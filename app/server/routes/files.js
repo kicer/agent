@@ -1,0 +1,138 @@
+// 文件管理 API（README 10.3）：上传 / 列表 / 下载 / 删除
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+const engine = require('../engine');
+const { listTaskFiles } = require('./sessions');
+const { resolveInTask } = require('../tools/executor');
+
+const router = express.Router();
+
+function taskDir(req) {
+  const dir = engine.taskDirOf(req.params.id);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function sanitizeName(original) {
+  let name = Buffer.from(original || 'file', 'latin1').toString('utf8');
+  name = path.basename(name).replace(/[\/\x00-\x1f]/g, '_');
+  while (name.startsWith('.')) name = name.slice(1);
+  return name || 'file';
+}
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: function (req, file, cb) {
+      try { cb(null, taskDir(req)); } catch (err) { cb(err); }
+    },
+    filename: function (req, file, cb) {
+      try {
+        const dir = taskDir(req);
+        const name = sanitizeName(file.originalname);
+        const ext = path.extname(name);
+        const stem = name.slice(0, name.length - ext.length);
+        let target = name;
+        let i = 0;
+        while (fs.existsSync(path.join(dir, target))) {
+          i++;
+          target = stem + '-' + i + ext;
+        }
+        cb(null, target);
+      } catch (err) { cb(err); }
+    },
+  }),
+  limits: { filesize: 50 * 1024 * 1024 },
+});
+
+router.post('/:id/files', upload.array('files', 10), function (req, res) {
+  try {
+    const uploaded = (req.files || []).map(f => ({ filename: f.filename, size: f.size }));
+    const db = engine.getDb();
+    for (const f of uploaded) {
+      db.prepare('INSERT INTO files (session_id, filename, size, created_at) VALUES (?,?,?,?)')
+        .run(req.params.id, f.filename, f.size, Date.now());
+    }
+    res.json({ uploaded });
+  } catch (err) {
+    res.status(500).json({ error: String(err && err.message || err) });
+  }
+});
+
+router.get('/:id/files', function (req, res) {
+  try {
+    const session = engine.getSession(req.params.id);
+    if (!session) return res.status(404).json({ error: '会话不存在' });
+    res.json(listTaskFiles(engine.taskDirOf(session.id)));
+  } catch (err) {
+    res.status(500).json({ error: String(err && err.message || err) });
+  }
+});
+
+// 下载（支持子目录路径，前端用 ?path=xxx 传入相对路径）
+router.get('/:id/files/download', function (req, res) {
+  try {
+    const rel = String(req.query.path || '');
+    if (!rel) return res.status(400).json({ error: '缺少 path 参数' });
+    const abs = resolveInTask(engine.taskDirOf(req.params.id), rel);
+    const st = fs.statSync(abs);
+    if (!st.isFile()) return res.status(400).json({ error: '不是文件' });
+    res.download(abs, path.basename(abs));
+  } catch (err) {
+    res.status(404).json({ error: '文件不存在' });
+  }
+});
+
+router.delete('/:id/files', function (req, res) {
+  try {
+    const rel = String(req.query.path || '');
+    if (!rel) return res.status(400).json({ error: '缺少 path 参数' });
+    const dir = engine.taskDirOf(req.params.id);
+    const abs = resolveInTask(dir, rel);
+    if (path.resolve(abs) === path.resolve(dir)) {
+      return res.status(400).json({ error: '禁止删除任务目录' });
+    }
+    fs.rmSync(abs, { recursive: true, force: true });
+    engine.getDb().prepare('DELETE FROM files WHERE session_id = ? AND filename = ?')
+      .run(req.params.id, rel);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(404).json({ error: '文件不存在' });
+  }
+});
+
+// 兼容 README 形式：GET /:id/files/{filename}（支持子目录）
+router.get('/:id/files/*', function (req, res) {
+  try {
+    const rel = req.params[req.params.length - 1] || '';
+    if (!rel) return res.status(400).json({ error: '缺少文件名' });
+    const abs = resolveInTask(engine.taskDirOf(req.params.id), rel);
+    const st = fs.statSync(abs);
+    if (!st.isFile()) return res.status(400).json({ error: '不是文件' });
+    res.download(abs, path.basename(abs));
+  } catch (err) {
+    res.status(404).json({ error: '文件不存在' });
+  }
+});
+
+// 兼容 README 形式：DELETE /:id/files/{filename}
+router.delete('/:id/files/*', function (req, res) {
+  req.query.path = req.params[req.params.length - 1] || '';
+  if (!req.query.path) return res.status(400).json({ error: '缺少文件名' });
+  try {
+    const dir = engine.taskDirOf(req.params.id);
+    const abs = resolveInTask(dir, req.query.path);
+    if (path.resolve(abs) === path.resolve(dir)) {
+      return res.status(400).json({ error: '禁止删除任务目录' });
+    }
+    fs.rmSync(abs, { recursive: true, force: true });
+    engine.getDb().prepare('DELETE FROM files WHERE session_id = ? AND filename = ?')
+      .run(req.params.id, req.query.path);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(404).json({ error: '文件不存在' });
+  }
+});
+
+module.exports = router;

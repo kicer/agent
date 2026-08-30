@@ -1,2 +1,9 @@
 /ai-xiaocai/
 /zed_agent/
+node_modules/
+app/test/tmp/
+app/config.yaml
+app/data/
+data/
+*.log
+.DS_Store

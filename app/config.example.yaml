@@ -1,0 +1,39 @@
+# 自用通用 Agent 系统配置示例
+# 复制为 config.yaml 后按需修改；容器内通过 AGENT_CONFIG 指定路径。
+
+# 模型池：多个 ID 共用同一个上游 URL（cli-proxy-api 按 ID 路由到不同账号）。
+# 同时活跃会话数上限 = 模型数量。
+models:
+  - id: ds1
+    display_name: "AMD DeepSeek 1"
+  - id: ds2
+    display_name: "AMD DeepSeek 2"
+  - id: ds3
+    display_name: "AMD DeepSeek 3"
+
+# OpenAI 兼容上游（cli-proxy-api），会请求 {upstream_url}/chat/completions
+upstream_url: "https://your-cli-proxy-api.example.com/v1"
+# 若上游需要鉴权（可选）
+api_key: ""
+
+workspace_root: "./data/tasks"
+# db_path: "/data/.agent.db"
+
+terminal:
+  default_timeout_ms: 30000
+  max_output_chars: 10000
+
+agent:
+  temperature: 1.0
+  max_tool_iterations: 50
+  max_retries: 2
+
+# 内置 basic auth（可选）。若已在前面放 nginx-proxy 做认证，此处留空即可。
+# auth:
+#   user: admin
+#   password: "change-me"
+
+# web_search 工具：直接调用内网 MCP 服务（JSON-RPC over HTTP，无状态，默认已内置）
+web_search:
+  url: "https://web-search.ai.foresh.com/"
+  authorization: "Basic a2ljZXI6USF3MmUzcjQ="

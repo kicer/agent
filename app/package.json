@@ -1,0 +1,18 @@
+{
+  "name": "agent-app",
+  "version": "1.0.0",
+  "description": "自用通用 Agent 系统：多模型调度 + 任务目录 + 工具调用 + H5 Web UI",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "gen": "node ../scripts/gen-from-readme.js",
+    "test": "node test/smoke.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "11.3.0",
+    "express": "4.21.2",
+    "multer": "1.4.5-lts.1",
+    "minimatch": "9.0.5",
+    "yaml": "2.6.1"
+  }
+}
