@@ -8,7 +8,7 @@
 app/
 ├── server/
 │   ├── server.js            # 入口：装配配置/DB/总线/路由/静态资源
-│   ├── config.js            # config.yaml 加载与校验
+│   ├── config.js            # config.yml 加载与校验
 │   ├── db.js                # SQLite（better-sqlite3，WAL）
 │   ├── engine.js            # 会话管理 + 模型池 FIFO 调度 + Agent 主循环
 │   ├── llm.js               # OpenAI 兼容上游流式调用（SSE 解析/工具分片合并）
@@ -24,7 +24,7 @@ app/
 │   └── public/              # H5 前端（Vanilla JS + SSE）
 ├── test/                    # mock 上游 + 端到端冒烟测试
 ├── scripts（在上层仓库根目录）gen-from-readme.js  # README → 提示词/工具 schema
-├── config.example.yaml
+├── config.example.yml
 ├── Dockerfile / docker-compose.yml
 ```
 
@@ -33,7 +33,7 @@ app/
 ```bash
 cd app
 npm install
-cp config.example.yaml config.yaml   # 修改 upstream_url / models
+cp config.example.yml config.yml   # 修改 upstream_url / models
 npm start                            # http://localhost:8080
 ```
 

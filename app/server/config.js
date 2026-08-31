@@ -1,4 +1,4 @@
-// 配置加载：AGENT_CONFIG 指向 config.yaml（见 config.example.yaml）
+// 配置加载：AGENT_CONFIG 指向 config.yml（见 config.example.yml）
 const fs = require('fs');
 const path = require('path');
 const YAML = require('yaml');
@@ -33,7 +33,7 @@ function deepMerge(base, extra) {
 }
 
 function loadConfig(configPath) {
-  const p = configPath || process.env.AGENT_CONFIG || path.join(__dirname, '..', 'config.yaml');
+  const p = configPath || process.env.AGENT_CONFIG || path.join(__dirname, '..', 'config.yml');
   let raw = {};
   if (fs.existsSync(p)) {
     raw = YAML.parse(fs.readFileSync(p, 'utf8')) || {};

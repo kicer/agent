@@ -2,7 +2,8 @@
 /zed_agent/
 node_modules/
 app/test/tmp/
-app/config.yaml
+app/config.yml
+/config.yml
 app/data/
 data/
 *.log

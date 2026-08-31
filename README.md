@@ -20,7 +20,7 @@
 
 ### 2.1 模型池配置
 
-配置文件（如 `config.yaml`）中定义模型列表：
+配置文件（如 `config.yml`）中定义模型列表：
 
 ```yaml
 models:
@@ -954,25 +954,35 @@ function runAgent(session):
 
 ## 十三、Docker 部署
 
-### 13.1 Docker Compose 示例
+### 13.1 Docker Compose（顶层 `docker-compose.yml`）
 
 ```yaml
 services:
   agent:
-    build: .
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./data:/workspace/tasks
-      - ./config.yaml:/app/config.yaml
-    environment:
-      - AGENT_CONFIG=/app/config.yaml
+    build: ./app
     restart: unless-stopped
+    expose:
+      - "8080"                          # 仅内网暴露，由 nginx-proxy 对外
+    volumes:
+      - ./data:/workspace/tasks         # 持久化：任务目录 + SQLite
+      - ./config.yml:/app/config.yml:ro
+    environment:
+      - PORT=8080
+      - AGENT_CONFIG=/app/config.yml
+      - VIRTUAL_HOST=agent.ai.foresh.com
+      - VIRTUAL_PORT=8080
+      - CERT_NAME=default
+    networks:
+      - my-app-network
+
+networks:
+  my-app-network:
+    external: true
 ```
 
-### 13.2 nginx-proxy basic auth
+### 13.2 nginx-proxy 对外暴露
 
-前置 nginx-proxy，配置 basic auth，多个用户共享同一认证，不做任务隔离。
+前置的 nginx-proxy 需与业务容器共用外部网络 `my-app-network`。compose 通过 `VIRTUAL_HOST`/`VIRTUAL_PORT`/`CERT_NAME` 接入；域名 `agent.ai.foresh.com` 的 DNS 指向 nginx-proxy 所在宿主机。多个用户共享同一认证，不做任务隔离；SSE 需关代理缓冲（`proxy_buffering off`），见 `docs/DEPLOY.md`。
 
 ---
 

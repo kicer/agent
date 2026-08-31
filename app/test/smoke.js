@@ -46,7 +46,7 @@ async function main() {
   const mock = spawn('node', [path.join(ROOT, 'test/mock-upstream.js')], { stdio: 'inherit' });
   const server = spawn('node', [path.join(ROOT, 'server/server.js')], {
     cwd: ROOT,
-    env: Object.assign({}, process.env, { AGENT_CONFIG: path.join(ROOT, 'test/config.test.yaml') }),
+    env: Object.assign({}, process.env, { AGENT_CONFIG: path.join(ROOT, 'test/config.test.yml') }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let serverLog = '';

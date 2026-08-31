@@ -619,7 +619,7 @@ function strip(s) { return s.replace(/<[^>]+>/g, ''); }
 // web_search：调用内网 MCP 服务（JSON-RPC over HTTP，无状态，响应为 SSE 帧包裹的 JSON）。
 async function toolWebSearch(ctx, args) {
   const ws = ctx.cfg.web_search || {};
-  if (!ws.url) return 'web_search 未配置：请在 config.yaml 的 web_search.url 中填写 MCP 服务地址';
+  if (!ws.url) return 'web_search 未配置：请在 config.yml 的 web_search.url 中填写 MCP 服务地址';
   const query = args.query;
   if (!query) return 'web_search 缺少参数 query';
   const callId = Date.now();
