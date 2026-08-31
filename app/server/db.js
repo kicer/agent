@@ -19,7 +19,8 @@ function initDb(dbPath) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       completed_at INTEGER,
-      cancelled_at INTEGER
+      cancelled_at INTEGER,
+      held_at INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -60,6 +61,9 @@ function initDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
     CREATE INDEX IF NOT EXISTS idx_files_session ON files(session_id);
   `);
+  // 迁移：旧库补 held_at 列（held 保持租约起始时间）
+  const cols = db.prepare('PRAGMA table_info(sessions)').all();
+  if (!cols.some(c => c.name === 'held_at')) db.exec('ALTER TABLE sessions ADD COLUMN held_at INTEGER');
   return db;
 }
 

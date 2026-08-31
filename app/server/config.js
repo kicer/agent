@@ -11,6 +11,9 @@ const DEFAULTS = {
   db_path: '', // 默认为 workspace_root/.agent.db
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
   agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2 },
+  // 回合结束后模型保持占用（held）的租约：页内无人观看超过 idle_release_ms 则释放；
+  // 即便一直有人观看，最长也只保持 active_max_ms；sweep_ms 为巡检间隔。
+  model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },
   models: [],
   auth: null, // { user, password }，为空则不启用内置 basic auth（可交给 nginx-proxy）
   // web_search 工具：内网 MCP 服务（JSON-RPC over HTTP，无状态）

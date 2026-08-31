@@ -95,14 +95,16 @@ function syncModelPool() {
   for (const row of db.prepare('SELECT id FROM model_pool').all()) {
     if (!ids.includes(row.id)) db.prepare('DELETE FROM model_pool WHERE id = ?').run(row.id);
   }
-  // 进程重启后：释放所有绑定、把 active 会话退回队列
+  // 进程重启后：释放所有绑定、把 active 会话退回队列；held 会话直接结版（释放）
   db.prepare('UPDATE model_pool SET is_busy = 0, current_session_id = NULL').run();
+  db.prepare("UPDATE sessions SET status='completed', completed_at=?, held_at=NULL, model_id=NULL WHERE status='held'").run(now());
   for (const s of db.prepare("SELECT id FROM sessions WHERE status = 'active'").all()) {
     db.prepare("UPDATE sessions SET status='queued', model_id=NULL, updated_at=? WHERE id=?").run(now(), s.id);
     enqueue(s.id);
   }
-  // 兜底：queued 会话必须在队列中
+  // 兑底：queued 会话必须在队列中
   for (const s of db.prepare("SELECT id FROM sessions WHERE status='queued'").all()) enqueue(s.id);
+  startHoldSweeper();
 }
 
 function freeModel() {
@@ -160,6 +162,40 @@ function dispatchQueued() {
   }
 }
 
+// ---------- held 保持租约 ----------
+// 回合结束后会话进入 held：继续占用模型（用户追问免排队），由 sweeper 按规则释放：
+// - 页面无 SSE 观看者：超过 idle_release_ms 释放；
+// - 有人观看：最长保持 active_max_ms（防止挂着页面霸占模型池）。
+function releaseHeld(sessionId) {
+  const s = getSession(sessionId);
+  if (!s || s.status !== 'held') return;
+  touch(sessionId, { status: 'completed', completed_at: now(), held_at: null });
+  releaseModel(sessionId);
+  bus.emit(sessionId, 'done', { status: 'completed' });
+  emitStatus(sessionId);
+  dispatchQueued();
+}
+
+function sweepHeld() {
+  const holdCfg = (cfg && cfg.model_hold) || {};
+  const idleMs = holdCfg.idle_release_ms || 180000;
+  const activeMs = holdCfg.active_max_ms || 1800000;
+  const t = now();
+  for (const s of db.prepare("SELECT * FROM sessions WHERE status='held'").all()) {
+    const heldSince = t - (s.held_at || s.updated_at || 0);
+    const present = bus.clientCount && bus.clientCount(s.id) > 0;
+    if (heldSince >= (present ? activeMs : idleMs)) releaseHeld(s.id);
+  }
+}
+
+let holdTimer = null;
+function startHoldSweeper() {
+  if (holdTimer) return;
+  const ms = (cfg && cfg.model_hold && cfg.model_hold.sweep_ms) || 10000;
+  holdTimer = setInterval(sweepHeld, ms);
+  if (holdTimer.unref) holdTimer.unref(); // 不阻止进程退出
+}
+
 // ---------- 运行控制 ----------
 function getRun(sessionId, create) {
   let run = runs.get(sessionId);
@@ -199,16 +235,20 @@ function finalize(sessionId, run) {
   const s = getSession(sessionId);
   if (!s || s.status !== 'active') { runs.delete(sessionId); return; }
   const cancelled = run.cancelled;
-  touch(sessionId, {
-    status: cancelled ? 'cancelled' : 'completed',
-    cancelled_at: cancelled ? now() : null,
-    completed_at: cancelled ? null : now(),
-  });
-  releaseModel(sessionId);
+  if (cancelled) {
+    touch(sessionId, { status: 'cancelled', cancelled_at: now(), completed_at: null });
+    releaseModel(sessionId);
+    runs.delete(sessionId);
+    bus.emit(sessionId, 'done', { status: 'cancelled' });
+    emitStatus(sessionId);
+    dispatchQueued();
+    return;
+  }
+  // 正常结束：进入 held 保持租约，不释放模型，用户追问可直接复用
+  touch(sessionId, { status: 'held', held_at: now(), completed_at: null, cancelled_at: null });
   runs.delete(sessionId);
-  bus.emit(sessionId, 'done', { status: cancelled ? 'cancelled' : 'completed' });
+  bus.emit(sessionId, 'done', { status: 'held' });
   emitStatus(sessionId);
-  dispatchQueued();
 }
 
 async function runLoopInner(sessionId, run) {
@@ -346,12 +386,19 @@ function postUserMessage(sessionId, content, opts) {
     // 正在跑：下一轮迭代会从 DB 重新加载历史，自动带上这条消息
     return { message_id: messageId, delivered: 'live' };
   }
+  if (session.status === 'held') {
+    // 保持租约期内：直接复用当前绑定的模型，无需排队
+    touch(sessionId, { status: 'active', held_at: null });
+    emitStatus(sessionId);
+    runLoop(sessionId);
+    return { message_id: messageId, delivered: 'live' };
+  }
   if (session.status === 'active' && (!run || !run.looping)) {
     runLoop(sessionId);
     return { message_id: messageId, delivered: 'live' };
   }
   // 排队 / 已完成 / 已取消 → 重新入队；若派发后已立即拿到空闲模型，则算直接送达
-  touch(sessionId, { status: 'queued', cancelled_at: null, completed_at: null });
+  touch(sessionId, { status: 'queued', cancelled_at: null, completed_at: null, held_at: null });
   enqueue(sessionId);
   dispatchQueued();
   const after = getSession(sessionId);
@@ -381,13 +428,14 @@ function stop(sessionId) {
   if (session.status === 'active') {
     // run 在循环退出处会 finalize；若无循环在跑则直接收尾
     if (!run || !run.looping) {
-      touch(sessionId, { status: 'cancelled', cancelled_at: now() });
+      touch(sessionId, { status: 'cancelled', cancelled_at: now(), held_at: null });
       releaseModel(sessionId);
       runs.delete(sessionId);
       bus.emit(sessionId, 'done', { status: 'cancelled' });
     }
   } else {
-    touch(sessionId, { status: 'cancelled', cancelled_at: now(), model_id: null });
+    touch(sessionId, { status: 'cancelled', cancelled_at: now(), model_id: null, held_at: null, completed_at: null });
+    releaseModel(sessionId); // held 会话同时释放模型保持租约
   }
   emitStatus(sessionId);
   dispatchQueued();

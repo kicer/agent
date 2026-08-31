@@ -74,6 +74,7 @@ body {
 .badge.active { background: #e3f2e6; color: #217a34; }
 .badge.queued { background: #fff4dc; color: #a06a00; }
 .badge.completed { background: #eceff5; color: #5c6674; }
+.badge.held { background: #efeafc; color: #6b46c8; }
 .badge.cancelled { background: #fdecea; color: #b3382c; }
 .session-del { color: #c33; background: none; border: none; font-size: 12px; padding: 6px; }
 

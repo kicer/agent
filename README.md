@@ -82,7 +82,10 @@ models:
 |---|---|---|---|
 | **排队中** | 无模型空闲，用户可输入，消息暂存并进入全局等待队列 | 无 | 可输入，AI 不应答（灰色图标） |
 | **活跃中** | 已绑定模型，实时对话/执行 | 有 | 消息实时发给模型 |
-| **已完成/已取消** | 任务结束或终止，模型已释放 | 无 | 可继续输入，自动再次进入排队 |
+| **保持中（held）** | AI 已答完，在租约内继续占用模型等待追问 | 有（临时保持） | 消息直接复用已绑模型，免排队 |
+| **已完成/已取消** | 租约到期释放、任务结束或用户终止，模型已释放 | 无 | 可继续输入，自动再次进入排队 |
+
+> held 租约规则（`model_hold` 可配置）：页面无观看者超过 `idle_release_ms`（默认 3 分钟）即释放；有人观看最长保持 `active_max_ms`（默认 30 分钟），防止挂着页面霸占模型池。
 
 > 「已完成」和「已取消」本质相同，都回到“空闲”状态，仅记录一个结束原因。
 
@@ -90,11 +93,10 @@ models:
 
 1. **创建会话**：生成任务 ID，创建任务目录，尝试绑定空闲模型。
 2. **用户输入**：
-   - 活跃中 → 实时发送。
+   - 活跃中 / 保持中 → 实时发送（held 直接复用已绑模型）。
    - 排队中 / 已完成 → 消息暂存，会话自动进入全局等待队列。
 3. **模型分配**：模型空闲时，从全局队列 FIFO 取会话，绑定，将暂存消息一次性发出。
-4. **开始执行**：用户点击状态开关，系统追加 user 消息，阶段切换。
-5. **任务结束**：AI 完成或用户终止，模型释放，会话回到空闲状态。
+4. **回合结束**：AI 答完，会话进入 held（模型不释放，可无缝追问）；租约到期无追问 → 释放变 completed；用户终止 → cancelled 并立即释放。
 
 ---
 
@@ -736,13 +738,14 @@ To use a Skill:
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY,              -- 任务 ID，如 "task-20260830-001"
   title TEXT DEFAULT '',            -- 会话标题（可由 AI 生成或用户填写）
-  status TEXT NOT NULL,             -- queued | active | completed | cancelled
+  status TEXT NOT NULL,             -- queued | active | held | completed | cancelled
   phase TEXT NOT NULL DEFAULT 'planning',  -- planning | execution
   model_id TEXT,                    -- 绑定的模型 ID（ds1/ds2/ds3），排队时为空
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   completed_at INTEGER,
-  cancelled_at INTEGER
+  cancelled_at INTEGER,
+  held_at INTEGER                   -- 进入 held（保持租约）的时间
 );
 
 -- 消息表

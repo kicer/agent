@@ -69,10 +69,17 @@ async function main() {
     let d = await waitSession(s.id, x => x.session.status === 'active', 5000, '绑定模型');
     ok(d.session.model_id === 'ds1', '绑定第一个空闲模型 ds1', d.session.model_id);
     await api('POST', '/api/sessions/' + s.id + '/messages', { content: '你好呀' });
-    d = await waitSession(s.id, x => x.session.status === 'completed', 8000, 'AI 回复完成');
+    d = await waitSession(s.id, x => x.session.status === 'held', 8000, 'AI 回复完成（held）');
     const asst = d.messages.filter(m => m.role === 'assistant');
     ok(asst.length === 1 && asst[0].content.includes('你好呀'), 'AI 文本回复流式落库', asst.map(m => m.content).join('|'));
-    ok(d.session.model_id === null, '完成后释放模型');
+    ok(d.session.model_id === 'ds1', '回复完成后模型不释放（held 保持租约）', d.session.model_id);
+    // held 期间追问：直接复用已绑模型，不重新排队
+    const r2 = await api('POST', '/api/sessions/' + s.id + '/messages', { content: '再来一条' });
+    ok(r2 && r2.delivered === 'live', 'held 期间追问直接送达（不排队）', r2 && r2.delivered);
+    d = await waitSession(s.id, x => x.session.status === 'held' && x.messages.filter(m => m.role === 'assistant').length >= 2, 8000, '第二次回复');
+    ok(d.session.model_id === 'ds1', '追问复用同一模型', d.session.model_id);
+    // held 租约到期自动释放（测试配置 idle_release_ms=1500）
+    d = await waitSession(s.id, x => x.session.status === 'completed' && x.session.model_id === null, 6000, 'held 租约到期自动释放');
 
     // ---- 2. 工具调用 write_file ----
     console.log('\n[2] 工具调用');
@@ -80,7 +87,7 @@ async function main() {
     await waitSession(s.id, x => x.session.status === 'active', 5000, '绑定');
     await api('POST', '/api/sessions/' + s.id + '/start');
     await api('POST', '/api/sessions/' + s.id + '/messages', { content: '请写文件' });
-    d = await waitSession(s.id, x => x.session.status === 'completed' && x.messages.some(m => m.role === 'tool'), 15000, '工具回合完成');
+    d = await waitSession(s.id, x => x.session.status === 'held' && x.messages.some(m => m.role === 'tool'), 15000, '工具回合完成（held）');
     const toolMsgs = d.messages.filter(m => m.role === 'tool');
     ok(toolMsgs.length === 1 && toolMsgs[0].name === 'write_file', 'tool 消息落库', JSON.stringify(toolMsgs.map(m => m.name)));
     ok(toolMsgs[0].content.includes('hello.txt'), '工具结果包含文件名', toolMsgs[0].content);

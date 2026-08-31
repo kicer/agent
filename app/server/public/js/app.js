@@ -117,7 +117,7 @@ async function loadSessions() {
       return;
     }
     el.innerHTML = rows.map(s => {
-      const st = { queued: '排队中', active: '活跃中', completed: '已完成', cancelled: '已终止' }[s.status] || s.status;
+      const st = { queued: '排队中', active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' }[s.status] || s.status;
       const badge = '<span class="badge ' + s.status + '">' + st + (s.status === 'queued' && s.queue_pos ? ' #' + s.queue_pos : '') + '</span>';
       return '<div class="session-card" onclick="ui.openSession(\'' + s.id + '\')">' +
         '<div class="session-main">' +
@@ -217,7 +217,7 @@ async function renderDetail(detail) {
   state.toolCards = {};
   const s = detail.session;
   state.status = s.status;
-  updatePhaseUI();
+  updatePhaseUI({ model_id: s.model_id, queue_pos: detail.queue_pos });
   $('chat-title').textContent = s.title || s.id;
   for (const m of detail.messages) {
     const node = msgNode(m, state.toolCards);
@@ -309,15 +309,16 @@ function connectStream() {
 // ---------- 任务状态 ----------
 function updatePhaseUI(d) {
   const pill = $('status-pill');
-  const stMap = { queued: '排队中', active: '活跃中', completed: '已完成', cancelled: '已终止' };
+  const stMap = { queued: '排队中', active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
   let text = stMap[state.status] || state.status || '--';
   if (d && d.queue_pos) text += '（第 ' + d.queue_pos + ' 位）';
-  if (state.status === 'active') {
-    text = '活跃中' + (d && d.model_id ? ' · ' + d.model_id : '');
+  // active/held 时附带当前占用的模型
+  if ((state.status === 'active' || state.status === 'held') && d && d.model_id) {
+    text += ' · ' + d.model_id;
   }
   pill.textContent = text;
-  // 仅活跃中提供终止入口
-  $('stop-btn').classList.toggle('hidden', state.status !== 'active');
+  // 活跃中/保持中提供终止入口（保持中点终止 = 主动放弃占用的模型）
+  $('stop-btn').classList.toggle('hidden', state.status !== 'active' && state.status !== 'held');
 }
 
 // ---------- 文件 ----------

@@ -19,3 +19,9 @@ agent:
   temperature: 1.0
   max_tool_iterations: 20
   max_retries: 1
+
+# 冒烟测试用短租约，验证 held → 自动释放
+model_hold:
+  idle_release_ms: 1500
+  active_max_ms: 8000
+  sweep_ms: 300

@@ -33,7 +33,12 @@ function createBus() {
     clients.delete(sessionId);
   }
 
-  return { addClient, removeClient, emit, closeAll };
+  function clientCount(sessionId) {
+    const set = clients.get(sessionId);
+    return set ? set.size : 0;
+  }
+
+  return { addClient, removeClient, emit, closeAll, clientCount };
 }
 
 module.exports = { createBus };
