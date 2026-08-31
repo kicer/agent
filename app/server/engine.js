@@ -10,6 +10,10 @@ const TOOL_DEFINITIONS = require('./tools/definitions.json');
 const START_EXECUTION_MESSAGE =
   '我说完了，你可以开始干活了。先把我上面说的需求整理成 task.md 文件写入任务目录，然后按照 task.md 开始执行。';
 
+// 会话上下文消息标记：动态信息（日期/任务目录/模型显示名）不再拼入 system prompt，
+// 而是建会话时作为首条 user 消息自动发送，跟着会话走；它不单独触发模型回合。
+const SESSION_CONTEXT_NAME = 'session_context';
+
 let cfg, db, bus;
 const runs = new Map(); // session_id -> {cancelled, procs:Set, abortController, looping:boolean}
 
@@ -146,11 +150,12 @@ function releaseModel(sessionId) {
   db.prepare('UPDATE sessions SET model_id = NULL, updated_at = ? WHERE id = ?').run(now(), sessionId);
 }
 
-// 是否还有待回应的新用户消息（最后一条非 tool 消息是 user）
+// 是否还有待回应的新用户消息（最后一条非 tool 消息是 user）。
+// 会话上下文消息（role=user 但带 SESSION_CONTEXT_NAME 标记）不算待回应消息。
 function hasPendingUser(sessionId) {
   const rows = loadHistory(sessionId);
   for (let i = rows.length - 1; i >= 0; i--) {
-    if (rows[i].role === 'tool') continue;
+    if (rows[i].role === 'tool' || rows[i].name === SESSION_CONTEXT_NAME) continue;
     return rows[i].role === 'user';
   }
   return false;
@@ -295,10 +300,9 @@ async function runLoopInner(sessionId, run) {
   while (!run.cancelled && iter < maxIter) {
     const session = getSession(sessionId);
     if (!session || session.status !== 'active' || !session.model_id) break;
-    session.task_dir = taskDirOf(sessionId);
     session.history = loadHistory(sessionId);
     for (const m of session.history) if (m.id > lastIncludedId) lastIncludedId = m.id;
-    const messages = buildMessages(session, modelDisplayName(session.model_id));
+    const messages = buildMessages(session);
     const tools = TOOL_DEFINITIONS;
 
     let result = null;
@@ -384,8 +388,8 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
 
 function hasUserSince(sessionId, sinceId) {
   const r = db.prepare(
-    "SELECT COUNT(*) AS c FROM messages WHERE session_id = ? AND role = 'user' AND id > ?"
-  ).get(sessionId, sinceId);
+    "SELECT COUNT(*) AS c FROM messages WHERE session_id = ? AND role = 'user' AND id > ? AND (name IS NULL OR name <> ?)"
+  ).get(sessionId, sinceId, SESSION_CONTEXT_NAME);
   return r.c > 0;
 }
 
@@ -396,6 +400,22 @@ function safeParse(s) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ---------- 对外 API ----------
+// 建会话时的动态信息：作为首条 user 消息发给模型（同时展示在聊天里），跟会话走。
+function sessionContextContent(session) {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const dateStr = d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
+  const model = session.model_id
+    ? modelDisplayName(session.model_id)
+    : '尚未绑定（排队中，绑定后自动开始处理）';
+  return [
+    '【会话上下文】以下信息由系统自动注入，无需回复本条消息。',
+    '- 当前日期：' + dateStr + '（UTC）',
+    '- 任务目录：' + taskDirOf(session.id) + '（本会话的文件与终端操作都在此目录内）',
+    '- 当前模型：' + model,
+  ].join('\n');
+}
+
 function createSession(title) {
   const id = genTaskId();
   const dir = taskDirOf(id);
@@ -405,7 +425,10 @@ function createSession(title) {
   ).run(id, title || '', now(), now());
   enqueue(id);
   dispatchQueued();
-  return getSession(id);
+  // 放在 dispatchQueued 之后：若能立即绑到空闲模型，上下文里就能带上模型显示名。
+  const session = getSession(id);
+  saveMessage(id, { role: 'user', name: SESSION_CONTEXT_NAME, content: sessionContextContent(session) });
+  return session;
 }
 
 // 用户消息（或“开始执行”的模板消息）入口。

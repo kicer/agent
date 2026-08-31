@@ -5,19 +5,16 @@ const path = require('path');
 
 const SYSTEM_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'system-prompt.txt'), 'utf8');
 
-function buildSystemPrompt(session, modelDisplayName) {
-  const d = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  const dateStr = d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
-  return SYSTEM_PROMPT_TEMPLATE
-    .replace('{动态日期}', dateStr)
-    .replace('{任务目录路径}', session.task_dir)
-    .replace('{模型显示名}', modelDisplayName || session.model_id || '');
+// system prompt 完全静态：所有会话共用同一份内容，利于上游前缀缓存。
+// 动态会话信息（日期/任务目录/模型显示名）不再拼入 system prompt，
+// 而是在新建会话时作为首条 user 消息发送，见 engine.js 的 sessionContextContent。
+function buildSystemPrompt() {
+  return SYSTEM_PROMPT_TEMPLATE;
 }
 
 // 将 DB 消息行转为 OpenAI messages 数组（不含 system，由调用方拼接）。
-function buildMessages(session, modelDisplayName) {
-  const messages = [{ role: 'system', content: buildSystemPrompt(session, modelDisplayName) }];
+function buildMessages(session) {
+  const messages = [{ role: 'system', content: SYSTEM_PROMPT_TEMPLATE }];
   for (const row of session.history) {
     if (row.role === 'assistant') {
       const m = { role: 'assistant', content: row.content || '' };

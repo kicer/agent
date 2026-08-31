@@ -129,7 +129,7 @@ models:
 # /app/server/templates/system-prompt.txt
 ```
 
-> 注：`{动态日期}`、`{任务目录路径}`、`{模型显示名}` 由应用在运行时填充。`<available_skills>` 当前为空，预留扩展。
+> 注：system prompt 完全静态（所有会话共用，利于前缀缓存）。动态会话信息（日期、任务目录、模型显示名）在新建会话时作为首条 user 消息自动发送，跟会话走。`<available_skills>` 当前为空，预留扩展。
 
 ### 7.2 工具定义（保留 14 个，去掉 diagnostics、skill、spawn_agent）
 

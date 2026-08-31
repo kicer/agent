@@ -45,8 +45,8 @@ npm test            # 启动 mock 上游 + 真实 server 的端到端冒烟测�
 
 ## 提示词与工具 schema
 
-System prompt 模板在 `server/templates/system-prompt.txt`，工具定义在 `server/tools/definitions.json`，直接修改这两个文件即可（改完重启服务）。
-模板中的 `{动态日期}`、`{任务目录路径}`、`{模型显示名}` 占位符由 `llm.js` 在每次请求时替换。
+System prompt 完全静态（所有会话共用，利于上游前缀缓存），在 `server/templates/system-prompt.txt` 直接编辑；工具定义在 `server/tools/definitions.json`。改完重启服务。
+动态会话信息（日期、任务目录、模型显示名）不拼入 prompt，而是新建会话时作为首条 user 消息自动发送（带 `session_context` 标记，不会单独触发模型回复），见 `engine.js` 的 `sessionContextContent`。
 
 ## 关键行为速查
 
