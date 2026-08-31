@@ -24,7 +24,7 @@ app.use(express.json({ limit: '2mb' }));
 
 // 可选 basic auth（若前置 nginx 已做，可不启用）
 if (cfg.auth && cfg.auth.user) {
-  const expected = 'Basic ' + Buffer.From(cfg.auth.user + ':' + cfg.auth.password).toString('base64');
+  const expected = 'Basic ' + Buffer.from(cfg.auth.user + ':' + cfg.auth.password).toString('base64');
   app.use((req, res, next) => {
     if (req.headers.authorization === expected) return next();
     res.set('WWW-Authenticate', 'Basic realm="agent"');

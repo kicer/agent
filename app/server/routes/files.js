@@ -70,6 +70,16 @@ router.get('/:id/files', function (req, res) {
   }
 });
 
+// 下载统一响应：禁用一切缓存协商。
+// 默认的 ETag/Last-Modified + Cache-Control: public, max-age=0 会诱导移动端浏览器
+// 先发条件请求拿 304 空体，下载管理器随后卡在“等待中”（桌面 Safari/curl 不受影响）。
+function sendDownload(res, abs) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.download(abs, path.basename(abs), { acceptRanges: true, lastModified: false, etag: false, maxAge: 0 });
+}
+
 // 下载（支持子目录路径，前端用 ?path=xxx 传入相对路径）
 router.get('/:id/files/download', function (req, res) {
   try {
@@ -78,7 +88,7 @@ router.get('/:id/files/download', function (req, res) {
     const abs = resolveInTask(engine.taskDirOf(req.params.id), rel);
     const st = fs.statSync(abs);
     if (!st.isFile()) return res.status(400).json({ error: '不是文件' });
-    res.download(abs, path.basename(abs));
+    sendDownload(res, abs);
   } catch (err) {
     res.status(404).json({ error: '文件不存在' });
   }
@@ -110,7 +120,7 @@ router.get('/:id/files/*', function (req, res) {
     const abs = resolveInTask(engine.taskDirOf(req.params.id), rel);
     const st = fs.statSync(abs);
     if (!st.isFile()) return res.status(400).json({ error: '不是文件' });
-    res.download(abs, path.basename(abs));
+    sendDownload(res, abs);
   } catch (err) {
     res.status(404).json({ error: '文件不存在' });
   }

@@ -359,6 +359,30 @@ function updatePhaseUI(d) {
 }
 
 // ---------- 文件 ----------
+// 下载：fetch + Blob 绕过浏览器原生下载（移动端 Chrome 对 Basic 认证下的
+// Content-Disposition 下载处理有 bug，会卡在“等待中”）。
+// 同源 fetch 会自动携带浏览器缓存的 Basic 认证头，无需在 JS 里处理密码。
+async function downloadFile(name) {
+  if (!state.sessionId) return;
+  toast('下载中…');
+  try {
+    const url = '/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const blob = await res.blob();
+    const dlUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = dlUrl;
+    a.download = name.split('/').pop() || 'download';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(dlUrl); }, 1000);
+  } catch (e) {
+    toast('下载失败：' + e.message);
+  }
+}
+
 async function loadFiles() {
   if (!state.sessionId) return;
   try {
@@ -369,10 +393,9 @@ async function loadFiles() {
       return;
     }
     el.innerHTML = files.map(f => {
-      const url = '/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(f.filename);
       return '<div class="file-row"><span class="file-name">' + esc(f.filename) + '</span>' +
         '<span class="file-size">' + fmtSize(f.size) + '</span>' +
-        '<a class="file-act" href="' + url + '">下载</a>' +
+        '<button class="file-act" onclick="ui.downloadFile(\'' + esc(f.filename) + '\')">下载</button>' +
         '<button class="file-act del" onclick="ui.deleteFile(\'' + esc(f.filename).replace(/'/g, '%27') + '\')">删</button></div>';
     }).join('');
   } catch (e) { toast('读取文件失败：' + e.message); }
@@ -380,6 +403,7 @@ async function loadFiles() {
 
 // ---------- 主逻辑 ----------
 const ui = {
+  downloadFile(name) { return downloadFile(name); },
   openCreate() { $('create-modal').classList.remove('hidden'); $('new-title').focus(); },
   closeCreate() { $('create-modal').classList.add('hidden'); },
   async createSession() {
