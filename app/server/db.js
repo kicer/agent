@@ -58,6 +58,12 @@ function initDb(dbPath) {
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
 
+    -- 杂项持久计数/标记（如每日任务序号 task_seq:YYYYMMDD，删除会话后不回退复用）
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
     CREATE INDEX IF NOT EXISTS idx_files_session ON files(session_id);
   `);

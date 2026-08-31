@@ -21,13 +21,24 @@ function genTaskId() {
   const pad = n => String(n).padStart(2, '0');
   const day = d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate());
   const prefix = 'task-' + day + '-';
-  const row = db.prepare("SELECT COUNT(*) AS c FROM sessions WHERE id LIKE ?").get(prefix + '%');
-  let seq = row.c + 1;
+  // 历史最大序号（防残留行碰撞）与持久计数器取大：会话删除后序号也不回退复用
+  let maxSeq = 0;
+  for (const r of db.prepare('SELECT id FROM sessions WHERE id LIKE ?').all(prefix + '%')) {
+    const n = parseInt(r.id.slice(prefix.length), 10);
+    if (n > maxSeq) maxSeq = n;
+  }
+  const key = 'task_seq:' + day;
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key);
+  const stored = row ? Number(row.value) || 0 : 0;
+  let seq = Math.max(stored, maxSeq) + 1;
   let id = prefix + String(seq).padStart(3, '0');
   while (db.prepare('SELECT id FROM sessions WHERE id = ?').get(id)) {
     seq++;
     id = prefix + String(seq).padStart(3, '0');
   }
+  db.prepare(
+    'INSERT INTO meta (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = ?'
+  ).run(key, String(seq), String(seq));
   return id;
 }
 
