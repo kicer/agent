@@ -12,14 +12,15 @@ app/
 │   ├── db.js                # SQLite（better-sqlite3，WAL）
 │   ├── engine.js            # 会话管理 + 模型池 FIFO 调度 + Agent 主循环
 │   ├── llm.js               # OpenAI 兼容上游流式调用（SSE 解析/工具分片合并）
+│   ├── mcp.js               # MCP 客户端：mcp_servers 工具发现（tools/list）与转发（tools/call）
 │   ├── sse.js               # 按会话分组的 SSE 事件总线
 │   ├── routes/
 │   │   ├── sessions.js      # 会话 CRUD（10.1）
 │   │   ├── messages.js      # 消息/SSE/start/stop（10.2）
 │   │   └── files.js         # 文件上传/列表/下载/删除（10.3）
 │   ├── tools/
-│   │   ├── definitions.json # 14 个工具的 JSON Schema
-│   │   └── executor.js      # 13 个工具执行器（任务目录沙箱）
+│   │   ├── definitions.json # 内置 12 个工具的 JSON Schema
+│   │   └── executor.js      # 内置工具执行器（任务目录沙箱；未知工具名转 MCP）
 │   ├── templates/system-prompt.txt  # System prompt 模板（直接编辑）
 │   └── public/              # H5 前端（Vanilla JS + SSE）
 ├── test/                    # mock 上游 + 端到端冒烟测试
@@ -55,6 +56,6 @@ System prompt 完全静态（所有会话共用，利于上游前缀缓存），
 - 规划阶段点「开始执行」：追加固定模板消息并切 execution。
 - 终止：置位标志 + kill 进程组 + 中止模型流，不再发新请求。
 - 所有文件路径解析到任务目录内，拒绝越界。
-- web_search 调用内网 MCP 服务（config.web_search.url/authorization，默认已内置）；如服务不可用会返回错误文本。
+- MCP 服务在 config.yml 的 `mcp_servers` 配置（可多个，每项 name?/url/headers）；启动时发现其工具，追加在内置工具之后与 system prompt 一起发给模型；服务不可用仅启动日志告警，工具名重名时加「服务名__」前缀。
 
 部署见 `../docs/DEPLOY.md`。

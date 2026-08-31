@@ -42,7 +42,11 @@ model_hold:
 #   user: admin
 #   password: "change-me"
 
-# web_search 工具：直接调用内网 MCP 服务（JSON-RPC over HTTP，无状态，默认已内置）
-web_search:
-  url: "https://web-search.ai.foresh.com/"
-  authorization: "Basic a2ljZXI6USF3MmUzcjQ="
+# MCP 服务（可配多个；与内置工具分开）。启动时对每个服务调 tools/list 发现工具，
+# 追加到内置工具之后一起发给模型；调用经 tools/call 转发。headers 是任意请求头（如 Authorization）。
+# 服务不可用时只在启动日志告警，不影响其他服务与内置工具。
+mcp_servers:
+  - name: web-search                                   # 选填，缺省取主机名首段
+    url: "https://web-search.ai.foresh.com/"
+    headers:
+      Authorization: "Basic a2ljZXI6USF3MmUzcjQ="

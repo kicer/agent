@@ -1,10 +1,11 @@
-// 工具执行器。所有文件路径强制解析到任务目录内（防路径穿越）。
-// 工具名与参数 schema 来自 README 7.2（生成到 definitions.json）。
+// 工具执行器（内置工具）。所有文件路径强制解析到任务目录内（防路径穿越）。
+// 工具名与参数 schema 来自 definitions.json；MCP 工具不在这里，见 ../mcp.js。
 const fs = require('fs');
 const path = require('path');
 const fsp = require('fs').promises;
 const { spawn } = require('child_process');
 const { Minimatch } = require('minimatch');
+const mcp = require('../mcp');
 
 function makeMatcher(pattern, opts) {
   const mm = new Minimatch(pattern, opts || {});
@@ -616,68 +617,6 @@ function htmlToMarkdown(html) {
 
 function strip(s) { return s.replace(/<[^>]+>/g, ''); }
 
-// web_search：调用内网 MCP 服务（JSON-RPC over HTTP，无状态，响应为 SSE 帧包裹的 JSON）。
-async function toolWebSearch(ctx, args) {
-  const ws = ctx.cfg.web_search || {};
-  if (!ws.url) return 'web_search 未配置：请在 config.yml 的 web_search.url 中填写 MCP 服务地址';
-  const query = args.query;
-  if (!query) return 'web_search 缺少参数 query';
-  const callId = Date.now();
-  const rpc = {
-    jsonrpc: '2.0',
-    id: callId,
-    method: 'tools/call',
-    params: {
-      name: 'web_search',
-      arguments: {
-        query,
-        ...(args.provider ? { provider: args.provider } : {}),
-        ...(args.numResults ? { numResults: args.numResults } : {}),
-      },
-    },
-  };
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000);
-  try {
-    const res = await fetch(ws.url, {
-      method: 'POST',
-      signal: ctrl.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json, text/event-stream',
-        ...(ws.authorization ? { Authorization: ws.authorization } : {}),
-      },
-      body: JSON.stringify(rpc),
-    });
-    const raw = await res.text();
-    if (!res.ok) return 'MCP web_search HTTP ' + res.status + ': ' + raw.slice(0, 300);
-    // 响应可能是 SSE 帧（多行 data: {...}），取 id 匹配或最后一条 JSON
-    let payload = null;
-    try {
-      payload = JSON.parse(raw);
-    } catch (_) {
-      for (const line of raw.split('\n')) {
-        const t = line.trim();
-        if (!t.startsWith('data:')) continue;
-        try {
-          const obj = JSON.parse(t.slice(5).trim());
-          if (!payload || obj.id === callId) payload = obj;
-        } catch (_) { /* 跳过非 JSON 帧 */ }
-      }
-    }
-    if (!payload) return 'MCP web_search 响应无法解析：' + raw.slice(0, 300);
-    if (payload.error) return 'MCP web_search 错误：' + JSON.stringify(payload.error).slice(0, 500);
-    const content = payload.result && payload.result.content;
-    if (Array.isArray(content)) {
-      const text = content.filter(c => c && c.type === 'text').map(c => c.text || '').join('\n');
-      if (text) return text;
-    }
-    return JSON.stringify(payload.result).slice(0, 20000);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function recordFile(ctx, abs) {
   try {
     const st = fs.statSync(abs);
@@ -701,15 +640,15 @@ const HANDLERS = {
   grep: toolGrep,
   terminal: toolTerminal,
   fetch: toolFetch,
-  web_search: toolWebSearch,
 };
 
 // ctx: {sessionId, taskDir, run, cfg, db}
+// 内置工具优先；未命中时交给 MCP 注册表（启动时发现的服务工具）。
 async function executeTool(baseCtx, name, args) {
   const handler = HANDLERS[name];
-  if (!handler) return 'Error: 未知工具 ' + name;
-  const ctx = baseCtx;
-  return handler(ctx, args || {});
+  if (handler) return handler(baseCtx, args || {});
+  if (mcp.hasTool(name)) return mcp.callTool(name, args || {});
+  return 'Error: 未知工具 ' + name;
 }
 
 module.exports = { executeTool, resolveInTask, recordFile };

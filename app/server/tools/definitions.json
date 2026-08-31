@@ -305,37 +305,6 @@
   {
     "type": "function",
     "function": {
-      "name": "web_search",
-      "description": "免费网页搜索：Parallel（默认，匿名免 key）或 Exa（备用）。返回结构化结果数组（title / url / snippet / publishedAt）。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "搜索查询词"
-          },
-          "provider": {
-            "type": "string",
-            "enum": [
-              "parallel",
-              "exa"
-            ],
-            "description": "免费后端：parallel（默认）/ exa（备用）"
-          },
-          "numResults": {
-            "type": "number",
-            "description": "返回结果条数上限（默认 8）"
-          }
-        },
-        "required": [
-          "query"
-        ]
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
       "name": "write_file",
       "description": "This is a tool for creating a new file or overwriting an existing file with completely new contents.\n\nTo make granular edits to an existing file, prefer the `edit_file` tool instead.\n\nBefore using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location\n\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.",
       "parameters": {

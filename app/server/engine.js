@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { buildMessages, callModel } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
+const mcp = require('./mcp');
 
 const TOOL_DEFINITIONS = require('./tools/definitions.json');
 
@@ -303,7 +304,8 @@ async function runLoopInner(sessionId, run) {
     session.history = loadHistory(sessionId);
     for (const m of session.history) if (m.id > lastIncludedId) lastIncludedId = m.id;
     const messages = buildMessages(session);
-    const tools = TOOL_DEFINITIONS;
+    // 内置工具 + 启动时发现的 MCP 工具，一起随 system prompt 发给模型
+    const tools = TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
 
     let result = null;
     let lastErr = null;

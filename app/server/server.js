@@ -8,6 +8,7 @@ const { loadConfig } = require('./config');
 const { initDb } = require('./db');
 const { createBus } = require('./sse');
 const engine = require('./engine');
+const mcp = require('./mcp');
 
 const cfg = loadConfig(process.env.AGENT_CONFIG);
 const db = initDb(cfg.db_path);
@@ -45,8 +46,14 @@ app.get('/api/models', (req, res) => {
 app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
 const PORT = process.env.PORT || cfg.port;
-server.listen(PORT, () => {
-  console.log('Agent server listening on ' + PORT);
-  console.log('  workspace_root=' + cfg.workspace_root);
-  console.log('  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
+
+// 启动时先发现各 MCP 服务的工具（单个服务失败只警告，不阻止启动），发现完成后再开始监听。
+mcp.init(cfg).then(() => {
+  server.listen(PORT, () => {
+    console.log('Agent server listening on ' + PORT);
+    console.log('  workspace_root=' + cfg.workspace_root);
+    console.log('  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
+    const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url).join(', ');
+    console.log('  mcp_servers=' + (mcpList || '(none)'));
+  });
 });

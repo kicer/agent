@@ -131,7 +131,7 @@ models:
 
 > 注：system prompt 完全静态（所有会话共用，利于前缀缓存）。动态会话信息（日期、任务目录、模型显示名）在新建会话时作为首条 user 消息自动发送，跟会话走。`<available_skills>` 当前为空，预留扩展。
 
-### 7.2 工具定义（保留 14 个，去掉 diagnostics、skill、spawn_agent）
+### 7.2 内置工具定义（12 个；去掉 diagnostics、skill、spawn_agent；web_search 移至 MCP 服务）
 
 以下工具定义沿用 Zed 原始 JSON Schema，**保持字段完全一致以利于缓存**。
 
@@ -464,38 +464,7 @@ models:
 }
 ```
 
-#### 12. `web_search`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "web_search",
-    "description": "免费网页搜索：Parallel（默认，匿名免 key）或 Exa（备用）。返回结构化结果数组（title / url / snippet / publishedAt）。",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "query": {
-          "type": "string",
-          "description": "搜索查询词"
-        },
-        "provider": {
-          "type": "string",
-          "enum": ["parallel", "exa"],
-          "description": "免费后端：parallel（默认）/ exa（备用）"
-        },
-        "numResults": {
-          "type": "number",
-          "description": "返回结果条数上限（默认 8）"
-        }
-      },
-      "required": ["query"]
-    }
-  }
-}
-```
-
-#### 13. `write_file`
+#### 12. `write_file`
 
 ```json
 {
@@ -521,7 +490,7 @@ models:
 }
 ```
 
-> 说明：Zed 原始 16 个工具中去掉 `diagnostics`、`skill`、`spawn_agent`，保留上述 13 个。`fetch` 和 `web_search` 都保留。后续如需扩展 `skill` / `spawn_agent`，可在 tools 数组中追加定义并实现对应逻辑。
+> 说明：Zed 原始 16 个工具中去掉 `diagnostics`、`skill`、`spawn_agent`、`web_search`，内置保留上述 12 个。`web_search` 等外部能力改由 MCP 服务提供：在 config 的 `mcp_servers`（url + headers）配置，启动时 `tools/list` 自动发现并追加到内置工具之后一起发给模型，与内置工具严格分离。
 
 ---
 
@@ -757,7 +726,7 @@ function runAgent(session):
 - **文件工具**：所有路径必须解析到任务目录内（防路径穿越）。
 - **terminal**：使用 `child_process.spawn`，设置超时（默认 30s），输出截断（前 10000 字符）。支持 kill。
 - **fetch**：使用 HTTP 客户端抓取，转换为 Markdown 返回。
-- **web_search**：调用 Parallel 或 Exa 搜索 API，返回结构化 JSON。
+- **MCP 工具**：外部 MCP 服务在 config 的 `mcp_servers` 配置（url + headers，可多个）；启动时 `tools/list` 发现工具追加到内置工具之后，调用经 `tools/call` 转发（如 web_search）。
 
 ### 11.3 模型调度器要点
 
