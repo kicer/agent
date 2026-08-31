@@ -83,6 +83,11 @@ body {
   padding: 8px 12px; background: #fff; border-bottom: 1px solid #e8e8ee;
 }
 .status-pill { font-size: 12px; color: #666; }
+.stop-link {
+  background: none; border: none; cursor: pointer;
+  color: #c33; font-size: 12px; padding: 2px 6px; margin-left: 2px;
+}
+.stop-link:active { opacity: 0.6; }
 
 /* ---- 消息 ---- */
 .messages {

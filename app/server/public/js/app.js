@@ -314,6 +314,8 @@ function updatePhaseUI(d) {
     text = '活跃中' + (d && d.model_id ? ' · ' + d.model_id : '');
   }
   pill.textContent = text;
+  // 仅活跃中提供终止入口
+  $('stop-btn').classList.toggle('hidden', state.status !== 'active');
 }
 
 // ---------- 文件 ----------
@@ -410,6 +412,13 @@ const ui = {
     state.filePanelOpen = !state.filePanelOpen;
     $('files-panel').classList.toggle('hidden', !state.filePanelOpen);
     if (state.filePanelOpen) loadFiles();
+  },
+  async stopSession() {
+    if (!state.sessionId) return;
+    try {
+      await req('POST', '/api/sessions/' + state.sessionId + '/stop');
+      toast('已发送终止指令');
+    } catch (e) { toast('终止失败：' + e.message); }
   },
   async uploadFiles(ev) {
     const input = ev.target;
