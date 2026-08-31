@@ -13,6 +13,7 @@ const DEFAULTS = {
   agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2 },
   // 回合结束后模型保持占用（held）的租约：页内无人观看超过 idle_release_ms 则释放；
   // 即便一直有人观看，最长也只保持 active_max_ms；sweep_ms 为巡检间隔。
+  // 「绑定模型但闲置」的会话（从未发言、无未回应消息）同样按此租约释放，防建而不用霸占模型。
   model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },
   models: [],
   auth: null, // { user, password }，为空则不启用内置 basic auth（可交给 nginx-proxy）

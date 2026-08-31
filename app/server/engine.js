@@ -173,14 +173,29 @@ function dispatchQueued() {
   }
 }
 
-// ---------- held 保持租约 ----------
+// ---------- 保持租约（held / active 闲置） ----------
 // 回合结束后会话进入 held：继续占用模型（用户追问免排队），由 sweeper 按规则释放：
 // - 页面无 SSE 观看者：超过 idle_release_ms 释放；
 // - 有人观看：最长保持 active_max_ms（防止挂着页面霸占模型池）。
+// 「绑定了模型但闲置」的会话（active 且无 run 在跑、无未回应消息，如新建后从未发言）
+// 同样受租约管理，避免建了不用的会话无限占用模型。
 function releaseHeld(sessionId) {
   const s = getSession(sessionId);
   if (!s || s.status !== 'held') return;
   touch(sessionId, { status: 'completed', completed_at: now(), held_at: null });
+  releaseModel(sessionId);
+  bus.emit(sessionId, 'done', { status: 'completed' });
+  emitStatus(sessionId);
+  dispatchQueued();
+}
+
+// active 但闲置（从未发言/无未回应消息）→ 按租约释放，语义同 held 到期
+function releaseIdleActive(sessionId) {
+  const s = getSession(sessionId);
+  if (!s || s.status !== 'active' || !s.model_id) return;
+  const run = runs.get(sessionId);
+  if (run && run.looping) return;
+  touch(sessionId, { status: 'completed', completed_at: now() });
   releaseModel(sessionId);
   bus.emit(sessionId, 'done', { status: 'completed' });
   emitStatus(sessionId);
@@ -196,6 +211,15 @@ function sweepHeld() {
     const heldSince = t - (s.held_at || s.updated_at || 0);
     const present = bus.clientCount && bus.clientCount(s.id) > 0;
     if (heldSince >= (present ? activeMs : idleMs)) releaseHeld(s.id);
+  }
+  // active 闲置：绑定了模型但无 run 在跑、无未回应消息（如新建后从未发言）→ 同租约释放
+  for (const s of db.prepare("SELECT * FROM sessions WHERE status='active' AND model_id IS NOT NULL").all()) {
+    const run = runs.get(s.id);
+    if (run && run.looping) continue;
+    if (hasPendingUser(s.id)) continue; // 有消息待回应，由 runLoop 处理，不动它
+    const idleSince = t - (s.updated_at || 0);
+    const present = bus.clientCount && bus.clientCount(s.id) > 0;
+    if (idleSince >= (present ? activeMs : idleMs)) releaseIdleActive(s.id);
   }
 }
 

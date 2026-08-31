@@ -30,6 +30,7 @@ agent:
 
 # 模型保持占用（held）租约：AI 答完后不立即释放模型，用户追问可直接复用。
 # 页面无人观看超过 idle_release_ms 释放；有人观看最长保持 active_max_ms；sweep_ms 巡检间隔。
+# 新建后从未发言的空闲会话也按同一租约自动释放。
 model_hold:
   idle_release_ms: 180000   # 3 分钟
   active_max_ms: 1800000    # 30 分钟
