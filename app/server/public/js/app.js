@@ -372,13 +372,27 @@ async function downloadFile(name) {
     let blob = await res.blob();
     // 抹掉 blob 的 MIME：响应常为 octet-stream，部分移动端浏览器内核会按类型给下载名追加 .bin，抹掉后按原名保存
     try { blob = new Blob([blob], { type: '' }); } catch (_) {}
-    const dlUrl = URL.createObjectURL(blob);
+    // 用 data: URL 触发下载：移动端 Chrome（约 114 起）对 blob: object URL 常忽略 download 属性，
+    // 文件名会兜底成 uuid.bin；data: URL 不走该回归逻辑，能正常保留原文件名。
+    let href;
+    try {
+      href = await new Promise(function (resolve, reject) {
+        const r = new FileReader();
+        r.onload = function () { resolve(String(r.result)); };
+        r.onerror = function () { reject(new Error('blob 转 data URL 失败')); };
+        r.readAsDataURL(blob);
+      });
+    } catch (_) {
+      // 兜底：回到 object URL（电脑端正常）
+      href = URL.createObjectURL(blob);
+      setTimeout(function () { URL.revokeObjectURL(href); }, 3000);
+    }
     const a = document.createElement('a');
-    a.href = dlUrl;
+    a.href = href;
     a.download = name.split('/').pop() || 'download';
     document.body.appendChild(a);
     a.click();
-    setTimeout(function () { a.remove(); URL.revokeObjectURL(dlUrl); }, 1000);
+    setTimeout(function () { a.remove(); }, 1000);
   } catch (e) {
     toast('下载失败：' + e.message);
   }
