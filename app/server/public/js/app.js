@@ -408,7 +408,7 @@ const ui = {
   },
   deleteSession(id) {
     state.pendingDeleteId = id;
-    $('del-dir-check').checked = false;
+    $('del-dir-check').checked = true;
     $('delete-modal-text').textContent = '确定删除会话 ' + id + '？';
     $('delete-modal').classList.remove('hidden');
   },
