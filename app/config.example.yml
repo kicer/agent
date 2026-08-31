@@ -37,10 +37,20 @@ model_hold:
   active_max_ms: 1800000    # 30 分钟
   sweep_ms: 10000           # 10 秒
 
-# 内置 basic auth（可选）。若已在前面放 nginx-proxy 做认证，此处留空即可。
+# 登录认证（推荐启用）：多用户，用户名/明文密码直接配在这里（自用场景）。
+# 登录页 /login，会话 token 以 HttpOnly cookie 下发（替代 nginx htpasswd：
+# 手机浏览器原生下载不带 Basic 认证头，cookie 则会自动携带，下载不再失败）。
+# 仍兼容 Authorization: Basic 头（curl/API 脚本可用）。
+# secret：签名密钥；留空则启动时随机生成（重启后需重新登录）。
+# 整段删除或 users 留空则不启用认证。
 # auth:
-#   user: admin
-#   password: "change-me"
+#   secret: "change-me"        # 选填；建议固定，避免重启掉登录态
+#   ttl_ms: 2592000000         # 选填，登录态有效期，默认 30 天
+#   users:
+#     - user: admin
+#       password: "change-me"
+#     - user: alice
+#       password: "s3cret"
 
 # MCP 服务（可配多个；与内置工具分开）。启动时对每个服务调 tools/list 发现工具，
 # 追加到内置工具之后一起发给模型；调用经 tools/call 转发。headers 是任意请求头（如 Authorization）。

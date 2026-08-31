@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Agent 任务台 · 登录</title>
+  <meta name="theme-color" content="#1e3c72">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .login-wrap {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #1e3c72, #2a5299);
+    }
+    .login-card {
+      background: #fff; border-radius: 14px; padding: 28px 22px 22px; width: 84%; max-width: 340px;
+    }
+    .login-card h2 { font-size: 18px; margin-bottom: 18px; text-align: center; color: #223; }
+    .login-card input {
+      display: block; width: 100%; box-sizing: border-box;
+      border: 1px solid #dde; border-radius: 8px; padding: 11px 12px;
+      font-size: 15px; margin-bottom: 12px; outline: none;
+    }
+    .login-card input:focus { border-color: #2a5299; }
+    .login-error { color: #d2483c; font-size: 13px; min-height: 18px; margin: 6px 0 0; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="login-card" id="login-form" onsubmit="return doLogin(event)">
+      <h2>Agent 任务台</h2>
+      <input type="text" id="login-user" placeholder="用户名" autocomplete="username" autocapitalize="none" autocorrect="off">
+      <input type="password" id="login-pass" placeholder="密码" autocomplete="current-password">
+      <button class="primary-btn" id="login-btn" type="submit">登录</button>
+      <p class="login-error" id="login-error"></p>
+    </form>
+  </div>
+  <script>
+    'use strict';
+    async function doLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('login-btn');
+      const errEl = document.getElementById('login-error');
+      errEl.textContent = '';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user: document.getElementById('login-user').value.trim(),
+            password: document.getElementById('login-pass').value,
+          }),
+        });
+        if (!res.ok) {
+          let msg = 'HTTP ' + res.status;
+          try { msg = (await res.json()).error || msg; } catch (_) {}
+          throw new Error(msg);
+        }
+        location.href = '/';
+      } catch (e2) {
+        errEl.textContent = e2.message || '登录失败';
+        btn.disabled = false;
+      }
+      return false;
+    }
+    document.getElementById('login-user').focus();
+  </script>
+</body>
+</html>

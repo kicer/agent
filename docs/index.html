@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>小财记账</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <meta name="theme-color" content="#1e3c72">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="app" id="app">
+        <!-- 登录 -->
+        <div id="login-page" class="modal-overlay">
+            <div class="modal">
+                <h2>登录小财记账</h2>
+                <input type="text" id="login-user" placeholder="用户名">
+                <input type="password" id="login-pass" placeholder="密码">
+                <button class="primary-btn" onclick="login()" style="width:100%;">登录</button>
+                <p id="login-error" style="color:red; margin-top:8px;"></p>
+                <div class="version" id="version-text"></div>
+            </div>
+        </div>
+
+        <!-- 主界面 -->
+        <div id="main-page" class="hidden" style="display:flex; flex-direction:column; height:100%;">
+            <!-- 群聊列表页 -->
+            <div id="list-page" style="display:flex; flex-direction:column; height:100%;">
+                <div class="header">
+                    <div class="header-left" onclick="Store.logout()">
+                        <svg width="24" height="24" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="1.5">
+                            <rect x="3" y="3" width="18" height="18" rx="3"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/>
+                        </svg>
+                        <h2>小财记账</h2>
+                    </div>
+                    <div style="display:flex; gap:2px;">
+                        <button class="icon-btn visible" id="create-room-btn" onclick="openCreateRoom()" title="新建群聊">
+                            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="chat-list" id="chat-list-container"></div>
+                <div class="summary-card" onclick="openSummary()">
+                    <div>
+                        <h4>采购汇总</h4>
+                        <div class="summary-preview" id="summary-preview">加载中...</div>
+                    </div>
+                    <svg width="20" height="20" viewBox="0 0 24 24" stroke="#888" fill="none" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </div>
+            </div>
+
+            <!-- 采购清单页 -->
+            <div id="purchase-page" class="hidden" style="display:flex; flex-direction:column; height:100%;">
+                <div class="header">
+                    <button class="icon-btn back-btn" onclick="showList()">
+                        <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    </button>
+                    <span class="chat-title" id="purchase-page-title">采购清单</span>
+                    <button class="icon-btn" onclick="openChatFromPurchase()" title="聊天">
+                        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                    </button>
+                </div>
+                <div class="purchase-panel-body" id="purchase-panel-body"></div>
+                <!-- 新建采购输入栏 -->
+                <div class="input-area">
+                    <label class="file-upload-btn" title="上传图片">
+                        <input type="file" id="purchase-file-input" accept="image/*" multiple style="display:none;" onchange="handlePurchaseFileSelect(event)">
+                        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                    </label>
+                    <textarea id="purchase-msg-input" placeholder="输入采购信息..." rows="1"></textarea>
+                    <button class="send-btn" onclick="sendFromPurchase()">
+                        <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 聊天窗口 -->
+            <div id="chat-page" class="chat-window hidden">
+                <div class="chat-header">
+                    <button class="icon-btn back-btn" onclick="backToPurchase()">
+                        <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    </button>
+                    <span class="chat-title" id="current-chat-name"></span>
+                    <button class="icon-btn" onclick="backToPurchase()" title="关闭聊天">
+                        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
+                <div class="messages" id="messages-container"></div>
+                <div class="input-area">
+                    <label class="file-upload-btn" title="上传图片">
+                        <input type="file" id="file-input" accept="image/*" multiple style="display:none;" onchange="handleFileSelect(event)">
+                        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                    </label>
+                    <textarea id="msg-input" placeholder="输入消息..." rows="1"></textarea>
+                    <button class="send-btn" onclick="sendMessage()">
+                        <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 弹窗 -->
+        <div id="create-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeCreateModal()">
+            <div class="modal">
+                <button class="modal-close-btn" onclick="closeCreateModal()">
+                    <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+                <h3>新建项目群聊</h3>
+                <input type="text" id="new-room-name" placeholder="群聊名称">
+                <input type="text" id="white-list" placeholder="白名单成员（逗号分隔，留空全员可见）">
+                <button class="primary-btn" onclick="confirmCreateRoom()">创建</button>
+            </div>
+        </div>
+
+        <div id="manage-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeManageModal()">
+            <div class="modal">
+                <button class="modal-close-btn" onclick="closeManageModal()">
+                    <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+                <h3 id="manage-title">编辑群聊</h3>
+                <input type="text" id="manage-room-name" placeholder="群聊名称">
+                <input type="text" id="manage-white-list" placeholder="白名单成员（逗号分隔）">
+                <button class="primary-btn" onclick="saveRoom()">保存</button>
+                <button class="close-modal" style="background:#e53e3e;color:#fff;margin-top:8px;" onclick="deleteRoom()">删除群聊</button>
+            </div>
+        </div>
+
+        <!-- 采购汇总弹窗 -->
+        <div id="summary-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeSummaryModal()">
+            <div class="modal">
+                <button class="modal-close-btn" onclick="closeSummaryModal()">
+                    <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+                <h3 id="summary-title"></h3>
+                <div id="summary-content"></div>
+            </div>
+        </div>
+
+        <!-- 采购详情编辑弹窗 -->
+        <div id="detail-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeDetailModal()">
+            <div class="modal detail-modal">
+                <div class="detail-header">
+                    <input type="text" id="edit-item" class="detail-title-input" placeholder="物品名称">
+                    <button class="icon-btn" onclick="closeDetailModal()">
+                        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
+                <div class="edit-form">
+                    <!-- 金额组：折叠 -->
+                    <div class="edit-group">
+                        <div class="edit-group-summary" onclick="toggleEditGroup('amount-group')">
+                            <label>金额</label>
+                            <span id="amount-summary">0</span>
+                            <svg class="group-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </div>
+                        <div class="edit-group-detail hidden" id="amount-group">
+                            <div class="edit-row"><label>数量</label><input type="number" id="edit-quantity" inputmode="decimal" min="0" step="1" oninput="updateAmountSummary()"></div>
+                            <div class="edit-row"><label>单价</label><input type="number" id="edit-unit-price" inputmode="decimal" min="0" step="0.01" oninput="updateAmountSummary()"></div>
+                            <div class="edit-row"><label>邮费</label><input type="number" id="edit-freight" inputmode="decimal" min="0" step="0.01" oninput="updateAmountSummary()"></div>
+                        </div>
+                    </div>
+
+                    <!-- 状态组：折叠 -->
+                    <div class="edit-group">
+                        <div class="edit-group-summary" onclick="toggleEditGroup('status-group')">
+                            <label>状态</label>
+                            <span id="status-summary">待付款</span>
+                            <svg class="group-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </div>
+                        <div class="edit-group-detail hidden" id="status-group">
+                            <div class="edit-row">
+                                <label>付款</label>
+                                <select id="edit-payment-method" onchange="updateStatusSummary()">
+                                    <option>未指定</option><option>支付宝</option><option>微信</option><option>银行卡</option><option>现金</option><option>对公转账</option>
+                                </select>
+                            </div>
+                            <div class="edit-row">
+                                <label>发票</label>
+                                <select id="edit-invoice-type" onchange="updateStatusSummary()">
+                                    <option>无票</option><option>普票</option><option>专票</option>
+                                </select>
+                            </div>
+                            <div class="edit-row">
+                                <label>状态</label>
+                                <select id="edit-status" onchange="updateStatusSummary()">
+                                    <option>待付款</option><option>已付款</option><option>已收货</option><option>已完成</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="edit-row">
+                        <label>申请人</label><input type="text" id="edit-applicant">
+                    </div>
+                    <div class="edit-row">
+                        <label>时间</label><input type="text" id="edit-time" placeholder="yyyy/MM/dd HH:mm:ss">
+                    </div>
+                    <div class="edit-row">
+                        <label>备注</label><textarea id="edit-remarks" rows="2"></textarea>
+                    </div>
+
+                    <!-- 附件 -->
+                    <div class="edit-section">
+                        <div class="edit-section-header">
+                            <span>附件</span>
+                            <label class="attach-add-btn" title="添加附件">
+                                <input type="file" id="detail-file-input" accept="image/*" multiple style="display:none;" onchange="handleDetailFileUpload(event)">
+                                <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                            </label>
+                        </div>
+                        <div class="attach-gallery" id="edit-attachments"></div>
+                    </div>
+
+                    <!-- 操作历史（折叠） -->
+                    <details class="edit-section" id="edit-history-section">
+                        <summary class="edit-section-header history-summary"><span>操作历史</span><svg class="section-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></summary>
+                        <ul class="history-list" id="edit-history"></ul>
+                    </details>
+
+                    <!-- 按钮 -->
+                    <div class="edit-buttons">
+                        <button class="save-btn" onclick="savePurchase()">保存</button>
+                        <button class="danger-btn" id="delete-purchase-btn" onclick="deletePurchaseDetail()">删除</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/store.js"></script>
+    <script src="/js/chat.js"></script>
+    <script src="/js/ws.js"></script>
+    <script src="/js/purchases.js"></script>
+    <script src="/js/auth.js"></script>
+    <script>
+        // 版本号
+        (function() {
+            document.getElementById('version-text').textContent = 'v3.0.1-260829';
+        })();
+        document.addEventListener('input', function(e) {
+            if (e.target.id === 'msg-input' || e.target.id === 'purchase-msg-input') {
+                e.target.style.height = 'auto';
+                e.target.style.height = e.target.scrollHeight + 'px';
+            }
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.target.id === 'msg-input' && e.key === 'Enter' && !e.ctrlKey) { e.preventDefault(); sendMessage(); }
+            if (e.target.id === 'purchase-msg-input' && e.key === 'Enter' && !e.ctrlKey) { e.preventDefault(); sendFromPurchase(); }
+        });
+        init();
+    </script>
+</body>
+</html>

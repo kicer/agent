@@ -7,6 +7,7 @@ const fs = require('fs');
 const { loadConfig } = require('./config');
 const { initDb } = require('./db');
 const { createBus } = require('./sse');
+const { createAuth } = require('./auth');
 const engine = require('./engine');
 const mcp = require('./mcp');
 
@@ -22,15 +23,11 @@ const server = http.createServer(app);
 
 app.use(express.json({ limit: '2mb' }));
 
-// 可选 basic auth（若前置 nginx 已做，可不启用）
-if (cfg.auth && cfg.auth.user) {
-  const expected = 'Basic ' + Buffer.from(cfg.auth.user + ':' + cfg.auth.password).toString('base64');
-  app.use((req, res, next) => {
-    if (req.headers.authorization === expected) return next();
-    res.set('WWW-Authenticate', 'Basic realm="agent"');
-    res.status(401).end('需要认证');
-  });
-}
+// 登录认证（cookie 会话）：users 配在 config.yml 的 auth.users；留空则不启用。
+// 相比 nginx htpasswd 的 basic auth，cookie 在手机浏览器原生下载时也会自动携带，下载不再失败。
+const auth = createAuth(cfg);
+app.use(auth.router);      // /login、/logout、/api/login 等免认证端点
+app.use(auth.middleware);  // 其余请求需登录态（cookie 或 Basic 头）
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -55,5 +52,6 @@ mcp.init(cfg).then(() => {
     console.log('  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
     const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url).join(', ');
     console.log('  mcp_servers=' + (mcpList || '(none)'));
+    console.log('  auth=' + (auth.enabled ? 'login (' + cfg.auth.users.map(u => u.user).join(', ') + ')' : '(disabled)'));
   });
 });

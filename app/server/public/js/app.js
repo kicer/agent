@@ -30,6 +30,7 @@ async function req(method, url, body, isForm) {
     opt.body = body;
   }
   const res = await fetch(url, opt);
+  if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
   if (!res.ok) {
     let msg = 'HTTP ' + res.status;
     try { msg = (await res.json()).error || msg; } catch (_) {}
@@ -361,7 +362,7 @@ function updatePhaseUI(d) {
 // ---------- 文件 ----------
 // 下载：先换一枚短时效签名链接，再 window.location.href 交给浏览器原生下载。
 // （fetch+blob 在移动端浏览器会被改名 uuid.bin；原生导航下载按服务端
-// Content-Disposition 保留原名，同源自动带 Basic 认证头。）
+// Content-Disposition 保留原名，同源自动携带登录 cookie。）
 async function downloadFile(name) {
   if (!state.sessionId) return;
   try {
@@ -496,7 +497,20 @@ const ui = {
       loadFiles();
     } catch (e) { toast('删除失败：' + e.message); }
   },
+  logout() { location.href = '/logout'; },
 };
+
+// ---------- 登录态：显示当前用户；未启用认证（/api/me 404）则隐藏退出按钮 ----------
+async function initAuth() {
+  try {
+    const me = await req('GET', '/api/me');
+    if (me && me.user) {
+      $('whoami').textContent = me.user;
+      $('whoami').classList.remove('hidden');
+      $('logout-btn').classList.remove('hidden');
+    }
+  } catch (_) { /* 未启用认证 */ }
+}
 
 // ---------- 输入框行为 ----------
 document.addEventListener('input', e => {
@@ -519,4 +533,5 @@ document.addEventListener('keydown', e => {
 showList();
 loadSessions();
 loadModels();
+initAuth();
 setInterval(loadSessions, 8000);

@@ -21,7 +21,11 @@
           </svg>
           <h2>Agent 任务台</h2>
         </div>
-        <div style="display:flex; gap:2px;">
+        <div style="display:flex; gap:2px; align-items:center;">
+          <span id="whoami" class="hidden" style="color:rgba(255,255,255,0.85); font-size:12px; margin-right:6px; max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+          <button class="icon-btn hidden" id="logout-btn" onclick="ui.logout()" title="退出登录">
+            <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          </button>
           <button class="icon-btn" id="create-session-btn" onclick="ui.openCreate()" title="新建任务">
             <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           </button>
@@ -111,6 +115,6 @@
   <div class="toast hidden" id="toast"></div>
 
   <!-- 发版时更新 v 参数，避免移动端浏览器缓存旧 JS -->
-  <script src="/js/app.js?v=20260831d"></script>
+  <script src="/js/app.js?v=20260831e"></script>
 </body>
 </html>

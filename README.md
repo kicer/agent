@@ -502,7 +502,7 @@ models:
 - **前端**：单页 H5 + Vanilla JS + SSE（不引入重型框架）
 - **数据库**：SQLite
 - **部署**：Docker Compose
-- **认证**：nginx-proxy basic auth（简单多用户登录，不做任务隔离）
+- **认证**：内置多用户登录（用户名/明文密码配在 `config.yml` 的 `auth.users`，登录页 + HttpOnly cookie，不做任务隔离；不用 nginx htpasswd，因手机浏览器原生下载不带 Basic 头会失败）
 
 ### 8.2 系统组件
 
@@ -800,7 +800,7 @@ networks:
 
 ### 13.2 nginx-proxy 对外暴露
 
-前置的 nginx-proxy 需与业务容器共用外部网络 `my-app-network`。compose 通过 `VIRTUAL_HOST`/`VIRTUAL_PORT`/`CERT_NAME` 接入；域名 `agent.ai.foresh.com` 的 DNS 指向 nginx-proxy 所在宿主机。多个用户共享同一认证，不做任务隔离；SSE 需关代理缓冲（`proxy_buffering off`），见 `docs/DEPLOY.md`。
+前置的 nginx-proxy 需与业务容器共用外部网络 `my-app-network`。compose 通过 `VIRTUAL_HOST`/`VIRTUAL_PORT`/`CERT_NAME` 接入；域名 `agent.ai.foresh.com` 的 DNS 指向 nginx-proxy 所在宿主机。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），nginx 层不再配 htpasswd；多用户共享同一任务库，不做任务隔离；SSE 需关代理缓冲（`proxy_buffering off`），见 `docs/DEPLOY.md`。
 
 ---
 

@@ -47,7 +47,7 @@ compose 已通过 `VIRTUAL_HOST` / `VIRTUAL_PORT` / `CERT_NAME` 接入 nginx-pro
       }
   }
   ```
-- 认证交给 nginx-proxy（htpasswd）或在此 config 里启用内置 `auth`（见 config.example.yml 注释），二选一即可。
+- 认证建议直接在 `config.yml` 配置多用户登录（`auth.users`，见 config.example.yml 注释）：登录页 `/login`，会话 token 走 HttpOnly cookie。不建议再用 nginx-proxy 的 htpasswd basic auth：手机浏览器原生下载不会携带 Basic 认证头，会导致下载失败；cookie 则会自动携带。若迁移到内置登录，记得去掉 nginx 上对应的 htpasswd 配置。
 
 ## 4. 升级流程
 

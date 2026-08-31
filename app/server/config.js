@@ -14,7 +14,9 @@ const DEFAULTS = {
   // 「绑定模型但闲置」的会话（从未发言、无未回应消息）同样按此租约释放，防建而不用霸占模型。
   model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },
   models: [],
-  auth: null, // { user, password }，为空则不启用内置 basic auth（可交给 nginx-proxy）
+  // 登录认证：{ users: [{user, password}], secret?, ttl_ms? }，密码明文存配置（自用场景）。
+  // users 为空则不启用认证（可交给前置 nginx-proxy，但手机浏览器原生下载不带 Basic 头，不推荐）。
+  auth: null,
   // MCP 服务列表：每项 {name?, url, headers?}；启动时发现其工具并追加到内置工具之后。
   // 注意与内置工具（definitions.json）严格分离：这里只配外部 MCP 服务。
   mcp_servers: [],
@@ -54,6 +56,17 @@ function loadConfig(configPath) {
 
   cfg.workspace_root = path.resolve(cfg.workspace_root);
   if (!cfg.db_path) cfg.db_path = path.join(cfg.workspace_root, '.agent.db');
+
+  // auth 规范化：多用户 auth.users: [{user, password}]；兼容旧的单用户 auth.{user,password}
+  if (cfg.auth && !Array.isArray(cfg.auth.users)) {
+    cfg.auth.users = cfg.auth.user ? [{ user: cfg.auth.user, password: cfg.auth.password }] : [];
+  }
+  if (cfg.auth && Array.isArray(cfg.auth.users)) {
+    cfg.auth.users = cfg.auth.users
+      .filter(u => u && u.user)
+      .map(u => ({ user: String(u.user), password: String(u.password == null ? '' : u.password) }));
+    if (!cfg.auth.users.length) cfg.auth = null;
+  }
 
   // 兼容旧配置：顶层 web_search.{url,authorization} 自动转为一条 mcp_servers（authorization 即一条 header）
   if (raw.web_search && raw.web_search.url && !raw.mcp_servers) {
