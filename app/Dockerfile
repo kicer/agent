@@ -6,7 +6,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     build-essential ripgrep procps unzip wget jq zip tree file \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir \
+RUN pip3 install --no-cache-dir --break-system-packages \
     requests beautifulsoup4 lxml pandas numpy openpyxl \
     python-docx reportlab matplotlib Pillow pypdf python-dateutil
 
