@@ -8,7 +8,6 @@ if (typeof marked !== 'undefined') {
 
 const state = {
   sessionId: null,
-  phase: 'planning',
   status: '',
   es: null,
   streamEl: null,
@@ -120,11 +119,10 @@ async function loadSessions() {
     el.innerHTML = rows.map(s => {
       const st = { queued: '排队中', active: '活跃中', completed: '已完成', cancelled: '已终止' }[s.status] || s.status;
       const badge = '<span class="badge ' + s.status + '">' + st + (s.status === 'queued' && s.queue_pos ? ' #' + s.queue_pos : '') + '</span>';
-      const phase = s.phase === 'execution' ? '<span class="badge execution">执行中阶段</span>' : '';
       return '<div class="session-card" onclick="ui.openSession(\'' + s.id + '\')">' +
         '<div class="session-main">' +
           '<div class="session-name">' + esc(s.title || s.id) + '</div>' +
-          '<div class="session-meta"><span>' + esc(s.id) + '</span>' + badge + phase +
+          '<div class="session-meta"><span>' + esc(s.id) + '</span>' + badge +
           (s.model_id ? '<span>' + esc(s.model_id) + '</span>' : '') + '</div>' +
         '</div>' +
         '<button class="session-del" onclick="event.stopPropagation();ui.deleteSession(\'' + s.id + '\')">删除</button>' +
@@ -217,7 +215,6 @@ async function renderDetail(detail) {
   state.streamText = '';
   state.toolCards = {};
   const s = detail.session;
-  state.phase = s.phase;
   state.status = s.status;
   updatePhaseUI();
   $('chat-title').textContent = s.title || s.id;
@@ -227,7 +224,7 @@ async function renderDetail(detail) {
     if (m.role === 'assistant') appendToolCardsFromAssistant(m, box);
   }
   if (!detail.messages.length) {
-    box.innerHTML = '<div class="empty-tip">描述你的需求，AI 会先和你讨论（规划阶段）。</div>';
+    box.innerHTML = '<div class="empty-tip">描述你的需求，AI 会和你讨论并直接干活。</div>';
   }
   scrollBottom();
   loadFiles();
@@ -246,12 +243,7 @@ function connectStream() {
   es.addEventListener('status', ev => {
     const d = JSON.parse(ev.data);
     state.status = d.status;
-    state.phase = d.phase;
     updatePhaseUI(d);
-  });
-  es.addEventListener('phase', ev => {
-    state.phase = JSON.parse(ev.data).phase;
-    updatePhaseUI();
   });
   es.addEventListener('assistant_delta', ev => {
     const d = JSON.parse(ev.data);
@@ -312,25 +304,16 @@ function connectStream() {
   });
 }
 
-// ---------- 阶段开关 ----------
+// ---------- 任务状态 ----------
 function updatePhaseUI(d) {
-  const btn = $('phase-switch');
   const pill = $('status-pill');
   const stMap = { queued: '排队中', active: '活跃中', completed: '已完成', cancelled: '已终止' };
   let text = stMap[state.status] || state.status || '--';
   if (d && d.queue_pos) text += '（第 ' + d.queue_pos + ' 位）';
   if (state.status === 'active') {
-    const run = d && d.running;
-    text = '活跃中 · ' + (state.phase === 'execution' ? '执行' : '规划') + (d && d.model_id ? ' · ' + d.model_id : '');
+    text = '活跃中' + (d && d.model_id ? ' · ' + d.model_id : '');
   }
   pill.textContent = text;
-  if (state.phase === 'execution') {
-    btn.textContent = '■ 终止';
-    btn.className = 'phase-switch execution';
-  } else {
-    btn.textContent = '▶ 开始执行';
-    btn.className = 'phase-switch planning';
-  }
 }
 
 // ---------- 文件 ----------
@@ -340,7 +323,7 @@ async function loadFiles() {
     const files = await req('GET', '/api/sessions/' + state.sessionId + '/files');
     const el = $('files-list');
     if (!files.length) {
-      el.innerHTML = '<div class="empty-tip">还没有文件。上传文件或在执行阶段让 AI 生成。</div>';
+      el.innerHTML = '<div class="empty-tip">还没有文件。上传文件或在对话中让 AI 生成。</div>';
       return;
     }
     el.innerHTML = files.map(f => {
@@ -422,26 +405,6 @@ const ui = {
       box.appendChild(wrap);
       scrollBottom();
     } catch (e) { toast('发送失败：' + e.message); }
-  },
-  async togglePhase() {
-    if (!state.sessionId) return;
-    try {
-      if (state.phase === 'planning') {
-        await req('POST', '/api/sessions/' + state.sessionId + '/start');
-        state.phase = 'execution';
-        updatePhaseUI();
-        const box = $('messages');
-        const wrap = document.createElement('div');
-        wrap.className = 'msg me';
-        wrap.innerHTML = '<div class="msg-user">我（开始执行）</div>' +
-          '<div class="msg-bubble">我说完了，你可以开始干活了。先把我上面说的需求整理成 task.md 文件写入任务目录，然后按照 task.md 开始执行。</div>';
-        box.appendChild(wrap);
-        scrollBottom();
-      } else {
-        await req('POST', '/api/sessions/' + state.sessionId + '/stop');
-        toast('已发送终止指令');
-      }
-    } catch (e) { toast('操作失败：' + e.message); }
   },
   toggleFiles() {
     state.filePanelOpen = !state.filePanelOpen;
