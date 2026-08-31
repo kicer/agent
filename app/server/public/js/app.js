@@ -452,10 +452,21 @@ document.addEventListener('input', e => {
   }
 });
 document.addEventListener('keydown', e => {
-  if (e.target.id === 'msg-input' && e.key === 'Enter' && !e.shiftKey) {
+  if (e.target.id !== 'msg-input' || e.key !== 'Enter') return;
+  if (e.isComposing) return; // 中文输入法候选中，回车不拦截
+  // Ctrl/⌘/⌥ + Enter（或 Shift + Enter）→ 插入换行
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) {
     e.preventDefault();
-    ui.send();
+    const ta = e.target;
+    const s = ta.selectionStart;
+    ta.value = ta.value.slice(0, s) + '\n' + ta.value.slice(ta.selectionEnd);
+    ta.selectionStart = ta.selectionEnd = s + 1;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+    return;
   }
+  e.preventDefault();
+  ui.send();
 });
 
 // ---------- 启动 ----------
