@@ -3,6 +3,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const crypto = require('crypto');
 const engine = require('../engine');
 const { listTaskFiles } = require('./sessions');
 const { resolveInTask } = require('../tools/executor');
@@ -70,6 +71,45 @@ router.get('/:id/files', function (req, res) {
   }
 });
 
+// ---------- 临时下载链接（带签名 token，供浏览器原生下载使用） ----------
+// 移动端浏览器 fetch+blob 下载会丢失文件名（uuid.bin）；改为短时效签名链接，
+// 前端拿到后 window.location.href 导航下载，走原生下载流程。
+// 密钥随进程启动随机生成，重启后旧 token 自动失效。
+const DOWNLOAD_TOKEN_TTL_MS = 5 * 60 * 1000;
+const downloadTokenSecret = crypto.randomBytes(32).toString('hex');
+
+function signDownloadToken(sessionId, rel, expires) {
+  return crypto.createHmac('sha256', downloadTokenSecret)
+    .update(sessionId + '\n' + rel + '\n' + expires).digest('hex');
+}
+
+function validDownloadToken(sessionId, rel, expires, t) {
+  const exp = Number(expires);
+  if (!t || !Number.isFinite(exp) || exp < Date.now()) return false;
+  const expected = signDownloadToken(sessionId, rel, exp);
+  try {
+    return crypto.timingSafeEqual(Buffer.from(String(t), 'utf8'), Buffer.from(expected, 'utf8'));
+  } catch (_) { return false; }
+}
+
+// 签发临时下载链接（需正常认证；拿到的链接 5 分钟内有效）
+router.get('/:id/files/download-token', function (req, res) {
+  try {
+    const rel = String(req.query.path || '');
+    if (!rel) return res.status(400).json({ error: '缺少 path 参数' });
+    const abs = resolveInTask(engine.taskDirOf(req.params.id), rel);
+    if (!fs.statSync(abs).isFile()) return res.status(400).json({ error: '不是文件' });
+    const expires = Date.now() + DOWNLOAD_TOKEN_TTL_MS;
+    const t = signDownloadToken(req.params.id, rel, expires);
+    res.json({
+      url: '/api/sessions/' + encodeURIComponent(req.params.id) + '/files/download?path='
+        + encodeURIComponent(rel) + '&expires=' + expires + '&t=' + t,
+    });
+  } catch (err) {
+    res.status(404).json({ error: '文件不存在' });
+  }
+});
+
 // 下载统一响应：禁用一切缓存协商。
 // 默认的 ETag/Last-Modified + Cache-Control: public, max-age=0 会诱导移动端浏览器
 // 先发条件请求拿 304 空体，下载管理器随后卡在“等待中”（桌面 Safari/curl 不受影响）。
@@ -85,6 +125,10 @@ router.get('/:id/files/download', function (req, res) {
   try {
     const rel = String(req.query.path || '');
     if (!rel) return res.status(400).json({ error: '缺少 path 参数' });
+    // 带 token 的请求须先验签（会话/路径/时效任一不符即拒绝）
+    if (req.query.t && !validDownloadToken(req.params.id, rel, req.query.expires, String(req.query.t))) {
+      return res.status(403).json({ error: '下载链接已过期或无效' });
+    }
     const abs = resolveInTask(engine.taskDirOf(req.params.id), rel);
     const st = fs.statSync(abs);
     if (!st.isFile()) return res.status(400).json({ error: '不是文件' });

@@ -359,40 +359,14 @@ function updatePhaseUI(d) {
 }
 
 // ---------- 文件 ----------
-// 下载：fetch + Blob 绕过浏览器原生下载（移动端 Chrome 对 Basic 认证下的
-// Content-Disposition 下载处理有 bug，会卡在“等待中”）。
-// 同源 fetch 会自动携带浏览器缓存的 Basic 认证头，无需在 JS 里处理密码。
+// 下载：先换一枚短时效签名链接，再 window.location.href 交给浏览器原生下载。
+// （fetch+blob 在移动端浏览器会被改名 uuid.bin；原生导航下载按服务端
+// Content-Disposition 保留原名，同源自动带 Basic 认证头。）
 async function downloadFile(name) {
   if (!state.sessionId) return;
-  toast('下载中…');
   try {
-    const url = '/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name);
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    let blob = await res.blob();
-    // 抹掉 blob 的 MIME：响应常为 octet-stream，部分移动端浏览器内核会按类型给下载名追加 .bin，抹掉后按原名保存
-    try { blob = new Blob([blob], { type: '' }); } catch (_) {}
-    // 用 data: URL 触发下载：移动端 Chrome（约 114 起）对 blob: object URL 常忽略 download 属性，
-    // 文件名会兜底成 uuid.bin；data: URL 不走该回归逻辑，能正常保留原文件名。
-    let href;
-    try {
-      href = await new Promise(function (resolve, reject) {
-        const r = new FileReader();
-        r.onload = function () { resolve(String(r.result)); };
-        r.onerror = function () { reject(new Error('blob 转 data URL 失败')); };
-        r.readAsDataURL(blob);
-      });
-    } catch (_) {
-      // 兜底：回到 object URL（电脑端正常）
-      href = URL.createObjectURL(blob);
-      setTimeout(function () { URL.revokeObjectURL(href); }, 3000);
-    }
-    const a = document.createElement('a');
-    a.href = href;
-    a.download = name.split('/').pop() || 'download';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function () { a.remove(); }, 1000);
+    const r = await req('GET', '/api/sessions/' + state.sessionId + '/files/download-token?path=' + encodeURIComponent(name));
+    window.location.href = r.url;
   } catch (e) {
     toast('下载失败：' + e.message);
   }
