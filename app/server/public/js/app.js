@@ -202,6 +202,7 @@ function appendToolCardsFromAssistant(m, container) {
   try { calls = typeof m.tool_calls === 'string' ? JSON.parse(m.tool_calls) : m.tool_calls; } catch (_) { return; }
   for (const c of calls) {
     const id = c.id || ('c' + Math.random().toString(36).slice(2, 10));
+    if (state.toolCards[id]) continue; // tool_call 事件已经建过同一张卡，不重复创建
     const card = renderToolCard(id, c.function.name, c.function.arguments);
     container.appendChild(card);
     state.toolCards[id] = card;
@@ -282,6 +283,7 @@ function connectStream() {
   });
   es.addEventListener('tool_call', ev => {
     const d = JSON.parse(ev.data);
+    if (state.toolCards[d.id]) return; // assistant_message 已建卡（含完整参数），不重复创建
     const card = renderToolCard(d.id, d.name, d.arguments);
     $('messages').appendChild(card);
     state.toolCards[d.id] = card;

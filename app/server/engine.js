@@ -350,12 +350,13 @@ function postUserMessage(sessionId, content, opts) {
     runLoop(sessionId);
     return { message_id: messageId, delivered: 'live' };
   }
-  // 排队 / 已完成 / 已取消 → 重新入队
+  // 排队 / 已完成 / 已取消 → 重新入队；若派发后已立即拿到空闲模型，则算直接送达
   touch(sessionId, { status: 'queued', cancelled_at: null, completed_at: null });
   enqueue(sessionId);
-  emitStatus(sessionId);
   dispatchQueued();
-  return { message_id: messageId, delivered: 'queued' };
+  const after = getSession(sessionId);
+  emitStatus(sessionId);
+  return { message_id: messageId, delivered: after && after.status === 'active' ? 'live' : 'queued' };
 }
 
 function startExecution(sessionId) {
