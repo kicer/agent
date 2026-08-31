@@ -394,7 +394,7 @@ async function loadFiles() {
       return;
     }
     el.innerHTML = files.map(f => {
-      return '<div class="file-row"><span class="file-name">' + esc(f.filename) + '</span>' +
+      return '<div class="file-row"><span class="file-name">' + esc(f.filename.split('/').pop() || f.filename) + '</span>' +
         '<span class="file-size">' + fmtSize(f.size) + '</span>' +
         '<button class="file-act" onclick="ui.downloadFile(\'' + esc(f.filename) + '\')">下载</button>' +
         '<button class="file-act del" onclick="ui.deleteFile(\'' + esc(f.filename).replace(/'/g, '%27') + '\')">删</button></div>';
