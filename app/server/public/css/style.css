@@ -123,6 +123,16 @@ body {
 .msg-bubble table { border-collapse: collapse; margin: 6px 0; display: block; overflow-x: auto; }
 .msg-bubble th, .msg-bubble td { border: 1px solid #dde; padding: 4px 8px; font-size: 13px; }
 .msg-bubble blockquote { border-left: 3px solid #ccd; padding-left: 8px; color: #667; margin: 4px 0; }
+.msg-bubble.pending-bubble { color: #889; }
+.pending-dots { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+.pending-dots i {
+  width: 4px; height: 4px; border-radius: 50%; background: #9ab;
+  display: inline-block; animation: blink 1.2s infinite;
+}
+.pending-dots i:nth-child(2) { animation-delay: 0.2s; }
+.pending-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 60%, 100% { opacity: 0.25; } 30% { opacity: 1; } }
+.pending-timer { margin-left: 8px; font-size: 11px; color: #aab; font-variant-numeric: tabular-nums; }
 .msg-bubble ul, .msg-bubble ol { padding-left: 1.5em; margin: 6px 0; }
 .msg-bubble li { margin: 2px 0; }
 .msg-time { font-size: 10px; color: #aab; margin-top: 3px; }

@@ -15,6 +15,9 @@ const state = {
   toolCards: {},
   filePanelOpen: false,
   pendingDeleteId: null,
+  pendingEl: null,
+  pendingTimer: null,
+  pendingStart: 0,
 };
 
 // ---------- API ----------
@@ -212,6 +215,7 @@ function appendToolCardsFromAssistant(m, container) {
 async function renderDetail(detail) {
   const box = $('messages');
   box.innerHTML = '';
+  removePendingBubble();
   state.streamEl = null;
   state.streamText = '';
   state.toolCards = {};
@@ -236,6 +240,34 @@ function scrollBottom() {
   box.scrollTop = box.scrollHeight;
 }
 
+// ---------- AI 处理中占位 ----------
+// 发送后立即挂一个「思考中 + 秒计时」占位气泡，首个增量/回复/工具卡到达时移除，
+// 避免上游慢时长时间无反馈像卡死。
+function addPendingBubble() {
+  removePendingBubble();
+  const wrap = document.createElement('div');
+  wrap.className = 'msg other';
+  const box = $('messages');
+  const tip = box.querySelector('.empty-tip');
+  if (tip) tip.remove();
+  wrap.innerHTML = '<div class="msg-user"><span class="ai-avatar"></span>AI</div>' +
+    '<div class="msg-bubble pending-bubble">思考中<span class="pending-dots"><i></i><i></i><i></i></span>' +
+    '<span class="pending-timer">0s</span></div>';
+  box.appendChild(wrap);
+  state.pendingEl = wrap;
+  state.pendingStart = Date.now();
+  state.pendingTimer = setInterval(() => {
+    const t = state.pendingEl && state.pendingEl.querySelector('.pending-timer');
+    if (t) t.textContent = Math.floor((Date.now() - state.pendingStart) / 1000) + 's';
+  }, 500);
+  scrollBottom();
+}
+
+function removePendingBubble() {
+  if (state.pendingTimer) { clearInterval(state.pendingTimer); state.pendingTimer = null; }
+  if (state.pendingEl) { state.pendingEl.remove(); state.pendingEl = null; }
+}
+
 // ---------- SSE ----------
 function connectStream() {
   if (state.es) { state.es.close(); state.es = null; }
@@ -248,6 +280,7 @@ function connectStream() {
   });
   es.addEventListener('assistant_delta', ev => {
     const d = JSON.parse(ev.data);
+    removePendingBubble();
     if (!state.streamEl) {
       const wrap = document.createElement('div');
       wrap.className = 'msg other';
@@ -263,6 +296,7 @@ function connectStream() {
   });
   es.addEventListener('assistant_message', ev => {
     const d = JSON.parse(ev.data);
+    removePendingBubble();
     if (state.streamEl) {
       const bubble = state.streamEl;
       bubble.innerHTML = md(d.content || '');
@@ -283,6 +317,7 @@ function connectStream() {
   });
   es.addEventListener('tool_call', ev => {
     const d = JSON.parse(ev.data);
+    removePendingBubble(); // 工具卡出现也算即时反馈
     if (state.toolCards[d.id]) return; // assistant_message 已建卡（含完整参数），不重复创建
     const card = renderToolCard(d.id, d.name, d.arguments);
     $('messages').appendChild(card);
@@ -295,10 +330,12 @@ function connectStream() {
     scrollBottom();
   });
   es.addEventListener('done', ev => {
+    removePendingBubble(); // 本轮结束，占位兼终止（如模型报错无回复）
     loadSessions();
     loadModels();
   });
   es.addEventListener('error', ev => {
+    removePendingBubble();
     try {
       const d = JSON.parse(ev.data);
       if (d && d.message) toast('错误：' + d.message);
@@ -367,7 +404,7 @@ const ui = {
   },
   async confirmDelete() {
     const id = state.pendingDeleteId;
-    if (!id) return;
+    if (!id) { this.closeDelete(); return; }
     const delDir = $('del-dir-check').checked;
     this.closeDelete();
     try {
@@ -387,6 +424,7 @@ const ui = {
   },
   backToList() {
     if (state.es) { state.es.close(); state.es = null; }
+    removePendingBubble();
     state.sessionId = null;
     showList();
     loadSessions();
@@ -408,6 +446,8 @@ const ui = {
       wrap.innerHTML = '<div class="msg-user">我' + (r.delivered === 'queued' ? '（排队中，暂存）' : '') + '</div>' +
         '<div class="msg-bubble">' + esc(content) + '</div>';
       box.appendChild(wrap);
+      // 立即给出回馈：占位气泡 + 等待计时，首个增量/回复到达时移除并填充内容
+      if (r.delivered !== 'queued') addPendingBubble();
       scrollBottom();
     } catch (e) { toast('发送失败：' + e.message); }
   },
