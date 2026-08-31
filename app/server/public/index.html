@@ -89,8 +89,8 @@
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         <h3>新建任务会话</h3>
-        <input type="text" id="new-title" placeholder="任务标题（可留空，AI 自动取首条消息）">
-        <button class="primary-btn" onclick="ui.createSession()">创建</button>
+        <input type="text" id="new-title" placeholder="任务标题（留空自动取首条消息）" style="width:100%">
+        <button class="primary-btn" onclick="ui.createSession()" style="width:100%">创建</button>
       </div>
     </div>
 
@@ -100,6 +100,7 @@
         <h3>删除会话</h3>
         <div class="modal-text" id="delete-modal-text">确定删除该会话？</div>
         <label class="del-dir"><input type="checkbox" id="del-dir-check">同时删除任务目录（文件将不可恢复）</label>
+        <br>
         <div class="btn-row">
           <button class="ghost-btn" onclick="ui.closeDelete()">取消</button>
           <button class="primary-btn" style="background:linear-gradient(135deg,#a3352a,#d2483c);" onclick="ui.confirmDelete()">删除</button>
