@@ -15,6 +15,7 @@ const state = {
   streamText: '',
   toolCards: {},
   filePanelOpen: false,
+  pendingDeleteId: null,
 };
 
 // ---------- API ----------
@@ -68,6 +69,10 @@ function toolArgsSummary(name, argsStr) {
   } catch (_) { s = argsStr || ''; }
   if (s.length > 80) s = s.slice(0, 80) + '…';
   return s;
+}
+function toolArgsFull(argsStr) {
+  try { return JSON.stringify(JSON.parse(argsStr || '{}'), null, 2); }
+  catch (_) { return argsStr || ''; }
 }
 
 // ---------- 页面切换 ----------
@@ -151,7 +156,8 @@ function renderToolCard(id, name, argsStr) {
     '<details><summary><span class="spin">◌</span>' +
     '<span class="tool-name">' + esc(name) + '</span>' +
     '<span class="tool-args">' + esc(toolArgsSummary(name, argsStr)) + '</span></summary>' +
-    '<pre>执行中…</pre></details>';
+    '<pre class="tool-args-full">' + esc(toolArgsFull(argsStr)) + '</pre>' +
+    '<pre class="tool-result">执行中…</pre></details>';
   return div;
 }
 
@@ -160,7 +166,8 @@ function fillToolResult(id, content, isError) {
   if (!card) return;
   if (isError) card.classList.add('error');
   card.querySelector('.spin').textContent = isError ? '✕' : '✓';
-  card.querySelector('pre').textContent = content || '（空）';
+  const pre = card.querySelector('.tool-result');
+  if (pre) pre.textContent = content || '（空）';
 }
 
 function msgNode(m, cardMap) {
@@ -360,9 +367,21 @@ const ui = {
       this.openSession(s.id);
     } catch (e) { toast('创建失败：' + e.message); }
   },
-  async deleteSession(id) {
-    if (!confirm('删除会话？')) return;
-    const delDir = confirm('同时删除任务目录（文件将不可恢复）？\n取消 = 仅删除会话记录');
+  deleteSession(id) {
+    state.pendingDeleteId = id;
+    $('del-dir-check').checked = false;
+    $('delete-modal-text').textContent = '确定删除会话 ' + id + '？';
+    $('delete-modal').classList.remove('hidden');
+  },
+  closeDelete() {
+    $('delete-modal').classList.add('hidden');
+    state.pendingDeleteId = null;
+  },
+  async confirmDelete() {
+    const id = state.pendingDeleteId;
+    if (!id) return;
+    const delDir = $('del-dir-check').checked;
+    this.closeDelete();
     try {
       await req('DELETE', '/api/sessions/' + id + '?delete_dir=' + (delDir ? 'true' : 'false'));
       if (state.sessionId === id) this.backToList();

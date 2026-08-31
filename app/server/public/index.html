@@ -93,6 +93,19 @@
         <button class="primary-btn" onclick="ui.createSession()">创建</button>
       </div>
     </div>
+
+    <!-- 删除会话弹窗 -->
+    <div id="delete-modal" class="modal-overlay hidden" onclick="if(event.target===this)ui.closeDelete()">
+      <div class="modal">
+        <h3>删除会话</h3>
+        <div class="modal-text" id="delete-modal-text">确定删除该会话？</div>
+        <label class="del-dir"><input type="checkbox" id="del-dir-check">同时删除任务目录（文件将不可恢复）</label>
+        <div class="btn-row">
+          <button class="ghost-btn" onclick="ui.closeDelete()">取消</button>
+          <button class="primary-btn" style="background:linear-gradient(135deg,#a3352a,#d2483c);" onclick="ui.confirmDelete()">删除</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="toast hidden" id="toast"></div>
