@@ -45,3 +45,5 @@ You have a dedicated working directory for each conversation. All file paths in 
 - Runs in a Docker container. File access is limited to the working directory and temp directories.
 - Python: use `python3`. To install Python packages: `pip3 install --break-system-packages <pkg>`.
 - System packages: `apt-get update -y && apt-get install -y <pkg>`.
+- Preinstalled system tools: curl, git, python3, pip3, ripgrep, procps, unzip, wget, jq, zip, tree, file, build-essential.
+- Preinstalled Python packages: requests, beautifulsoup4, lxml, pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, Pillow, pypdf, python-dateutil.

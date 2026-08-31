@@ -413,12 +413,12 @@ function sessionContextContent(session) {
   // vision 能力随会话上下文告知 AI：不支持时读图只能拿到元信息，免得白跑一轮 read_file
   const bound = session.model_id && cfg.models.find(m => m.id === session.model_id);
   const visionLine = bound
-    ? (bound.vision ? '支持（可直接读取图片内容）' : '不支持（无法回传图片内容；读图仅返回元信息，需要图内文字请用 OCR 等工具）')
-    : '未知（模型绑定后生效；默认按不支持处理）';
+    ? (bound.vision ? '支持' : '不支持')
+    : '未知';
   return [
-    '【会话上下文】以下信息由系统自动注入，无需回复本条消息。',
+    '【会话上下文】由系统自动注入，无需回复本消息',
     '- 当前日期：' + dateStr + '（UTC）',
-    '- 任务目录：' + taskDirOf(session.id) + '（本会话的文件与终端操作都在此目录内）',
+    '- 任务目录：' + taskDirOf(session.id),
     '- 当前模型：' + model,
     '- 图片（vision）：' + visionLine,
   ].join('\n');
