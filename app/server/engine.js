@@ -195,6 +195,15 @@ function releaseHeld(sessionId) {
   dispatchQueued();
 }
 
+// 用户主动「断开」： held 会话放弃保持租约，结版为 completed（区别于终止的 cancelled）
+function releaseHold(sessionId) {
+  const s = getSession(sessionId);
+  if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  if (s.status !== 'held') throw Object.assign(new Error('会话不在保持中'), { status_code: 409 });
+  releaseHeld(sessionId);
+  return { ok: true };
+}
+
 // active 但闲置（从未发言/无未回应消息）→ 按租约释放，语义同 held 到期
 function releaseIdleActive(sessionId) {
   const s = getSession(sessionId);
@@ -535,6 +544,7 @@ module.exports = {
   postUserMessage,
   startExecution,
   stop,
+  releaseHold,
   deleteSession,
   getSession,
   getRun,

@@ -29,6 +29,11 @@ router.post('/:id/stop', wrap((req, res) => {
   res.json(engine.stop(req.params.id));
 }));
 
+// 断开：held 会话主动放弃模型保持租约，结版为已完成（非终止）
+router.post('/:id/release', wrap((req, res) => {
+  res.json(engine.releaseHold(req.params.id));
+}));
+
 // SSE 事件流
 router.get('/:id/stream', (req, res) => {
   const session = engine.getSession(req.params.id);

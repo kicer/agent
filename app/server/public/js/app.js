@@ -355,8 +355,15 @@ function updatePhaseUI(d) {
     text += ' · ' + d.model_id;
   }
   pill.textContent = text;
-  // 活跃中/保持中提供终止入口（保持中点终止 = 主动放弃占用的模型）
-  $('stop-btn').classList.toggle('hidden', state.status !== 'active' && state.status !== 'held');
+  // 状态胶囊配色：活跃中绿（执行中）、保持中黄（已答完、保持模型中）等；状态栏整体同步染色
+  pill.className = 'status-pill ' + (state.status || '');
+  $('phase-bar').className = 'phase-bar ' + (state.status || '');
+  // 活跃中提供「终止」；保持中改为「断开」（主动放弃保持租约，会话结为已完成）
+  const btn = $('stop-btn');
+  const actionable = state.status === 'active' || state.status === 'held';
+  btn.classList.toggle('hidden', !actionable);
+  btn.textContent = state.status === 'held' ? '断开' : '终止';
+  btn.classList.toggle('muted', state.status === 'held');
 }
 
 // ---------- 文件 ----------
@@ -472,10 +479,16 @@ const ui = {
   },
   async stopSession() {
     if (!state.sessionId) return;
+    const held = state.status === 'held';
     try {
-      await req('POST', '/api/sessions/' + state.sessionId + '/stop');
-      toast('已发送终止指令');
-    } catch (e) { toast('终止失败：' + e.message); }
+      if (held) {
+        await req('POST', '/api/sessions/' + state.sessionId + '/release');
+        toast('已断开，模型已释放');
+      } else {
+        await req('POST', '/api/sessions/' + state.sessionId + '/stop');
+        toast('已发送终止指令');
+      }
+    } catch (e) { toast((held ? '断开失败：' : '终止失败：') + e.message); }
   },
   async uploadFiles(ev) {
     const input = ev.target;

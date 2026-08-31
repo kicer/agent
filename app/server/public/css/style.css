@@ -89,9 +89,9 @@ body {
 .session-meta { font-size: 12px; color: #888; margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 8px; white-space: nowrap; }
 .badge.active { background: #e3f2e6; color: #217a34; }
-.badge.queued { background: #fff4dc; color: #a06a00; }
+.badge.queued { background: #e8eefc; color: #4a5f87; }
 .badge.completed { background: #eceff5; color: #5c6674; }
-.badge.held { background: #efeafc; color: #6b46c8; }
+.badge.held { background: #fff4dc; color: #a06a00; }
 .badge.cancelled { background: #fdecea; color: #b3382c; }
 .session-del { color: #c33; background: none; border: none; font-size: 12px; padding: 6px; }
 
@@ -100,11 +100,30 @@ body {
   display: flex; align-items: center;
   padding: 8px 12px; background: #fff; border-bottom: 1px solid #e8e8ee;
 }
-.status-pill { font-size: 12px; color: #666; }
+/* 会话窗口顶部状态栏随状态染色：执行中=绿底、保持中=黄底，一眼区分 */
+.phase-bar.active { background: #f0f9f2; border-bottom-color: #cde8d3; }
+.phase-bar.held { background: #fffbe8; border-bottom-color: #f5e3b3; }
+/* 状态胶囊：带圆点，按状态配色（活跃=绿、保持=黄、排队=蓝灰、终止=红） */
+.status-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 3px 10px; border-radius: 10px;
+  background: #eceff5; color: #5c6674;
+}
+.status-pill::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor; flex-shrink: 0;
+}
+.status-pill.active { background: #e3f2e6; color: #1c7a2e; }
+.status-pill.active::before { animation: pill-pulse 1.2s ease-in-out infinite; }
+.status-pill.held { background: #fff4dc; color: #8a6400; }
+.status-pill.queued { background: #e8eefc; color: #4a5f87; }
+.status-pill.cancelled { background: #fdecea; color: #b3382c; }
+@keyframes pill-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .stop-link {
   background: none; border: none; cursor: pointer;
   color: #c33; font-size: 12px; padding: 2px 6px; margin-left: 2px;
 }
+.stop-link.muted { color: #8a6400; }
 .stop-link:active { opacity: 0.6; }
 
 /* ---- 消息 ---- */
