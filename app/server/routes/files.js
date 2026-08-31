@@ -55,6 +55,16 @@ router.post('/:id/files', upload.array('files', 10), function (req, res) {
       db.prepare('INSERT INTO files (session_id, filename, size, created_at) VALUES (?,?,?,?)')
         .run(req.params.id, f.filename, f.size, Date.now());
     }
+    // 主动告知 AI：文件名、大小等随上传以一条用户消息进入会话（live/held/queued 都能送达）。
+    // 失败不影响上传本身。
+    if (uploaded.length) {
+      try {
+        const list = uploaded.map(f => '- ' + f.filename + '（' + f.size + ' 字节）').join('\n');
+        engine.postUserMessage(req.params.id,
+          '【系统通知】用户通过页面上传了 ' + uploaded.length + ' 个文件到任务目录：\n' + list +
+          '\n请告知用户已收到，并按需处理这些文件。');
+      } catch (e) { console.warn('[files] 上传通知 AI 失败:', e && e.message || e); }
+    }
     res.json({ uploaded });
   } catch (err) {
     res.status(500).json({ error: String(err && err.message || err) });
