@@ -30,7 +30,17 @@ body {
   gap: 8px;
 }
 .header-left { display: flex; align-items: center; gap: 8px; flex: 1; }
-.header h2 { font-size: 17px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.header h2 { font-size: 17px; font-weight: 600; white-space: nowrap; }
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  /* 可选：增加内边距扩大点击热区，但不会扩展到空白区域 */
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
 .chat-title {
   flex: 1; text-align: center; font-size: 16px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -47,6 +57,13 @@ body {
 .icon-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #files-panel .icon-btn, .files-panel-header .icon-btn { color: #555; }
 #files-panel .icon-btn:active { background: #eee; }
+
+.version {
+    text-align: center;
+    font-size: 12px;
+    color: #aaa;
+    margin-top: 16px;
+}
 
 /* ---- 模型池条 ---- */
 .model-strip {

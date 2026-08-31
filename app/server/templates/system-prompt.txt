@@ -43,3 +43,5 @@ You have a dedicated working directory for each conversation. All file paths in 
 - OS: linux
 - Shell: bash
 - Runs in a Docker container. File access is limited to the working directory and temp directories.
+- Python: use `python3`. To install Python packages: `pip3 install --break-system-packages <pkg>`.
+- System packages: `apt-get update -y && apt-get install -y <pkg>`.
