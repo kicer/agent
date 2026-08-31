@@ -5,8 +5,6 @@ const YAML = require('yaml');
 
 const DEFAULTS = {
   port: 8080,
-  upstream_url: '',
-  api_key: '',
   workspace_root: './data/tasks',
   db_path: '', // 默认为 workspace_root/.agent.db
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
@@ -45,14 +43,16 @@ function loadConfig(configPath) {
   const cfg = deepMerge(DEFAULTS, raw);
 
   if (!Array.isArray(cfg.models) || cfg.models.length === 0) {
-    throw new Error('配置缺少 models：至少需要一个模型 {id, display_name}');
+    throw new Error('配置缺少 models：至少需要一个模型 {id, url, display_name}')
   }
+  // 每个模型独立配置上游：url 必填（OpenAI 兼容 /v1 地址），api_key 选填（留空则不带鉴权头）
   for (const m of cfg.models) {
-    if (!m.id) throw new Error('models 中每项必须有 id');
+    if (!m || !m.id) throw new Error('models 中每项必须有 id');
+    if (!m.url) throw new Error('models.' + m.id + ' 缺少 url（每个模型独立配置上游 /v1 地址）');
     if (!m.display_name) m.display_name = m.id;
+    m.url = String(m.url).replace(/\/+$/, '');
+    m.api_key = m.api_key || '';
   }
-  if (!cfg.upstream_url) throw new Error('配置缺少 upstream_url（cli-proxy-api 的 /v1 地址）');
-  cfg.upstream_url = cfg.upstream_url.replace(/\/+$/, '');
 
   cfg.workspace_root = path.resolve(cfg.workspace_root);
   if (!cfg.db_path) cfg.db_path = path.join(cfg.workspace_root, '.agent.db');

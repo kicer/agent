@@ -12,7 +12,7 @@
 
 ```bash
 cp app/config.example.yml config.yml
-vi config.yml   # 至少改 upstream_url 与 models
+vi config.yml   # 至少改 models（每个模型独立 url/api_key）
 ```
 
 > 容器内运行时 `workspace_root` 写 `/workspace/tasks`（docker-compose.yml 已把 `./data` 挂到这里）。

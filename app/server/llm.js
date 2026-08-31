@@ -66,6 +66,9 @@ async function callModel(cfg, modelId, messages, tools, options) {
     if (opts.signal.aborted) controller.abort();
     else opts.signal.addEventListener('abort', () => controller.abort());
   }
+  const modelCfg = (cfg.models || []).find(m => m.id === modelId);
+  if (!modelCfg || !modelCfg.url) throw new Error('模型未在配置中定义或缺少独立 url: ' + modelId);
+
   const body = {
     model: modelId,
     messages,
@@ -76,9 +79,9 @@ async function callModel(cfg, modelId, messages, tools, options) {
   if (tools && tools.length) body.tools = tools;
 
   const headers = { 'Content-Type': 'application/json' };
-  if (cfg.api_key) headers.Authorization = 'Bearer ' + cfg.api_key;
+  if (modelCfg.api_key) headers.Authorization = 'Bearer ' + modelCfg.api_key;
 
-  const res = await fetch(cfg.upstream_url + '/chat/completions', {
+  const res = await fetch(modelCfg.url + '/chat/completions', {
     method: 'POST',
     headers,
     body: JSON.stringify(body),

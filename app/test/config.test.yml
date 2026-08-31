@@ -2,10 +2,10 @@
 models:
   - id: ds1
     display_name: "Mock Model 1"
+    url: "http://127.0.0.1:9999/v1"
   - id: ds2
     display_name: "Mock Model 2"
-
-upstream_url: "http://127.0.0.1:9999/v1"
+    url: "http://127.0.0.1:9999/v1"
 
 workspace_root: "./test/tmp/tasks"
 

@@ -995,12 +995,16 @@ networks:
 models:
   - id: ds1
     display_name: "AMD DeepSeek 1"
+    url: "https://proxy-a.example.com/v1"
+    api_key: "sk-..."
   - id: ds2
     display_name: "AMD DeepSeek 2"
+    url: "https://proxy-b.example.com/v1"
+    api_key: "sk-..."
   - id: ds3
     display_name: "AMD DeepSeek 3"
-
-upstream_url: "https://your-cli-proxy-api.example.com/v1"
+    url: "https://proxy-c.example.com/v1"
+    api_key: "sk-..."
 
 workspace_root: "/workspace/tasks"
 

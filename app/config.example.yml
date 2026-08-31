@@ -1,20 +1,21 @@
 # 自用通用 Agent 系统配置示例
 # 复制为 config.yml 后按需修改；容器内通过 AGENT_CONFIG 指定路径。
 
-# 模型池：多个 ID 共用同一个上游 URL（cli-proxy-api 按 ID 路由到不同账号）。
+# 模型池：每个模型独立配置上游 url 与 api_key（互不共用，可指向不同代理/账号）。
 # 同时活跃会话数上限 = 模型数量。
 models:
   - id: ds1
     display_name: "AMD DeepSeek 1"
+    url: "https://proxy-a.example.com/v1"   # 独立的 OpenAI 兼容 /v1 地址
+    api_key: "sk-..."                        # 各模型可不同，留空则不带鉴权头
   - id: ds2
     display_name: "AMD DeepSeek 2"
+    url: "https://proxy-b.example.com/v1"
+    api_key: "sk-..."
   - id: ds3
     display_name: "AMD DeepSeek 3"
-
-# OpenAI 兼容上游（cli-proxy-api），会请求 {upstream_url}/chat/completions
-upstream_url: "https://your-cli-proxy-api.example.com/v1"
-# 若上游需要鉴权（可选）
-api_key: ""
+    url: "https://proxy-c.example.com/v1"
+    api_key: ""
 
 workspace_root: "./data/tasks"
 # db_path: "/data/.agent.db"

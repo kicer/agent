@@ -48,5 +48,5 @@ const PORT = process.env.PORT || cfg.port;
 server.listen(PORT, () => {
   console.log('Agent server listening on ' + PORT);
   console.log('  workspace_root=' + cfg.workspace_root);
-  console.log('  models=' + cfg.models.map(m => m.id).join(',') + '  upstream=' + cfg.upstream_url);
+  console.log('  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
 });

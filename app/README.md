@@ -33,7 +33,7 @@ app/
 ```bash
 cd app
 npm install
-cp config.example.yml config.yml   # 修改 upstream_url / models
+cp config.example.yml config.yml   # 修改 models（每个模型独立 url/api_key）
 npm start                            # http://localhost:8080
 ```
 
