@@ -1,6 +1,7 @@
 services:
   agent:
     build: ./app
+    container_name: agent
     restart: unless-stopped
     expose:
       - "8080"                          # 仅内网暴露，由 nginx-proxy 对外
