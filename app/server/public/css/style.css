@@ -30,7 +30,7 @@ body {
   gap: 8px;
 }
 .header-left { display: flex; align-items: center; gap: 8px; flex: 1; }
-.header h2 { font-size: 17px; font-weight: 600; white-space: nowrap; }
+.header h2 { font-size: 17px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .chat-title {
   flex: 1; text-align: center; font-size: 16px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

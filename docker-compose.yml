@@ -8,6 +8,7 @@ services:
     volumes:
       - ./data:/workspace/tasks         # 持久化：任务目录 + SQLite（.agent.db 在此目录内）
       - ./config.yml:/app/config.yml:ro
+      - ./app/server:/app/server
     environment:
       - PORT=8080
       - AGENT_CONFIG=/app/config.yml
