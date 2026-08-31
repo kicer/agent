@@ -369,15 +369,16 @@ async function downloadFile(name) {
     const url = '/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name);
     const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const blob = await res.blob();
+    let blob = await res.blob();
+    // 抹掉 blob 的 MIME：响应常为 octet-stream，部分移动端浏览器内核会按类型给下载名追加 .bin，抹掉后按原名保存
+    try { blob = new Blob([blob], { type: '' }); } catch (_) {}
     const dlUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = dlUrl;
     a.download = name.split('/').pop() || 'download';
     document.body.appendChild(a);
     a.click();
-    a.remove();
-    setTimeout(function () { URL.revokeObjectURL(dlUrl); }, 1000);
+    setTimeout(function () { a.remove(); URL.revokeObjectURL(dlUrl); }, 1000);
   } catch (e) {
     toast('下载失败：' + e.message);
   }
