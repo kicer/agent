@@ -18,12 +18,11 @@ app/
 │   │   ├── messages.js      # 消息/SSE/start/stop（10.2）
 │   │   └── files.js         # 文件上传/列表/下载/删除（10.3）
 │   ├── tools/
-│   │   ├── definitions.json # 由 README 7.2 生成（npm run gen）
+│   │   ├── definitions.json # 14 个工具的 JSON Schema
 │   │   └── executor.js      # 13 个工具执行器（任务目录沙箱）
-│   ├── templates/system-prompt.txt  # 由 README 7.1 生成
+│   ├── templates/system-prompt.txt  # System prompt 模板（直接编辑）
 │   └── public/              # H5 前端（Vanilla JS + SSE）
 ├── test/                    # mock 上游 + 端到端冒烟测试
-├── scripts（在上层仓库根目录）gen-from-readme.js  # README → 提示词/工具 schema
 ├── config.example.yml
 ├── Dockerfile / docker-compose.yml
 ```
@@ -44,16 +43,10 @@ cd app
 npm test            # 启动 mock 上游 + 真实 server 的端到端冒烟测试（25 项断言）
 ```
 
-## 从 README 重新生成提示词与工具 schema
+## 提示词与工具 schema
 
-README 是 system prompt 与工具 JSON schema 的唯一事实来源（与 Zed 逐字一致以利用前缀缓存）：
-
-```bash
-cd app
-npm run gen         # 读 ../README.md → templates/system-prompt.txt + tools/definitions.json
-```
-
-修改 `README.md` 第七章节后必须重跑 `npm run gen` 并重启服务。
+System prompt 模板在 `server/templates/system-prompt.txt`，工具定义在 `server/tools/definitions.json`，直接修改这两个文件即可（改完重启服务）。
+模板中的 `{动态日期}`、`{任务目录路径}`、`{模型显示名}` 占位符由 `llm.js` 在每次请求时替换。
 
 ## 关键行为速查
 
