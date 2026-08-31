@@ -52,6 +52,8 @@ function loadConfig(configPath) {
     if (!m.display_name) m.display_name = m.id;
     m.url = String(m.url).replace(/\/+$/, '');
     m.api_key = m.api_key || '';
+    // 模型是否支持 vision（图片内容回传）；默认 false，会话上下文中会告知 AI
+    m.vision = m.vision === true;
   }
 
   cfg.workspace_root = path.resolve(cfg.workspace_root);

@@ -18,8 +18,16 @@ function taskDir(req) {
 
 function sanitizeName(original) {
   let name = Buffer.from(original || 'file', 'latin1').toString('utf8');
-  name = path.basename(name).replace(/[\/\x00-\x1f]/g, '_');
-  while (name.startsWith('.')) name = name.slice(1);
+  name = path.basename(name).replace(/[\x00-\x1f\x7f]/g, '_');
+  // 非常通字符（&?@#=%、emoji、不可见序列等）统一换成 _：
+  // 微信图片 URL 直接当文件名时，& ? @ 会让 shell/AI 引用路径处处踩坑。
+  // 保留：各国文字/数字（\p{L}\p{N}，含中文）、空格与 . - _ ( ) [ ] 、常见中文标点。
+  name = name.replace(/[^\p{L}\p{N} \-_.()\[\]，。、（）【】]+/gu, '_');
+  name = name.trim().replace(/^\.+/, '');
+  // 限长（字节友好按字符数算）：主体过长截断，保留扩展名
+  const ext = path.extname(name);
+  const stem = name.slice(0, name.length - ext.length);
+  if (stem.length > 80) name = stem.slice(0, 80) + ext;
   return name || 'file';
 }
 
@@ -55,14 +63,15 @@ router.post('/:id/files', upload.array('files', 10), function (req, res) {
       db.prepare('INSERT INTO files (session_id, filename, size, created_at) VALUES (?,?,?,?)')
         .run(req.params.id, f.filename, f.size, Date.now());
     }
-    // 主动告知 AI：文件名、大小等随上传以一条用户消息进入会话（live/held/queued 都能送达）。
-    // 失败不影响上传本身。
+    // 主动告知 AI：文件名、大小以单行随上传送达会话（live/held/queued 都能送达）。
+    // 附任务目录绝对路径、明确无需列目录验证与确认回复，减少 AI 多余探索；通知失败不影响上传本身。
     if (uploaded.length) {
       try {
-        const list = uploaded.map(f => '- ' + f.filename + '（' + f.size + ' 字节）').join('\n');
+        const dir = engine.taskDirOf(req.params.id);
+        const list = uploaded.map(f => f.filename + '（' + f.size + ' 字节）').join('；');
         engine.postUserMessage(req.params.id,
-          '【系统通知】用户通过页面上传了 ' + uploaded.length + ' 个文件到任务目录：\n' + list +
-          '\n请告知用户已收到，并按需处理这些文件。');
+          '【系统通知】用户刚通过页面上传了 ' + uploaded.length + ' 个文件，已存在于任务目录 ' + dir + ' 中：' + list +
+          '。文件已确认存在，无需再列目录或读取验证；无需为确认收到而回复，除非用户另有诉求。');
       } catch (e) { console.warn('[files] 上传通知 AI 失败:', e && e.message || e); }
     }
     res.json({ uploaded });

@@ -8,6 +8,7 @@ models:
     display_name: "AMD DeepSeek 1"
     url: "https://proxy-a.example.com/v1"   # 独立的 OpenAI 兼容 /v1 地址
     api_key: "sk-..."                        # 各模型可不同，留空则不带鉴权头
+    # vision: true                           # 选填，默认 false；支持图片时会话上下文会告知 AI
   - id: ds2
     display_name: "AMD DeepSeek 2"
     url: "https://proxy-b.example.com/v1"
