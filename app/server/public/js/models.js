@@ -40,8 +40,10 @@ async function loadModelCards() {
         '<div class="model-card-meta">' + esc(m.id) +
           (run && run.is_busy && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</div>' +
         '<div class="cfg-kv"><label>余额</label><b>--</b></div>' +
-        '<div class="cfg-kv"><label>今日 token</label><b>' + (run ? fmtTok(run.today_tokens) : '--') + '</b></div>' +
-        '<div class="cfg-kv"><label>累计 token</label><b>' + (run ? fmtTok(run.total_tokens) : '--') + '</b></div>' +
+        '<div class="cfg-kv"><label>今日输入 token</label><b>' + (run ? fmtTok(run.today_prompt) : '--') + '</b></div>' +
+        '<div class="cfg-kv"><label>今日输出 token</label><b>' + (run ? fmtTok(run.today_completion) : '--') + '</b></div>' +
+        '<div class="cfg-kv"><label>累计输入 token</label><b>' + (run ? fmtTok(run.total_prompt) : '--') + '</b></div>' +
+        '<div class="cfg-kv"><label>累计输出 token</label><b>' + (run ? fmtTok(run.total_completion) : '--') + '</b></div>' +
       '</div>';
     }).join('') +
       (modelsPendingRestart

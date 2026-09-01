@@ -245,11 +245,13 @@ async function main() {
     ok(qc.some(x => x.id === fs9.id), 'q= 按消息内容命中');
     const qnone = await api('GET', '/api/sessions?q=绝无此内容xyzzy-9x7');
     ok(Array.isArray(qnone) && qnone.length === 0, 'q= 无命中返回空');
-    // token 用量:model_usage 由 mock 上游的 usage 帧驱动,今日/累计应已统计
+    // token 用量:model_usage 由 mock 上游的 usage 帧驱动,输入/输出分开统计
     const usagePool = await api('GET', '/api/models');
-    const sumToday = usagePool.reduce(function (n, m) { return n + (m.today_tokens || 0); }, 0);
-    const sumAll = usagePool.reduce(function (n, m) { return n + (m.total_tokens || 0); }, 0);
-    ok(sumToday > 0 && sumAll >= sumToday, '/api/models 携带今日/累计 token 用量', '今日=' + sumToday + ' 累计=' + sumAll);
+    const sumP = usagePool.reduce(function (n, m) { return n + (m.today_prompt || 0); }, 0);
+    const sumC = usagePool.reduce(function (n, m) { return n + (m.today_completion || 0); }, 0);
+    const sumTP = usagePool.reduce(function (n, m) { return n + (m.total_prompt || 0); }, 0);
+    ok(sumP > 0 && sumC > 0 && sumTP >= sumP,
+      '/api/models 携带今日/累计输入输出 token 用量', '今日输入=' + sumP + ' 今日输出=' + sumC);
 
     // ---- 10. 技能管理(阶段 3)----
     console.log('\n[10] 技能管理');

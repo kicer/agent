@@ -38,14 +38,16 @@ app.use('/api/skills', require('./routes/skills'));
 app.use('/api/config', require('./routes/config'));
 app.use('/api/system', require('./routes/system'));
 
-// 模型池状态（前端可展示空闲/占用）+ 每模型 token 用量（今日/累计）
+// 模型池状态(前端可展示空闲/占用)+ 每模型 token 用量(今日/累计,输入/输出分开)
 app.get('/api/models', (req, res) => {
   const rows = db.prepare('SELECT id, display_name, is_busy, current_session_id FROM model_pool ORDER BY id').all();
   const stats = engine.modelUsageStats();
   for (const r of rows) {
-    const s = stats[r.id] || { today_tokens: 0, total_tokens: 0 };
-    r.today_tokens = s.today_tokens;
-    r.total_tokens = s.total_tokens;
+    const s = stats[r.id] || {};
+    r.today_prompt = s.today_prompt || 0;
+    r.today_completion = s.today_completion || 0;
+    r.total_prompt = s.total_prompt || 0;
+    r.total_completion = s.total_completion || 0;
   }
   res.json(rows);
 });

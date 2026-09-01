@@ -92,25 +92,27 @@ function recordModelUsage(sessionId, modelId, usage) {
   ).run(sessionId, modelId, pt, ct, tt, now());
 }
 
-// 每模型 token 用量统计：今日（本地时区自然日起）+ 累计。
-// 返回 { [model_id]: { today_tokens, total_tokens } },配置内的模型保证有零值占位。
+// 每模型 token 用量统计:今日(本地时区自然日起)+ 累计,输入/输出分开。
+// 返回 { [model_id]: { today_prompt, today_completion, total_prompt, total_completion } },
+// 配置内的模型保证有零值占位。
 function modelUsageStats() {
   const d = new Date();
   const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const stats = {};
   const slot = function (id) {
-    if (!stats[id]) stats[id] = { today_tokens: 0, total_tokens: 0 };
+    if (!stats[id]) stats[id] = { today_prompt: 0, today_completion: 0, total_prompt: 0, total_completion: 0 };
     return stats[id];
   };
   for (const m of cfg.models) slot(m.id);
-  const today = db.prepare(
-    'SELECT model_id, SUM(total_tokens) AS n FROM model_usage WHERE created_at >= ? GROUP BY model_id'
-  ).all(dayStart);
-  for (const r of today) slot(r.model_id).today_tokens = r.n || 0;
-  const total = db.prepare(
-    'SELECT model_id, SUM(total_tokens) AS n FROM model_usage GROUP BY model_id'
-  ).all();
-  for (const r of total) slot(r.model_id).total_tokens = r.n || 0;
+  const sumSql = 'SELECT model_id, SUM(prompt_tokens) AS p, SUM(completion_tokens) AS c FROM model_usage';
+  for (const r of db.prepare(sumSql + ' WHERE created_at >= ? GROUP BY model_id').all(dayStart)) {
+    slot(r.model_id).today_prompt = r.p || 0;
+    slot(r.model_id).today_completion = r.c || 0;
+  }
+  for (const r of db.prepare(sumSql + ' GROUP BY model_id').all()) {
+    slot(r.model_id).total_prompt = r.p || 0;
+    slot(r.model_id).total_completion = r.c || 0;
+  }
   return stats;
 }
 
