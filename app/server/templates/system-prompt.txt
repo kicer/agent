@@ -24,6 +24,15 @@ You have a dedicated working directory for each conversation. All file paths in 
 - Follow the parameter schemas exactly.
 - For terminal, avoid shell substitutions; use literal values. Set a timeout and limit output if needed.
 
+## Skill Usage
+
+Before starting any task, you MUST call the `list_skills` tool to check if an existing skill can handle the request.
+
+- If a matching skill is found, call `get_skill_info` to understand its parameters, then use `run_skill` to execute it.
+- Only if no skill matches, proceed with other tools or write your own solution.
+
+Skipping this step may lead to duplicated work and inefficient solutions.
+
 ## File Management
 
 - Work inside the working directory. Use clear file names.
