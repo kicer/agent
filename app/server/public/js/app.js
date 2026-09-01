@@ -408,9 +408,9 @@ const ui = {
       const rows = await req('GET', '/api/models');
       const free = rows.filter(m => !m.is_busy);
       sel.innerHTML = free.length
-        ? '<option value="">自动分配（使用任一空闲模型）</option>' + free.map(m =>
+        ? '<option value="">自动分配</option>' + free.map(m =>
             '<option value="' + esc(m.id) + '">' + esc(m.display_name || m.id) + '</option>').join('')
-        : '<option value="">暂无空闲模型（将排队等待）</option>';
+        : '<option value="">排队等待</option>';
     } catch (_) { /* 保留默认选项 */ }
     $('create-modal').classList.remove('hidden');
     $('new-title').focus();

@@ -261,7 +261,7 @@ body {
 .modal select {
   width: 100%; border: 1px solid #dde; border-radius: 8px;
   padding: 10px 12px; font-size: 15px; margin-bottom: 10px; outline: none;
-  background: #fff; color: #334; appearance: auto;
+  background: #fff; color: #334; appearance: none;
 }
 .modal select:focus { border-color: #2a5299; }
 .modal-close-btn {
