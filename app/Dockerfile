@@ -1,5 +1,7 @@
 FROM node:20-slim
 
+ENV TZ=Asia/Shanghai
+
 # 常用命令行工具：Agent 的 terminal 工具经常用到
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
     ca-certificates curl git python3 python3-pip python3-venv python3-dev \

@@ -415,7 +415,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function sessionContextContent(session) {
   const d = new Date();
   const pad = n => String(n).padStart(2, '0');
-  const dateStr = d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
+  const dateStr = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   const model = session.model_id
     ? modelDisplayName(session.model_id)
     : '尚未绑定（排队中，绑定后自动开始处理）';
@@ -426,7 +426,7 @@ function sessionContextContent(session) {
     : '未知';
   return [
     '【会话上下文】由系统自动注入，无需回复本消息',
-    '- 当前日期：' + dateStr + '（UTC）',
+    '- 当前日期：' + dateStr,
     '- 任务目录：' + taskDirOf(session.id),
     '- 当前模型：' + model,
     '- 图片（vision）：' + visionLine,
