@@ -172,6 +172,40 @@ async function main() {
     const esc = await executeTool(ctx, 'read_file', { path: '../outside.txt' }).catch(e => 'ERR:' + e.message);
     ok(String(esc).includes('越界'), 'read_file 拒绝越界', String(esc));
 
+    // ---- 9. 配置读写 API(阶段 2)----
+    console.log('\n[8] 配置读写');
+    const cfgPath = path.join(ROOT, 'test/config.test.yml');
+    const origText = fs.readFileSync(cfgPath, 'utf8');
+    const got = await api('GET', '/api/config');
+    ok(got.exists && got.text.includes('models:'), 'GET /api/config 返回原文');
+    const patched = await api('PATCH', '/api/config', { path: 'agent.temperature', value: 0.5 });
+    ok(patched.ok && patched.changed.includes('agent'), 'PATCH 单项修改');
+    const afterPatch = await api('GET', '/api/config');
+    ok(/temperature:\s*0\.5/.test(afterPatch.text), 'PATCH 写盘生效');
+    ok(afterPatch.text.includes('冒烟测试用短租约'), 'PATCH 保留文件注释');
+    let bad400 = false;
+    try { await api('PUT', '/api/config', { text: 'models: [unclosed' }); } catch (e) { bad400 = /400/.test(e.message); }
+    ok(bad400, 'PUT 非法配置被 400 拒绝');
+    ok(fs.readFileSync(cfgPath, 'utf8') === afterPatch.text, '非法写入未动文件');
+    const restored = await api('PUT', '/api/config', { text: origText });
+    ok(restored.ok && fs.readFileSync(cfgPath, 'utf8') === origText, 'PUT 整文件恢复原配置');
+
+    // ---- 10. 系统状态与优雅重启(阶段 2;放在最后,服务进程将退出收尾)----
+    console.log('\n[9] 优雅重启');
+    const st = await api('GET', '/api/system/status');
+    ok(st.ok && st.started_at && st.port === 8099, 'GET /api/system/status');
+    s = await api('POST', '/api/sessions', { title: '冒烟-重启保护' });
+    await waitSession(s.id, x => x.session.status === 'active', 5000, '绑定');
+    await api('POST', '/api/sessions/' + s.id + '/messages', { content: '慢一点说' });
+    await sleep(400); // 进入慢速流式输出,looping=true
+    let guarded = false;
+    try { await api('POST', '/api/system/restart'); } catch (e) { guarded = /409/.test(e.message); }
+    ok(guarded, '回合执行中 restart 被 409 拦截');
+    const rj = await api('POST', '/api/system/restart?force=true');
+    ok(rj && rj.restarting, 'force 重启被接受');
+    await sleep(800); // 服务在响应后 300ms 退出
+    ok(server.exitCode === 0, '服务以退出码 0 结束(交由 Docker 拉起)', 'exitCode=' + server.exitCode);
+
     console.log('\n========================');
     console.log('通过 ' + pass + ' / 失败 ' + fail);
     process.exit(fail === 0 ? 0 : 2);

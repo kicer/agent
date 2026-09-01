@@ -37,12 +37,9 @@ function deepMerge(base, extra) {
   return out;
 }
 
-function loadConfig(configPath) {
-  const p = configPath || process.env.AGENT_CONFIG || path.join(__dirname, '..', 'config.yml');
-  let raw = {};
-  if (fs.existsSync(p)) {
-    raw = YAML.parse(fs.readFileSync(p, 'utf8')) || {};
-  }
+// 校验原始配置文本(启动读文件与网页编辑共用)。configPath 仅记录来源,可为空。
+function parseAndValidate(rawText, configPath) {
+  const raw = YAML.parse(rawText || '') || {};
   const cfg = deepMerge(DEFAULTS, raw);
 
   if (!Array.isArray(cfg.models) || cfg.models.length === 0) {
@@ -106,8 +103,50 @@ function loadConfig(configPath) {
     s.headers = headers;
   }
 
-  cfg.config_path = p;
+  cfg.config_path = configPath || '';
   return cfg;
 }
 
-module.exports = { loadConfig };
+function loadConfig(configPath) {
+  const p = configPath || process.env.AGENT_CONFIG || path.join(__dirname, '..', 'config.yml');
+  const text = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+  return parseAndValidate(text, p);
+}
+
+// 从文本校验一份配置(页面编辑试运行 / 写盘前校验),返回完整生效 cfg。
+function loadConfigFromText(text, configPath) {
+  return parseAndValidate(text, configPath || '');
+}
+
+// ---------- 配置读写(2.0:设置页管理 config.yml;无热重载,写盘后重启生效) ----------
+// 读当前配置文件原文(保留注释);文件不存在返回 null。
+function readConfigText(cfg) {
+  const p = cfg && cfg.config_path;
+  if (!p || !fs.existsSync(p)) return null;
+  return fs.readFileSync(p, 'utf8');
+}
+
+// 单项编辑:[{path:[...], value}] 或 [{path:[...], delete:true}]。
+// 用 YAML Document 写回,保留注释与排版;路径段为纯数字时按数组下标处理(如 ["models",0,"url"])。
+function applyEditsToText(text, edits) {
+  const doc = YAML.parseDocument(text || '');
+  for (const e of edits || []) {
+    if (!e || !Array.isArray(e.path) || !e.path.length) throw new Error('配置项 path 必须是非空数组');
+    const docPath = e.path.map(s => (typeof s === 'string' && /^\d+$/.test(s)) ? Number(s) : s);
+    if (e.delete) doc.deleteIn(docPath);
+    else doc.setIn(docPath, e.value);
+  }
+  return doc.toString();
+}
+
+// 校验通过才写盘(不合法直接抛错、不动文件)。
+// 注意:不用「临时文件 + rename」原子写:容器里 config.yml 是单文件 bind mount,
+// rename 替换该路径会 EBUSY;写坏风险已由“先校验后写”兑底。
+function writeConfigText(cfg, text) {
+  const p = cfg && cfg.config_path;
+  if (!p) throw Object.assign(new Error('配置文件路径未知(config.yml 可能不存在),无法写入'), { status_code: 409 });
+  parseAndValidate(text, p);
+  fs.writeFileSync(p, text, 'utf8');
+}
+
+module.exports = { loadConfig, loadConfigFromText, readConfigText, applyEditsToText, writeConfigText };

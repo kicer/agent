@@ -8,7 +8,7 @@ services:
     volumes:
       - ./data:/workspace/tasks         # 持久化：任务目录 + SQLite（.agent.db 在此目录内）
       - ./skills:/workspace/skills      # 技能目录：所有任务/会话共享同一份技能
-      - ./config.yml:/app/config.yml:ro
+      - ./config.yml:/app/config.yml    # 2.0:去掉 :ro,允许设置页写配置(写前服务端会校验)
       - ./app/server:/app/server
     environment:
       - PORT=8080

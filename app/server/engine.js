@@ -256,6 +256,14 @@ function getRun(sessionId, create) {
   return run;
 }
 
+// 正在执行 AI 回合(looping)的会话 id 列表:供重启保护判断。
+// 注意只算「回合执行中」;active 但空闲(等用户输入)与 held 都不算,重启无损失。
+function activeRuns() {
+  const out = [];
+  for (const [id, run] of runs) if (run && run.looping) out.push(id);
+  return out;
+}
+
 function killRunProcs(run) {
   for (const proc of run.procs) {
     try { process.kill(-proc.pid, 'SIGKILL'); } catch (_) {
@@ -549,6 +557,7 @@ module.exports = {
   getDb: () => db,
   getBus: () => bus,
   getConfig: () => cfg,
+  activeRuns,
   createSession,
   postUserMessage,
   startExecution,

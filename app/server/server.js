@@ -34,6 +34,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/sessions', require('./routes/sessions'));
 app.use('/api/sessions', require('./routes/messages'));
 app.use('/api/sessions', require('./routes/files'));
+app.use('/api/config', require('./routes/config'));
+app.use('/api/system', require('./routes/system'));
 
 // 模型池状态（前端可展示空闲/占用）
 app.get('/api/models', (req, res) => {
