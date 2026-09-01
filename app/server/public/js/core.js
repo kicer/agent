@@ -70,6 +70,49 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.add('hidden'), 2500);
 }
 
+// ---------- 统一弹窗(替代原生 confirm/prompt;同屏仅弹一个) ----------
+let _dlgResolve = null;
+function _dlgSettle(val) {
+  $('confirm-modal').classList.add('hidden');
+  $('prompt-modal').classList.add('hidden');
+  const r = _dlgResolve;
+  _dlgResolve = null;
+  if (r) r(val);
+}
+// 确认框:resolve(true/false);danger=true 时确定钮红色
+function confirmModal(title, text, okText, danger) {
+  return new Promise(resolve => {
+    _dlgResolve = resolve;
+    $('confirm-title').textContent = title || '请确认';
+    $('confirm-text').textContent = text || '';
+    const ok = $('confirm-ok-btn');
+    ok.textContent = okText || '确定';
+    ok.style.background = danger ? 'linear-gradient(135deg,#a3352a,#d2483c)' : '';
+    $('confirm-modal').classList.remove('hidden');
+  });
+}
+function confirmClose(v) { _dlgSettle(v); }
+// 输入框:resolve(字符串) 或取消 resolve(null)
+function promptModal(title, placeholder, initial) {
+  return new Promise(resolve => {
+    _dlgResolve = resolve;
+    $('prompt-title').textContent = title || '请输入';
+    const inp = $('prompt-input');
+    inp.placeholder = placeholder || '';
+    inp.value = initial || '';
+    $('prompt-modal').classList.remove('hidden');
+    setTimeout(() => inp.focus(), 60);
+  });
+}
+function promptOk() { _dlgSettle($('prompt-input').value); }
+function promptCancel() { _dlgSettle(null); }
+(function () {
+  const inp = document.getElementById('prompt-input');
+  if (inp) inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); promptOk(); }
+  });
+})();
+
 // ---------- 底部导航路由(hash) ----------
 const TABS = ['tasks', 'skills', 'models', 'settings'];
 

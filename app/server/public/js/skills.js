@@ -65,7 +65,7 @@ async function loadSkillDetail() {
   try {
     const d = await req('GET', '/api/skills/' + encodeURIComponent(curSkill));
     $('skills-title').textContent = d.name;
-    const newBtn = '<button class="ghost-btn" style="width:100%;margin-top:10px" onclick="skillsUI.newFile()">+ 新建文件</button>';
+    const newBtn = '<button class="primary-btn" style="width:100%;margin-top:10px" onclick="skillsUI.newFile()">+ 新建文件</button>';
     if (!d.files.length) {
       el.innerHTML = '<div class="skill-files"><div class="empty-tip">技能目录是空的</div></div>' + newBtn;
       return;
@@ -120,7 +120,7 @@ async function createSkill() {
 async function renameSkill(nameEnc) {
   const name = nameEnc ? decodeURIComponent(nameEnc) : curSkill;
   if (!name) return;
-  const nn = prompt('新的技能名:', name);
+  const nn = await promptModal('重命名技能', '新的技能名', name);
   if (nn == null) return;
   const newName = nn.trim();
   if (!newName || newName === name) return;
@@ -135,7 +135,7 @@ async function renameSkill(nameEnc) {
 async function deleteSkill(nameEnc) {
   const name = nameEnc ? decodeURIComponent(nameEnc) : curSkill;
   if (!name) return;
-  if (!confirm('确定删除技能「' + name + '」?目录下所有文件将不可恢复。')) return;
+  if (!await confirmModal('删除技能', '确定删除技能「' + name + '」?目录下所有文件将不可恢复。', '删除', true)) return;
   try {
     await req('DELETE', '/api/skills/' + encodeURIComponent(name));
     toast('已删除 ' + name);
@@ -166,9 +166,9 @@ async function saveSkillFile() {
   } catch (e) { toast('保存失败:' + e.message); }
 }
 
-function closeSkillEditor() {
+async function closeSkillEditor() {
   if ($('skill-editor-area').value !== editorOrig &&
-      !confirm('有未保存的修改,确定关闭编辑器?')) return;
+      !await confirmModal('未保存的修改', '有未保存的修改,确定关闭编辑器并丢弃?', '关闭', true)) return;
   editorPath = null; editorOrig = '';
   setSkillsView('detail');
   loadSkillDetail();
@@ -176,7 +176,7 @@ function closeSkillEditor() {
 
 async function newSkillFile() {
   if (!curSkill) return;
-  const p = prompt('新建文件路径(相对技能目录,可含子目录):', '');
+  const p = await promptModal('新建文件', '相对技能目录的路径,可含子目录(如 scripts/run.sh)', '');
   if (p == null) return;
   const rel = p.trim();
   if (!rel) { toast('路径为空'); return; }
@@ -189,7 +189,7 @@ async function newSkillFile() {
 
 async function deleteSkillFile(path) {
   const rel = decodeURIComponent(path);
-  if (!confirm('删除文件 ' + rel + ' ?')) return;
+  if (!await confirmModal('删除文件', '删除文件 ' + rel + ' ?', '删除', true)) return;
   try {
     await req('DELETE', '/api/skills/' + encodeURIComponent(curSkill) + '/file?path=' + encodeURIComponent(rel));
     toast('已删除');
@@ -213,7 +213,7 @@ async function uploadSkillFile(ev) {
     toast('已上传 ' + file.name);
   } catch (e) {
     if (/已存在/.test(e.message)) {
-      if (!confirm(file.name + ' 已存在,覆盖?')) return;
+      if (!await confirmModal('文件已存在', file.name + ' 已存在,覆盖?', '覆盖')) return;
       try { await send(true); toast('已覆盖 ' + file.name); }
       catch (e2) { toast('上传失败:' + e2.message); }
     } else {

@@ -211,20 +211,50 @@
       </div>
     </div>
 
-    <!-- 添加模型弹窗 -->
-    <div id="model-add-modal" class="modal-overlay hidden" onclick="if(event.target===this)modelsUI.closeAdd()">
+    <!-- 模型编辑/新增弹窗 -->
+    <div id="model-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)modelsUI.close()">
       <div class="modal">
-        <button class="modal-close-btn" onclick="modelsUI.closeAdd()">
+        <button class="modal-close-btn" onclick="modelsUI.close()">
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
-        <h3>添加模型</h3>
-        <input type="text" id="model-new-id" placeholder="id(唯一标识,如 ds3)" style="width:100%">
-        <input type="text" id="model-new-name" placeholder="显示名(留空同 id)" style="width:100%">
-        <input type="text" id="model-new-url" placeholder="上游地址(OpenAI 兼容 /v1)" style="width:100%">
-        <input type="text" id="model-new-key" placeholder="api_key(选填,留空不带鉴权头)" style="width:100%">
-        <label class="del-dir"><input type="checkbox" id="model-new-vision">支持图片输入(vision)</label>
-        <button class="primary-btn" style="width:100%" onclick="modelsUI.add()">添加</button>
-        <div class="cfg-note">写入 config.yml 的 models 段,到「设置」页重启服务后生效。</div>
+        <h3 id="moe-title">编辑模型</h3>
+        <input type="text" id="moe-name" placeholder="显示名(留空同 id)" style="width:100%">
+        <input type="text" id="moe-id" placeholder="id(唯一标识)" style="width:100%">
+        <input type="text" id="moe-url" placeholder="上游地址(OpenAI 兼容 /v1)" style="width:100%">
+        <input type="text" id="moe-key" placeholder="api_key(留空则不带鉴权头)" style="width:100%">
+        <label class="del-dir"><input type="checkbox" id="moe-vision">支持图片输入(vision)</label>
+        <div class="btn-row">
+          <button class="ghost-btn danger hidden" id="moe-del-btn" onclick="modelsUI.del()">删除</button>
+          <button class="primary-btn" onclick="modelsUI.save()">保存</button>
+        </div>
+        <div class="cfg-note">写入 config.yml,到「设置」页重启服务后生效。id 不可在此修改(历史会话按 id 绑定),如需改动请编辑配置文件原文。</div>
+      </div>
+    </div>
+
+    <!-- 全局确认弹窗(替代原生 confirm) -->
+    <div id="confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)confirmClose(false)">
+      <div class="modal">
+        <h3 id="confirm-title">请确认</h3>
+        <div class="modal-text" id="confirm-text"></div>
+        <div class="btn-row">
+          <button class="ghost-btn" onclick="confirmClose(false)">取消</button>
+          <button class="primary-btn" id="confirm-ok-btn" onclick="confirmClose(true)">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 全局输入弹窗(替代原生 prompt) -->
+    <div id="prompt-modal" class="modal-overlay hidden" onclick="if(event.target===this)promptCancel()">
+      <div class="modal">
+        <button class="modal-close-btn" onclick="promptCancel()">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+        <h3 id="prompt-title">请输入</h3>
+        <input type="text" id="prompt-input" style="width:100%">
+        <div class="btn-row">
+          <button class="ghost-btn" onclick="promptCancel()">取消</button>
+          <button class="primary-btn" onclick="promptOk()">确定</button>
+        </div>
       </div>
     </div>
 
@@ -247,10 +277,10 @@
   <div class="toast hidden" id="toast"></div>
 
   <!-- 发版时更新 v 参数,避免移动端浏览器缓存旧 JS -->
-  <script src="/js/core.js?v=20260901i"></script>
-  <script src="/js/tasks.js?v=20260901i"></script>
-  <script src="/js/skills.js?v=20260901i"></script>
-  <script src="/js/models.js?v=20260901i"></script>
-  <script src="/js/settings.js?v=20260901i"></script>
+  <script src="/js/core.js?v=20260901j"></script>
+  <script src="/js/tasks.js?v=20260901j"></script>
+  <script src="/js/skills.js?v=20260901j"></script>
+  <script src="/js/models.js?v=20260901j"></script>
+  <script src="/js/settings.js?v=20260901j"></script>
 </body>
 </html>

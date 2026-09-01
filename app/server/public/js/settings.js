@@ -179,13 +179,13 @@ async function saveForm() {
 
 // ---------- 重启 ----------
 async function restart() {
-  if (!confirm('重启服务使新配置生效?正在执行的 AI 会话会被打断。')) return;
+  if (!await confirmModal('重启服务', '重启服务使新配置生效?正在执行的 AI 会话会被打断。', '重启')) return;
   try {
     await req('POST', '/api/system/restart');
   } catch (e) {
     if (e.status === 409 && /个任务.*执行中/.test(e.message)) {
       // 仅「有会话在跑」值得二次确认强打;配置不合法等 409 强打也无法启动,直接报给用户
-      if (!confirm(e.message + '\n\n仍要强制重启?')) return;
+      if (!await confirmModal('有任务在跑', e.message, '强制重启', true)) return;
       try { await req('POST', '/api/system/restart?force=true'); }
       catch (e2) { toast('重启失败:' + e2.message); return; }
     } else { toast('重启失败:' + e.message); return; }
@@ -227,8 +227,9 @@ async function saveCfgEditor() {
     toast('配置不合法,未写入');
   }
 }
-function closeCfgEditor() {
-  if ($('cfg-editor-area').value !== cfgOrig && !confirm('有未保存的修改,确定关闭?')) return;
+async function closeCfgEditor() {
+  if ($('cfg-editor-area').value !== cfgOrig &&
+      !await confirmModal('未保存的修改', '有未保存的修改,确定关闭并丢弃?', '关闭', true)) return;
   $('cfg-editor').classList.add('hidden');
   loadSettings(); // 原文可能改了生效值相关的显示,回到本页时刷新
 }

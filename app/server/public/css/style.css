@@ -239,6 +239,7 @@ body {
   padding: 10px 12px; font-size: 15px; margin-bottom: 10px; outline: none;
 }
 .modal input:focus { border-color: #2a5299; }
+.modal input:disabled { background: #f2f3f7; color: #99a; }
 .modal select {
   width: 100%; border: 1px solid #dde; border-radius: 8px;
   padding: 10px 12px; font-size: 15px; margin-bottom: 10px; outline: none;
@@ -262,6 +263,7 @@ body {
   border-radius: 10px; padding: 11px; font-size: 15px; cursor: pointer;
 }
 .ghost-btn:active { background: #e8eaf0; }
+.ghost-btn.danger { background: #fdf3f2; color: #c0392b; border-color: #eac2bd; }
 .btn-row { display: flex; gap: 10px; }
 .btn-row .primary-btn { flex: 1; }
 .modal .modal-text { font-size: 14px; color: #556; margin-bottom: 12px; }
@@ -322,6 +324,15 @@ body {
 .model-card-state.busy { background: #fdecea; color: #b3382c; }
 /* 配置已加但还没重启进运行池 */
 .model-card-state.pending { background: #fff4dc; color: #a06a00; }
+.model-card-right { display: flex; align-items: center; gap: 4px; }
+.model-edit-ico {
+  background: none; border: none; cursor: pointer; padding: 5px; border-radius: 8px;
+}
+.model-edit-ico svg {
+  width: 17px; height: 17px; stroke: #7f8db0; fill: none;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.model-edit-ico:active { background: #eef0f6; }
 .model-card-meta { font-size: 12px; color: #888; margin-top: 4px; }
 .model-card-foot { display: flex; justify-content: flex-end; gap: 14px; margin-top: 6px; }
 

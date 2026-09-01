@@ -452,7 +452,7 @@ const ui = {
     } catch (e) { toast('上传失败:' + e.message); }
   },
   async deleteFile(name) {
-    if (!confirm('删除文件 ' + name + '?')) return;
+    if (!await confirmModal('删除文件', '删除文件 ' + name + ' ?', '删除', true)) return;
     try {
       await req('DELETE', '/api/sessions/' + state.sessionId + '/files?path=' + encodeURIComponent(name));
       loadFiles();
