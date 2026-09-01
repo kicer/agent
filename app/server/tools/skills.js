@@ -286,4 +286,4 @@ async function runSkill(ctx, skillName, inputArgs) {
   return runEntry(ctx, entry, cmdArgs, dir, timeoutMs);
 }
 
-module.exports = { listSkills, getSkillInfo, runSkill, skillsRoot };
+module.exports = { listSkills, getSkillInfo, runSkill, skillsRoot, parseFrontMatter, extractDescription };

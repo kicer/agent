@@ -34,6 +34,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/sessions', require('./routes/sessions'));
 app.use('/api/sessions', require('./routes/messages'));
 app.use('/api/sessions', require('./routes/files'));
+app.use('/api/skills', require('./routes/skills'));
 app.use('/api/config', require('./routes/config'));
 app.use('/api/system', require('./routes/system'));
 

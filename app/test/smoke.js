@@ -198,7 +198,7 @@ async function main() {
     const esc = await executeTool(ctx, 'read_file', { path: '../outside.txt' }).catch(e => 'ERR:' + e.message);
     ok(String(esc).includes('越界'), 'read_file 拒绝越界', String(esc));
 
-    // ---- 9. 配置读写 API(阶段 2)----
+    // ---- 8. 配置读写 API(阶段 2)----
     console.log('\n[8] 配置读写');
     const cfgPath = path.join(ROOT, 'test/config.test.yml');
     const origText = fs.readFileSync(cfgPath, 'utf8');
@@ -216,8 +216,38 @@ async function main() {
     const restored = await api('PUT', '/api/config', { text: origText });
     ok(restored.ok && fs.readFileSync(cfgPath, 'utf8') === origText, 'PUT 整文件恢复原配置');
 
+    // ---- 9. 技能管理(阶段 3)----
+    console.log('\n[9] 技能管理');
+    ok((await api('POST', '/api/skills', { name: 'demo-skill', description: '演示技能' })).ok, '创建技能');
+    let slist = await api('GET', '/api/skills');
+    const demo = slist.find(x => x.name === 'demo-skill');
+    ok(demo && demo.has_md && String(demo.description).includes('演示技能'), '列表含新技能与描述');
+    let sdet = await api('GET', '/api/skills/demo-skill');
+    ok(sdet.skill_md && sdet.skill_md.includes('demo-skill') && sdet.files.some(f => f.filename === 'SKILL.md'), '详情含 SKILL.md');
+    await api('PUT', '/api/skills/demo-skill/file', { path: 'sub/run.sh', content: '#!/bin/sh\necho hi\n' });
+    const sfr = await api('GET', '/api/skills/demo-skill/file?path=sub%2Frun.sh');
+    ok(sfr.content.includes('echo hi'), '文件写入+读取(含子目录)');
+    let trav = false;
+    try { await api('GET', '/api/skills/demo-skill/file?path=..%2F..%2Fetc%2Fpasswd'); } catch (e) { trav = /400/.test(e.message); }
+    ok(trav, '路径穿越被拒 400');
+    const mkFd = txt => { const fd = new FormData(); fd.append('file', new Blob([txt]), 'note.txt'); return fd; };
+    const up1 = await fetch(BASE + '/api/skills/demo-skill/upload', { method: 'POST', body: mkFd('up\n') });
+    const up1j = await up1.json();
+    ok(up1.ok && up1j.path === 'note.txt', '上传新文件');
+    const up2 = await fetch(BASE + '/api/skills/demo-skill/upload', { method: 'POST', body: mkFd('dup\n') });
+    ok(up2.status === 409, '重名上传默认 409');
+    const up3 = await fetch(BASE + '/api/skills/demo-skill/upload?overwrite=true', { method: 'POST', body: mkFd('ovr\n') });
+    ok(up3.ok, 'overwrite=true 覆盖上传');
+    ok((await api('POST', '/api/skills/demo-skill/rename', { newName: 'demo-2' })).ok, '重命名技能');
+    await api('DELETE', '/api/skills/demo-2/file?path=sub%2Frun.sh');
+    sdet = await api('GET', '/api/skills/demo-2');
+    ok(!sdet.files.some(f => f.filename === 'sub/run.sh') && sdet.files.some(f => f.filename === 'note.txt'), '删文件生效');
+    ok((await api('DELETE', '/api/skills/demo-2')).ok, '删除整个技能');
+    slist = await api('GET', '/api/skills');
+    ok(!slist.some(x => x.name.indexOf('demo') === 0), '删除后列表干净');
+
     // ---- 10. 系统状态与优雅重启(阶段 2;放在最后,服务进程将退出收尾)----
-    console.log('\n[9] 优雅重启');
+    console.log('\n[10] 优雅重启');
     const st = await api('GET', '/api/system/status');
     ok(st.ok && st.started_at && st.port === 8099, 'GET /api/system/status');
     s = await api('POST', '/api/sessions', { title: '冒烟-重启保护' });

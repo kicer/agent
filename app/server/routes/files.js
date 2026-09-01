@@ -209,3 +209,4 @@ router.delete('/:id/files/*', function (req, res) {
 });
 
 module.exports = router;
+module.exports.sanitizeName = sanitizeName;
