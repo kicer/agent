@@ -14,11 +14,7 @@ let editorOrig = '';     // 打开/上次保存时的内容,用于脏检测
 function setSkillsView(v) {
   $('skills-back-btn').classList.toggle('hidden', v === 'list');
   $('skill-new-btn').classList.toggle('hidden', v !== 'list');
-  const detailOnly = v === 'detail';
-  $('skill-newfile-btn').classList.toggle('hidden', !detailOnly);
-  $('skill-upload-btn').classList.toggle('hidden', !detailOnly);
-  $('skill-rename-btn').classList.toggle('hidden', !detailOnly);
-  $('skill-del-btn').classList.toggle('hidden', !detailOnly);
+  $('skill-upload-btn').classList.toggle('hidden', v !== 'detail');
   $('skills-list').classList.toggle('hidden', v !== 'list');
   $('skill-detail').classList.toggle('hidden', v !== 'detail');
   $('skill-editor').classList.toggle('hidden', v !== 'editor');
@@ -37,8 +33,9 @@ async function loadSkillList() {
       el.innerHTML = '<div class="empty-tip">还没有技能,点右上角 + 新建一个。</div>';
       return;
     }
-    el.innerHTML = rows.map(s =>
-      '<div class="session-card" onclick="skillsUI.open(\'' + encodeURIComponent(s.name) + '\')">' +
+    el.innerHTML = rows.map(s => {
+      const a = encodeURIComponent(s.name);
+      return '<div class="session-card" onclick="skillsUI.open(\'' + a + '\')">' +
         '<div class="session-main">' +
           '<div class="session-name">' + esc(s.name) +
             (s.has_md ? '' : ' <span class="badge cancelled">缺 SKILL.md</span>') +
@@ -49,7 +46,12 @@ async function loadSkillList() {
             '<span>' + fmtSize(s.size) + '</span>' +
             (s.mtime ? '<span>' + fmtTime(s.mtime) + '</span>' : '') + '</div>' +
         '</div>' +
-      '</div>').join('');
+        '<div class="card-acts">' +
+          '<button class="card-act" onclick="event.stopPropagation();skillsUI.renameSkill(\'' + a + '\')">改名</button>' +
+          '<button class="card-act del" onclick="event.stopPropagation();skillsUI.deleteSkill(\'' + a + '\')">删除</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
   } catch (e) {
     el.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
   }
@@ -63,19 +65,21 @@ async function loadSkillDetail() {
   try {
     const d = await req('GET', '/api/skills/' + encodeURIComponent(curSkill));
     $('skills-title').textContent = d.name;
+    const newBtn = '<button class="ghost-btn" style="width:100%;margin-top:10px" onclick="skillsUI.newFile()">+ 新建文件</button>';
     if (!d.files.length) {
-      el.innerHTML = '<div class="empty-tip">技能目录是空的。</div>';
+      el.innerHTML = '<div class="skill-files"><div class="empty-tip">技能目录是空的</div></div>' + newBtn;
       return;
     }
-    el.innerHTML = d.files.map(f => {
+    el.innerHTML = '<div class="skill-files">' + d.files.map(f => {
       const a = encodeURIComponent(f.filename);
-      return '<div class="file-row">' +
+      return '<div class="file-row" onclick="skillsUI.editFile(\'' + a + '\')">' +
+        '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>' +
         '<span class="file-name">' + esc(f.filename) + '</span>' +
         '<span class="file-size">' + fmtSize(f.size) + '</span>' +
-        '<button class="file-act" onclick="skillsUI.editFile(\'' + a + '\')">编辑</button>' +
-        '<button class="file-act del" onclick="skillsUI.deleteFile(\'' + a + '\')">删</button>' +
+        '<button class="file-act" onclick="event.stopPropagation();skillsUI.editFile(\'' + a + '\')">编辑</button>' +
+        '<button class="file-act del" onclick="event.stopPropagation();skillsUI.deleteFile(\'' + a + '\')">删</button>' +
         '</div>';
-    }).join('');
+    }).join('') + '</div>' + newBtn;
   } catch (e) {
     el.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
   }
@@ -113,25 +117,29 @@ async function createSkill() {
   } catch (e) { toast('创建失败:' + e.message); }
 }
 
-async function renameSkill() {
-  if (!curSkill) return;
-  const nn = prompt('新的技能名:', curSkill);
+async function renameSkill(nameEnc) {
+  const name = nameEnc ? decodeURIComponent(nameEnc) : curSkill;
+  if (!name) return;
+  const nn = prompt('新的技能名:', name);
   if (nn == null) return;
-  const name = nn.trim();
-  if (!name || name === curSkill) return;
+  const newName = nn.trim();
+  if (!newName || newName === name) return;
   try {
-    await req('POST', '/api/skills/' + encodeURIComponent(curSkill) + '/rename', { newName: name });
-    toast('已重命名为 ' + name);
-    await openSkill(encodeURIComponent(name));
+    await req('POST', '/api/skills/' + encodeURIComponent(name) + '/rename', { newName });
+    toast('已重命名为 ' + newName);
+    if (curSkill === name) { curSkill = newName; await loadSkillDetail(); }
+    else await loadSkillList();
   } catch (e) { toast('重命名失败:' + e.message); }
 }
 
-async function deleteSkill() {
-  if (!curSkill) return;
-  if (!confirm('确定删除技能「' + curSkill + '」?目录下所有文件将不可恢复。')) return;
+async function deleteSkill(nameEnc) {
+  const name = nameEnc ? decodeURIComponent(nameEnc) : curSkill;
+  if (!name) return;
+  if (!confirm('确定删除技能「' + name + '」?目录下所有文件将不可恢复。')) return;
   try {
-    await req('DELETE', '/api/skills/' + encodeURIComponent(curSkill));
-    toast('已删除 ' + curSkill);
+    await req('DELETE', '/api/skills/' + encodeURIComponent(name));
+    toast('已删除 ' + name);
+    if (curSkill === name) curSkill = null;
     loadSkillList();
   } catch (e) { toast('删除失败:' + e.message); }
 }

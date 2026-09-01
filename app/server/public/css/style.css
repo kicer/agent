@@ -31,14 +31,6 @@ body {
 }
 .header-left { display: flex; align-items: center; gap: 8px; flex: 1; }
 .header h2 { font-size: 17px; font-weight: 600; white-space: nowrap; }
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: default;
-  padding: 4px 8px;
-  border-radius: 6px;
-}
 .chat-title {
   flex: 1; text-align: center; font-size: 16px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -346,6 +338,32 @@ body {
   font-size: 12px; color: #888; margin-top: 3px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+/* 列表卡右侧操作钮 */
+.card-acts { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; flex-shrink: 0; }
+.card-act {
+  background: #eef3fc; color: #2a5299; border: none; border-radius: 8px;
+  font-size: 12px; padding: 5px 10px; cursor: pointer;
+}
+.card-act.del { background: #fdecea; color: #c0392b; }
+.card-act:active { opacity: 0.7; }
+/* 技能详情文件列表:白卡包裹 + 行图标/胶囊 */
+.skill-files {
+  background: #fff; border-radius: 12px; padding: 6px 8px;
+  box-shadow: 0 1px 4px rgba(30,40,90,0.06);
+}
+.skill-files .file-row { cursor: pointer; border-bottom: 1px dashed #eef0f5; }
+.skill-files .file-row:last-child { border-bottom: none; }
+.skill-files .file-ico {
+  width: 16px; height: 16px; flex-shrink: 0;
+  stroke: #7f8db0; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.skill-files .file-name { color: #223; font-weight: 500; }
+.skill-files .file-size {
+  background: #f2f3f7; color: #8a93a6; font-size: 11px;
+  padding: 2px 8px; border-radius: 9px; flex-shrink: 0;
+}
+.skill-files .file-act { background: #eef3fc; border-radius: 7px; padding: 4px 9px; flex-shrink: 0; }
+.skill-files .file-act.del { background: #fdecea; color: #c0392b; }
 /* 代码/配置编辑器:全屏覆盖所在 Tab(盖住列表/详情与顶栏,不遮底部导航) */
 #skill-editor, #cfg-editor {
   position: absolute; inset: 0; z-index: 6; background: #f2f3f7;
