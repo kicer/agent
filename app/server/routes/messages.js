@@ -14,8 +14,31 @@ function wrap(fn) {
   };
 }
 
+// 附件提示词:用户带附件发消息时,服务端在正文前拼一行系统通知,
+// 与消息一并落库(历史重建时 AI 能看到)。格式:
+//   【系统通知】用户上传了文件：a.png（大小 1.2 MB）、b.txt（大小 3 KB）
+//   <用户原文>
+function fmtSize(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+function composeWithAttachments(content, attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return content;
+  const list = attachments.slice(0, 20).map(a =>
+    String(a && a.name || 'file').slice(0, 200) + '（大小 ' + fmtSize(a && a.size) + '）'
+  ).join('、');
+  const notice = '【系统通知】用户上传了文件：' + list;
+  return content ? notice + '\n' + content : notice;
+}
+
 router.post('/:id/messages', wrap((req, res) => {
-  const content = String((req.body && req.body.content) || '').trim();
+  const content = composeWithAttachments(
+    String((req.body && req.body.content) || '').trim(),
+    req.body && req.body.attachments
+  );
   if (!content) return res.status(400).json({ error: 'content 不能为空' });
   const r = engine.postUserMessage(req.params.id, content);
   res.json(r);

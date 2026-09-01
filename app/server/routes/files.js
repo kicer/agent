@@ -63,17 +63,7 @@ router.post('/:id/files', upload.array('files', 10), function (req, res) {
       db.prepare('INSERT INTO files (session_id, filename, size, created_at) VALUES (?,?,?,?)')
         .run(req.params.id, f.filename, f.size, Date.now());
     }
-    // 主动告知 AI：文件名、大小以单行随上传送达会话（live/held/queued 都能送达）。
-    // 附任务目录绝对路径、明确无需列目录验证与确认回复，减少 AI 多余探索；通知失败不影响上传本身。
-    if (uploaded.length) {
-      try {
-        const dir = engine.taskDirOf(req.params.id);
-        const list = uploaded.map(f => f.filename + '（' + f.size + ' 字节）').join('；');
-        engine.postUserMessage(req.params.id,
-          '【系统通知】用户刚通过页面上传了 ' + uploaded.length + ' 个文件，已存在于任务目录 ' + dir + ' 中：' + list +
-          '。文件已确认存在，无需再列目录或读取验证；无需为确认收到而回复，除非用户另有诉求。');
-      } catch (e) { console.warn('[files] 上传通知 AI 失败:', e && e.message || e); }
-    }
+    // 不再自动通知 AI:附件随用户下一条消息统一告知(见 routes/messages.js 的 attachments)
     res.json({ uploaded });
   } catch (err) {
     res.status(500).json({ error: String(err && err.message || err) });

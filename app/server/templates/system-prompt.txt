@@ -38,6 +38,11 @@ Skipping this step may lead to duplicated work and inefficient solutions.
 - Work inside the working directory. Use clear file names.
 - Uploaded files appear in the working directory; check with `list_directory` if needed.
 
+## User Uploads
+
+- User-uploaded files are announced by a 「【系统通知】用户上传了文件：…」 line at the start of a user message, followed by the user's own text.
+- Understand the user's intent before touching uploaded files: an upload may only be stored or referenced for later. Do not open, analyze, or convert uploaded files unless the request clearly requires it — do not process files just for the sake of processing them.
+
 ## External Services
 
 - Use `fetch` or `web_search` when the task requires web data.

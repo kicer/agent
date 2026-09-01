@@ -245,6 +245,15 @@ async function main() {
     ok(qc.some(x => x.id === fs9.id), 'q= 按消息内容命中');
     const qnone = await api('GET', '/api/sessions?q=绝无此内容xyzzy-9x7');
     ok(Array.isArray(qnone) && qnone.length === 0, 'q= 无命中返回空');
+    // 附件消息:服务端在正文前拼【系统通知】行,与消息一并落库
+    await api('POST', '/api/sessions/' + fs9.id + '/messages', { content: '', attachments: [{ name: 'a.png', size: 1536 }, { name: 'b.txt', size: 20 }] });
+    const noticePrefix = '【系统通知】用户上传了文件：a.png（大小 1.5 KB）、b.txt（大小 20 B）';
+    let attOk = false;
+    try {
+      await waitSession(fs9.id, x => x.messages.some(m => m.role === 'user' && m.content.indexOf(noticePrefix) === 0), 6000, '附件通知落库');
+      attOk = true;
+    } catch (_) {}
+    ok(attOk, '附件提示词按格式拼接(文件名+大小)');
     // token 用量:model_usage 由 mock 上游的 usage 帧驱动,输入/输出分开统计
     const usagePool = await api('GET', '/api/models');
     const sumP = usagePool.reduce(function (n, m) { return n + (m.today_prompt || 0); }, 0);

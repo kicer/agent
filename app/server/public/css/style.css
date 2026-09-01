@@ -206,6 +206,23 @@ body {
 .file-act.del { color: #c33; }
 .empty-tip { color: #99a; text-align: center; padding: 18px; font-size: 13px; }
 
+/* ---- 待发送附件(随下一条消息统一告知 AI) ---- */
+.attach-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 6px; }
+.attach-chip {
+  display: flex; align-items: center; gap: 6px; max-width: 100%;
+  background: #fff; border: 1px solid #d5deee; border-radius: 14px;
+  padding: 4px 10px; font-size: 12px; color: #334;
+}
+.attach-chip .nm { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip .st { color: #2a5299; flex: none; }
+.attach-chip.err { border-color: #eac2bd; color: #c0392b; }
+.attach-chip.err .st { color: #c0392b; }
+.attach-chip .x { color: #99a; background: none; border: none; font-size: 14px; line-height: 1; padding: 0 2px; cursor: pointer; }
+.file-upload-btn.uploading svg { display: none; }
+.up-pct { font-size: 11px; font-weight: 600; color: #2a5299; }
+/* 消息气泡内的附件行 */
+.msg-files { font-size: 12px; opacity: 0.85; margin-bottom: 4px; word-break: break-all; }
+
 /* ---- 输入区 ---- */
 .input-area {
   display: flex; align-items: flex-end; gap: 8px;

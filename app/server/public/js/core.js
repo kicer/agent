@@ -92,14 +92,15 @@ function confirmModal(title, text, okText, danger) {
   });
 }
 function confirmClose(v) { _dlgSettle(v); }
-// 输入框:resolve(字符串) 或取消 resolve(null)
-function promptModal(title, placeholder, initial) {
+// 输入框:resolve(字符串) 或取消 resolve(null);opts.type 可指定 password 等输入类型
+function promptModal(title, placeholder, initial, opts) {
   return new Promise(resolve => {
     _dlgResolve = resolve;
     $('prompt-title').textContent = title || '请输入';
     const inp = $('prompt-input');
     inp.placeholder = placeholder || '';
     inp.value = initial || '';
+    inp.type = opts && opts.type ? opts.type : 'text';
     $('prompt-modal').classList.remove('hidden');
     setTimeout(() => inp.focus(), 60);
   });

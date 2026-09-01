@@ -57,6 +57,30 @@ function kvPlain(label, v) {
   return '<div class="cfg-kv"><label>' + esc(label) + '</label><b>' + esc(dispVal(v)) + '</b></div>';
 }
 
+// 账号卡(仅启用认证时显示):当前登录 + 修改密码(prompt 弹窗,免原密码,立即生效)
+function accountCard(me) {
+  return '<div class="settings-card"><h4>账号</h4>' +
+    kvPlain('当前登录', me) +
+    '<button class="primary-btn" id="pwd-btn" style="width:100%;margin-top:8px" onclick="cfgUI.changePassword()">修改密码</button>' +
+    '<div class="cfg-note">修改立即生效并写回 config.yml;其他已登录设备需重新登录时才用新密码。</div></div>';
+}
+
+async function changePassword() {
+  const btn = $('pwd-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const newP = await promptModal('修改密码', '新密码,至少 6 位', '', { type: 'password' });
+    if (newP == null) return;
+    if (newP.length < 6) { toast('新密码至少 6 位'); return; }
+    await req('POST', '/api/password', { new_password: newP });
+    toast('密码已修改,立即生效');
+  } catch (e) {
+    toast('修改失败:' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function svcCard(st) {
   let html = '<div class="settings-card"><h4>服务状态' +
     (pendingKeys.size ? ' <span class="badge held">待重启生效</span>' : '') + '</h4>';
@@ -103,12 +127,13 @@ async function loadSettings() {
   if (!el) return;
   el.innerHTML = '<div class="empty-tip">加载中…</div>';
   try {
-    const [st, cg] = await Promise.all([
+    const [st, cg, me] = await Promise.all([
       req('GET', '/api/system/status'),
       req('GET', '/api/config'),
+      req('GET', '/api/me').catch(function () { return { user: null }; }), // 未启用认证时无此路由
     ]);
     effCfg = cg.effective || {};
-    el.innerHTML = svcCard(st) + formCard();
+    el.innerHTML = (st.auth_enabled && me && me.user ? accountCard(me.user) : '') + svcCard(st) + formCard();
   } catch (e) {
     el.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
   }
@@ -238,6 +263,7 @@ async function closeCfgEditor() {
 
 window.cfgUI = {
   saveForm: saveForm,
+  changePassword: changePassword,
   restart: restart,
   open: openCfgEditor,
   save: saveCfgEditor,

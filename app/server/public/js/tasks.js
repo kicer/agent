@@ -152,6 +152,91 @@ async function doSearch() {
   } catch (e) { toast('搜索失败:' + e.message); }
 }
 
+// ---------- 待发送附件 ----------
+// 选定文件后立即传到任务目录,但**不通知 AI**;下一条用户消息发送时,
+// 由服务端在正文前拼【系统通知】一并送达(见 routes/messages.js)。
+let pendingFiles = []; // { name, size, pct, status: 'up'|'ok'|'err', xhr? }
+
+function renderAttach() {
+  const row = $('attach-row');
+  if (!row) return;
+  row.classList.toggle('hidden', !pendingFiles.length);
+  row.innerHTML = pendingFiles.map(function (f, i) {
+    const st = f.status === 'up' ? (f.pct + '%') : f.status === 'ok' ? '✓' : '失败';
+    return '<span class="attach-chip' + (f.status === 'err' ? ' err' : '') + '">' +
+      '<span class="nm">' + esc(f.name) + '</span><span class="st">' + st + '</span>' +
+      '<button class="x" onclick="ui.removeAttach(' + i + ')">×</button></span>';
+  }).join('');
+  // 输入框里的回形针图标在上传中换成总进度百分比
+  const lb = document.getElementById('attach-btn');
+  const pctEl = $('up-pct');
+  if (lb && pctEl) {
+    const ups = pendingFiles.filter(function (f) { return f.status === 'up'; });
+    lb.classList.toggle('uploading', ups.length > 0);
+    if (ups.length) {
+      let done = 0, tot = 0;
+      for (const f of pendingFiles) { if (f.status === 'err') continue; done += f.size * f.pct / 100; tot += f.size; }
+      pctEl.textContent = (tot ? Math.round(done / tot * 100) : 0) + '%';
+    }
+  }
+}
+
+function startUpload(file) {
+  if (!state.sessionId) return;
+  const item = { name: file.name, size: file.size, pct: 0, status: 'up' };
+  pendingFiles.push(item);
+  renderAttach();
+  const fd = new FormData();
+  fd.append('files', file);
+  const xhr = new XMLHttpRequest();
+  item.xhr = xhr;
+  xhr.open('POST', '/api/sessions/' + state.sessionId + '/files');
+  xhr.upload.onprogress = function (e) {
+    if (e.lengthComputable) { item.pct = Math.min(99, Math.round(e.loaded / e.total * 100)); renderAttach(); }
+  };
+  xhr.onload = function () {
+    let r = {};
+    try { r = JSON.parse(xhr.responseText); } catch (_) {}
+    if (xhr.status === 200 && r.uploaded && r.uploaded[0]) {
+      item.name = r.uploaded[0].filename; // 以服务端清洗/重命名后的文件名为准
+      item.size = r.uploaded[0].size;
+      item.pct = 100;
+      item.status = 'ok';
+    } else {
+      item.status = 'err';
+      toast('上传失败:' + (r.error || xhr.status));
+    }
+    item.xhr = null;
+    renderAttach();
+  };
+  xhr.onerror = function () { item.status = 'err'; item.xhr = null; renderAttach(); toast('上传失败:网络错误'); };
+  xhr.send(fd);
+}
+
+function removeAttach(i) {
+  const f = pendingFiles[i];
+  if (!f) return;
+  if (f.xhr) { try { f.xhr.abort(); } catch (_) {} }
+  else if (f.status === 'ok' && state.sessionId) {
+    // 已传完成的附件被移除:连带删掉已落盘的文件,避免任务目录里残留孤儿文件
+    req('DELETE', '/api/sessions/' + state.sessionId + '/files?path=' + encodeURIComponent(f.name)).catch(function () {});
+  }
+  pendingFiles.splice(i, 1);
+  renderAttach();
+}
+
+// 历史消息里的【系统通知】行:展示层拆成附件胶囊行 + 用户原文
+function parseUploadNotice(content) {
+  const m = /^【系统通知】用户上传了文件：([^\n]*)(?:\n([\s\S]*))?$/.exec(content || '');
+  if (!m) return { text: content || '', files: null };
+  const files = m[1].split('、').map(function (s) { return s.replace(/（大小[^）]*）$/, '').trim(); }).filter(Boolean);
+  return { text: m[2] || '', files: files };
+}
+
+function attachBubbleLine(names) {
+  return names && names.length ? '<div class="msg-files">📎 ' + names.map(esc).join('　') + '</div>' : '';
+}
+
 // ---------- 消息渲染 ----------
 function md(text) {
   if (typeof marked === 'undefined') return esc(text);
@@ -189,9 +274,11 @@ function msgNode(m, cardMap) {
   }
   const wrap = document.createElement('div');
   if (m.role === 'user') {
+    const p = parseUploadNotice(m.content);
     wrap.className = 'msg me';
     wrap.innerHTML = '<div class="msg-user">我</div>' +
-      '<div class="msg-bubble">' + esc(m.content) + '</div>' +
+      '<div class="msg-bubble">' + attachBubbleLine(p.files) + esc(p.text) + '</div>';
+  } else if (m.role === 'assistant' && (m.content || !m.tool_calls)) {
       '<div class="msg-time">' + fmtTime(m.created_at) + '</div>';
     return wrap;
   }
@@ -457,6 +544,9 @@ const ui = {
   },
   async openSession(id) {
     state.sessionId = id;
+    // 待发送附件属于上一个会话的语境,切会话时清空展示(文件已落盘,可在文件面板查看)
+    pendingFiles = [];
+    renderAttach();
     showChat();
     try {
       const detail = await req('GET', '/api/sessions/' + id);
@@ -474,19 +564,27 @@ const ui = {
   async send() {
     const ta = $('msg-input');
     const content = ta.value.trim();
-    if (!content || !state.sessionId) return;
+    if (!state.sessionId) return;
+    if (pendingFiles.some(f => f.status === 'up')) { toast('附件上传中,请稍候'); return; }
+    const atts = pendingFiles.filter(f => f.status === 'ok').map(f => ({ name: f.name, size: f.size }));
+    if (!content && !atts.length) return;
     ta.value = '';
     ta.style.height = 'auto';
     const box = $('messages');
     const tip = box.querySelector('.empty-tip');
     if (tip) tip.remove();
     try {
-      const r = await req('POST', '/api/sessions/' + state.sessionId + '/messages', { content });
+      const body = { content };
+      if (atts.length) body.attachments = atts;
+      const r = await req('POST', '/api/sessions/' + state.sessionId + '/messages', body);
       const wrap = document.createElement('div');
       wrap.className = 'msg me';
       wrap.innerHTML = '<div class="msg-user">我' + (r.delivered === 'queued' ? '(排队中,暂存)' : '') + '</div>' +
-        '<div class="msg-bubble">' + esc(content) + '</div>';
+        '<div class="msg-bubble">' + attachBubbleLine(atts.map(a => a.name)) + esc(content) + '</div>';
       box.appendChild(wrap);
+      // 发送成功后附件已随消息告知 AI;失败的保留,由用户决定重试或移除
+      pendingFiles = pendingFiles.filter(f => f.status === 'err');
+      renderAttach();
       // 立即给出回馈:占位气泡 + 等待计时,首个增量/回复到达时移除并填充内容
       if (r.delivered !== 'queued') addPendingBubble();
       scrollBottom();
@@ -515,16 +613,11 @@ const ui = {
   async uploadFiles(ev) {
     const input = ev.target;
     const files = input.files;
-    if (!files || !files.length || !state.sessionId) return;
-    const fd = new FormData();
-    for (const f of files) fd.append('files', f);
     input.value = '';
-    try {
-      const r = await req('POST', '/api/sessions/' + state.sessionId + '/files', fd, true);
-      toast('已上传 ' + r.uploaded.length + ' 个文件');
-      loadFiles();
-    } catch (e) { toast('上传失败:' + e.message); }
+    if (!files || !files.length || !state.sessionId) return;
+    for (const f of files) startUpload(f); // 多个文件并行上传,进度在回形针图标上汇总
   },
+  removeAttach(i) { removeAttach(i); },
   async deleteFile(name) {
     if (!await confirmModal('删除文件', '删除文件 ' + name + ' ?', '删除', true)) return;
     try {

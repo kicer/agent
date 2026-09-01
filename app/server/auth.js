@@ -4,6 +4,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
+const { readConfigText, applyEditsToText, loadConfigFromText, writeConfigText } = require('./config');
 
 const COOKIE_NAME = 'agent_token';
 const DEFAULT_TTL_MS = 30 * 24 * 3600 * 1000; // 30 天
@@ -128,6 +129,40 @@ function createAuth(cfg) {
   router.post('/api/logout', (req, res) => {
     clearAuthCookie(res);
     res.json({ ok: true });
+  });
+
+  // ----- 修改密码(设置页) -----
+  // 已登录即可改自己的密码(免输原密码) → 写回 config.yml(保留注释,校验失败不动文件)
+  // → 同步更新内存(users/validUsers),立即生效无需重启。
+  // 已签发的 token 不失效(HMAC 无状态);其他设备下次登录才需新密码。
+  // 注:本路由挂在认证中间件之前,需手动验登录态。
+  router.post('/api/password', (req, res) => {
+    try {
+      const me = sessionUser(req);
+      if (!me) return res.status(401).json({ error: '未登录' });
+      const newP = String((req.body && req.body.new_password == null ? '' : req.body.new_password));
+      if (newP.length < 6) return res.status(400).json({ error: '新密码至少 6 位' });
+      const idx = users.findIndex(u => String(u.user) === me);
+      if (idx < 0) return res.status(404).json({ error: '当前用户已不在配置中' });
+      if (newP === users[idx].password) return res.status(400).json({ error: '新密码与当前密码相同' });
+      const text = readConfigText(cfg);
+      if (text === null) return res.status(409).json({ error: '配置文件不存在,无法持久化新密码' });
+      let nextText;
+      try {
+        nextText = applyEditsToText(text, [{ path: ['auth', 'users', String(idx), 'password'], value: newP }]);
+        loadConfigFromText(nextText, cfg.config_path);
+      } catch (e) {
+        return res.status(400).json({ error: '写入配置失败:' + String(e && e.message || e) });
+      }
+      writeConfigText(cfg, nextText);
+      // 内存同步:users 与 engine.cfg 是同一对象,Basic 认证实时生效;cookie 登录查 validUsers
+      users[idx].password = newP;
+      validUsers.set(me, newP);
+      console.log('[auth] 用户 ' + me + ' 修改了密码');
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e && e.message || e) });
+    }
   });
 
   router.get('/api/me', (req, res) => {
