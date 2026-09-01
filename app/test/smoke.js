@@ -204,6 +204,7 @@ async function main() {
     const origText = fs.readFileSync(cfgPath, 'utf8');
     const got = await api('GET', '/api/config');
     ok(got.exists && got.text.includes('models:'), 'GET /api/config 返回原文');
+    ok(got.effective && got.effective.agent && got.effective.agent.max_retries === 1 && got.effective.models.length === 2, 'GET 返回生效配置(effective)');
     const patched = await api('PATCH', '/api/config', { path: 'agent.temperature', value: 0.5 });
     ok(patched.ok && patched.changed.includes('agent'), 'PATCH 单项修改');
     const afterPatch = await api('GET', '/api/config');
@@ -213,6 +214,9 @@ async function main() {
     try { await api('PUT', '/api/config', { text: 'models: [unclosed' }); } catch (e) { bad400 = /400/.test(e.message); }
     ok(bad400, 'PUT 非法配置被 400 拒绝');
     ok(fs.readFileSync(cfgPath, 'utf8') === afterPatch.text, '非法写入未动文件');
+    const mpatch = await api('PATCH', '/api/config', { path: 'models.0.display_name', value: '改名模型' });
+    const mtext = (await api('GET', '/api/config')).text;
+    ok(mpatch.ok && mtext.includes('改名模型'), 'PATCH 支持 models[i] 数组下标');
     const restored = await api('PUT', '/api/config', { text: origText });
     ok(restored.ok && fs.readFileSync(cfgPath, 'utf8') === origText, 'PUT 整文件恢复原配置');
 

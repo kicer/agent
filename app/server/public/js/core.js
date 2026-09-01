@@ -39,7 +39,9 @@ async function req(method, url, body, isForm) {
   if (!res.ok) {
     let msg = 'HTTP ' + res.status;
     try { msg = (await res.json()).error || msg; } catch (_) {}
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status; // 供调用方区分 409(重启保护/重名)等状态
+    throw err;
   }
   return res.json();
 }

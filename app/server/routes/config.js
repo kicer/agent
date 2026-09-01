@@ -34,11 +34,11 @@ function diffTop(oldCfg, newCfg) {
 
 function cfgOf() { return engine.getConfig(); }
 
-// 配置原文 + 路径(页面编辑器用;注释原样保留)
+// 配置原文 + 路径 + 当前生效配置(设置页表单显示当前值;注释原样保留)
 router.get('/', wrap((req, res) => {
   const cfg = cfgOf();
   const text = readConfigText(cfg);
-  res.json({ config_path: cfg.config_path || '', exists: text !== null, text: text === null ? '' : text });
+  res.json({ config_path: cfg.config_path || '', exists: text !== null, text: text === null ? '' : text, effective: cfg });
 }));
 
 // 干跑校验(编辑器保存前预检):body { text }

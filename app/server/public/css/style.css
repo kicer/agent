@@ -352,15 +352,40 @@ body {
   font-size: 12px; color: #888; margin-top: 3px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-/* 文件编辑器:全屏覆盖本 Tab(盖住列表/详情与顶栏,不遮底部导航) */
-#skill-editor {
+/* 代码/配置编辑器:全屏覆盖所在 Tab(盖住列表/详情与顶栏,不遮底部导航) */
+#skill-editor, #cfg-editor {
   position: absolute; inset: 0; z-index: 6; background: #f2f3f7;
   display: flex; flex-direction: column;
 }
-#skill-editor-area {
+#skill-editor-area, #cfg-editor-area {
   flex: 1; margin: 10px 12px 12px; resize: none; outline: none;
   border: 1px solid #dde; border-radius: 10px; background: #fff; color: #223;
   padding: 10px 12px; font-size: 12.5px; line-height: 1.55; tab-size: 4;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
   white-space: pre; overflow: auto;
+}
+
+/* ---- 设置页(阶段 5) ---- */
+.settings-card {
+  background: #fff; border-radius: 12px; padding: 10px 14px 12px; margin-bottom: 12px;
+  box-shadow: 0 1px 4px rgba(30,40,90,0.06);
+}
+.settings-card h4 { font-size: 14px; color: #334; margin: 4px 0 2px; display: flex; align-items: center; gap: 8px; }
+.cfg-kv {
+  display: flex; align-items: baseline; gap: 10px;
+  font-size: 13px; padding: 7px 0; border-bottom: 1px dashed #eef0f5;
+}
+.cfg-kv:last-of-type { border-bottom: none; }
+.cfg-kv label { color: #889; flex: none; max-width: 42%; }
+.cfg-kv b {
+  font-weight: 500; flex: 1; text-align: right; color: #223;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.cfg-note { font-size: 11.5px; color: #99a; line-height: 1.5; margin-top: 6px; }
+/* 原文编辑器保存前的校验错误条 */
+.cfg-err {
+  margin: 8px 12px 0; padding: 8px 12px; border-radius: 8px;
+  background: #fdecea; color: #a3352a; font-size: 12.5px;
+  white-space: pre-wrap; word-break: break-all;
 }

@@ -98,7 +98,24 @@
           <span>当前用户:<b id="whoami" class="hidden">-</b></span>
           <button class="ghost-btn small hidden" id="logout-btn" onclick="ui.logout()">退出登录</button>
         </div>
-        <div class="empty-tip">设置中心开发中(阶段 5):config.yml 配置管理与服务重启。</div>
+        <div id="cfg-sections"><div class="empty-tip">加载中…</div></div>
+      </div>
+
+      <!-- config.yml 原文编辑器(全屏覆盖本 Tab) -->
+      <div id="cfg-editor" class="hidden">
+        <div class="header">
+          <button class="icon-btn" onclick="cfgUI.close()" title="关闭">
+            <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </button>
+          <span class="chat-title">config.yml 原文</span>
+          <div class="header-right">
+            <button class="icon-btn" onclick="cfgUI.save()" title="校验并保存">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            </button>
+          </div>
+        </div>
+        <div id="cfg-editor-err" class="cfg-err hidden"></div>
+        <textarea id="cfg-editor-area" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
       </div>
     </div>
 
@@ -218,10 +235,10 @@
   <div class="toast hidden" id="toast"></div>
 
   <!-- 发版时更新 v 参数,避免移动端浏览器缓存旧 JS -->
-  <script src="/js/core.js?v=20260901e"></script>
-  <script src="/js/tasks.js?v=20260901e"></script>
-  <script src="/js/skills.js?v=20260901e"></script>
-  <script src="/js/models.js?v=20260901e"></script>
-  <script src="/js/settings.js?v=20260901e"></script>
+  <script src="/js/core.js?v=20260901f"></script>
+  <script src="/js/tasks.js?v=20260901f"></script>
+  <script src="/js/skills.js?v=20260901f"></script>
+  <script src="/js/models.js?v=20260901f"></script>
+  <script src="/js/settings.js?v=20260901f"></script>
 </body>
 </html>
