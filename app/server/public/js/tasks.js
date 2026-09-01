@@ -1,67 +1,8 @@
-// Agent 任务台前端：会话列表 / 聊天（SSE 流式）/ 文件管理 / 阶段开关
-// 交互风格参考 ai-xiaocai（移动优先、左右滑动切页）。
+// 任务 Tab:会话列表 / 聊天(SSE 流式)/ 文件管理 / 阶段开关。
+// 交互沿用 1.0:移动优先,聊天详情为全屏覆盖页(盖住底部导航),右滑返回列表。
 'use strict';
 
-if (typeof marked !== 'undefined') {
-  marked.setOptions({ breaks: true, gfm: true });
-}
-
-const state = {
-  sessionId: null,
-  status: '',
-  es: null,
-  streamEl: null,
-  streamText: '',
-  toolCards: {},
-  filePanelOpen: false,
-  pendingDeleteId: null,
-  pendingEl: null,
-  pendingTimer: null,
-  pendingStart: 0,
-};
-
-// ---------- API ----------
-async function req(method, url, body, isForm) {
-  const opt = { method, headers: {} };
-  if (body && !isForm) {
-    opt.headers['Content-Type'] = 'application/json';
-    opt.body = JSON.stringify(body);
-  } else if (body && isForm) {
-    opt.body = body;
-  }
-  const res = await fetch(url, opt);
-  if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
-  if (!res.ok) {
-    let msg = 'HTTP ' + res.status;
-    try { msg = (await res.json()).error || msg; } catch (_) {}
-    throw new Error(msg);
-  }
-  return res.json();
-}
-
-// ---------- 工具函数 ----------
-function $(id) { return document.getElementById(id); }
-function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
-function fmtSize(n) {
-  if (n == null) return '';
-  if (n < 1024) return n + ' B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-  return (n / 1024 / 1024).toFixed(1) + ' MB';
-}
-function fmtTime(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  const p = n => String(n).padStart(2, '0');
-  const today = new Date().toDateString() === d.toDateString();
-  return (today ? '' : (d.getMonth() + 1) + '/' + d.getDate() + ' ') + p(d.getHours()) + ':' + p(d.getMinutes());
-}
-function toast(msg) {
-  const el = $('toast');
-  el.textContent = msg;
-  el.classList.remove('hidden');
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.add('hidden'), 2500);
-}
+// ---------- 工具摘要(工具卡片用) ----------
 function toolArgsSummary(name, argsStr) {
   let s = '';
   try {
@@ -78,31 +19,33 @@ function toolArgsFull(argsStr) {
   catch (_) { return argsStr || ''; }
 }
 
-// ---------- 页面切换 ----------
+// ---------- 聊天详情覆盖页进出(底部导航随之隐藏/恢复) ----------
 function showChat() {
-  $('list-page').classList.add('off-left');
-  $('chat-page').classList.remove('hidden');
-  $('chat-page').classList.add('off-right');
+  $('tabbar').classList.add('hidden');
+  const cp = $('chat-page');
+  cp.classList.remove('hidden');
+  cp.classList.add('off-right');
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => $('chat-page').classList.remove('off-right'));
+    requestAnimationFrame(() => cp.classList.remove('off-right'));
   });
 }
 function showList() {
-  $('chat-page').classList.add('off-right');
-  setTimeout(() => {
-    $('chat-page').classList.add('hidden');
-    $('list-page').classList.remove('off-left');
-  }, 50);
+  const cp = $('chat-page');
+  cp.classList.add('off-right');
+  setTimeout(() => cp.classList.add('hidden'), 50);
+  $('tabbar').classList.remove('hidden');
 }
 
-// 滑动切换：聊天页右滑返回列表
+// 滑动切换:聊天页右滑返回列表
 (function bindSwipe() {
   let x0 = null, y0 = null;
-  $('chat-page').addEventListener('touchstart', e => {
+  const cp = $('chat-page');
+  if (!cp) return;
+  cp.addEventListener('touchstart', e => {
     if (e.touches.length !== 1) return;
     x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
   }, { passive: true });
-  $('chat-page').addEventListener('touchend', e => {
+  cp.addEventListener('touchend', e => {
     if (x0 == null) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - x0, dy = t.clientY - y0;
@@ -117,7 +60,7 @@ async function loadSessions() {
     const rows = await req('GET', '/api/sessions');
     const el = $('session-list');
     if (!rows.length) {
-      el.innerHTML = '<div class="empty-tip">还没有任务，点右上角 + 新建</div>';
+      el.innerHTML = '<div class="empty-tip">还没有任务,点右上角 + 新建</div>';
       return;
     }
     el.innerHTML = rows.map(s => {
@@ -132,7 +75,7 @@ async function loadSessions() {
         '<button class="session-del" onclick="event.stopPropagation();ui.deleteSession(\'' + s.id + '\')">删除</button>' +
       '</div>';
     }).join('');
-  } catch (e) { toast('加载会话失败：' + e.message); }
+  } catch (e) { toast('加载会话失败:' + e.message); }
 }
 
 async function loadModels() {
@@ -169,7 +112,7 @@ function fillToolResult(id, content, isError) {
   if (isError) card.classList.add('error');
   card.querySelector('.spin').textContent = isError ? '✕' : '✓';
   const pre = card.querySelector('.tool-result');
-  if (pre) pre.textContent = content || '（空）';
+  if (pre) pre.textContent = content || '(空)';
 }
 
 function msgNode(m, cardMap) {
@@ -206,7 +149,7 @@ function appendToolCardsFromAssistant(m, container) {
   try { calls = typeof m.tool_calls === 'string' ? JSON.parse(m.tool_calls) : m.tool_calls; } catch (_) { return; }
   for (const c of calls) {
     const id = c.id || ('c' + Math.random().toString(36).slice(2, 10));
-    if (state.toolCards[id]) continue; // tool_call 事件已经建过同一张卡，不重复创建
+    if (state.toolCards[id]) continue; // tool_call 事件已经建过同一张卡,不重复创建
     const card = renderToolCard(id, c.function.name, c.function.arguments);
     container.appendChild(card);
     state.toolCards[id] = card;
@@ -230,7 +173,7 @@ async function renderDetail(detail) {
     if (m.role === 'assistant') appendToolCardsFromAssistant(m, box);
   }
   if (!detail.messages.length) {
-    box.innerHTML = '<div class="empty-tip">描述你的需求，AI 会和你讨论并直接干活。</div>';
+    box.innerHTML = '<div class="empty-tip">描述你的需求,AI 会和你讨论并直接干活。</div>';
   }
   scrollBottom();
   loadFiles();
@@ -242,7 +185,7 @@ function scrollBottom() {
 }
 
 // ---------- AI 处理中占位 ----------
-// 发送后立即挂一个「思考中 + 秒计时」占位气泡，首个增量/回复/工具卡到达时移除，
+// 发送后立即挂一个「思考中 + 秒计时」占位气泡,首个增量/回复/工具卡到达时移除,
 // 避免上游慢时长时间无反馈像卡死。
 function addPendingBubble() {
   removePendingBubble();
@@ -319,7 +262,7 @@ function connectStream() {
   es.addEventListener('tool_call', ev => {
     const d = JSON.parse(ev.data);
     removePendingBubble(); // 工具卡出现也算即时反馈
-    if (state.toolCards[d.id]) return; // assistant_message 已建卡（含完整参数），不重复创建
+    if (state.toolCards[d.id]) return; // assistant_message 已建卡(含完整参数),不重复创建
     const card = renderToolCard(d.id, d.name, d.arguments);
     $('messages').appendChild(card);
     state.toolCards[d.id] = card;
@@ -331,7 +274,7 @@ function connectStream() {
     scrollBottom();
   });
   es.addEventListener('done', ev => {
-    removePendingBubble(); // 本轮结束，占位兼终止（如模型报错无回复）
+    removePendingBubble(); // 本轮结束,占位兼终止(如模型报错无回复)
     loadSessions();
     loadModels();
   });
@@ -339,8 +282,8 @@ function connectStream() {
     removePendingBubble();
     try {
       const d = JSON.parse(ev.data);
-      if (d && d.message) toast('错误：' + d.message);
-    } catch (_) { /* EventSource 连接错误，自动重连 */ }
+      if (d && d.message) toast('错误:' + d.message);
+    } catch (_) { /* EventSource 连接错误,自动重连 */ }
   });
 }
 
@@ -349,16 +292,16 @@ function updatePhaseUI(d) {
   const pill = $('status-pill');
   const stMap = { queued: '排队中', active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
   let text = stMap[state.status] || state.status || '--';
-  if (d && d.queue_pos) text += '（第 ' + d.queue_pos + ' 位）';
+  if (d && d.queue_pos) text += '(第 ' + d.queue_pos + ' 位)';
   // active/held 时附带当前占用的模型
   if ((state.status === 'active' || state.status === 'held') && d && d.model_id) {
     text += ' · ' + d.model_id;
   }
   pill.textContent = text;
-  // 状态胶囊配色：活跃中绿（执行中）、保持中黄（已答完、保持模型中）等；状态栏整体同步染色
+  // 状态胶囊配色:活跃中绿(执行中)、保持中黄(已答完、保持模型中)等;状态栏整体同步染色
   pill.className = 'status-pill ' + (state.status || '');
   $('phase-bar').className = 'phase-bar ' + (state.status || '');
-  // 活跃中提供「终止」；保持中改为「断开」（主动放弃保持租约，会话结为已完成）
+  // 活跃中提供「终止」;保持中改为「断开」(主动放弃保持租约,会话结为已完成)
   const btn = $('stop-btn');
   const actionable = state.status === 'active' || state.status === 'held';
   btn.classList.toggle('hidden', !actionable);
@@ -367,16 +310,16 @@ function updatePhaseUI(d) {
 }
 
 // ---------- 文件 ----------
-// 下载：先换一枚短时效签名链接，再 window.location.href 交给浏览器原生下载。
-// （fetch+blob 在移动端浏览器会被改名 uuid.bin；原生导航下载按服务端
-// Content-Disposition 保留原名，同源自动携带登录 cookie。）
+// 下载:先换一枚短时效签名链接,再 window.location.href 交给浏览器原生下载。
+// (fetch+blob 在移动端浏览器会被改名 uuid.bin;原生导航下载按服务端
+// Content-Disposition 保留原名,同源自动携带登录 cookie。)
 async function downloadFile(name) {
   if (!state.sessionId) return;
   try {
     const r = await req('GET', '/api/sessions/' + state.sessionId + '/files/download-token?path=' + encodeURIComponent(name));
     window.location.href = r.url;
   } catch (e) {
-    toast('下载失败：' + e.message);
+    toast('下载失败:' + e.message);
   }
 }
 
@@ -395,7 +338,7 @@ async function loadFiles() {
         '<button class="file-act" onclick="ui.downloadFile(\'' + esc(f.filename) + '\')">下载</button>' +
         '<button class="file-act del" onclick="ui.deleteFile(\'' + esc(f.filename).replace(/'/g, '%27') + '\')">删</button></div>';
     }).join('');
-  } catch (e) { toast('读取文件失败：' + e.message); }
+  } catch (e) { toast('读取文件失败:' + e.message); }
 }
 
 // ---------- 主逻辑 ----------
@@ -425,12 +368,12 @@ const ui = {
       $('new-title').value = '';
       await loadSessions();
       this.openSession(s.id);
-    } catch (e) { toast('创建失败：' + e.message); }
+    } catch (e) { toast('创建失败:' + e.message); }
   },
   deleteSession(id) {
     state.pendingDeleteId = id;
     $('del-dir-check').checked = true;
-    $('delete-modal-text').textContent = '确定删除会话 ' + id + '？';
+    $('delete-modal-text').textContent = '确定删除会话 ' + id + '?';
     $('delete-modal').classList.remove('hidden');
   },
   closeDelete() {
@@ -446,7 +389,7 @@ const ui = {
       await req('DELETE', '/api/sessions/' + id + '?delete_dir=' + (delDir ? 'true' : 'false'));
       if (state.sessionId === id) this.backToList();
       loadSessions();
-    } catch (e) { toast('删除失败：' + e.message); }
+    } catch (e) { toast('删除失败:' + e.message); }
   },
   async openSession(id) {
     state.sessionId = id;
@@ -455,7 +398,7 @@ const ui = {
       const detail = await req('GET', '/api/sessions/' + id);
       await renderDetail(detail);
       connectStream();
-    } catch (e) { toast('打开会话失败：' + e.message); }
+    } catch (e) { toast('打开会话失败:' + e.message); }
   },
   backToList() {
     if (state.es) { state.es.close(); state.es = null; }
@@ -478,16 +421,16 @@ const ui = {
       const r = await req('POST', '/api/sessions/' + state.sessionId + '/messages', { content });
       const wrap = document.createElement('div');
       wrap.className = 'msg me';
-      wrap.innerHTML = '<div class="msg-user">我' + (r.delivered === 'queued' ? '（排队中，暂存）' : '') + '</div>' +
+      wrap.innerHTML = '<div class="msg-user">我' + (r.delivered === 'queued' ? '(排队中,暂存)' : '') + '</div>' +
         '<div class="msg-bubble">' + esc(content) + '</div>';
       box.appendChild(wrap);
-      // 立即给出回馈：占位气泡 + 等待计时，首个增量/回复到达时移除并填充内容
+      // 立即给出回馈:占位气泡 + 等待计时,首个增量/回复到达时移除并填充内容
       if (r.delivered !== 'queued') addPendingBubble();
       scrollBottom();
-    } catch (e) { toast('发送失败：' + e.message); }
+    } catch (e) { toast('发送失败:' + e.message); }
   },
   toggleFiles(ev) {
-    // 阻断冒泡，避免开启面板的同一次点击被「点外部自动关闭」监听器立刻关掉
+    // 阻断冒泡,避免开启面板的同一次点击被「点外部自动关闭」监听器立刻关掉
     if (ev) ev.stopPropagation();
     state.filePanelOpen = !state.filePanelOpen;
     $('files-panel').classList.toggle('hidden', !state.filePanelOpen);
@@ -499,12 +442,12 @@ const ui = {
     try {
       if (held) {
         await req('POST', '/api/sessions/' + state.sessionId + '/release');
-        toast('已断开，模型已释放');
+        toast('已断开,模型已释放');
       } else {
         await req('POST', '/api/sessions/' + state.sessionId + '/stop');
         toast('已发送终止指令');
       }
-    } catch (e) { toast((held ? '断开失败：' : '终止失败：') + e.message); }
+    } catch (e) { toast((held ? '断开失败:' : '终止失败:') + e.message); }
   },
   async uploadFiles(ev) {
     const input = ev.target;
@@ -517,37 +460,25 @@ const ui = {
       const r = await req('POST', '/api/sessions/' + state.sessionId + '/files', fd, true);
       toast('已上传 ' + r.uploaded.length + ' 个文件');
       loadFiles();
-    } catch (e) { toast('上传失败：' + e.message); }
+    } catch (e) { toast('上传失败:' + e.message); }
   },
   async deleteFile(name) {
-    if (!confirm('删除文件 ' + name + '？')) return;
+    if (!confirm('删除文件 ' + name + '?')) return;
     try {
       await req('DELETE', '/api/sessions/' + state.sessionId + '/files?path=' + encodeURIComponent(name));
       loadFiles();
-    } catch (e) { toast('删除失败：' + e.message); }
+    } catch (e) { toast('删除失败:' + e.message); }
   },
   logout() { location.href = '/logout'; },
 };
 
-// 文件面板展开时，点击面板以外的区域自动关闭
+// 文件面板展开时,点击面板以外的区域自动关闭
 document.addEventListener('click', e => {
   if (!state.filePanelOpen) return;
   if ($('files-panel').contains(e.target)) return;
   state.filePanelOpen = false;
   $('files-panel').classList.add('hidden');
 });
-
-// ---------- 登录态：显示当前用户；未启用认证（/api/me 404）则隐藏退出按钮 ----------
-async function initAuth() {
-  try {
-    const me = await req('GET', '/api/me');
-    if (me && me.user) {
-      $('whoami').textContent = me.user;
-      $('whoami').classList.remove('hidden');
-      $('logout-btn').classList.remove('hidden');
-    }
-  } catch (_) { /* 未启用认证 */ }
-}
 
 // ---------- 输入框行为 ----------
 document.addEventListener('input', e => {
@@ -558,17 +489,19 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('keydown', e => {
   if (e.target.id !== 'msg-input' || e.key !== 'Enter') return;
-  if (e.isComposing) return; // 中文输入法候选中，回车不拦截
-  // 桌面：Ctrl/⌘/⌥+Enter 发送；其余 Enter（含手机软键盘）保持默认换行，发送用右侧按钮
+  if (e.isComposing) return; // 中文输入法候选中,回车不拦截
+  // 桌面:Ctrl/⌘/⌥+Enter 发送;其余 Enter(含手机软键盘)保持默认换行,发送用右侧按钮
   if (e.ctrlKey || e.metaKey || e.altKey) {
     e.preventDefault();
     ui.send();
   }
 });
 
-// ---------- 启动 ----------
-showList();
-loadSessions();
-loadModels();
-initAuth();
-setInterval(loadSessions, 8000);
+// ---------- Tab 注册 ----------
+window.tabModules = window.tabModules || {};
+tabModules.tasks = {
+  onShow() {
+    loadSessions();
+    loadModels();
+  },
+};

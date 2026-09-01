@@ -12,8 +12,9 @@
 </head>
 <body>
   <div class="app" id="app">
-    <!-- 会话列表页 -->
-    <div id="list-page" class="page">
+
+    <!-- ================= Tab:任务(会话列表) ================= -->
+    <div id="tab-tasks" class="tab-page hidden">
       <div class="header">
         <div class="header-left"><div class="brand" onclick="ui.logout()">
           <svg width="24" height="24" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="1.5">
@@ -31,7 +32,61 @@
       <div class="session-list" id="session-list"></div>
     </div>
 
-    <!-- 聊天/任务页 -->
+    <!-- ================= Tab:技能 ================= -->
+    <div id="tab-skills" class="tab-page hidden">
+      <div class="header">
+        <div class="header-left"><h2>技能管理</h2></div>
+      </div>
+      <div class="tab-body-area">
+        <div class="empty-tip">技能管理开发中(阶段 3):技能的创建 / 编辑 / 删除与技能文件管理。</div>
+      </div>
+    </div>
+
+    <!-- ================= Tab:模型 ================= -->
+    <div id="tab-models" class="tab-page hidden">
+      <div class="header">
+        <div class="header-left"><h2>模型池</h2></div>
+      </div>
+      <div class="tab-body-area" id="model-cards">
+        <div class="empty-tip">加载中…</div>
+      </div>
+    </div>
+
+    <!-- ================= Tab:设置 ================= -->
+    <div id="tab-settings" class="tab-page hidden">
+      <div class="header">
+        <div class="header-left"><h2>设置</h2></div>
+      </div>
+      <div class="tab-body-area">
+        <div class="settings-row">
+          <span>当前用户:<b id="whoami" class="hidden">-</b></span>
+          <button class="ghost-btn small hidden" id="logout-btn" onclick="ui.logout()">退出登录</button>
+        </div>
+        <div class="empty-tip">设置中心开发中(阶段 5):config.yml 配置管理与服务重启。</div>
+      </div>
+    </div>
+
+    <!-- ================= 底部导航 ================= -->
+    <nav class="tabbar" id="tabbar">
+      <a class="tab-item" href="#/tasks" data-tab="tasks">
+        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        <span>任务</span>
+      </a>
+      <a class="tab-item" href="#/skills" data-tab="skills">
+        <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        <span>技能</span>
+      </a>
+      <a class="tab-item" href="#/models" data-tab="models">
+        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+        <span>模型</span>
+      </a>
+      <a class="tab-item" href="#/settings" data-tab="settings">
+        <svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+        <span>设置</span>
+      </a>
+    </nav>
+
+    <!-- ================= 聊天/任务详情(全屏覆盖,盖住底部导航) ================= -->
     <div id="chat-page" class="page hidden">
       <div class="header">
         <button class="icon-btn back-btn" onclick="ui.backToList()">
@@ -113,7 +168,11 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <!-- 发版时更新 v 参数，避免移动端浏览器缓存旧 JS -->
-  <script src="/js/app.js?v=20260901b"></script>
+  <!-- 发版时更新 v 参数,避免移动端浏览器缓存旧 JS -->
+  <script src="/js/core.js?v=20260901c"></script>
+  <script src="/js/tasks.js?v=20260901c"></script>
+  <script src="/js/skills.js?v=20260901c"></script>
+  <script src="/js/models.js?v=20260901c"></script>
+  <script src="/js/settings.js?v=20260901c"></script>
 </body>
 </html>
