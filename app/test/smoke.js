@@ -3,6 +3,7 @@
 'use strict';
 const { spawn } = require('child_process');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -14,6 +15,17 @@ function ok(cond, name, extra) {
   else { fail++; console.log('  FAIL ' + name + (extra ? ' -> ' + extra : '')); }
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// 端口占用探测:上次运行崩溃可能残留 mock/server,导致本次测试行为错乱,先快速失败
+function portInUse(port) {
+  return new Promise(resolve => {
+    const s = net.connect(port, '127.0.0.1');
+    s.setTimeout(500);
+    s.on('connect', () => { s.destroy(); resolve(true); });
+    s.on('error', () => resolve(false));
+    s.on('timeout', () => { s.destroy(); resolve(false); });
+  });
+}
 
 async function api(method, url, body) {
   const opt = { method, headers: {} };
@@ -40,6 +52,12 @@ async function waitSession(id, predicate, timeoutMs, label) {
 }
 
 async function main() {
+  for (const p of [9999, 8099]) {
+    if (await portInUse(p)) {
+      console.error('端口 ' + p + ' 已被占用(可能是上次测试残留的 mock/server),请先清理: pkill -f "test/(mock-upstream|server.js)"');
+      process.exit(3);
+    }
+  }
   // 清理旧数据
   fs.rmSync(path.join(ROOT, 'test/tmp'), { recursive: true, force: true });
 
@@ -122,13 +140,21 @@ async function main() {
 
     // ---- 5. 排队调度（ds1/ds2 都占用 → 第三个排队 → 释放后 FIFO 绑定）----
     console.log('\n[5] 排队调度');
+    // 先等模型池全空闲:前节的 held 租约最长还需 idle_release_ms 才释放,
+    // 否则本节会话会绑到不同模型,下面「分到不同模型」的断言时机依赖运气
+    for (let i = 0; i < 30; i++) {
+      const pool0 = await api('GET', '/api/models');
+      if (pool0.every(m => !m.is_busy)) break;
+      await sleep(200);
+    }
     const a = await api('POST', '/api/sessions', { title: 'A' });
     const b = await api('POST', '/api/sessions', { title: 'B' });
     const c = await api('POST', '/api/sessions', { title: 'C' });
     const da = await waitSession(a.id, x => x.session.status === 'active', 5000, 'A active');
     const db = await waitSession(b.id, x => x.session.status === 'active', 5000, 'B active');
     const dc = await api('GET', '/api/sessions/' + c.id);
-    ok(da.session.model_id === 'ds1' && db.session.model_id === 'ds2', '两个会话分到不同模型');
+    ok(da.session.model_id && db.session.model_id && da.session.model_id !== db.session.model_id,
+      '两个会话分到不同模型', da.session.model_id + ' vs ' + db.session.model_id);
     ok(dc.session.status === 'queued' && dc.queue_pos === 1, '第三个会话排队 position 1');
     await api('POST', '/api/sessions/' + a.id + '/stop');
     await waitSession(c.id, x => x.session.status === 'active', 6000, 'C 顶替');
