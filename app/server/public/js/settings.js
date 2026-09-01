@@ -1,6 +1,7 @@
-// 设置 Tab(阶段 5):账号 / 服务状态与重启 / config.yml 表单化单项编辑 / 原文编辑器。
+// 设置 Tab(阶段 5):账号 / 服务状态与重启 / config.yml 表单化编辑。
 // 语义:所有写入 = 服务端校验 → 写盘;多数改动需「重启服务」生效(本项目不做热重载)。
-// 表单值展示的是「当前生效值」;改完未重启前显示旧值属正常,卡片顶部会提示待生效段。
+// 表单值展示的是「当前生效值」;改完未重启前显示旧值属正常,保存按钮统一写盘。
+// 模型池 / 登录账号 / MCP / 路径类配置不在本页编辑,请用顶栏「配置文件」图标改原文。
 'use strict';
 
 window.tabModules = window.tabModules || {};
@@ -27,17 +28,14 @@ function dispVal(v) {
   if (typeof v === 'boolean') return v ? '是' : '否';
   return String(v);
 }
+// 属性上下文转义(esc 不处理引号)
+function att(s) { return esc(s).replace(/"/g, '&quot;'); }
 
-// ---------- 表单 schema:path 点分路径;type:str|int|float ----------
+// ---------- 表单 schema:path 点分路径;type:int|float ----------
 const CFG_FORM = [
-  { group: '通用', items: [
-    { path: 'port', label: '端口', type: 'int' },
-    { path: 'workspace_root', label: '工作区目录', type: 'str' },
-    { path: 'db_path', label: '数据库路径', type: 'str' },
-  ] },
-  { group: 'Agent 回合', items: [
+  { group: 'Agent 会话', items: [
     { path: 'agent.temperature', label: '温度 temperature', type: 'float' },
-    { path: 'agent.max_tool_iterations', label: '单回合最大工具轮次', type: 'int' },
+    { path: 'agent.max_tool_iterations', label: '单会话最大工具轮次', type: 'int' },
     { path: 'agent.max_retries', label: '上游失败重试次数', type: 'int' },
   ] },
   { group: '终端工具', items: [
@@ -45,10 +43,9 @@ const CFG_FORM = [
     { path: 'terminal.max_output_chars', label: '输出最大字符数', type: 'int' },
   ] },
   { group: '技能', items: [
-    { path: 'skills.skills_root', label: '技能目录', type: 'str' },
     { path: 'skills.timeout_ms', label: '技能执行超时(ms)', type: 'int' },
   ] },
-  { group: '模型租约(回合结束后的保持)', items: [
+  { group: '模型租约(会话结束后的保持)', items: [
     { path: 'model_hold.idle_release_ms', label: '无人观看释放(ms)', type: 'int' },
     { path: 'model_hold.active_max_ms', label: '最长保持(ms)', type: 'int' },
     { path: 'model_hold.sweep_ms', label: '巡检间隔(ms)', type: 'int' },
@@ -59,10 +56,6 @@ const CFG_FORM = [
 function kvPlain(label, v) {
   return '<div class="cfg-kv"><label>' + esc(label) + '</label><b>' + esc(dispVal(v)) + '</b></div>';
 }
-function kvBtn(label, vDisp, call) {
-  return '<div class="cfg-kv"><label>' + esc(label) + '</label><b>' + vDisp + '</b>' +
-    '<button class="file-act" onclick="' + call + '">改</button></div>';
-}
 
 function svcCard(st) {
   let html = '<div class="settings-card"><h4>服务状态' +
@@ -70,7 +63,7 @@ function svcCard(st) {
   html += kvPlain('版本 / Node', st.version + ' / ' + st.node);
   html += kvPlain('已运行', fmtUptime(st.uptime_ms) + '(启动于 ' + new Date(st.started_at).toLocaleString() + ')');
   html += kvPlain('端口', st.port);
-  html += kvPlain('运行中回合', (st.running_sessions || []).length);
+  html += kvPlain('运行中会话', (st.running_sessions || []).length);
   html += kvPlain('配置文件', st.config_path);
   html += kvPlain('工作区', st.workspace_root);
   html += kvPlain('技能目录', st.skills_root);
@@ -80,63 +73,28 @@ function svcCard(st) {
   return html;
 }
 
+function cfgInput(it) {
+  const cur = getByPath(effCfg, it.path);
+  const v = cur == null ? '' : String(cur);
+  const step = it.type === 'float' ? ' step="any"' : ' step="1"';
+  return '<div class="cfg-kv"><label>' + esc(it.label) + '</label>' +
+    '<input class="cfg-input" type="number"' + step +
+    ' inputmode="decimal"' +
+    ' data-path="' + att(it.path) + '" data-type="' + it.type + '" data-label="' + att(it.label) + '" data-orig="' + att(v) + '"' +
+    ' value="' + att(v) + '"></div>';
+}
+
 function formCard() {
   let html = '';
   for (const g of CFG_FORM) {
     html += '<div class="settings-card"><h4>' + esc(g.group) + '</h4>';
-    for (const it of g.items) {
-      const call = "cfgUI.edit('" + it.path + "','" + it.label + "','" + it.type + "')";
-      html += kvBtn(it.label, esc(dispVal(getByPath(effCfg, it.path))), call);
-    }
+    html += g.items.map(cfgInput).join('');
     html += '</div>';
   }
+  html += '<button class="primary-btn" id="cfg-save-btn" style="width:100%" onclick="cfgUI.saveForm()">保存配置</button>' +
+    '<div class="cfg-note" style="margin-bottom:12px">保存即写入 config.yml(注释保留);多数配置需重启服务后生效。' +
+    '模型、账号、MCP 等请用右上角配置文件编辑。</div>';
   return html;
-}
-
-function modelsCard() {
-  const ms = (effCfg && effCfg.models) || [];
-  let html = '<div class="settings-card"><h4>模型池(' + ms.length + ')</h4>';
-  html += ms.map((m, i) =>
-    '<div class="model-card" style="margin-top:8px">' +
-      '<div class="model-card-head"><span class="model-card-name">' + esc(m.display_name || m.id) + '</span>' +
-        '<button class="file-act del" onclick="cfgUI.modelDel(' + i + ')">删除</button></div>' +
-      kvPlain('id(改 id 请用原文编辑)', m.id) +
-      kvBtn('上游地址 url', esc(m.url), "cfgUI.modelEdit(" + i + ",'url')") +
-      kvBtn('api_key', m.api_key ? '已设置(••••' + esc(String(m.api_key).slice(-4)) + ')' : '(未设置)', "cfgUI.modelEdit(" + i + ",'api_key')") +
-      kvBtn('支持图片 vision', esc(dispVal(!!m.vision)), "cfgUI.modelVision(" + i + ")") +
-    '</div>').join('');
-  html += '<button class="ghost-btn" style="width:100%;margin-top:8px" onclick="cfgUI.modelAdd()">+ 添加模型</button>' +
-    '<div class="cfg-note">添加/删除会整体重写 models 段(其中的注释会丢失);精细调整请用配置文件原文编辑。</div></div>';
-  return html;
-}
-
-function authCard() {
-  const a = effCfg && effCfg.auth;
-  let html = '<div class="settings-card"><h4>登录账号</h4>';
-  if (a && a.users && a.users.length) {
-    html += a.users.map(u => kvPlain('用户名', u.user)).join('');
-    html += '<div class="cfg-note">增删账号或改密码:请用下方「配置文件原文」编辑 auth.users 后重启。</div>';
-  } else {
-    html += '<div class="cfg-note">未启用认证:能访问本地址的人可直接使用。如需登录,在配置文件 auth.users 中添加 {user, password} 并重启。</div>';
-  }
-  return html + '</div>';
-}
-
-function mcpCard() {
-  const list = (effCfg && effCfg.mcp_servers) || [];
-  let html = '<div class="settings-card"><h4>MCP 服务(' + list.length + ')</h4>';
-  html += list.length
-    ? list.map(s => kvPlain(s.name || 'mcp', s.url)).join('')
-    : '<div class="cfg-note">未配置外部 MCP 服务。</div>';
-  return html + '<div class="cfg-note">headers 含密钥,不在页面展示;请用配置文件原文编辑。</div></div>';
-}
-
-function fileCard(cg) {
-  return '<div class="settings-card"><h4>配置文件</h4>' +
-    kvPlain('路径', cg.config_path) +
-    (cg.exists ? '' : '<div class="cfg-note">配置文件当前不存在,原文保存时将创建。</div>') +
-    '<button class="ghost-btn" style="width:100%;margin-top:6px" onclick="cfgUI.open()">编辑原文(YAML)</button>' +
-    '<div class="cfg-note">保存前自动校验,不合法不落盘;注释与排版原样保留。</div></div>';
 }
 
 async function loadSettings() {
@@ -150,7 +108,7 @@ async function loadSettings() {
       req('GET', '/api/config'),
     ]);
     effCfg = cg.effective || {};
-    el.innerHTML = svcCard(st) + formCard() + modelsCard() + authCard() + mcpCard() + fileCard(cg);
+    el.innerHTML = svcCard(st) + formCard();
   } catch (e) {
     el.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
   }
@@ -170,87 +128,48 @@ async function refreshUser() {
   } catch (_) { /* 未启用认证 */ }
 }
 
-// ---------- 写操作 ----------
-function afterWrite(r) {
-  (r.changed || []).forEach(k => pendingKeys.add(k));
-  const ch = (r.changed || []).join(', ');
-  toast('已写入 config.yml' + (ch ? ';段 [' + ch + '] 重启后生效' : ';与当前生效值一致,无需重启'));
-  loadSettings();
-}
-
-async function editCfgItem(p, label, type) {
-  const cur = getByPath(effCfg, p);
-  let v = prompt(label + ' 新值:', cur == null ? '' : String(cur));
-  if (v == null) return;
-  v = v.trim();
-  let val = v;
-  if (type === 'int' || type === 'float') {
-    val = Number(v);
-    if (v === '' || !isFinite(val)) { toast('请输入数字'); return; }
+// ---------- 表单保存(收集与打开时不同的项,逐项 PATCH) ----------
+async function saveForm() {
+  const inputs = document.querySelectorAll('#cfg-sections .cfg-input');
+  const edits = [];
+  for (const inp of inputs) {
+    const v = inp.value.trim();
+    if (v === inp.dataset.orig) continue;
+    let val = v;
+    if (inp.dataset.type === 'int' || inp.dataset.type === 'float') {
+      val = Number(v);
+      if (v === '' || !isFinite(val)) { toast('「' + inp.dataset.label + '」需填数字'); return; }
+      if (inp.dataset.type === 'int' && !Number.isInteger(val)) { toast('「' + inp.dataset.label + '」需为整数'); return; }
+    }
+    edits.push({ path: inp.dataset.path, value: val });
   }
+  if (!edits.length) { toast('没有改动'); return; }
+  const btn = $('cfg-save-btn');
+  if (btn) btn.disabled = true;
+  let lastChanged = [];
   try {
-    const r = await req('PATCH', '/api/config', { path: p, value: val });
-    afterWrite(r);
-  } catch (e) { toast('保存失败:' + e.message); }
-}
-
-async function modelEdit(i, field) {
-  const m = ((effCfg || {}).models || [])[i] || {};
-  const label = field === 'url' ? '上游地址(OpenAI 兼容 /v1,不带尾斜杠)' : 'API Key(留空则不带鉴权头)';
-  // api_key 不回填旧值,避免密钥长时间展示在输入框
-  const cur = field === 'url' ? (m.url || '') : '';
-  const v = prompt(label + ':', cur);
-  if (v == null) return;
-  try {
-    const r = await req('PATCH', '/api/config', { path: ['models', i, field], value: v.trim() });
-    afterWrite(r);
-  } catch (e) { toast('保存失败:' + e.message); }
-}
-
-async function modelVision(i) {
-  const ms = (effCfg && effCfg.models) || [];
-  const m = ms[i] || {};
-  const nv = !m.vision;
-  if (!confirm('模型「' + (m.display_name || m.id) + '」支持图片输入(vision)?\n确定=开启,取消=关闭')) return;
-  try {
-    const r = await req('PATCH', '/api/config', { path: ['models', i, 'vision'], value: nv });
-    afterWrite(r);
-  } catch (e) { toast('保存失败:' + e.message); }
-}
-
-async function modelAdd() {
-  const ms = (effCfg && effCfg.models) || [];
-  const id = (prompt('新模型 id(唯一,如 ds3):') || '').trim();
-  if (!id) return;
-  if (ms.some(m => m.id === id)) { toast('id 已存在:' + id); return; }
-  const url = (prompt('上游地址(OpenAI 兼容 /v1):') || '').trim();
-  if (!url) return;
-  try {
-    // 整体替换 models 数组(setIn 数组下标只适合改字段,增删只能整段重写)
-    const r = await req('PATCH', '/api/config', { path: 'models', value: ms.concat([{ id, display_name: id, url }]) });
-    afterWrite(r);
-  } catch (e) { toast('添加失败:' + e.message); }
-}
-
-async function modelDel(i) {
-  const ms = (effCfg && effCfg.models) || [];
-  const m = ms[i] || {};
-  if (ms.length <= 1) { toast('至少要保留一个模型'); return; }
-  if (!confirm('删除模型「' + (m.display_name || m.id) + '」?将整体重写 models 段(注释可能丢失)。')) return;
-  try {
-    const r = await req('PATCH', '/api/config', { path: 'models', value: ms.filter((_, j) => j !== i) });
-    afterWrite(r);
-  } catch (e) { toast('删除失败:' + e.message); }
+    for (const e of edits) {
+      const r = await req('PATCH', '/api/config', { path: e.path, value: e.value });
+      lastChanged = r.changed || [];
+      lastChanged.forEach(k => pendingKeys.add(k));
+    }
+    toast('已保存 ' + edits.length + ' 项' + (lastChanged.length ? ',重启后生效' : ''));
+  } catch (e) {
+    toast('保存失败:' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  loadSettings();
 }
 
 // ---------- 重启 ----------
 async function restart() {
-  if (!confirm('重启服务使新配置生效?正在执行的 AI 回合会被打断。')) return;
+  if (!confirm('重启服务使新配置生效?正在执行的 AI 会话会被打断。')) return;
   try {
     await req('POST', '/api/system/restart');
   } catch (e) {
-    if (e.status === 409 && /回合执行中/.test(e.message)) {
-      // 仅「有回合在跑」值得二次确认强打;配置不合法等 409 强打也无法启动,直接报给用户
+    if (e.status === 409 && /个任务.*执行中/.test(e.message)) {
+      // 仅「有会话在跑」值得二次确认强打;配置不合法等 409 强打也无法启动,直接报给用户
       if (!confirm(e.message + '\n\n仍要强制重启?')) return;
       try { await req('POST', '/api/system/restart?force=true'); }
       catch (e2) { toast('重启失败:' + e2.message); return; }
@@ -267,7 +186,7 @@ async function restart() {
   if (btn) { btn.disabled = false; btn.textContent = '重启服务'; }
 }
 
-// ---------- config.yml 原文编辑器 ----------
+// ---------- config.yml 原文编辑器(顶栏图标打开) ----------
 async function openCfgEditor() {
   try {
     const cg = await req('GET', '/api/config');
@@ -285,7 +204,8 @@ async function saveCfgEditor() {
     await req('POST', '/api/config/validate', { text }); // 先干跑,错误信息更友好
     const r = await req('PUT', '/api/config', { text });
     cfgOrig = text;
-    afterWrite(r);
+    (r.changed || []).forEach(k => pendingKeys.add(k));
+    toast('配置已保存');
   } catch (e) {
     errEl.textContent = '校验失败:' + e.message;
     errEl.classList.remove('hidden');
@@ -295,15 +215,12 @@ async function saveCfgEditor() {
 function closeCfgEditor() {
   if ($('cfg-editor-area').value !== cfgOrig && !confirm('有未保存的修改,确定关闭?')) return;
   $('cfg-editor').classList.add('hidden');
+  loadSettings(); // 原文可能改了生效值相关的显示,回到本页时刷新
 }
 
 window.cfgUI = {
-  edit: editCfgItem,
+  saveForm: saveForm,
   restart: restart,
-  modelEdit: modelEdit,
-  modelVision: modelVision,
-  modelAdd: modelAdd,
-  modelDel: modelDel,
   open: openCfgEditor,
   save: saveCfgEditor,
   close: closeCfgEditor,

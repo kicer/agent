@@ -383,6 +383,15 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .cfg-note { font-size: 11.5px; color: #99a; line-height: 1.5; margin-top: 6px; }
+/* 表单内联数值输入:平时像文本,聚焦时才显输入框 */
+.cfg-input {
+  flex: 1; min-width: 0; text-align: right; font-size: 13px; color: #223;
+  background: #f4f5f9; border: 1px solid transparent; border-radius: 8px;
+  padding: 6px 10px; outline: none; font-variant-numeric: tabular-nums; font-family: inherit;
+  -webkit-appearance: none; appearance: none;
+}
+.cfg-input:focus { border-color: #2a5299; background: #fff; }
+.cfg-input::-webkit-outer-spin-button, .cfg-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 /* 原文编辑器保存前的校验错误条 */
 .cfg-err {
   margin: 8px 12px 0; padding: 8px 12px; border-radius: 8px;

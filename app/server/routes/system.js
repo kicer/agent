@@ -49,7 +49,7 @@ router.post('/restart', wrap((req, res) => {
   const running = engine.activeRuns();
   if (running.length && !force) {
     return res.status(409).json({
-      error: '有 ' + running.length + ' 个任务回合执行中,重启将打断它们',
+      error: '有 ' + running.length + ' 个任务会话执行中,重启将打断它们',
       running_sessions: running,
     });
   }
