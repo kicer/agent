@@ -9,6 +9,9 @@ const DEFAULTS = {
   db_path: '', // 默认为 workspace_root/.agent.db
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
   agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2 },
+  // 技能（Skill Manager）：skills_root 为技能根目录，所有任务/会话共享（容器内挂我 ./skills → /workspace/skills）；
+  // 缺省取 workspace_root 的同级目录 skills（如 /workspace/tasks → /workspace/skills）。timeout_ms 为单个技能执行超时，默认 120000。
+  skills: { skills_root: '', timeout_ms: 120000 },
   // 回合结束后模型保持占用（held）的租约：页内无人观看超过 idle_release_ms 则释放；
   // 即便一直有人观看，最长也只保持 active_max_ms；sweep_ms 为巡检间隔。
   // 「绑定模型但闲置」的会话（从未发言、无未回应消息）同样按此租约释放，防建而不用霸占模型。
@@ -58,6 +61,16 @@ function loadConfig(configPath) {
 
   cfg.workspace_root = path.resolve(cfg.workspace_root);
   if (!cfg.db_path) cfg.db_path = path.join(cfg.workspace_root, '.agent.db');
+
+  // 技能根目录：显式配置优先；缺省取 workspace_root 的同级 skills 目录（容器内 /workspace/tasks → /workspace/skills）。
+  if (!cfg.skills || !cfg.skills.skills_root) {
+    cfg.skills_root = path.resolve(cfg.workspace_root, '..', 'skills');
+  } else {
+    cfg.skills_root = path.resolve(cfg.skills.skills_root);
+  }
+  if (cfg.skills) {
+    cfg.skills.timeout_ms = (cfg.skills.timeout_ms == null) ? 120000 : cfg.skills.timeout_ms;
+  }
 
   // auth 规范化：多用户 auth.users: [{user, password}]；兼容旧的单用户 auth.{user,password}
   if (cfg.auth && !Array.isArray(cfg.auth.users)) {

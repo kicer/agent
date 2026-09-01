@@ -25,6 +25,12 @@ terminal:
   default_timeout_ms: 30000
   max_output_chars: 10000
 
+# Skill Manager：技能根目录，所有任务/会话共享（容器内挂 ./skills → /workspace/skills）。
+# skills_root 缺省取 workspace_root 的同级 skills 目录（如 /workspace/tasks → /workspace/skills）；可显式覆盖。
+skills:
+  skills_root: "/workspace/skills"
+  timeout_ms: 120000   # 单个技能执行超时，默认 120 秒
+
 agent:
   temperature: 1.0
   max_tool_iterations: 50

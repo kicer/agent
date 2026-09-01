@@ -3,7 +3,7 @@
     "type": "function",
     "function": {
       "name": "copy_path",
-      "description": "Copies a file or directory in the project, and returns confirmation that the copy succeeded.\nDirectory contents will be copied recursively.\n\nThis tool should be used when it's desirable to create a copy of a file or directory without modifying the original.\nIt's much more efficient than doing this by separately reading and then writing the file or directory's contents, so this tool should be preferred over that approach whenever copying is the goal.\nThe only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.",
+      "description": "Copies a file or directory in the project, and returns confirmation that the copy succeeded.\nDirectory contents will be copied recursively.\n\nThis tool should be used when it's desirable to create a copy of a file or directory without modifying the original.\nIt's much more efficient than doing this by separately reading and then writing the file or directory's contents, so this tool should be preferred over that approach whenever copying is the goal.",
       "parameters": {
         "required": [
           "source_path",
@@ -27,14 +27,14 @@
     "type": "function",
     "function": {
       "name": "create_directory",
-      "description": "Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.\n\nThis tool creates a directory and all necessary parent directories. It should be used whenever you need to create new directories within the project.\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.",
+      "description": "Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.\n\nThis tool creates a directory and all necessary parent directories. It should be used whenever you need to create new directories within the project.",
       "parameters": {
         "required": [
           "path"
         ],
         "properties": {
           "path": {
-            "description": "The path of the new directory.\n\n<example>\nIf the project has the following structure:\n\n- directory1/\n- directory2/\n\nYou can create a new directory by providing a path of \"directory1/new_directory\"\n</example>\n\n<example>\nTo create a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.\n</example>",
+            "description": "The path of the new directory.\n\n<example>\nIf the project has the following structure:\n\n- directory1/\n- directory2/\n\nYou can create a new directory by providing a path of \"directory1/new_directory\"\n</example>",
             "type": "string"
           }
         },
@@ -46,7 +46,7 @@
     "type": "function",
     "function": {
       "name": "delete_path",
-      "description": "Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.\n\nThe only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.",
+      "description": "Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.",
       "parameters": {
         "required": [
           "path"
@@ -65,7 +65,7 @@
     "type": "function",
     "function": {
       "name": "edit_file",
-      "description": "This is a tool for applying edits to an existing file.\n\nBefore using this tool, use the `read_file` tool to understand the file's contents and context.\nTo create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.\n\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.\n\n`read_file` prefixes each line of its output with a line number right-aligned in a\n6-character field followed by a single tab, then the line's actual content. When you\nderive `old_text` or `new_text` from that output, strip this prefix and keep only what\ncomes after the tab, preserving the original indentation (tabs and spaces) exactly.\nNever include any part of the line number prefix in `old_text` or `new_text`.",
+      "description": "This is a tool for applying edits to an existing file.\n\nBefore using this tool, use the `read_file` tool to understand the file's contents and context.\nTo create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.\n\n`read_file` prefixes each line of its output with a line number right-aligned in a\n6-character field followed by a single tab, then the line's actual content. When you\nderive `old_text` or `new_text` from that output, strip this prefix and keep only what\ncomes after the tab, preserving the original indentation (tabs and spaces) exactly.\nNever include any part of the line number prefix in `old_text` or `new_text`.",
       "parameters": {
         "required": [
           "path",
@@ -73,7 +73,7 @@
         ],
         "properties": {
           "path": {
-            "description": "The full path of the file to edit in the project.\n\nWARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.\n\nThe following examples assume we have two root directories in the project:\n- /a/b/backend\n- /c/d/frontend\n\n<example>\n`backend/src/main.rs`\n\nNotice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!\n</example>\n\n<example>\n`frontend/db.js`\n</example>\n\n<example>\nTo edit a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.\n</example>",
+            "description": "The full path of the file to edit in the project.\n\nWARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories,\n\nThe following examples assume we have two root directories in the project:\n- /a/b/backend\n- /c/d/frontend\n\n<example>\n`backend/src/main.rs`\n\nNotice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!\n</example>\n\n<example>\n`frontend/db.js`\n</example>",
             "type": "string"
           },
           "edits": {
@@ -107,7 +107,7 @@
     "type": "function",
     "function": {
       "name": "fetch",
-      "description": "Fetches a URL and returns the content as Markdown.\n\nThis tool is not run inside the terminal OS sandbox, but it still refuses to\nreach any host that hasn't been granted network access. It shares the same\nper-host grants as the `terminal` tool: approving a host for one authorizes\nit for the other, whether the grant is for this thread or saved permanently.\nWhen unsandboxed access has been granted, these restrictions are lifted\nentirely, matching the terminal, which is also how loopback and IP-literal\nhosts (which can't be granted individually) become reachable.",
+      "description": "Fetches a URL and returns the content as Markdown.",
       "parameters": {
         "required": [
           "url"
@@ -186,14 +186,14 @@
     "type": "function",
     "function": {
       "name": "list_directory",
-      "description": "Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.\n\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.",
+      "description": "Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.",
       "parameters": {
         "required": [
           "path"
         ],
         "properties": {
           "path": {
-            "description": "The fully-qualified path of the directory to list in the project.\n\nThis path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill directory under `~/.agents/skills`.\n\n<example>\nIf the project has the following root directories:\n\n- directory1\n- directory2\n\nYou can list the contents of `directory1` by using the path `directory1`.\n</example>\n\n<example>\nIf the project has the following root directories:\n\n- foo\n- bar\n\nIf you wanna list contents in the directory `foo/baz`, you should use the path `foo/baz`.\n</example>\n\n<example>\nTo list a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.\n</example>",
+            "description": "The fully-qualified path of the directory to list in the project.\n\nThis path should never be absolute, and the first component of the path should always be a root directory in a project,\n\n<example>\nIf the project has the following root directories:\n\n- directory1\n- directory2\n\nYou can list the contents of `directory1` by using the path `directory1`.\n</example>\n\n<example>\nIf the project has the following root directories:\n\n- foo\n- bar\n\nIf you wanna list contents in the directory `foo/baz`, you should use the path `foo/baz`.\n</example>",
             "type": "string"
           }
         },
@@ -205,7 +205,7 @@
     "type": "function",
     "function": {
       "name": "move_path",
-      "description": "Moves or rename a file or directory in the project, and returns confirmation that the move succeeded.\n\nIf the source and destination directories are the same, but the filename is different, this performs a rename. Otherwise, it performs a move.\n\nThis tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.\nThe only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.",
+      "description": "Moves or rename a file or directory in the project, and returns confirmation that the move succeeded.\n\nIf the source and destination directories are the same, but the filename is different, this performs a rename. Otherwise, it performs a move.\n\nThis tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.",
       "parameters": {
         "required": [
           "source_path",
@@ -229,14 +229,14 @@
     "type": "function",
     "function": {
       "name": "read_file",
-      "description": "Reads the content of the given file in the project.\n\n- Never attempt to read a path that hasn't been previously mentioned.\n- For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.\n  This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.\n  Do NOT retry reading the same file without line numbers if you receive an outline.\n- This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.\n  Image files are returned as visual content that you can analyze directly.\n\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.",
+      "description": "Reads the content of the given file in the project.\n\n- Never attempt to read a path that hasn't been previously mentioned.\n- For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.\n  This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.\n  Do NOT retry reading the same file without line numbers if you receive an outline.\n- This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.\n  Image files are returned as visual content that you can analyze directly.",
       "parameters": {
         "required": [
           "path"
         ],
         "properties": {
           "path": {
-            "description": "The relative path of the file to read.\n\nThis path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill under `~/.agents/skills`.\n\n<example>\nIf the project has the following root directories:\n\n- /a/b/directory1\n- /c/d/directory2\n\nIf you want to access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.\nIf you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.\n</example>\n\n<example>\nTo read a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.\n</example>",
+            "description": "The relative path of the file to read.\n\nThis path should never be absolute, and the first component of the path should always be a root directory in a project,\n\n<example>\nIf the project has the following root directories:\n\n- /a/b/directory1\n- /c/d/directory2\n\nIf you want to access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.\nIf you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.\n</example>",
             "type": "string"
           },
           "start_line": {
@@ -306,7 +306,7 @@
     "type": "function",
     "function": {
       "name": "write_file",
-      "description": "This is a tool for creating a new file or overwriting an existing file with completely new contents.\n\nTo make granular edits to an existing file, prefer the `edit_file` tool instead.\n\nBefore using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location\n\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.",
+      "description": "This is a tool for creating a new file or overwriting an existing file with completely new contents.\n\nTo make granular edits to an existing file, prefer the `edit_file` tool instead.\n\nBefore using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location",
       "parameters": {
         "required": [
           "path",
@@ -314,12 +314,67 @@
         ],
         "properties": {
           "path": {
-            "description": "The full path of the file to create or overwrite in the project.\n\nWARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.\n\nThe following examples assume we have two root directories in the project:\n- /a/b/backend\n- /c/d/frontend\n\n<example>\n`backend/src/main.rs`\n\nNotice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!\n</example>\n\n<example>\n`frontend/db.js`\n</example>\n\n<example>\nTo create or overwrite a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.\n</example>",
+            "description": "The full path of the file to create or overwrite in the project.\n\nWARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories,\n\nThe following examples assume we have two root directories in the project:\n- /a/b/backend\n- /c/d/frontend\n\n<example>\n`backend/src/main.rs`\n\nNotice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!\n</example>\n\n<example>\n`frontend/db.js`\n</example>",
             "type": "string"
           },
           "content": {
             "description": "The entire content for the file.",
             "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_skills",
+      "description": "列出技能根目录下的所有可用技能，返回每个技能的名称与简要描述。\n\n技能是自包含的目录（含 SKILL.md 描述与 run.py/run.sh 可执行入口），用于复用已有能力。先调用本工具了解有哪些技能，再决定是否用 get_skill_info 查看详情或用 run_skill 执行。\n\n- 无需参数。\n- 若技能目录不存在，返回空列表。",
+      "parameters": {
+        "required": [],
+        "properties": {},
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_skill_info",
+      "description": "查看指定技能的完整说明（返回该技能目录下 SKILL.md 的全文），便于了解其用途、参数（input_schema）与调用方式。",
+      "parameters": {
+        "required": [
+          "skill_name"
+        ],
+        "properties": {
+          "skill_name": {
+            "description": "技能名称（即技能根目录下的子目录名，如 md2pdf）",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "run_skill",
+      "description": "执行指定技能，传入所需参数，自动检查与安装依赖（pip install --target 装入共享 deps 目录并以 PYTHONPATH 注入，或执行 install.sh），返回技能运行的标准输出或错误信息。\n\n技能入口脚本约定接收一个 JSON 字符串作为唯一命令行参数，其中包含全部输入参数键值对。\n\n- 执行前会根据 SKILL.md 的 input_schema.required 校验必填参数。\n- 依赖安装有缓存标记 .deps_installed，仅当 requirements.txt / install.sh 变化时重装。\n- 默认超时 120 秒。\n- input_args 中的相对路径会按会话工作目录自动解析并转为绝对路径（技能进程的工作目录是技能目录，不是会话目录），直接传相对路径即可。",
+      "parameters": {
+        "required": [
+          "skill_name",
+          "input_args"
+        ],
+        "properties": {
+          "skill_name": {
+            "description": "技能名称（技能根目录下的子目录名，如 md2pdf）",
+            "type": "string"
+          },
+          "input_args": {
+            "description": "技能所需的输入参数字典（对象），键值对形式。例如 {\"input\": \"file.md\", \"output\": \"out.pdf\"}。具体字段以 get_skill_info 查看的 SKILL.md 为准。路径参数可传相对会话工作目录的路径，也可传绝对路径，后者原样使用。",
+            "type": "object"
           }
         },
         "type": "object"

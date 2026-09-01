@@ -6,5 +6,7 @@ app/config.yml
 /config.yml
 app/data/
 data/
+skills/deps/
+skills/*/.deps_installed
 *.log
 .DS_Store

@@ -7,6 +7,7 @@ services:
       - "8080"                          # 仅内网暴露，由 nginx-proxy 对外
     volumes:
       - ./data:/workspace/tasks         # 持久化：任务目录 + SQLite（.agent.db 在此目录内）
+      - ./skills:/workspace/skills      # 技能目录：所有任务/会话共享同一份技能
       - ./config.yml:/app/config.yml:ro
       - ./app/server:/app/server
     environment:

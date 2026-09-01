@@ -6,6 +6,7 @@ const fsp = require('fs').promises;
 const { spawn } = require('child_process');
 const { Minimatch } = require('minimatch');
 const mcp = require('../mcp');
+const skills = require('./skills');
 
 function makeMatcher(pattern, opts) {
   const mm = new Minimatch(pattern, opts || {});
@@ -640,6 +641,9 @@ const HANDLERS = {
   grep: toolGrep,
   terminal: toolTerminal,
   fetch: toolFetch,
+  list_skills: async (ctx, args) => JSON.stringify(await skills.listSkills(ctx), null, 2),
+  get_skill_info: (ctx, args) => skills.getSkillInfo(ctx, args.skill_name),
+  run_skill: (ctx, args) => skills.runSkill(ctx, args.skill_name, args.input_args),
 };
 
 // ctx: {sessionId, taskDir, run, cfg, db}
