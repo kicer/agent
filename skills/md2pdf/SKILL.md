@@ -1,6 +1,6 @@
 ---
 name: md2pdf
-description: 将 Markdown 文件转换为 PDF（仅英文，简单排版）
+description: 将 Markdown 文件转换为 PDF
 input_schema:
   type: object
   properties:
