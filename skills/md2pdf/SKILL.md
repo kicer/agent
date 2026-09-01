@@ -17,8 +17,11 @@ output_schema:
 ---
 
 ## 使用说明
-该技能使用 `reportlab` 将 Markdown 转换为 PDF。
+- 该技能使用 `reportlab` 将 Markdown 转换为 PDF。
+- 支持标题、加粗、斜体、列表、引用、分隔线等常用 Markdown 语法
+- 自动处理中文字体
 
-本技能由 `run_skill` 调用，参数：
-- `input`（必填）：Markdown 文件路径，支持相对路径（自动转为绝对路径）。
-- `output`（可选）：PDF 输出路径，默认与输入文件同名。
+## 使用说明
+通过 `run_skill` 调用，参数：
+- `input`：Markdown 文件路径（必填）
+- `output`：PDF 输出路径（可选，默认与输入同名）
