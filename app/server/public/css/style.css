@@ -258,6 +258,12 @@ body {
   padding: 10px 12px; font-size: 15px; margin-bottom: 10px; outline: none;
 }
 .modal input:focus { border-color: #2a5299; }
+.modal select {
+  width: 100%; border: 1px solid #dde; border-radius: 8px;
+  padding: 10px 12px; font-size: 15px; margin-bottom: 10px; outline: none;
+  background: #fff; color: #334; appearance: auto;
+}
+.modal select:focus { border-color: #2a5299; }
 .modal-close-btn {
   position: absolute; right: 10px; top: 10px;
   background: none; border: none; cursor: pointer; color: #99a;

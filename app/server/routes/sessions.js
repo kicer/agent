@@ -47,7 +47,8 @@ function listTaskFiles(dir) {
 
 router.post('/', wrap((req, res) => {
   const title = (req.body && req.body.title || '').trim();
-  const session = engine.createSession(title);
+  const modelId = (req.body && req.body.model_id || '').trim();
+  const session = engine.createSession(title, modelId);
   res.json(session);
 }));
 

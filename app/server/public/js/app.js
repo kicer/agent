@@ -401,12 +401,26 @@ async function loadFiles() {
 // ---------- 主逻辑 ----------
 const ui = {
   downloadFile(name) { return downloadFile(name); },
-  openCreate() { $('create-modal').classList.remove('hidden'); $('new-title').focus(); },
+  async openCreate() {
+    // 每次打开时刷新一次空闲模型列表
+    const sel = $('new-model');
+    try {
+      const rows = await req('GET', '/api/models');
+      const free = rows.filter(m => !m.is_busy);
+      sel.innerHTML = free.length
+        ? '<option value="">自动分配（使用任一空闲模型）</option>' + free.map(m =>
+            '<option value="' + esc(m.id) + '">' + esc(m.display_name || m.id) + '</option>').join('')
+        : '<option value="">暂无空闲模型（将排队等待）</option>';
+    } catch (_) { /* 保留默认选项 */ }
+    $('create-modal').classList.remove('hidden');
+    $('new-title').focus();
+  },
   closeCreate() { $('create-modal').classList.add('hidden'); },
   async createSession() {
     try {
       const title = $('new-title').value.trim();
-      const s = await req('POST', '/api/sessions', { title });
+      const model_id = $('new-model') ? $('new-model').value : '';
+      const s = await req('POST', '/api/sessions', { title, model_id });
       this.closeCreate();
       $('new-title').value = '';
       await loadSessions();
@@ -472,7 +486,9 @@ const ui = {
       scrollBottom();
     } catch (e) { toast('发送失败：' + e.message); }
   },
-  toggleFiles() {
+  toggleFiles(ev) {
+    // 阻断冒泡，避免开启面板的同一次点击被「点外部自动关闭」监听器立刻关掉
+    if (ev) ev.stopPropagation();
     state.filePanelOpen = !state.filePanelOpen;
     $('files-panel').classList.toggle('hidden', !state.filePanelOpen);
     if (state.filePanelOpen) loadFiles();
@@ -512,6 +528,14 @@ const ui = {
   },
   logout() { location.href = '/logout'; },
 };
+
+// 文件面板展开时，点击面板以外的区域自动关闭
+document.addEventListener('click', e => {
+  if (!state.filePanelOpen) return;
+  if ($('files-panel').contains(e.target)) return;
+  state.filePanelOpen = false;
+  $('files-panel').classList.add('hidden');
+});
 
 // ---------- 登录态：显示当前用户；未启用认证（/api/me 404）则隐藏退出按钮 ----------
 async function initAuth() {

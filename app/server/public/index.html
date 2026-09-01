@@ -39,7 +39,7 @@
         </button>
         <span class="chat-title" id="chat-title"></span>
         <div class="header-right">
-          <button class="icon-btn" onclick="ui.toggleFiles()" title="文件">
+          <button class="icon-btn" onclick="ui.toggleFiles(event)" title="文件">
             <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
           </button>
         </div>
@@ -90,6 +90,7 @@
         </button>
         <h3>新建任务会话</h3>
         <input type="text" id="new-title" placeholder="任务标题（留空自动取首条消息）" style="width:100%">
+        <select id="new-model" style="width:100%"><option value="">自动分配（使用任一空闲模型）</option></select>
         <button class="primary-btn" onclick="ui.createSession()" style="width:100%">创建</button>
       </div>
     </div>
@@ -113,6 +114,6 @@
   <div class="toast hidden" id="toast"></div>
 
   <!-- 发版时更新 v 参数，避免移动端浏览器缓存旧 JS -->
-  <script src="/js/app.js?v=20260901a"></script>
+  <script src="/js/app.js?v=20260901b"></script>
 </body>
 </html>

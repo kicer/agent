@@ -433,16 +433,25 @@ function sessionContextContent(session) {
   ].join('\n');
 }
 
-function createSession(title) {
+function createSession(title, preferModelId) {
   const id = genTaskId();
   const dir = taskDirOf(id);
   fs.mkdirSync(dir, { recursive: true });
   db.prepare(
     "INSERT INTO sessions (id, title, status, phase, model_id, created_at, updated_at) VALUES (?,?,'queued','planning',NULL,?,?)"
   ).run(id, title || '', now(), now());
-  enqueue(id);
-  dispatchQueued();
-  // 放在 dispatchQueued 之后：若能立即绑到空闲模型，上下文里就能带上模型显示名。
+  // 指定了模型且它恰好空闲 → 直接绑定，跳过排队；否则回退到 FIFO 队列
+  const prefer = preferModelId
+    ? db.prepare('SELECT * FROM model_pool WHERE id = ? AND is_busy = 0').get(preferModelId)
+    : null;
+  if (prefer) {
+    bindModel(getSession(id), prefer);
+    emitStatus(id);
+  } else {
+    enqueue(id);
+    dispatchQueued();
+  }
+  // 放在绑定/派发之后：若能立即绑到空闲模型，上下文里就能带上模型显示名。
   const session = getSession(id);
   saveMessage(id, { role: 'user', name: SESSION_CONTEXT_NAME, content: sessionContextContent(session) });
   return session;
