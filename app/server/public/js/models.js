@@ -30,12 +30,8 @@ async function loadModelCards() {
         : '<span class="model-card-state pending">待重启</span>';
       return '<div class="model-card">' +
         '<div class="model-card-head">' +
-          '<span class="model-card-name">' + esc(m.display_name || m.id) + '</span>' +
-          '<span class="model-card-right">' + stateHtml +
-            '<button class="model-edit-ico" title="编辑" onclick="modelsUI.openEdit(\'' + encodeURIComponent(m.id) + '\')">' +
-              '<svg viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"></path></svg>' +
-            '</button>' +
-          '</span>' +
+          '<span class="model-card-name" title="点击编辑" onclick="modelsUI.openEdit(\'' + encodeURIComponent(m.id) + '\')">' + esc(m.display_name || m.id) + '</span>' +
+          stateHtml +
         '</div>' +
         '<div class="model-card-meta">' + esc(m.id) +
           (run && run.is_busy && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</div>' +

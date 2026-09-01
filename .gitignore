@@ -10,3 +10,4 @@ skills/deps/
 skills/*/.deps_installed
 *.log
 .DS_Store
+app/server/version.json

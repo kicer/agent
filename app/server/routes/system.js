@@ -5,12 +5,15 @@
 const express = require('express');
 const engine = require('../engine');
 const { loadConfig } = require('../config');
+const versionInfo = require('../version');
 
 const router = express.Router();
 
 const STARTED_AT = Date.now();
 let VERSION = '2.0.0';
 try { VERSION = require('../../package.json').version || VERSION; } catch (_) {}
+// 附带 git 提交号(post-commit 钩子自动生成),免去手动改版本号
+if (versionInfo.commit) VERSION += '+' + versionInfo.commit;
 
 function sendErr(res, err) {
   const code = err && err.status_code || 500;
@@ -28,6 +31,7 @@ router.get('/status', wrap((req, res) => {
   res.json({
     ok: true,
     version: VERSION,
+    version_date: versionInfo.date,
     pid: process.pid,
     node: process.version,
     started_at: STARTED_AT,

@@ -60,7 +60,7 @@ function kvPlain(label, v) {
 function svcCard(st) {
   let html = '<div class="settings-card"><h4>服务状态' +
     (pendingKeys.size ? ' <span class="badge held">待重启生效</span>' : '') + '</h4>';
-  html += kvPlain('版本 / Node', st.version + ' / ' + st.node);
+  html += kvPlain('版本 / Node', st.version + (st.version_date ? '(' + st.version_date + ')' : '') + ' / ' + st.node);
   html += kvPlain('已运行', fmtUptime(st.uptime_ms) + '(启动于 ' + new Date(st.started_at).toLocaleString() + ')');
   html += kvPlain('端口', st.port);
   html += kvPlain('配置文件', st.config_path);
@@ -90,8 +90,8 @@ function formCard() {
     html += g.items.map(cfgInput).join('');
     html += '</div>';
   }
-  html += '<button class="primary-btn" id="cfg-save-btn" style="width:100%" onclick="cfgUI.saveForm()">保存配置</button>' +
-    '<div class="cfg-note" style="margin-bottom:12px">保存即写入 config.yml(注释保留);多数配置需重启服务后生效。' +
+  html += '<button class="primary-btn" id="cfg-save-btn" style="width:100%" onclick="cfgUI.saveForm()">更新配置</button>' +
+    '<div class="cfg-note" style="margin-bottom:12px">更新即写入 config.yml(注释保留);多数配置需重启服务后生效。' +
     '模型、账号、MCP 等请用右上角配置文件编辑。</div>';
   return html;
 }
@@ -221,6 +221,8 @@ async function saveCfgEditor() {
     cfgOrig = text;
     (r.changed || []).forEach(k => pendingKeys.add(k));
     toast('配置已保存');
+    $('cfg-editor').classList.add('hidden');
+    loadSettings(); // 保存成功直接退出编辑页
   } catch (e) {
     errEl.textContent = '校验失败:' + e.message;
     errEl.classList.remove('hidden');

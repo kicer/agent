@@ -77,7 +77,7 @@ async function loadSkillDetail() {
         '<span class="file-name">' + esc(f.filename) + '</span>' +
         '<span class="file-size">' + fmtSize(f.size) + '</span>' +
         '<button class="file-act" onclick="event.stopPropagation();skillsUI.editFile(\'' + a + '\')">编辑</button>' +
-        '<button class="file-act del" onclick="event.stopPropagation();skillsUI.deleteFile(\'' + a + '\')">删</button>' +
+        '<button class="file-act del" onclick="event.stopPropagation();skillsUI.deleteFile(\'' + a + '\')">删除</button>' +
         '</div>';
     }).join('') + '</div>' + newBtn;
   } catch (e) {
@@ -163,6 +163,10 @@ async function saveSkillFile() {
     await req('PUT', '/api/skills/' + encodeURIComponent(curSkill) + '/file', { path: editorPath, content });
     editorOrig = content;
     toast('已保存 ' + editorPath);
+    // 保存成功直接退出编辑页回文件列表
+    editorPath = null;
+    setSkillsView('detail');
+    loadSkillDetail();
   } catch (e) { toast('保存失败:' + e.message); }
 }
 
