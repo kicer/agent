@@ -40,15 +40,14 @@ async function loadModelCards() {
         '<div class="model-card-meta">' + esc(m.id) +
           (run && run.is_busy && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</div>' +
         '<div class="cfg-kv"><label>余额</label><b>--</b></div>' +
-        '<div class="cfg-kv"><label>今日输入 token</label><b>' + (run ? fmtTok(run.today_prompt) : '--') + '</b></div>' +
-        '<div class="cfg-kv"><label>今日输出 token</label><b>' + (run ? fmtTok(run.today_completion) : '--') + '</b></div>' +
-        '<div class="cfg-kv"><label>累计输入 token</label><b>' + (run ? fmtTok(run.total_prompt) : '--') + '</b></div>' +
-        '<div class="cfg-kv"><label>累计输出 token</label><b>' + (run ? fmtTok(run.total_completion) : '--') + '</b></div>' +
+        // token 紧凑显示:输入 / 输出
+        '<div class="cfg-kv"><label>今日 token</label><b title="输入 / 输出">' + (run ? fmtTok(run.today_prompt) + ' / ' + fmtTok(run.today_completion) : '--') + '</b></div>' +
+        '<div class="cfg-kv"><label>累计 token</label><b title="输入 / 输出">' + (run ? fmtTok(run.total_prompt) + ' / ' + fmtTok(run.total_completion) : '--') + '</b></div>' +
       '</div>';
     }).join('') +
       (modelsPendingRestart
         ? '<div class="empty-tip">已写入 config.yml,到「设置」页重启服务后生效。</div>'
-        : '<div class="empty-tip">余额需对接模型提供方 API,暂未实现;改动写入 config.yml,重启服务后生效。</div>');
+        : '<div class="empty-tip">token 格式为「输入 / 输出」;余额需对接模型提供方 API,暂未实现;改动写入 config.yml,重启服务后生效。</div>');
   } catch (e) {
     el.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
   }
