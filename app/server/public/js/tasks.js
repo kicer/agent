@@ -78,15 +78,6 @@ async function loadSessions() {
   } catch (e) { toast('加载会话失败:' + e.message); }
 }
 
-async function loadModels() {
-  try {
-    const rows = await req('GET', '/api/models');
-    $('model-strip').innerHTML = rows.map(m =>
-      '<span class="model-chip ' + (m.is_busy ? 'busy' : '') + '">' +
-      esc(m.display_name || m.id) + (m.is_busy ? ' 忙' : ' 空闲') + '</span>').join('');
-  } catch (_) {}
-}
-
 // ---------- 消息渲染 ----------
 function md(text) {
   if (typeof marked === 'undefined') return esc(text);
@@ -276,7 +267,6 @@ function connectStream() {
   es.addEventListener('done', ev => {
     removePendingBubble(); // 本轮结束,占位兼终止(如模型报错无回复)
     loadSessions();
-    loadModels();
   });
   es.addEventListener('error', ev => {
     removePendingBubble();
@@ -406,7 +396,6 @@ const ui = {
     state.sessionId = null;
     showList();
     loadSessions();
-    loadModels();
   },
   async send() {
     const ta = $('msg-input');
@@ -502,6 +491,5 @@ window.tabModules = window.tabModules || {};
 tabModules.tasks = {
   onShow() {
     loadSessions();
-    loadModels();
   },
 };

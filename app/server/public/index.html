@@ -28,7 +28,6 @@
           </button>
         </div>
       </div>
-      <div class="model-strip" id="model-strip"></div>
       <div class="session-list" id="session-list"></div>
     </div>
 
@@ -82,6 +81,11 @@
     <div id="tab-models" class="tab-page hidden">
       <div class="header">
         <div class="header-left"><h2>模型池</h2></div>
+        <div class="header-right">
+          <button class="icon-btn" onclick="modelsUI.openAdd()" title="添加模型">
+            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+        </div>
       </div>
       <div class="tab-body-area" id="model-cards">
         <div class="empty-tip">加载中…</div>
@@ -221,6 +225,23 @@
       </div>
     </div>
 
+    <!-- 添加模型弹窗 -->
+    <div id="model-add-modal" class="modal-overlay hidden" onclick="if(event.target===this)modelsUI.closeAdd()">
+      <div class="modal">
+        <button class="modal-close-btn" onclick="modelsUI.closeAdd()">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+        <h3>添加模型</h3>
+        <input type="text" id="model-new-id" placeholder="id(唯一标识,如 ds3)" style="width:100%">
+        <input type="text" id="model-new-name" placeholder="显示名(留空同 id)" style="width:100%">
+        <input type="text" id="model-new-url" placeholder="上游地址(OpenAI 兼容 /v1)" style="width:100%">
+        <input type="text" id="model-new-key" placeholder="api_key(选填,留空不带鉴权头)" style="width:100%">
+        <label class="del-dir"><input type="checkbox" id="model-new-vision">支持图片输入(vision)</label>
+        <button class="primary-btn" style="width:100%" onclick="modelsUI.add()">添加</button>
+        <div class="cfg-note">写入 config.yml 的 models 段,到「设置」页重启服务后生效。</div>
+      </div>
+    </div>
+
     <!-- 删除会话弹窗 -->
     <div id="delete-modal" class="modal-overlay hidden" onclick="if(event.target===this)ui.closeDelete()">
       <div class="modal">
@@ -240,10 +261,10 @@
   <div class="toast hidden" id="toast"></div>
 
   <!-- 发版时更新 v 参数,避免移动端浏览器缓存旧 JS -->
-  <script src="/js/core.js?v=20260901g"></script>
-  <script src="/js/tasks.js?v=20260901g"></script>
-  <script src="/js/skills.js?v=20260901g"></script>
-  <script src="/js/models.js?v=20260901g"></script>
-  <script src="/js/settings.js?v=20260901g"></script>
+  <script src="/js/core.js?v=20260901h"></script>
+  <script src="/js/tasks.js?v=20260901h"></script>
+  <script src="/js/skills.js?v=20260901h"></script>
+  <script src="/js/models.js?v=20260901h"></script>
+  <script src="/js/settings.js?v=20260901h"></script>
 </body>
 </html>

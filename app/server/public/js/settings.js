@@ -63,7 +63,6 @@ function svcCard(st) {
   html += kvPlain('版本 / Node', st.version + ' / ' + st.node);
   html += kvPlain('已运行', fmtUptime(st.uptime_ms) + '(启动于 ' + new Date(st.started_at).toLocaleString() + ')');
   html += kvPlain('端口', st.port);
-  html += kvPlain('运行中会话', (st.running_sessions || []).length);
   html += kvPlain('配置文件', st.config_path);
   html += kvPlain('工作区', st.workspace_root);
   html += kvPlain('技能目录', st.skills_root);
@@ -99,6 +98,7 @@ function formCard() {
 
 async function loadSettings() {
   refreshUser();
+  bindDirtyMark();
   const el = $('cfg-sections');
   if (!el) return;
   el.innerHTML = '<div class="empty-tip">加载中…</div>';
@@ -126,6 +126,21 @@ async function refreshUser() {
     const out = $('logout-btn');
     if (out) out.classList.toggle('hidden', !(me && me.user));
   } catch (_) { /* 未启用认证 */ }
+}
+
+// 未保存改动标红:委托监听(#cfg-sections 容器常驻,innerHTML 重建不影响)
+let dirtyBound = false;
+function bindDirtyMark() {
+  if (dirtyBound) return;
+  const box = $('cfg-sections');
+  if (!box) return;
+  dirtyBound = true;
+  box.addEventListener('input', function (ev) {
+    const inp = ev.target;
+    if (inp.classList && inp.classList.contains('cfg-input')) {
+      inp.classList.toggle('cfg-dirty', inp.value.trim() !== inp.dataset.orig);
+    }
+  });
 }
 
 // ---------- 表单保存(收集与打开时不同的项,逐项 PATCH) ----------

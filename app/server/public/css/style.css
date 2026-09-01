@@ -63,16 +63,7 @@ body {
     margin-top: 16px;
 }
 
-/* ---- 模型池条 ---- */
-.model-strip {
-  display: flex; gap: 6px; padding: 8px 12px 0;
-  flex-wrap: wrap;
-}
-.model-chip {
-  font-size: 11px; padding: 3px 8px; border-radius: 10px;
-  background: #e3f2e6; color: #217a34;
-}
-.model-chip.busy { background: #fdecea; color: #b3382c; }
+/* ---- 模型池条已随 2.0 任务页改版移除 ---- */
 
 /* ---- 会话列表 ---- */
 .session-list { flex: 1; overflow-y: auto; padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); }
@@ -337,7 +328,10 @@ body {
 .model-card-state { font-size: 11px; padding: 2px 8px; border-radius: 9px; }
 .model-card-state.idle { background: #e3f2e6; color: #217a34; }
 .model-card-state.busy { background: #fdecea; color: #b3382c; }
+/* 配置已加但还没重启进运行池 */
+.model-card-state.pending { background: #fff4dc; color: #a06a00; }
 .model-card-meta { font-size: 12px; color: #888; margin-top: 4px; }
+.model-card-foot { display: flex; justify-content: flex-end; gap: 14px; margin-top: 6px; }
 
 /* ---- 设置页行 ---- */
 .settings-row {
@@ -392,6 +386,8 @@ body {
 }
 .cfg-input:focus { border-color: #2a5299; background: #fff; }
 .cfg-input::-webkit-outer-spin-button, .cfg-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+/* 改了但还没保存的项标红 */
+.cfg-input.cfg-dirty { color: #c0392b; border-color: #e8b4b0; background: #fdf3f2; }
 /* 原文编辑器保存前的校验错误条 */
 .cfg-err {
   margin: 8px 12px 0; padding: 8px 12px; border-radius: 8px;
