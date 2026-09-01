@@ -226,7 +226,8 @@ async function main() {
     const fs9 = await api('POST', '/api/sessions', { title: uniqTitle });
     ok(fs9 && fs9.id, '创建搜索专用会话');
     await api('POST', '/api/sessions/' + fs9.id + '/messages', { content: 'zzq-unique 检索内容 12345' });
-    await waitSession(fs9.id, x => x.messages.some(m => m.content.indexOf('zzq-unique') >= 0), 8000, '消息落库');
+    // 等到结版(completed 为终态,避免 active/done 归类断言撞上 held→completed 过渡态)
+    await waitSession(fs9.id, x => x.session.status === 'completed', 8000, 'AI 回复后租约到期结版,token 用量已落库');
     const st9 = (await api('GET', '/api/sessions/' + fs9.id)).session.status;
     const actSet = await api('GET', '/api/sessions?status=active&limit=200');
     const doneSet = await api('GET', '/api/sessions?status=done&limit=200');
@@ -244,6 +245,11 @@ async function main() {
     ok(qc.some(x => x.id === fs9.id), 'q= 按消息内容命中');
     const qnone = await api('GET', '/api/sessions?q=绝无此内容xyzzy-9x7');
     ok(Array.isArray(qnone) && qnone.length === 0, 'q= 无命中返回空');
+    // token 用量:model_usage 由 mock 上游的 usage 帧驱动,今日/累计应已统计
+    const usagePool = await api('GET', '/api/models');
+    const sumToday = usagePool.reduce(function (n, m) { return n + (m.today_tokens || 0); }, 0);
+    const sumAll = usagePool.reduce(function (n, m) { return n + (m.total_tokens || 0); }, 0);
+    ok(sumToday > 0 && sumAll >= sumToday, '/api/models 携带今日/累计 token 用量', '今日=' + sumToday + ' 累计=' + sumAll);
 
     // ---- 10. 技能管理(阶段 3)----
     console.log('\n[10] 技能管理');

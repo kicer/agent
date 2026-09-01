@@ -79,6 +79,41 @@ function saveMessage(sessionId, msg) {
   return info.lastInsertRowid;
 }
 
+// 记录一次模型回合的 token 用量（上游未返回 usage 时跳过）。
+// 写入 model_usage 表,不建会话外键：删会话后累计统计仍保留。
+function recordModelUsage(sessionId, modelId, usage) {
+  if (!modelId || !usage) return;
+  const pt = usage.prompt_tokens || 0;
+  const ct = usage.completion_tokens || 0;
+  const tt = usage.total_tokens || (pt + ct);
+  if (!pt && !ct && !tt) return;
+  db.prepare(
+    'INSERT INTO model_usage (session_id, model_id, prompt_tokens, completion_tokens, total_tokens, created_at) VALUES (?,?,?,?,?,?)'
+  ).run(sessionId, modelId, pt, ct, tt, now());
+}
+
+// 每模型 token 用量统计：今日（本地时区自然日起）+ 累计。
+// 返回 { [model_id]: { today_tokens, total_tokens } },配置内的模型保证有零值占位。
+function modelUsageStats() {
+  const d = new Date();
+  const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const stats = {};
+  const slot = function (id) {
+    if (!stats[id]) stats[id] = { today_tokens: 0, total_tokens: 0 };
+    return stats[id];
+  };
+  for (const m of cfg.models) slot(m.id);
+  const today = db.prepare(
+    'SELECT model_id, SUM(total_tokens) AS n FROM model_usage WHERE created_at >= ? GROUP BY model_id'
+  ).all(dayStart);
+  for (const r of today) slot(r.model_id).today_tokens = r.n || 0;
+  const total = db.prepare(
+    'SELECT model_id, SUM(total_tokens) AS n FROM model_usage GROUP BY model_id'
+  ).all();
+  for (const r of total) slot(r.model_id).total_tokens = r.n || 0;
+  return stats;
+}
+
 function emitStatus(sessionId) {
   const s = getSession(sessionId);
   if (!s) return;
@@ -356,6 +391,7 @@ async function runLoopInner(sessionId, run) {
       })) : null,
     };
     const assistantId = saveMessage(sessionId, msgRow);
+    recordModelUsage(sessionId, session.model_id, result.usage);
     bus.emit(sessionId, 'assistant_message', { id: assistantId, content: msgRow.content, tool_calls: msgRow.tool_calls });
 
     if (!hasTools) {
@@ -571,6 +607,8 @@ module.exports = {
   saveMessage,
   queuePosition,
   modelDisplayName,
+  recordModelUsage,
+  modelUsageStats,
   dispatchQueued,
   TOOL_DEFINITIONS,
   START_EXECUTION_MESSAGE,

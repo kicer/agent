@@ -1,5 +1,5 @@
 // 模型 Tab(阶段 5):模型池状态 + 增 / 改 / 删(仅写 config.yml,到「设置」页重启才生效)。
-// 卡片默认只展示:名称 / id / 运行状态 + 余额、token 用量占位(功能后续上线)。
+// 卡片默认只展示:名称 / id / 运行状态 + 余额占位 + 今日/累计 token 用量(model_usage 表统计)。
 // 编辑走统一弹窗(新增复用同一弹窗);id 不可页面修改(会话按 id 绑定,改 id 走配置文件原文)。
 'use strict';
 
@@ -9,6 +9,10 @@ let cfgModels = [];             // 配置里的模型数组(下标即 PATCH 下�
 let runtimeById = {};           // 运行池状态,按 id 关联
 let modelsPendingRestart = false;
 let moeIdx = -1;                // 当前编辑弹窗对应的下标;-1 = 新增
+
+function fmtTok(n) {
+  return (Number(n) || 0).toLocaleString('zh-CN');
+}
 
 async function loadModelCards() {
   const el = $('model-cards');
@@ -36,13 +40,13 @@ async function loadModelCards() {
         '<div class="model-card-meta">' + esc(m.id) +
           (run && run.is_busy && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</div>' +
         '<div class="cfg-kv"><label>余额</label><b>--</b></div>' +
-        '<div class="cfg-kv"><label>今日 token</label><b>--</b></div>' +
-        '<div class="cfg-kv"><label>累计 token</label><b>--</b></div>' +
+        '<div class="cfg-kv"><label>今日 token</label><b>' + (run ? fmtTok(run.today_tokens) : '--') + '</b></div>' +
+        '<div class="cfg-kv"><label>累计 token</label><b>' + (run ? fmtTok(run.total_tokens) : '--') + '</b></div>' +
       '</div>';
     }).join('') +
       (modelsPendingRestart
         ? '<div class="empty-tip">已写入 config.yml,到「设置」页重启服务后生效。</div>'
-        : '<div class="empty-tip">余额与 token 用量统计后续上线;改动写入 config.yml,重启服务后生效。</div>');
+        : '<div class="empty-tip">余额需对接模型提供方 API,暂未实现;改动写入 config.yml,重启服务后生效。</div>');
   } catch (e) {
     el.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
   }

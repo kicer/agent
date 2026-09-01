@@ -17,6 +17,8 @@ function streamText(res, text, delayMs) {
     if (!queue.length) {
       clearInterval(timer);
       sse(res, { choices: [{ delta: {}, finish_reason: 'stop' }] });
+      // 尾声 usage 帧(OpenAI stream_options.include_usage 行为),供 token 用量统计测试
+      sse(res, { usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } });
       res.write('data: [DONE]\n\n');
       res.end();
       return;
@@ -33,6 +35,7 @@ function streamToolCall(res) {
   sse(res, { choices: [{ delta: { tool_calls: [{ function: { arguments: '{"path": "hello.txt",' } }] } }] });
   sse(res, { choices: [{ delta: { tool_calls: [{ function: { arguments: ' "content": "hello from agent"}' } }] } }] });
   sse(res, { choices: [{ delta: {}, finish_reason: 'tool_calls' }] });
+  sse(res, { usage: { prompt_tokens: 80, completion_tokens: 40, total_tokens: 120 } });
   res.write('data: [DONE]\n\n');
   res.end();
 }

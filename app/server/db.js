@@ -64,8 +64,21 @@ function initDb(dbPath) {
       value TEXT
     );
 
+    -- 模型 token 用量流水（每次模型回合一条）。故意不建会话外键：
+    -- 删会话后累计统计仍需保留
+    CREATE TABLE IF NOT EXISTS model_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      prompt_tokens INTEGER DEFAULT 0,
+      completion_tokens INTEGER DEFAULT 0,
+      total_tokens INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
     CREATE INDEX IF NOT EXISTS idx_files_session ON files(session_id);
+    CREATE INDEX IF NOT EXISTS idx_model_usage_model_time ON model_usage(model_id, created_at);
   `);
   // 迁移：旧库补 held_at 列（held 保持租约起始时间）
   const cols = db.prepare('PRAGMA table_info(sessions)').all();

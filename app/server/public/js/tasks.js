@@ -73,7 +73,7 @@ function sessionCard(s) {
       '<div class="session-meta"><span>' + esc(s.id) + '</span>' + badge +
       (s.model_id ? '<span>' + esc(s.model_id) + '</span>' : '') + '</div>' +
     '</div>' +
-    '<button class="session-del" onclick="event.stopPropagation();ui.deleteSession(\'' + s.id + '\')">删除</button>' +
+    '<button class="card-act del" onclick="event.stopPropagation();ui.deleteSession(\'' + s.id + '\')">删除</button>' +
   '</div>';
 }
 

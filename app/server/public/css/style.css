@@ -67,7 +67,6 @@ body {
 .badge.completed { background: #eceff5; color: #5c6674; }
 .badge.held { background: #fff4dc; color: #a06a00; }
 .badge.cancelled { background: #fdecea; color: #b3382c; }
-.session-del { color: #c33; background: none; border: none; font-size: 12px; padding: 6px; }
 
 /* ---- 任务搜索 + 归档折叠(2.0) ---- */
 .search-bar { display: flex; gap: 8px; align-items: center; padding: 10px 12px 0; }
@@ -79,10 +78,12 @@ body {
 .search-cancel { background: none; border: none; color: #2a5299; font-size: 14px; padding: 6px 4px; cursor: pointer; flex: none; }
 .search-tip { color: #8891a5; font-size: 12px; padding: 2px 4px 8px; }
 .load-more {
-  width: 100%; background: none; border: 1px dashed #ccd2dd; border-radius: 10px;
-  color: #667; font-size: 13px; padding: 9px; margin-bottom: 10px; cursor: pointer;
+  display: block; margin: 4px auto 14px;
+  padding: 8px 26px; background: #fff; color: #2a5299;
+  border: 1px solid #d5deee; border-radius: 18px;
+  font-size: 13px; cursor: pointer; box-shadow: 0 1px 3px rgba(30,40,90,0.06);
 }
-.load-more:active { background: #eceef3; }
+.load-more:active { background: #eef3fc; }
 .load-more:disabled { opacity: 0.5; cursor: default; }
 
 /* ---- 任务状态栏 ---- */
