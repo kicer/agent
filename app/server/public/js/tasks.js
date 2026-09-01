@@ -54,11 +54,10 @@ function showList() {
   }, { passive: true });
 })();
 
-// ---------- 会话列表(活跃 + 归档折叠 + 搜索) ----------
-const DONE_PAGE = 20; // 归档每页条数
+// ---------- 会话列表(活跃 + 归档分页 + 搜索) ----------
+const DONE_PAGE = 10; // 归档每页条数
 let activeRows = [];        // 当前活跃会话(含排队/保持)
 let searchMode = false;     // 搜索模式:列表区显示搜索结果
-let doneExpanded = false;   // 归档区是否展开
 let doneRows = [];          // 已加载的归档行
 let doneTotal = 0;          // 归档总数
 let doneCursor = null;      // 下一页游标 {updated_at, id}
@@ -81,18 +80,14 @@ function sessionCard(s) {
 function renderSessionList() {
   const el = $('session-list');
   let html = activeRows.map(sessionCard).join('');
-  if (doneTotal) {
-    html += '<div class="done-head' + (doneExpanded ? ' open' : '') + '" onclick="ui.toggleDone()">' +
-      '已完成/已终止 (' + doneTotal + ')' +
-      '<svg class="chev" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg></div>';
-    if (doneExpanded) {
-      html += doneRows.map(sessionCard).join('');
-      if (doneRows.length < doneTotal) {
-        html += '<button class="load-more" onclick="ui.loadMoreDone()"' + (doneLoading ? ' disabled' : '') + '>加载更多</button>';
-      }
-    }
-  } else if (!activeRows.length) {
+  html += doneRows.map(sessionCard).join('');
+  if (!activeRows.length && !doneTotal) {
     html += '<div class="empty-tip">还没有任务,点右上角 + 新建</div>';
+  }
+  const remain = doneTotal - doneRows.length;
+  if (remain > 0) {
+    // 括号内是剩余未展示的归档数,如总共 100、已显 10 则显示「加载更多(90)」
+    html += '<button class="load-more" onclick="ui.loadMoreDone()"' + (doneLoading ? ' disabled' : '') + '>加载更多(' + remain + ')</button>';
   }
   el.innerHTML = html;
 }
@@ -540,7 +535,6 @@ const ui = {
   logout() { location.href = '/logout'; },
   toggleSearch() { toggleSearch(); },
   doSearch() { doSearch(); },
-  toggleDone() { doneExpanded = !doneExpanded; renderSessionList(); },
   loadMoreDone() { return loadMoreDone(); },
 };
 

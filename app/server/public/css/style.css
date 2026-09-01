@@ -78,16 +78,6 @@ body {
 .search-bar input:focus { border-color: #2a5299; }
 .search-cancel { background: none; border: none; color: #2a5299; font-size: 14px; padding: 6px 4px; cursor: pointer; flex: none; }
 .search-tip { color: #8891a5; font-size: 12px; padding: 2px 4px 8px; }
-.done-head {
-  display: flex; align-items: center; justify-content: center; gap: 4px;
-  color: #77818f; font-size: 13px; padding: 10px 0 12px; cursor: pointer; user-select: none;
-}
-.done-head:active { color: #445; }
-.done-head .chev {
-  width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2;
-  stroke-linecap: round; stroke-linejoin: round; transition: transform 0.2s;
-}
-.done-head.open .chev { transform: rotate(180deg); }
 .load-more {
   width: 100%; background: none; border: 1px dashed #ccd2dd; border-radius: 10px;
   color: #667; font-size: 13px; padding: 9px; margin-bottom: 10px; cursor: pointer;
