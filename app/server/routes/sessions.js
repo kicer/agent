@@ -52,9 +52,41 @@ router.post('/', wrap((req, res) => {
   res.json(session);
 }));
 
+// 列表查询参数(2.0):
+//   status=active|done|all  归档分组:active=排队/活跃/保持,done=已完成/已终止
+//   q=关键词                标题或消息内容 LIKE 搜索
+//   before + before_id      游标分页(上一页末行的 updated_at,id),避免 offset 翻页在
+//                           updated_at 变动时重复/漏行
+//   with_total=1            返回 {rows,total}(归档折叠区需要总数);默认仍返回纯数组
 router.get('/', wrap((req, res) => {
   const db = engine.getDb();
-  const rows = db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC LIMIT 50').all();
+  const status = String(req.query.status || 'all');
+  const q = String(req.query.q || '').trim();
+  let limit = parseInt(req.query.limit, 10);
+  if (!Number.isFinite(limit) || limit < 1) limit = 50;
+  if (limit > 200) limit = 200;
+
+  const where = [];
+  const args = [];
+  if (status === 'active') where.push("status IN ('queued','active','held')");
+  else if (status === 'done') where.push("status IN ('completed','cancelled')");
+  if (q) {
+    where.push('(title LIKE ? OR EXISTS(SELECT 1 FROM messages m WHERE m.session_id = sessions.id AND m.content LIKE ?))');
+    args.push('%' + q + '%', '%' + q + '%');
+  }
+  const before = req.query.before;
+  const beforeId = req.query.before_id;
+  if (before != null && before !== '' && beforeId) {
+    where.push('(updated_at < ? OR (updated_at = ? AND id < ?))');
+    args.push(String(before), String(before), String(beforeId));
+  }
+  const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
+
+  const stmt = db.prepare(
+    'SELECT * FROM sessions' + whereSql + ' ORDER BY updated_at DESC, id DESC LIMIT ?'
+  );
+  const rows = stmt.all.apply(stmt, args.concat([limit]));
+
   const qpos = db.prepare(
     'SELECT session_id, ROW_NUMBER() OVER (ORDER BY queued_at, id) AS pos FROM wait_queue'
   ).all();
@@ -62,6 +94,11 @@ router.get('/', wrap((req, res) => {
   for (const r of qpos) posMap[r.session_id] = r.pos;
   for (const row of rows) {
     row.queue_pos = row.status === 'queued' ? (posMap[row.id] || null) : null;
+  }
+  if (req.query.with_total === '1') {
+    const cnt = db.prepare('SELECT COUNT(*) AS n FROM sessions' + whereSql);
+    const total = cnt.all.apply(cnt, args)[0].n;
+    return res.json({ rows: rows, total: total });
   }
   res.json(rows);
 }));

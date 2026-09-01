@@ -54,28 +54,107 @@ function showList() {
   }, { passive: true });
 })();
 
-// ---------- 会话列表 ----------
+// ---------- 会话列表(活跃 + 归档折叠 + 搜索) ----------
+const DONE_PAGE = 20; // 归档每页条数
+let activeRows = [];        // 当前活跃会话(含排队/保持)
+let searchMode = false;     // 搜索模式:列表区显示搜索结果
+let doneExpanded = false;   // 归档区是否展开
+let doneRows = [];          // 已加载的归档行
+let doneTotal = 0;          // 归档总数
+let doneCursor = null;      // 下一页游标 {updated_at, id}
+let doneLoading = false;
+
+// 单张会话卡片(活跃/归档/搜索结果共用)
+function sessionCard(s) {
+  const st = { queued: '排队中', active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' }[s.status] || s.status;
+  const badge = '<span class="badge ' + s.status + '">' + st + (s.status === 'queued' && s.queue_pos ? ' #' + s.queue_pos : '') + '</span>';
+  return '<div class="session-card" onclick="ui.openSession(\'' + s.id + '\')">' +
+    '<div class="session-main">' +
+      '<div class="session-name">' + esc(s.title || s.id) + '</div>' +
+      '<div class="session-meta"><span>' + esc(s.id) + '</span>' + badge +
+      (s.model_id ? '<span>' + esc(s.model_id) + '</span>' : '') + '</div>' +
+    '</div>' +
+    '<button class="session-del" onclick="event.stopPropagation();ui.deleteSession(\'' + s.id + '\')">删除</button>' +
+  '</div>';
+}
+
+function renderSessionList() {
+  const el = $('session-list');
+  let html = activeRows.map(sessionCard).join('');
+  if (doneTotal) {
+    html += '<div class="done-head' + (doneExpanded ? ' open' : '') + '" onclick="ui.toggleDone()">' +
+      '已完成/已终止 (' + doneTotal + ')' +
+      '<svg class="chev" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg></div>';
+    if (doneExpanded) {
+      html += doneRows.map(sessionCard).join('');
+      if (doneRows.length < doneTotal) {
+        html += '<button class="load-more" onclick="ui.loadMoreDone()"' + (doneLoading ? ' disabled' : '') + '>加载更多</button>';
+      }
+    }
+  } else if (!activeRows.length) {
+    html += '<div class="empty-tip">还没有任务,点右上角 + 新建</div>';
+  }
+  el.innerHTML = html;
+}
+
 async function loadSessions() {
+  if (searchMode) return doSearch();
   try {
-    const rows = await req('GET', '/api/sessions');
+    const lists = await Promise.all([
+      req('GET', '/api/sessions?status=active&limit=100'),
+      req('GET', '/api/sessions?status=done&limit=' + DONE_PAGE + '&with_total=1'),
+    ]);
+    activeRows = lists[0];
+    doneRows = lists[1].rows;
+    doneTotal = lists[1].total;
+    const last = doneRows[doneRows.length - 1];
+    doneCursor = last ? { updated_at: last.updated_at, id: last.id } : null;
+    renderSessionList();
+  } catch (e) { toast('加载会话失败:' + e.message); }
+}
+
+async function loadMoreDone() {
+  if (doneLoading || !doneCursor) return;
+  doneLoading = true;
+  renderSessionList(); // 按钮置灰
+  try {
+    const r = await req('GET', '/api/sessions?status=done&limit=' + DONE_PAGE + '&with_total=1' +
+      '&before=' + encodeURIComponent(doneCursor.updated_at) + '&before_id=' + encodeURIComponent(doneCursor.id));
+    doneRows = doneRows.concat(r.rows);
+    doneTotal = r.total;
+    const last = r.rows[r.rows.length - 1];
+    if (last) doneCursor = { updated_at: last.updated_at, id: last.id };
+    else doneTotal = doneRows.length; // 防御:数据变少导致翻页空转,直接隐藏按钮
+  } catch (e) { toast('加载更多失败:' + e.message); }
+  doneLoading = false;
+  renderSessionList();
+}
+
+function toggleSearch() {
+  searchMode = !searchMode;
+  $('search-bar').classList.toggle('hidden', !searchMode);
+  const input = $('search-input');
+  if (searchMode) {
+    input.focus();
+    if (input.value.trim()) doSearch();
+  } else {
+    input.value = '';
+    loadSessions();
+  }
+}
+
+async function doSearch() {
+  const q = $('search-input').value.trim();
+  if (!q) return loadSessions();
+  try {
+    const r = await req('GET', '/api/sessions?q=' + encodeURIComponent(q) + '&limit=50&with_total=1');
     const el = $('session-list');
-    if (!rows.length) {
-      el.innerHTML = '<div class="empty-tip">还没有任务,点右上角 + 新建</div>';
+    if (!r.rows.length) {
+      el.innerHTML = '<div class="empty-tip">没有找到包含「' + esc(q) + '」的任务</div>';
       return;
     }
-    el.innerHTML = rows.map(s => {
-      const st = { queued: '排队中', active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' }[s.status] || s.status;
-      const badge = '<span class="badge ' + s.status + '">' + st + (s.status === 'queued' && s.queue_pos ? ' #' + s.queue_pos : '') + '</span>';
-      return '<div class="session-card" onclick="ui.openSession(\'' + s.id + '\')">' +
-        '<div class="session-main">' +
-          '<div class="session-name">' + esc(s.title || s.id) + '</div>' +
-          '<div class="session-meta"><span>' + esc(s.id) + '</span>' + badge +
-          (s.model_id ? '<span>' + esc(s.model_id) + '</span>' : '') + '</div>' +
-        '</div>' +
-        '<button class="session-del" onclick="event.stopPropagation();ui.deleteSession(\'' + s.id + '\')">删除</button>' +
-      '</div>';
-    }).join('');
-  } catch (e) { toast('加载会话失败:' + e.message); }
+    el.innerHTML = '<div class="search-tip">找到 ' + r.total + ' 个相关任务</div>' + r.rows.map(sessionCard).join('');
+  } catch (e) { toast('搜索失败:' + e.message); }
 }
 
 // ---------- 消息渲染 ----------
@@ -459,6 +538,10 @@ const ui = {
     } catch (e) { toast('删除失败:' + e.message); }
   },
   logout() { location.href = '/logout'; },
+  toggleSearch() { toggleSearch(); },
+  doSearch() { doSearch(); },
+  toggleDone() { doneExpanded = !doneExpanded; renderSessionList(); },
+  loadMoreDone() { return loadMoreDone(); },
 };
 
 // 文件面板展开时,点击面板以外的区域自动关闭
@@ -484,6 +567,17 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     ui.send();
   }
+});
+
+// 搜索框:回车触发搜索;清空后退回普通列表
+document.addEventListener('keydown', e => {
+  if (e.target.id === 'search-input' && e.key === 'Enter' && !e.isComposing) {
+    e.preventDefault();
+    doSearch();
+  }
+});
+document.addEventListener('input', e => {
+  if (e.target.id === 'search-input' && !e.target.value.trim()) loadSessions();
 });
 
 // ---------- Tab 注册 ----------

@@ -220,8 +220,33 @@ async function main() {
     const restored = await api('PUT', '/api/config', { text: origText });
     ok(restored.ok && fs.readFileSync(cfgPath, 'utf8') === origText, 'PUT 整文件恢复原配置');
 
-    // ---- 9. 技能管理(阶段 3)----
-    console.log('\n[9] 技能管理');
+    // ---- 9. 会话列表过滤/游标分页/搜索(2.0)----
+    console.log('\n[9] 会话列表过滤与搜索');
+    const uniqTitle = '冒烟-搜索专用-' + Date.now();
+    const fs9 = await api('POST', '/api/sessions', { title: uniqTitle });
+    ok(fs9 && fs9.id, '创建搜索专用会话');
+    await api('POST', '/api/sessions/' + fs9.id + '/messages', { content: 'zzq-unique 检索内容 12345' });
+    await waitSession(fs9.id, x => x.messages.some(m => m.content.indexOf('zzq-unique') >= 0), 8000, '消息落库');
+    const st9 = (await api('GET', '/api/sessions/' + fs9.id)).session.status;
+    const actSet = await api('GET', '/api/sessions?status=active&limit=200');
+    const doneSet = await api('GET', '/api/sessions?status=done&limit=200');
+    ok(((st9 === 'completed' || st9 === 'cancelled') ? doneSet : actSet).some(x => x.id === fs9.id), '新会话按状态归入对应过滤', st9);
+    ok(!actSet.some(x => x.status === 'completed' || x.status === 'cancelled'), 'active 过滤不含归档会话');
+    const withTot = await api('GET', '/api/sessions?status=done&limit=1&with_total=1');
+    ok(Array.isArray(withTot.rows) && typeof withTot.total === 'number' && withTot.total >= withTot.rows.length, 'with_total 返回 {rows,total}');
+    const pg1 = await api('GET', '/api/sessions?limit=1');
+    ok(Array.isArray(pg1) && pg1.length === 1, '默认数组响应兼容旧格式(limit=1)');
+    const pg2 = await api('GET', '/api/sessions?limit=1&before=' + encodeURIComponent(pg1[0].updated_at) + '&before_id=' + pg1[0].id);
+    ok(Array.isArray(pg2) && pg2.length === 1 && pg2[0].id !== pg1[0].id, '游标翻页取到不同的下一页');
+    const qt = await api('GET', '/api/sessions?q=' + encodeURIComponent(uniqTitle));
+    ok(qt.some(x => x.id === fs9.id), 'q= 按标题命中');
+    const qc = await api('GET', '/api/sessions?q=zzq-unique');
+    ok(qc.some(x => x.id === fs9.id), 'q= 按消息内容命中');
+    const qnone = await api('GET', '/api/sessions?q=绝无此内容xyzzy-9x7');
+    ok(Array.isArray(qnone) && qnone.length === 0, 'q= 无命中返回空');
+
+    // ---- 10. 技能管理(阶段 3)----
+    console.log('\n[10] 技能管理');
     ok((await api('POST', '/api/skills', { name: 'demo-skill', description: '演示技能' })).ok, '创建技能');
     let slist = await api('GET', '/api/skills');
     const demo = slist.find(x => x.name === 'demo-skill');
@@ -250,8 +275,8 @@ async function main() {
     slist = await api('GET', '/api/skills');
     ok(!slist.some(x => x.name.indexOf('demo') === 0), '删除后列表干净');
 
-    // ---- 10. 系统状态与优雅重启(阶段 2;放在最后,服务进程将退出收尾)----
-    console.log('\n[10] 优雅重启');
+    // ---- 11. 系统状态与优雅重启(阶段 2;放在最后,服务进程将退出收尾)----
+    console.log('\n[11] 优雅重启');
     const st = await api('GET', '/api/system/status');
     ok(st.ok && st.started_at && st.port === 8099, 'GET /api/system/status');
     s = await api('POST', '/api/sessions', { title: '冒烟-重启保护' });

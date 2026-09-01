@@ -18,10 +18,17 @@
       <div class="header">
         <div class="header-left"><h2>Agent 任务台</h2></div>
         <div style="display:flex; gap:2px; align-items:center;">
+          <button class="icon-btn" id="search-toggle-btn" onclick="ui.toggleSearch()" title="搜索任务">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          </button>
           <button class="icon-btn" id="create-session-btn" onclick="ui.openCreate()" title="新建任务">
             <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           </button>
         </div>
+      </div>
+      <div class="search-bar hidden" id="search-bar">
+        <input type="search" id="search-input" placeholder="搜索任务标题或消息内容" enterkeyhint="search">
+        <button class="search-cancel" onclick="ui.toggleSearch()">取消</button>
       </div>
       <div class="session-list" id="session-list"></div>
     </div>
@@ -277,10 +284,10 @@
   <div class="toast hidden" id="toast"></div>
 
   <!-- 发版时更新 v 参数,避免移动端浏览器缓存旧 JS -->
-  <script src="/js/core.js?v=20260901k"></script>
-  <script src="/js/tasks.js?v=20260901k"></script>
-  <script src="/js/skills.js?v=20260901k"></script>
-  <script src="/js/models.js?v=20260901k"></script>
-  <script src="/js/settings.js?v=20260901k"></script>
+  <script src="/js/core.js?v=20260901l"></script>
+  <script src="/js/tasks.js?v=20260901l"></script>
+  <script src="/js/skills.js?v=20260901l"></script>
+  <script src="/js/models.js?v=20260901l"></script>
+  <script src="/js/settings.js?v=20260901l"></script>
 </body>
 </html>

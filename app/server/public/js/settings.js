@@ -60,7 +60,7 @@ function kvPlain(label, v) {
 function svcCard(st) {
   let html = '<div class="settings-card"><h4>服务状态' +
     (pendingKeys.size ? ' <span class="badge held">待重启生效</span>' : '') + '</h4>';
-  html += kvPlain('版本 / Node', st.version + (st.version_date ? '(' + st.version_date + ')' : '') + ' / ' + st.node);
+  html += kvPlain('版本 / Node', st.version + ' / ' + st.node);
   html += kvPlain('已运行', fmtUptime(st.uptime_ms) + '(启动于 ' + new Date(st.started_at).toLocaleString() + ')');
   html += kvPlain('端口', st.port);
   html += kvPlain('配置文件', st.config_path);
