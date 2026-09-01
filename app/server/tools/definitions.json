@@ -349,7 +349,7 @@
         ],
         "properties": {
           "skill_name": {
-            "description": "技能名称（即技能根目录下的子目录名，如 md2pdf）",
+            "description": "技能名称（即技能根目录下的子目录名）",
             "type": "string"
           }
         },
@@ -361,7 +361,7 @@
     "type": "function",
     "function": {
       "name": "run_skill",
-      "description": "执行指定技能，传入所需参数，自动检查与安装依赖（pip install --target 装入共享 deps 目录并以 PYTHONPATH 注入，或执行 install.sh），返回技能运行的标准输出或错误信息。\n\n技能入口脚本约定接收一个 JSON 字符串作为唯一命令行参数，其中包含全部输入参数键值对。\n\n- 执行前会根据 SKILL.md 的 input_schema.required 校验必填参数。\n- 依赖安装有缓存标记 .deps_installed，仅当 requirements.txt / install.sh 变化时重装。\n- 默认超时 120 秒。\n- input_args 中的相对路径会按会话工作目录自动解析并转为绝对路径（技能进程的工作目录是技能目录，不是会话目录），直接传相对路径即可。",
+      "description": "执行指定技能，传入所需参数，自动检查与安装依赖，返回技能运行的标准输出或错误信息。\n技能入口脚本约定接收一个 JSON 字符串作为唯一命令行参数，其中包含全部输入参数键值对。\n- 执行前会根据 SKILL.md 的 input_schema.required 校验必填参数。\n- 默认超时 120 秒。\n- 参数中的相对路径会按会话工作目录自动解析并转为绝对路径，直接传相对路径即可。",
       "parameters": {
         "required": [
           "skill_name",
@@ -369,11 +369,11 @@
         ],
         "properties": {
           "skill_name": {
-            "description": "技能名称（技能根目录下的子目录名，如 md2pdf）",
+            "description": "技能名称（技能根目录下的子目录名）",
             "type": "string"
           },
           "input_args": {
-            "description": "技能所需的输入参数字典（对象），键值对形式。例如 {\"input\": \"file.md\", \"output\": \"out.pdf\"}。具体字段以 get_skill_info 查看的 SKILL.md 为准。路径参数可传相对会话工作目录的路径，也可传绝对路径，后者原样使用。",
+            "description": "技能所需的输入参数字典（对象），键值对形式。例如 {\"input\": \"file.md\", \"output\": \"out.pdf\"}。具体字段以 get_skill_info 查看的 SKILL.md 为准。路径参数建议传相对会话工作目录的路径，也可传绝对路径。",
             "type": "object"
           }
         },
