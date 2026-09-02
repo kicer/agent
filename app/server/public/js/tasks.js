@@ -466,7 +466,7 @@ function scrollBottom() {
 }
 // 监听用户滚动意图:向上翻阅历史时立即暂停跟随,回到底部时恢复。
 // 关键:用 wheel/touchmove 捕获「用户主动向上」的意图(程序滚动不会触发这二者),
-// 避免被 16ms 一次的 flushTypewriter→scrollBottom 反复拉回底部而无法上翻。
+// 避免被自动跟随的 scrollBottom 反复拉回底部而无法上翻。
 // scroll 事件只负责「回到底部时清除暂停」(程序 scrollBottom 到底部也会触发,清暂停无副作用)。
 function bindScroll() {
   const box = $('messages');
@@ -533,60 +533,6 @@ function removePendingBubble() {
   if (state.pendingEl) { state.pendingEl.remove(); state.pendingEl = null; }
 }
 
-// ---------- 打字机效果 ----------
-// AI 流式输出时,不直接把全量文本一次性写进气泡,而是逐字「吐」出,
-// 视觉上接近打字机。累计文本存于 state.streamText,已显示长度存于 typewriterShown。
-// 每次固定推进 typingConfig.chunk 个字符(默认1=真逐字),不随堆积量加速。
-// chunk 与 interval 均可配置:localStorage 持久化 + window.typingConfig 控制台实时调。
-const typingConfig = {
-  chunk: 1,      // 每次推进字符数
-  interval: 16,  // 每次推进间隔(ms)
-};
-// 从 localStorage 读取用户自定义覆盖(便于调参)
-try {
-  const saved = localStorage.getItem('typingConfig');
-  if (saved) Object.assign(typingConfig, JSON.parse(saved));
-} catch (_) {}
-// 暴露到 window,方便在控制台实时调整(改后下一帧生效)
-window.typingConfig = typingConfig;
-let typewriterShown = 0;
-let typewriterTimer = null;
-let typewriterBlinkCursor = null; // 光标闪烁 interval
-function startTypewriter() {
-  typewriterShown = 0;
-  stopTypewriter();
-  // 光标闪烁
-  if (typewriterBlinkCursor) clearInterval(typewriterBlinkCursor);
-  typewriterBlinkCursor = setInterval(() => {
-    if (state.streamEl) state.streamEl.classList.toggle('typing');
-    if (!state.streamEl && typewriterBlinkCursor) { clearInterval(typewriterBlinkCursor); typewriterBlinkCursor = null; }
-  }, 500);
-  // 递归 setTimeout:每次读取最新 interval,改 interval 实时生效
-  typewriterTimer = setTimeout(flushTypewriter, typingConfig.interval);
-}
-function flushTypewriter() {
-  typewriterTimer = null;
-  if (!state.streamEl) return;
-  const total = state.streamText.length;
-  if (typewriterShown < total) {
-    // 固定步长,不随堆积量加速(避免一次输出一堆)
-    typewriterShown = Math.min(total, typewriterShown + typingConfig.chunk);
-    state.streamEl.textContent = state.streamText.slice(0, typewriterShown);
-    maybeAutoScroll();
-  }
-  if (state.streamEl) {
-    typewriterTimer = setTimeout(flushTypewriter, typingConfig.interval);
-  }
-}
-function stopTypewriter() {
-  if (typewriterTimer) { clearTimeout(typewriterTimer); typewriterTimer = null; }
-}
-// 结束打字机:一次性补足剩余文本(以原始 markdown 渲染),关闭光标
-function finishTypewriter() {
-  stopTypewriter();
-  if (typewriterBlinkCursor) { clearInterval(typewriterBlinkCursor); typewriterBlinkCursor = null; }
-  if (state.streamEl) state.streamEl.classList.remove('typing');
-}
 
 // ---------- SSE ----------
 function connectStream() {
@@ -607,20 +553,19 @@ function connectStream() {
       wrap.innerHTML = '<div class="msg-user"><span class="ai-avatar"></span>AI</div>' +
         '<div class="msg-bubble"></div>';
       state.streamEl = wrap.querySelector('.msg-bubble');
-      state.streamText = '';
-      $('messages').appendChild(wrap);
-      startTypewriter();
-    }
-    state.streamText += d.text;
-    // 打字机推进在定时器里完成,这里仅设位状态、刷新按钮
-    state.streaming = true;
-    updateScrollBottomBtn();
+        state.streamText = '';
+        $('messages').appendChild(wrap);
+      }
+      state.streamText += d.text;
+      state.streamEl.textContent = state.streamText;
+      state.streaming = true;
+      maybeAutoScroll();
+      updateScrollBottomBtn();
   });
   es.addEventListener('assistant_message', ev => {
     const d = JSON.parse(ev.data);
     removePendingBubble();
     if (state.streamEl) {
-      finishTypewriter();
       const bubble = state.streamEl;
       bubble.innerHTML = md(d.content || '');
       state.streamEl = null;
@@ -663,7 +608,6 @@ function connectStream() {
   });
   es.addEventListener('done', ev => {
     removePendingBubble(); // 本轮结束,占位兼终止(如模型报错无回复)
-    finishTypewriter();
     state.streaming = false;
     updateScrollBottomBtn();
     loadSessions();
@@ -853,9 +797,8 @@ const ui = {
     } catch (e) { toast('删除失败:' + e.message); }
   },
   async openSession(id) {
-    // 切会话前收尾上一会话:关闭 SSE、清打字机/占位,避免跨会话残留
+    // 切会话前收尾上一会话:关闭 SSE、清占位,避免跨会话残留
     if (state.es) { state.es.close(); state.es = null; }
-    finishTypewriter();
     removePendingBubble();
     state.sessionId = id;
     // 待发送附件属于上一个会话的语境,切会话时清空展示(文件已落盘,可在文件面板查看)
@@ -887,7 +830,6 @@ const ui = {
   },
   backToList() {
     if (state.es) { state.es.close(); state.es = null; }
-    finishTypewriter();
     removePendingBubble();
     state.streaming = false;
     updateScrollBottomBtn();
