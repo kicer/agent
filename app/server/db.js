@@ -16,6 +16,7 @@ function initDb(dbPath) {
       status TEXT NOT NULL,
       phase TEXT NOT NULL DEFAULT 'planning',
       model_id TEXT,
+      last_model_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       completed_at INTEGER,
@@ -83,6 +84,11 @@ function initDb(dbPath) {
   // 迁移：旧库补 held_at 列（held 保持租约起始时间）
   const cols = db.prepare('PRAGMA table_info(sessions)').all();
   if (!cols.some(c => c.name === 'held_at')) db.exec('ALTER TABLE sessions ADD COLUMN held_at INTEGER');
+  // 迁移：last_model_id 记住会话最近用过的模型，释放后新消息优先回绑（见 engine.dispatchQueued）
+  if (!cols.some(c => c.name === 'last_model_id')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN last_model_id TEXT');
+    db.exec('UPDATE sessions SET last_model_id = model_id WHERE last_model_id IS NULL AND model_id IS NOT NULL');
+  }
   return db;
 }
 

@@ -209,7 +209,9 @@ function dequeue(sessionId) {
 
 function bindModel(session, model) {
   db.prepare('UPDATE model_pool SET is_busy = 1, current_session_id = ? WHERE id = ?').run(session.id, model.id);
-  db.prepare("UPDATE sessions SET status='active', model_id=?, updated_at=? WHERE id=?").run(model.id, now(), session.id);
+  // last_model_id 不随释放清除：会话再次需要模型时优先回绑（见 pickModelFor）
+  db.prepare("UPDATE sessions SET status='active', model_id=?, last_model_id=?, updated_at=? WHERE id=?")
+    .run(model.id, model.id, now(), session.id);
 }
 
 function releaseModel(sessionId) {
@@ -228,18 +230,27 @@ function hasPendingUser(sessionId) {
   return false;
 }
 
-// 有空闲模型就按 FIFO 派发排队会话。
+// 为排队会话挑模型：上次用过的模型（last_model_id）恰好空闲则优先回绑；
+// 被占用（或从未绑过/已从配置删除）则按 id 序取任意空闲模型。
+function pickModelFor(session) {
+  if (session.last_model_id) {
+    const pref = db.prepare('SELECT * FROM model_pool WHERE id = ? AND is_busy = 0').get(session.last_model_id);
+    if (pref) return pref;
+  }
+  return freeModel();
+}
+
+// 有空闲模型就按 FIFO 派发排队会话（每会话优先回绑上次用过的模型）。
 function dispatchQueued() {
   for (;;) {
-    const model = freeModel();
-    if (!model) return;
+    if (!freeModel()) return;
     const head = db.prepare('SELECT session_id FROM wait_queue ORDER BY queued_at, id').get();
     if (!head) return;
     dequeue(head.session_id);
     const session = getSession(head.session_id);
-    if (!session) continue;
-    if (session.status !== 'queued') continue;
-    bindModel(session, model);
+    if (!session || session.status !== 'queued') continue;
+    // 上面已确认有空闲模型，pickModelFor 必能回退到 freeModel
+    bindModel(session, pickModelFor(session));
     emitStatus(session.id);
     if (hasPendingUser(session.id)) runLoop(session.id);
   }

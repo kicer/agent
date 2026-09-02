@@ -138,6 +138,19 @@ async function main() {
       'tool 消息含压缩后的 image_url 内容块',
       imgTool ? JSON.stringify(imgTool.__blocks__.map(b => b.type)) : '无多模态块');
 
+    // ---- 2.8 释放后新消息优先回绑上次模型（last_model_id）----
+    console.log('\n[2.8] 优先回绑');
+    const sp = await api('POST', '/api/sessions', { title: '冒烟-回绑' });
+    let dp = await waitSession(sp.id, x => x.session.status === 'active', 5000, '绑定');
+    const m1 = dp.session.model_id;
+    await api('POST', '/api/sessions/' + sp.id + '/messages', { content: '回绑测试' });
+    dp = await waitSession(sp.id, x => x.session.status === 'held', 8000, '回复完成 held');
+    await api('POST', '/api/sessions/' + sp.id + '/release'); // 主动断开：completed + 释放模型
+    dp = await waitSession(sp.id, x => x.session.status === 'completed' && !x.session.model_id, 3000, 'release 后释放');
+    await api('POST', '/api/sessions/' + sp.id + '/messages', { content: '再来一句' });
+    dp = await waitSession(sp.id, x => x.session.status !== 'queued', 5000, '新消息送达');
+    ok(dp.session.model_id === m1, '释放后新消息回绑上次模型', dp.session.model_id + ' vs ' + m1);
+
     // ---- 3. 路径穿越防护 ----
     console.log('\n[3] 路径防护');
     let blocked = false;
