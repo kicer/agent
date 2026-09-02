@@ -716,6 +716,18 @@ function stop(sessionId) {
   return { ok: true };
 }
 
+// 重命名会话：标题必填，最长 100 字。
+function renameSession(sessionId, title) {
+  const s = getSession(sessionId);
+  if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const t = String(title || '').trim();
+  if (!t) throw Object.assign(new Error('名称不能为空'), { status_code: 400 });
+  if (t.length > 100) throw Object.assign(new Error('名称不能超过 100 字'), { status_code: 400 });
+  touch(sessionId, { title: t });
+  log.info('[task] ' + sessionId + ' 重命名为「' + t + '」');
+  return { ok: true, title: t };
+}
+
 function deleteSession(sessionId, deleteDir) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -745,6 +757,7 @@ module.exports = {
   startExecution,
   stop,
   releaseHold,
+  renameSession,
   deleteSession,
   getSession,
   getRun,

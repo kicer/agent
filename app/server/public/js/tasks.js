@@ -538,6 +538,18 @@ const ui = {
     $('new-title').focus();
   },
   closeCreate() { $('create-modal').classList.add('hidden'); },
+  async renameSession() {
+    if (!state.sessionId) return;
+    const cur = $('chat-title').textContent;
+    const t = await promptModal('重命名会话', '输入新的会话名称', cur === state.sessionId ? '' : cur);
+    if (t === null) return; // 取消
+    try {
+      await req('PATCH', '/api/sessions/' + state.sessionId, { title: t });
+      toast('已重命名');
+      $('chat-title').textContent = t.trim();
+      loadSessions();
+    } catch (e) { toast('重命名失败:' + e.message); }
+  },
   async openModelSwitch() {
     if (!state.sessionId) return;
     const list = $('bind-model-list');
