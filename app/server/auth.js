@@ -79,9 +79,11 @@ function isPublicPath(p) {
   return false;
 }
 
-// 带签名 token 的临时下载链接（files.js 自己验签），此处放行由路由层拒绝伪造请求
+// 带签名 token 的临时下载链接（files.js 自己验签），此处放行由路由层拒绝伪造请求。
+// 两种 URL 形态都要认：/files/download?path=… 与加固形态 /files/download-name/<名字>?path=…；
+// 只认旧形态会让 APK 系统下载器（不带 cookie、依赖 token）对新链接拿 401。
 function isSignedDownload(req) {
-  return req.method === 'GET' && /\/files\/download$/.test(req.path) && !!req.query.t;
+  return req.method === 'GET' && /\/files\/download(-name\/.+)?$/.test(req.path) && !!req.query.t;
 }
 
 // cfg.auth = { users: [{user, password}], secret?, ttl_ms? }
