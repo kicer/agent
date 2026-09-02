@@ -294,11 +294,17 @@
 
   <div class="toast hidden" id="toast"></div>
 
+  <!-- 消息全屏查看器(双击气泡打开) -->
+  <div id="fs-viewer" class="hidden" onclick="if(event.target===this)ui.closeFullscreen()">
+    <button class="fs-close" onclick="ui.closeFullscreen()">✕</button>
+    <div class="msg-bubble fs-panel" id="fs-body"></div>
+  </div>
+
   <!-- 发版时更新 v 参数,避免移动端浏览器缓存旧 JS -->
-  <script src="/js/core.js?v=20260902e"></script>
-  <script src="/js/tasks.js?v=20260902e"></script>
-  <script src="/js/skills.js?v=20260902e"></script>
-  <script src="/js/models.js?v=20260902e"></script>
-  <script src="/js/settings.js?v=20260902e"></script>
+  <script src="/js/core.js?v=20260902f"></script>
+  <script src="/js/tasks.js?v=20260902f"></script>
+  <script src="/js/skills.js?v=20260902f"></script>
+  <script src="/js/models.js?v=20260902f"></script>
+  <script src="/js/settings.js?v=20260902f"></script>
 </body>
 </html>

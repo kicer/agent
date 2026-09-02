@@ -45,6 +45,11 @@ const CFG_FORM = [
   { group: '技能', items: [
     { path: 'skills.timeout_ms', label: '技能执行超时(ms)', type: 'int' },
   ] },
+  { group: '图片上传压缩（浏览器端）', items: [
+    { path: 'upload.image_compress_threshold_kb', label: '大图阈值(KB)', type: 'int' },
+    { path: 'upload.image_max_dim', label: '压缩后长边上限(px)', type: 'int' },
+    { path: 'upload.image_quality', label: 'JPEG 质量(0~1)', type: 'float' },
+  ] },
   { group: '模型租约(会话结束后的保持)', items: [
     { path: 'model_hold.idle_release_ms', label: '无人观看释放(ms)', type: 'int' },
     { path: 'model_hold.active_max_ms', label: '最长保持(ms)', type: 'int' },

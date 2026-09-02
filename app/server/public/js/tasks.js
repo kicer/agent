@@ -357,6 +357,18 @@ function fillToolResult(id, content, isError, liveImageUrl) {
   }
 }
 
+// 每条消息的复制按钮：原文存 Map（内容可能含引号/换行，不适合嵌进属性），按钮只带自增 id。
+// renderDetail 重建列表时清空，防长会话累积。
+const COPY_SVG = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+const copyMap = new Map();
+let copySeq = 0;
+function copyBtnHtml(text) {
+  if (!text) return '';
+  const id = ++copySeq;
+  copyMap.set(id, text);
+  return '<button class="copy-btn" title="复制本条" onclick="ui.copyMsg(' + id + ',this)">' + COPY_SVG + '</button>';
+}
+
 function msgNode(m, cardMap) {
   if (m.role === 'tool') {
     if (m.tool_call_id && cardMap && cardMap[m.tool_call_id]) {
@@ -370,7 +382,7 @@ function msgNode(m, cardMap) {
     wrap.className = 'msg me';
     wrap.innerHTML = '<div class="msg-user">我</div>' +
       '<div class="msg-bubble">' + attachBubbleLine(p.files) + esc(p.text) + '</div>' +
-      '<div class="msg-time">' + fmtTime(m.created_at) + '</div>';
+      '<div class="msg-time">' + fmtTime(m.created_at) + copyBtnHtml(p.text) + '</div>';
     return wrap;
   }
   if (m.role === 'assistant') {
@@ -379,7 +391,7 @@ function msgNode(m, cardMap) {
     let inner = '<div class="msg-user"><span class="ai-avatar' + gray + '"></span>AI' +
       (m.model_tag ? ' · ' + esc(m.model_tag) : '') + '</div>';
     if (m.content) inner += '<div class="msg-bubble">' + md(m.content) + '</div>';
-    inner += '<div class="msg-time">' + fmtTime(m.created_at) + '</div>';
+    inner += '<div class="msg-time">' + fmtTime(m.created_at) + copyBtnHtml(m.content) + '</div>';
     wrap.innerHTML = inner;
     return wrap;
   }
@@ -406,6 +418,7 @@ async function renderDetail(detail) {
   state.streamEl = null;
   state.streamText = '';
   state.toolCards = {};
+  copyMap.clear(); copySeq = 0;
   const s = detail.session;
   state.status = s.status;
   updatePhaseUI({ model_id: s.model_id, queue_pos: detail.queue_pos });
@@ -489,12 +502,19 @@ function connectStream() {
       bubble.innerHTML = md(d.content || '');
       state.streamEl = null;
       state.streamText = '';
+      if (d.content) {
+        const timeEl = document.createElement('div');
+        timeEl.className = 'msg-time';
+        timeEl.innerHTML = fmtTime(Date.now()) + copyBtnHtml(d.content);
+        bubble.parentElement.appendChild(timeEl);
+      }
     } else if (d.content) {
       const box = $('messages');
       const wrap = document.createElement('div');
       wrap.className = 'msg other';
       wrap.innerHTML = '<div class="msg-user"><span class="ai-avatar"></span>AI</div>' +
-        '<div class="msg-bubble">' + md(d.content) + '</div>';
+        '<div class="msg-bubble">' + md(d.content) + '</div>' +
+        '<div class="msg-time">' + fmtTime(Date.now()) + copyBtnHtml(d.content) + '</div>';
       box.appendChild(wrap);
     }
     if (d.tool_calls) {
@@ -604,6 +624,21 @@ const ui = {
     $('new-title').focus();
   },
   closeCreate() { $('create-modal').classList.add('hidden'); },
+  openFullscreen(el) {
+    $('fs-body').innerHTML = el.innerHTML;
+    $('fs-viewer').classList.remove('hidden');
+  },
+  closeFullscreen() { $('fs-viewer').classList.add('hidden'); },
+  async copyMsg(id, btn) {
+    const t = copyMap.get(Number(id));
+    if (t == null) return;
+    if (await copyText(t)) {
+      // 图标短暂变绿作反馈
+      const svg = btn && btn.querySelector && btn.querySelector('svg');
+      if (svg) { svg.classList.add('copied'); setTimeout(function () { svg.classList.remove('copied'); }, 1200); }
+      toast('已复制');
+    } else toast('复制失败');
+  },
   async renameSession() {
     if (!state.sessionId) return;
     const cur = $('chat-title').textContent;
@@ -805,6 +840,13 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('input', e => {
   if (e.target.id === 'search-input' && !e.target.value.trim()) loadSessions();
+});
+
+// 双击消息气泡全屏查看（长回复/代码更好读）
+document.getElementById('messages').addEventListener('dblclick', function (e) {
+  if (e.target.closest('#fs-viewer')) return;
+  const b = e.target.closest('.msg-bubble');
+  if (b) ui.openFullscreen(b);
 });
 
 // ---------- Tab 注册 ----------

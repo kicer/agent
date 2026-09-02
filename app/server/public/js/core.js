@@ -59,8 +59,27 @@ function fmtTime(ts) {
   if (!ts) return '';
   const d = new Date(ts);
   const p = n => String(n).padStart(2, '0');
-  const today = new Date().toDateString() === d.toDateString();
-  return (today ? '' : (d.getMonth() + 1) + '/' + d.getDate() + ' ') + p(d.getHours()) + ':' + p(d.getMinutes());
+  const now = new Date();
+  const hm = p(d.getHours()) + ':' + p(d.getMinutes());
+  if (now.toDateString() === d.toDateString()) return hm;
+  const md = (d.getMonth() + 1) + '/' + d.getDate();
+  // 跨天带日期，跨年再带年份
+  return (d.getFullYear() === now.getFullYear() ? md : d.getFullYear() + '/' + md) + ' ' + hm;
+}
+// 剪贴板：WebView/局域网 http 非安全上下文没有 navigator.clipboard，降级 execCommand
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch (_) { /* 落入降级 */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_) { return false; }
 }
 function toast(msg) {
   const el = $('toast');
