@@ -39,6 +39,9 @@ agent:
   temperature: 1.0
   max_tool_iterations: 50
   max_retries: 2
+  # 回复语言：注入到 system prompt 末尾，强制模型用该语言回复用户
+  # （工具名/代码/命令保持原样）；留空则不限制。改后重启生效。
+  language: "中文"
 
 # 大图上传预处理：图片超过 threshold_kb（默认 1.5M）时，浏览器端询问是否压缩；
 # 同意后在用户本地 canvas 压缩（长边 ≤ image_max_dim，JPEG image_quality）再上传。

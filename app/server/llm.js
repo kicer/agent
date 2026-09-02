@@ -12,6 +12,18 @@ function buildSystemPrompt() {
   return SYSTEM_PROMPT_TEMPLATE;
 }
 
+// 部署级回复语言指令：拼在 system prompt 末尾（尾部对弱模型约束力最强）。
+// 同一进程内恒定，不破坏前缀缓存；改配置需重启生效。
+function systemPromptText(language) {
+  const t = String(language || '').trim();
+  if (!t) return SYSTEM_PROMPT_TEMPLATE;
+  return SYSTEM_PROMPT_TEMPLATE +
+    '\n\n## Reply Language\n' +
+    '- ALWAYS respond to the user in ' + t + '. Tool descriptions, tool outputs and errors are usually in English — ' +
+    'never let them switch your reply language. Tool names, parameters, code, file paths and shell commands stay as-is; ' +
+    'every sentence addressed to the user MUST be in ' + t + '.';
+}
+
 // 多模态内容块存取：messages.content 列为 TEXT，含图片的 tool 消息
 // 以 {"__blocks__":[content...]} 哨兵 JSON 落库（见需求 §5），
 // 发请求时还原为 OpenAI 内容块数组（text + image_url）。tool/user 消息共用。
@@ -28,8 +40,8 @@ function decodeBlocks(content) {
 // 省 token：image_url 块仅在其位于最后一条 assistant 消息之后（模型尚未对它回复）时保留；
 // 之前的视为已消费，发请求时替换为文字标记。DB 始终存全量：UI 历史照常渲染图片，
 // 模型如需重看可再次 read_file（新消息在尾部，会重新携带图片）。
-function buildMessages(session) {
-  const messages = [{ role: 'system', content: SYSTEM_PROMPT_TEMPLATE }];
+function buildMessages(session, language) {
+  const messages = [{ role: 'system', content: systemPromptText(language) }];
   const history = session.history;
   let lastAssistant = -1;
   for (let i = history.length - 1; i >= 0; i--) {
@@ -161,4 +173,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, encodeBlocks, decodeBlocks };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, encodeBlocks, decodeBlocks };

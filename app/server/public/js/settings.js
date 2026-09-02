@@ -37,6 +37,7 @@ const CFG_FORM = [
     { path: 'agent.temperature', label: '温度 temperature', type: 'float' },
     { path: 'agent.max_tool_iterations', label: '单会话最大工具轮次', type: 'int' },
     { path: 'agent.max_retries', label: '上游失败重试次数', type: 'int' },
+    { path: 'agent.language', label: '回复语言(留空不限)', type: 'text' },
   ] },
   { group: '终端工具', items: [
     { path: 'terminal.default_timeout_ms', label: '命令默认超时(ms)', type: 'int' },
@@ -120,6 +121,12 @@ function svcCard(st) {
 function cfgInput(it) {
   const cur = getByPath(effCfg, it.path);
   const v = cur == null ? '' : String(cur);
+  if (it.type === 'text') {
+    return '<div class="cfg-kv"><label>' + esc(it.label) + '</label>' +
+      '<input class="cfg-input" type="text"' +
+      ' data-path="' + att(it.path) + '" data-type="text" data-label="' + att(it.label) + '" data-orig="' + att(v) + '"' +
+      ' value="' + att(v) + '" placeholder="如：中文 / English"></div>';
+  }
   const step = it.type === 'float' ? ' step="any"' : ' step="1"';
   return '<div class="cfg-kv"><label>' + esc(it.label) + '</label>' +
     '<input class="cfg-input" type="number"' + step +

@@ -415,7 +415,7 @@ async function runLoopInner(sessionId, run) {
     if (!session || session.status !== 'active' || !session.model_id) break;
     session.history = loadHistory(sessionId);
     for (const m of session.history) if (m.id > lastIncludedId) lastIncludedId = m.id;
-    const messages = buildMessages(session);
+    const messages = buildMessages(session, (cfg.agent || {}).language);
     // 内置工具 + 启动时发现的 MCP 工具，一起随 system prompt 发给模型
     const tools = TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
 
