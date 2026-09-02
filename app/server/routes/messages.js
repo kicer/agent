@@ -41,6 +41,8 @@ router.post('/:id/messages', wrap((req, res) => {
   );
   if (!content) return res.status(400).json({ error: 'content 不能为空' });
   const r = engine.postUserMessage(req.params.id, content);
+  console.log('[msg] ' + (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
+    content.slice(0, 60).replace(/\s+/g, ' '));
   res.json(r);
 }));
 

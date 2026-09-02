@@ -76,6 +76,12 @@ function saveMessage(sessionId, msg) {
   ).run(sessionId, msg.role, msg.content || null,
     msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
     msg.tool_call_id || null, msg.name || null, now());
+  // 关键动作日志：AI 每轮回复落库（含纯工具调用轮）
+  if (msg.role === 'assistant') {
+    const nTools = msg.tool_calls ? msg.tool_calls.length : 0;
+    console.log('[msg] ' + sessionId + ' AI 回复：文本 ' + String(msg.content || '').length + ' 字' +
+      (nTools ? '，工具调用 ×' + nTools : ''));
+  }
   return info.lastInsertRowid;
 }
 

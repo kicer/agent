@@ -277,8 +277,7 @@ function msgNode(m, cardMap) {
     const p = parseUploadNotice(m.content);
     wrap.className = 'msg me';
     wrap.innerHTML = '<div class="msg-user">我</div>' +
-      '<div class="msg-bubble">' + attachBubbleLine(p.files) + esc(p.text) + '</div>';
-  } else if (m.role === 'assistant' && (m.content || !m.tool_calls)) {
+      '<div class="msg-bubble">' + attachBubbleLine(p.files) + esc(p.text) + '</div>' +
       '<div class="msg-time">' + fmtTime(m.created_at) + '</div>';
     return wrap;
   }
@@ -612,9 +611,11 @@ const ui = {
   },
   async uploadFiles(ev) {
     const input = ev.target;
-    const files = input.files;
+    // 必须先快照成数组再清空 input:input.files 是实时 FileList,
+    // input.value='' 会把它同步掏空(Chrome/Safari),直接 return 导致点了没反应。
+    const files = Array.prototype.slice.call(input.files || []);
     input.value = '';
-    if (!files || !files.length || !state.sessionId) return;
+    if (!files.length || !state.sessionId) return;
     for (const f of files) startUpload(f); // 多个文件并行上传,进度在回形针图标上汇总
   },
   removeAttach(i) { removeAttach(i); },

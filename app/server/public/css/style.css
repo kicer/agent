@@ -24,7 +24,7 @@ body {
 /* ---- 顶部栏 ---- */
 .header {
   display: flex; align-items: center;
-  background: linear-gradient(135deg, #1e3c72, #2a5299);
+  background: linear-gradient(135deg, #3964FE, #4D74FF);
   color: #fff; padding: 12px 12px;
   padding-top: calc(12px + env(safe-area-inset-top));
   gap: 8px;
@@ -63,7 +63,7 @@ body {
 .session-meta { font-size: 12px; color: #888; margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 8px; white-space: nowrap; }
 .badge.active { background: #e3f2e6; color: #217a34; }
-.badge.queued { background: #e8eefc; color: #4a5f87; }
+.badge.queued { background: #e9edff; color: #3964FE; }
 .badge.completed { background: #eceff5; color: #5c6674; }
 .badge.held { background: #fff4dc; color: #a06a00; }
 .badge.cancelled { background: #fdecea; color: #b3382c; }
@@ -74,8 +74,8 @@ body {
   flex: 1; border: 1px solid #dde1ea; border-radius: 18px; padding: 8px 14px;
   font-size: 14px; background: #fff; outline: none; color: #222; appearance: none;
 }
-.search-bar input:focus { border-color: #2a5299; }
-.search-cancel { background: none; border: none; color: #2a5299; font-size: 14px; padding: 6px 4px; cursor: pointer; flex: none; }
+.search-bar input:focus { border-color: #3964FE; }
+.search-cancel { background: none; border: none; color: #3964FE; font-size: 14px; padding: 6px 4px; cursor: pointer; flex: none; }
 .search-tip { color: #8891a5; font-size: 12px; padding: 2px 4px 8px; }
 .load-more {
   width: 100%; background: #f2f3f7; color: #445;
@@ -106,7 +106,7 @@ body {
 .status-pill.active { background: #e3f2e6; color: #1c7a2e; }
 .status-pill.active::before { animation: pill-pulse 1.2s ease-in-out infinite; }
 .status-pill.held { background: #fff4dc; color: #8a6400; }
-.status-pill.queued { background: #e8eefc; color: #4a5f87; }
+.status-pill.queued { background: #e9edff; color: #3964FE; }
 .status-pill.cancelled { background: #fdecea; color: #b3382c; }
 @keyframes pill-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .stop-link {
@@ -128,7 +128,7 @@ body {
 .msg-user { font-size: 11px; color: #98a; margin-bottom: 3px; display: flex; gap: 6px; align-items: center; }
 .ai-avatar {
   width: 18px; height: 18px; border-radius: 50%;
-  background: linear-gradient(135deg, #2a5299, #4d7fd6);
+  background: linear-gradient(135deg, #3964FE, #6E8BFF);
   display: inline-block;
 }
 .ai-avatar.gray { background: #b9bec9; filter: grayscale(); }
@@ -137,7 +137,7 @@ body {
   word-break: break-word; overflow-wrap: break-word; font-size: 14.5px;
   background: #fff; box-shadow: 0 1px 3px rgba(30,40,90,0.07);
 }
-.msg.me .msg-bubble { background: #d7e7ff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.msg.me .msg-bubble { background: #e3eaff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
 .msg.other .msg-bubble { border-bottom-left-radius: 4px; }
 .msg-bubble pre {
   background: #f0f2f6; padding: 8px 10px; border-radius: 8px;
@@ -202,7 +202,7 @@ body {
 .file-row:active { background: #f4f5f9; }
 .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-size { color: #99a; font-size: 12px; }
-.file-act { color: #2a5299; text-decoration: none; font-size: 13px; padding: 2px 6px; background: none; border: none; cursor: pointer; }
+.file-act { color: #3964FE; text-decoration: none; font-size: 13px; padding: 2px 6px; background: none; border: none; cursor: pointer; }
 .file-act.del { color: #c33; }
 .empty-tip { color: #99a; text-align: center; padding: 18px; font-size: 13px; }
 
@@ -210,16 +210,16 @@ body {
 .attach-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 6px; }
 .attach-chip {
   display: flex; align-items: center; gap: 6px; max-width: 100%;
-  background: #fff; border: 1px solid #d5deee; border-radius: 14px;
+  background: #fff; border: 1px solid #dbe4ff; border-radius: 14px;
   padding: 4px 10px; font-size: 12px; color: #334;
 }
 .attach-chip .nm { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attach-chip .st { color: #2a5299; flex: none; }
+.attach-chip .st { color: #3964FE; flex: none; }
 .attach-chip.err { border-color: #eac2bd; color: #c0392b; }
 .attach-chip.err .st { color: #c0392b; }
 .attach-chip .x { color: #99a; background: none; border: none; font-size: 14px; line-height: 1; padding: 0 2px; cursor: pointer; }
 .file-upload-btn.uploading svg { display: none; }
-.up-pct { font-size: 11px; font-weight: 600; color: #2a5299; }
+.up-pct { font-size: 11px; font-weight: 600; color: #3964FE; }
 /* 消息气泡内的附件行 */
 .msg-files { font-size: 12px; opacity: 0.85; margin-bottom: 4px; word-break: break-all; }
 
@@ -244,7 +244,7 @@ body {
 .file-upload-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .send-btn {
   width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer;
-  background: linear-gradient(135deg, #2a5299, #4d7fd6);
+  background: linear-gradient(135deg, #3964FE, #6E8BFF);
   display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
 .send-btn:active { opacity: 0.8; }
@@ -264,14 +264,14 @@ body {
   width: 1; border: 1px solid #dde; border-radius: 8px;
   padding: 10px 12px; font-size: 15px; margin-bottom: 10px; outline: none;
 }
-.modal input:focus { border-color: #2a5299; }
+.modal input:focus { border-color: #3964FE; }
 .modal input:disabled { background: #f2f3f7; color: #99a; }
 .modal select {
   width: 100%; border: 1px solid #dde; border-radius: 8px;
   padding: 10px 12px; font-size: 15px; margin-bottom: 10px; outline: none;
   background: #fff; color: #334; appearance: none;
 }
-.modal select:focus { border-color: #2a5299; }
+.modal select:focus { border-color: #3964FE; }
 .modal-close-btn {
   position: absolute; right: 10px; top: 10px;
   background: none; border: none; cursor: pointer; color: #99a;
@@ -279,7 +279,7 @@ body {
 }
 .modal-close-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
 .primary-btn {
-  width: 1; background: linear-gradient(135deg, #1e3c72, #2a5299);
+  width: 1; background: linear-gradient(135deg, #3964FE, #4D74FF);
   color: #fff; border: none; border-radius: 10px; padding: 11px;
   font-size: 15px; font-weight: 600; cursor: pointer;
 }
@@ -324,7 +324,7 @@ body {
   -webkit-tap-highlight-color: transparent; user-select: none;
 }
 .tab-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.tab-item.active { color: #2a5299; font-weight: 600; }
+.tab-item.active { color: #3964FE; font-weight: 600; }
 .tab-item:active { opacity: 0.7; }
 
 /* Tab 内容页:占满除底部导航外的区域(导航隐藏时被聊天页盖住,无影响) */
@@ -377,7 +377,7 @@ body {
 /* 列表卡右侧操作钮 */
 .card-acts { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; flex-shrink: 0; }
 .card-act {
-  background: #eef3fc; color: #2a5299; border: none; border-radius: 8px;
+  background: #eaefff; color: #3964FE; border: none; border-radius: 8px;
   font-size: 12px; padding: 5px 10px; cursor: pointer;
 }
 .card-act.del { background: #fdecea; color: #c0392b; }
@@ -398,7 +398,7 @@ body {
   background: #f2f3f7; color: #8a93a6; font-size: 11px;
   padding: 2px 8px; border-radius: 9px; flex-shrink: 0;
 }
-.skill-files .file-act { background: #eef3fc; border-radius: 7px; padding: 4px 9px; flex-shrink: 0; }
+.skill-files .file-act { background: #eaefff; border-radius: 7px; padding: 4px 9px; flex-shrink: 0; }
 .skill-files .file-act.del { background: #fdecea; color: #c0392b; }
 /* 代码/配置编辑器:全屏覆盖所在 Tab(盖住列表/详情与顶栏,不遮底部导航) */
 #skill-editor, #cfg-editor {
@@ -438,7 +438,7 @@ body {
   padding: 6px 10px; outline: none; font-variant-numeric: tabular-nums; font-family: inherit;
   -webkit-appearance: none; appearance: none;
 }
-.cfg-input:focus { border-color: #2a5299; background: #fff; }
+.cfg-input:focus { border-color: #3964FE; background: #fff; }
 .cfg-input::-webkit-outer-spin-button, .cfg-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 /* 改了但还没保存的项标红 */
 .cfg-input.cfg-dirty { color: #c0392b; border-color: #e8b4b0; background: #fdf3f2; }
