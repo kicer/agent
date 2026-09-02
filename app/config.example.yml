@@ -37,7 +37,7 @@ skills:
 
 agent:
   temperature: 1.0
-  max_tool_iterations: 50
+  max_tool_iterations: 20
   max_retries: 2
   # 回复语言：注入到 system prompt 末尾，强制模型用该语言回复用户
   # （工具名/代码/命令保持原样）；留空则不限制。改后重启生效。
