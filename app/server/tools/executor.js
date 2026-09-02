@@ -547,7 +547,7 @@ async function toolTerminal(ctx, args) {
   const maxChars = cfg.terminal.max_output_chars;
   let cwd = ctx.taskDir;
   if (args.cd) cwd = resolveInTask(ctx.taskDir, args.cd);
-  if (!fs.existsSync(cwd)) throw new Error('cd 目录不存在：' + args.cd);
+  if (!fs.existsSync(cwd)) throw new Error('工作目录不存在：' + cwd);
 
   return new Promise((resolve) => {
     const child = spawn('/bin/sh', ['-c', args.command], { cwd, detached: true, env: process.env });
