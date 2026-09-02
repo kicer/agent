@@ -92,6 +92,13 @@ function saveMessage(sessionId, msg) {
     }
     log.info('[msg] ' + sessionId + ' AI 回复：文本 ' + String(msg.content || '').length + ' 字' + toolDesc);
   }
+  // debug 等级：用户/AI 消息全文打印（含 tool_calls 参数），方便调试；info 仍只给概述。
+  // 不含 tool 角色：工具结果另在 runLoopInner 记 debug，且含图消息的大段 base64 不应刷进日志。
+  if (msg.role === 'user' || msg.role === 'assistant') {
+    log.debug('[msg] ' + sessionId + ' ' + (msg.role === 'user' ? '用户消息全文' : 'AI 回复全文') +
+      (msg.name ? '（' + msg.name + '）' : '') + '：\n' + String(msg.content || '') +
+      (msg.tool_calls ? '\ntool_calls: ' + JSON.stringify(msg.tool_calls) : ''));
+  }
   return info.lastInsertRowid;
 }
 
@@ -429,7 +436,7 @@ async function runLoopInner(sessionId, run) {
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
       const id = tc.id || ('call_' + Math.random().toString(36).slice(2, 10));
-      log.debug('[tool] ' + sessionId + ' 调用 ' + tc.function.name + ' 参数: ' + String(tc.function.arguments || '').slice(0, 500));
+      log.debug('[tool] ' + sessionId + ' 调用 ' + tc.function.name + ' 参数: ' + String(tc.function.arguments || ''));
       bus.emit(sessionId, 'tool_call', { id, name: tc.function.name, arguments: tc.function.arguments });
       let output;
       let isError = false;
@@ -452,7 +459,7 @@ async function runLoopInner(sessionId, run) {
         outText = String(output == null ? '' : output);
       }
       if (run.cancelled && !isError) outText = (outText ? outText + '\n' : '') + '（用户已终止任务）';
-      log.debug('[tool] ' + sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText.slice(0, 500));
+      log.debug('[tool] ' + sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText);
       const toolContent = imageDataUrl
         ? encodeBlocks([
             { type: 'text', text: outText },
