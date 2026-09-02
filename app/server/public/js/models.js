@@ -1,19 +1,22 @@
-// 模型 Tab(阶段 5):模型池状态 + 增 / 改 / 删(仅写 config.yml,到「设置」页重启才生效)。
-// 卡片默认只展示:名称 / id / 运行状态 + 余额占位 + 今日/累计 token 用量(model_usage 表统计)。
-// 编辑走统一弹窗(新增复用同一弹窗);id 不可页面修改(会话按 id 绑定,改 id 走配置文件原文)。
+// 模型 Tab(阶段 5):模型池状态 + 模型增 / 改 / 删(仅写 config.yml,到「设置」页重启才生效)。
+// 配置为 platforms 层级（平台 → Key → 模型）：url/type 在平台层，api_key/concurrency 在 Key 层，
+// 模型项只有 {id, display_name, vision}；id 只需同平台内唯一（内部唯一键 = 平台名/模型id，
+// effective.models 的 id 即该键、mid 为原始模型名）。页面 PATCH 用 platforms[i].keys[j].models[k] 嵌套下标定位；
+// 新增一律走 append(只动目标数组,脱敏 key 绝不整体回写文件);已有 Key 的 api_key 修改请走配置原文编辑器。
 'use strict';
 
 window.tabModules = window.tabModules || {};
 
-let cfgModels = [];             // 配置里的模型数组(下标即 PATCH 下标)
+let cfgPlatforms = [];          // effective.platforms(服务端已对 api_key 脱敏)
+let cfgModels = [];             // 打平后的 effective.models(含 platform_index/key_index/model_index)
 let runtimeById = {};           // 运行池状态,按 id 关联
 let modelsPendingRestart = false;
-let moeIdx = -1;                // 当前编辑弹窗对应的下标;-1 = 新增
-let moeOrigKey = '';            // 打开编辑弹窗时的原始 api_key;未改动(显示仍含***)则保留原值
+let moeIdx = -1;                // 当前编辑弹窗对应的打平下标;-1 = 新增
 
-// api_key 脱敏显示:sk-***1234 样式。含 *** 作为「未改动」哨兵,保存时据此还原原 key。
+// api_key 脱敏显示:sk-***1234 样式。后端 GET effective 已脱敏,这里仅兜底(幂等)。
 function maskKey(k) {
   k = k || '';
+  if (k.includes('***')) return k;
   if (k.length > 8) return k.slice(0, 3) + '***' + k.slice(-4);
   if (k.length > 0) return '***' + k.slice(-2);
   return '';
@@ -36,6 +39,7 @@ async function loadModelCards() {
     const [rt, cg] = await Promise.all([req('GET', '/api/models'), req('GET', '/api/config')]);
     runtimeById = {};
     for (const m of rt || []) runtimeById[m.id] = m;
+    cfgPlatforms = (cg.effective && cg.effective.platforms) || [];
     cfgModels = (cg.effective && cg.effective.models) || [];
     if (!cfgModels.length) {
       el.innerHTML = '<div class="empty-tip">尚未配置模型,点右上角 + 添加。</div>';
@@ -49,10 +53,10 @@ async function loadModelCards() {
         : '<span class="model-card-state pending">待重启</span>';
       return '<div class="model-card">' +
         '<div class="model-card-head">' +
-          '<span class="model-card-name" title="点击编辑" onclick="modelsUI.openEdit(\'' + encodeURIComponent(m.id) + '\')">' + esc(m.display_name || m.id) + '</span>' +
+          '<span class="model-card-name" title="点击编辑" onclick="modelsUI.openEdit(\'' + encodeURIComponent(m.id) + '\')">' + esc(m.display_name || m.mid || m.id) + '</span>' +
           stateHtml +
         '</div>' +
-        '<div class="model-card-meta">' + esc(m.id) +
+        '<div class="model-card-meta">' + esc(m.mid || m.id) + ' · 平台 ' + esc(m.platform || '') +
           (run && run.is_busy && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</div>' +
         '<div class="cfg-kv"><label>余额</label><b>--</b></div>' +
         // token 紧凑显示:输入 / 输出
@@ -79,50 +83,107 @@ function afterWrite() {
 }
 
 // ---------- 编辑/新增弹窗 ----------
+// Key 标签:「平台名 · sk-***1234」;下拉里用它标识可挂模型的目标 Key。
+function keyLabel(pi, ki) {
+  const p = cfgPlatforms[pi] || {};
+  const k = (p.keys || [])[ki] || {};
+  return (p.name || ('平台' + pi)) + ' · ' + (k.api_key ? maskKey(k.api_key) : '无 key');
+}
+
+function targetOptions() {
+  let html = '';
+  cfgPlatforms.forEach((p, pi) => (p.keys || []).forEach((k, ki) => {
+    html += '<option value="exist:' + pi + ':' + ki + '">' +
+      esc(keyLabel(pi, ki)) + '(' + ((k.models || []).length) + ' 模型)</option>';
+  }));
+  html += '<option value="newkey">＋ 在已有平台下新增 Key</option>';
+  html += '<option value="newplat">＋ 新增平台</option>';
+  return html;
+}
+
+// 切换「新增 Key / 新增平台」时显隐对应字段。
+function onTargetChange() {
+  const t = $('moe-target').value || '';
+  $('moe-newkey-wrap').classList.toggle('hidden', t !== 'newkey');
+  $('moe-newplat-wrap').classList.toggle('hidden', t !== 'newplat');
+}
+
+function fillNewKeyPlatforms() {
+  $('moe-nk-plat').innerHTML = cfgPlatforms.map((p, i) =>
+    '<option value="' + i + '">' + esc(p.name || ('平台' + i)) + '</option>').join('');
+}
+
 function openModelEditor(rawId) {
   const add = rawId == null;
   moeIdx = add ? -1 : idxOf(decodeURIComponent(rawId));
   if (!add && moeIdx < 0) return toast('模型不存在');
-  const m = add ? { display_name: '', id: '', url: '', api_key: '', vision: false } : cfgModels[moeIdx];
+  const m = add ? null : cfgModels[moeIdx];
   $('moe-title').textContent = add ? '添加模型' : '编辑模型';
-  $('moe-name').value = m.display_name || '';
   const idIn = $('moe-id');
-  idIn.value = m.id || '';
-  idIn.disabled = !add; // 编辑时禁改 id(历史会话按 id 绑定)
-  $('moe-url').value = m.url || '';
-  moeOrigKey = m.api_key || '';
-  const keyIn = $('moe-key');
-  keyIn.value = maskKey(moeOrigKey);
-  keyIn.placeholder = add ? 'sk-...' : '不改则保留原 key(清空将保存为空)';
-  $('moe-vision').checked = !!m.vision;
+  idIn.value = m ? (m.mid || m.id) : '';
+  idIn.disabled = !add; // 编辑时禁改 id（历史会话按「平台名/模型id」绑定，改 id 等于换模型）
+  $('moe-name').value = m ? (m.display_name || '') : '';
+  $('moe-vision').checked = m ? !!m.vision : false;
+  const tgt = $('moe-target');
+  if (add) {
+    tgt.disabled = false;
+    tgt.innerHTML = targetOptions();
+    fillNewKeyPlatforms();
+  } else {
+    // 编辑时锁定目标为本模型所属 Key(移动模型 = 删除后重建,不支持就地挪)
+    tgt.innerHTML = '<option value="exist:' + m.platform_index + ':' + m.key_index + '">' + esc(keyLabel(m.platform_index, m.key_index)) + '</option>';
+    tgt.disabled = true;
+  }
+  tgt.onchange = onTargetChange;
+  onTargetChange(); // add 模式默认 exist → 两组附加字段都隐藏
   $('moe-del-btn').classList.toggle('hidden', add);
   $('model-edit-modal').classList.remove('hidden');
 }
 function closeModelEditor() { $('model-edit-modal').classList.add('hidden'); }
 
 async function saveModelEditor() {
-  const add = moeIdx < 0;
   const id = $('moe-id').value.trim();
-  const url = $('moe-url').value.trim().replace(/\/+$/, '');
   if (!id) return toast('请填写 id');
-  if (!url) return toast('请填写上游地址');
-  // 显示值含 *** = 未改动,还原原 key;否则按用户输入(支持改为新 key 或清空)
-  const keyVal = $('moe-key').value.trim();
-  const api_key = keyVal.includes('***') ? moeOrigKey : keyVal;
-  const obj = {
+  // 模型项本身只含 id/display_name/vision;url/key/concurrency 在平台/Key 层,这里不动。
+  const model = {
     id,
     display_name: $('moe-name').value.trim() || id,
-    url,
-    api_key,
     vision: $('moe-vision').checked,
   };
+  const add = moeIdx < 0;
   let body;
-  if (add) {
-    if (idxOf(id) >= 0) return toast('id 已存在:' + id);
-    body = { path: 'models', value: cfgModels.concat([obj]) };
+  if (!add) {
+    // 编辑：精确改到 platforms[pi].keys[ki].models[mi]
+    const m = cfgModels[moeIdx];
+    body = { path: ['platforms', m.platform_index, 'keys', m.key_index, 'models', m.model_index], value: model };
   } else {
-    // 整项替换;key 顺序固定,保持配置文件观感一致
-    body = { path: ['models', moeIdx], value: obj };
+    const t = $('moe-target').value;
+    // id 唯一性只看同平台（内部键 = 平台名/模型id）；不同平台可同名。
+    let platName = '';
+    if (t === 'newkey') platName = (cfgPlatforms[parseInt($('moe-nk-plat').value, 10)] || {}).name || '';
+    else if (t.indexOf('exist:') === 0) platName = (cfgPlatforms[Number(t.split(':')[1])] || {}).name || '';
+    if (platName && cfgModels.some(x => x.platform === platName && x.mid === id)) return toast('平台「' + platName + '」下已有模型 id：' + id);
+    if (t === 'newplat') {
+      const url = $('moe-np-url').value.trim().replace(/\/+$/, '');
+      if (!url) return toast('请填写平台上游地址');
+      // append 一整个新平台:含一个新 Key + 这个模型;key 明文只在此时输入一次。
+      body = { op: 'append', path: ['platforms'], value: {
+        name: $('moe-np-name').value.trim(),
+        url,
+        type: $('moe-np-type').value || 'openai',
+        keys: [{ api_key: $('moe-np-key').value.trim(), concurrency: parseInt($('moe-np-con').value, 10) || 1, models: [model] }],
+      } };
+    } else if (t === 'newkey') {
+      const pi = parseInt($('moe-nk-plat').value, 10);
+      if (!(pi >= 0)) return toast('请选择平台');
+      // append 一个新 Key 到已有平台;模型挂在它下面。
+      body = { op: 'append', path: ['platforms', pi, 'keys'], value: {
+        api_key: $('moe-nk-key').value.trim(), concurrency: parseInt($('moe-nk-con').value, 10) || 1, models: [model] } };
+    } else {
+      // exist:pi:ki → append 模型到已有 Key 的 models 数组
+      const parts = t.split(':');
+      body = { op: 'append', path: ['platforms', Number(parts[1]), 'keys', Number(parts[2]), 'models'], value: model };
+    }
   }
   try {
     await req('PATCH', '/api/config', body);
@@ -136,10 +197,11 @@ async function delModelFromModal() {
   const m = cfgModels[moeIdx];
   closeModelEditor();
   if (cfgModels.length <= 1) return toast('至少要保留一个模型');
-  const ok = await confirmModal('删除模型', '删除模型「' + (m.display_name || m.id) + '」?将整体重写 models 段(注释可能丢失)。', '删除', true);
+  const ok = await confirmModal('删除模型', '删除模型「' + (m.display_name || m.id) + '」?将从 platforms 中移除该模型项。', '删除', true);
   if (!ok) return;
   try {
-    await req('PATCH', '/api/config', { path: 'models', value: cfgModels.filter(x => x.id !== m.id) });
+    // delete 到 platforms[pi].keys[ki].models[mi];YAML 数组删项会自动收紧,不影响其他行注释。
+    await req('PATCH', '/api/config', { path: ['platforms', m.platform_index, 'keys', m.key_index, 'models', m.model_index], op: 'delete' });
     afterWrite();
   } catch (e) { toast('删除失败:' + e.message); }
 }
@@ -150,6 +212,7 @@ window.modelsUI = {
   close: closeModelEditor,
   save: saveModelEditor,
   del: delModelFromModal,
+  onTargetChange: onTargetChange,
 };
 
 tabModules.models = {

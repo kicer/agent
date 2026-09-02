@@ -1,14 +1,25 @@
 # 冒烟测试用配置：上游指向本地 mock
 # 两个模型都开 vision：让「读图」端到端测试与绑定哪个模型无关（非 vision 分支由单测覆盖）
-models:
-  - id: ds1
-    display_name: "Mock Model 1"
+platforms:
+  - name: mock-a
     url: "http://127.0.0.1:9999/v1"
-    vision: true
-  - id: ds2
-    display_name: "Mock Model 2"
+    type: openai
+    keys:
+      - api_key: ""
+        models:
+          - id: ds1
+            display_name: "Mock Model 1"
+            vision: true
+  - name: mock-b
     url: "http://127.0.0.1:9999/v1"
-    vision: true
+    type: custom
+    keys:
+      - api_key: ""
+        concurrency: 1
+        models:
+          - id: ds2
+            display_name: "Mock Model 2"
+            vision: true
 
 workspace_root: "./test/tmp/tasks"
 

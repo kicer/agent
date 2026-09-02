@@ -243,10 +243,25 @@
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         <h3 id="moe-title">编辑模型</h3>
+        <select id="moe-target" style="width:100%"></select>
+        <div id="moe-newkey-wrap" class="hidden">
+          <select id="moe-nk-plat" style="width:100%"></select>
+          <input type="text" id="moe-nk-key" placeholder="api_key(留空则不带鉴权头)" style="width:100%">
+          <input type="number" id="moe-nk-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)" style="width:100%">
+        </div>
+        <div id="moe-newplat-wrap" class="hidden">
+          <input type="text" id="moe-np-name" placeholder="平台名称(留空取域名主机段)" style="width:100%">
+          <input type="text" id="moe-np-url" placeholder="平台上游地址(OpenAI 兼容 /v1)" style="width:100%">
+          <select id="moe-np-type" style="width:100%">
+            <option value="openai">openai</option>
+            <option value="deepseek">deepseek</option>
+            <option value="custom">custom</option>
+          </select>
+          <input type="text" id="moe-np-key" placeholder="api_key(留空则不带鉴权头)" style="width:100%">
+          <input type="number" id="moe-np-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)" style="width:100%">
+        </div>
         <input type="text" id="moe-name" placeholder="显示名(留空同 id)" style="width:100%">
-        <input type="text" id="moe-id" placeholder="id(唯一标识)" style="width:100%">
-        <input type="text" id="moe-url" placeholder="上游地址(OpenAI 兼容 /v1)" style="width:100%">
-        <input type="text" id="moe-key" placeholder="api_key(留空则不带鉴权头)" style="width:100%">
+        <input type="text" id="moe-id" placeholder="id(上游模型名,全局唯一)" style="width:100%">
         <label class="del-dir"><input type="checkbox" id="moe-vision">支持图片输入(vision)</label>
         <div class="btn-row">
           <button class="ghost-btn danger hidden" id="moe-del-btn" onclick="modelsUI.del()">删除</button>

@@ -809,19 +809,27 @@ networks:
 ## 十四、配置文件示例
 
 ```yaml
-models:
-  - id: ds1
-    display_name: "AMD DeepSeek 1"
+# 模型池:平台(platforms) → Key → 模型 三层。url/type 配在平台,api_key/concurrency 配在 Key,
+# 模型只声明 {id, display_name, vision}。加载时打平成全局模型列表。
+platforms:
+  - name: proxy-a
     url: "https://proxy-a.example.com/v1"
-    api_key: "sk-..."
-  - id: ds2
-    display_name: "AMD DeepSeek 2"
-    url: "https://proxy-b.example.com/v1"
-    api_key: "sk-..."
-  - id: ds3
-    display_name: "AMD DeepSeek 3"
+    type: openai                    # openai/deepseek/custom,决定余额查询适配器(预留)
+    keys:
+      - api_key: "sk-..."
+        concurrency: 1              # 该 Key 并发会话数,默认 1(当前仅记录,未参与调度)
+        models:
+          - id: ds1
+            display_name: "AMD DeepSeek 1"
+            # vision: true          # 选填,默认 false
+  - name: proxy-c
     url: "https://proxy-c.example.com/v1"
-    api_key: "sk-..."
+    type: custom
+    keys:
+      - api_key: "sk-..."
+        models:
+          - id: ds3
+            display_name: "AMD DeepSeek 3"
 
 workspace_root: "/workspace/tasks"
 

@@ -43,10 +43,10 @@ function maskKey(k) {
   return '';
 }
 
-// 逐行掩码 config.yml 原文里的 api_key 值(设置页原文编辑器展示用)。
-// 行格式如 `    api_key: sk-xxx` 或 `    api_key: "sk-xxx"`(双/单引号)。
+// 逐行掩码配置原文里的 api_key 值(设置页原文编辑器展示用)。
+// 行格式如 `    api_key: sk-xxx` / `    api_key: "sk-xxx"` / `    - api_key: sk-xxx`(platforms.keys 列表项写法)。
 // 记录每行是否掩码,便于 restore 时按顺序还原未改动项。
-const API_KEY_LINE = /^(\s*api_key:\s*)(["']?)(.+?)\2\s*$/;
+const API_KEY_LINE = /^(\s*(?:-\s+)?api_key:\s*)(["']?)(.+?)\2\s*$/;
 function maskApiKeys(text) {
   if (!text) return text;
   return text.split('\n').map(function (line) {
@@ -76,13 +76,23 @@ function restoreApiKeys(submitted, orig) {
   }).join('\n');
 }
 
+// 生效配置的脱敏副本:api_key 在前端仅展示用(模型卡片/Key 下拉标签),真值不会回写文件。
+function maskEffective(cfg) {
+  const c = Object.assign({}, cfg);
+  c.platforms = (cfg.platforms || []).map(p => Object.assign({}, p, {
+    keys: (p.keys || []).map(k => Object.assign({}, k, { api_key: maskKey(k.api_key) })),
+  }));
+  c.models = (cfg.models || []).map(m => Object.assign({}, m, { api_key: maskKey(m.api_key) }));
+  return c;
+}
+
 // 配置原文 + 路径 + 当前生效配置(设置页表单显示当前值;注释原样保留)
-// GET 返回的原文对 models[].api_key 脱敏(避免明文外显);PUT/validate 时按顺序还原。
+// GET 返回的原文与生效配置均对 api_key 脱敏;PUT/validate 时按顺序还原。
 router.get('/', wrap((req, res) => {
   const cfg = cfgOf();
   const text = readConfigText(cfg);
   const shown = text === null ? '' : maskApiKeys(text);
-  res.json({ config_path: cfg.config_path || '', exists: text !== null, text: shown, effective: cfg });
+  res.json({ config_path: cfg.config_path || '', exists: text !== null, text: shown, effective: maskEffective(cfg) });
 }));
 
 // 干跑校验(编辑器保存前预检):body { text }
@@ -115,8 +125,9 @@ router.put('/', wrap((req, res) => {
   res.json({ ok: true, changed: diffTop(cfg, next), restart_required: true });
 }));
 
-// 单项修改:body { path: "agent.temperature" | ["models",0,"url"], value, op?: "delete" }
-// 用 YAML Document 写回,保留文件注释与排版;数组可整体替换,也可按数字下标改元素。
+// 单项修改:body { path: "agent.temperature" | ["platforms",0,"keys",0,"models",1], value, op?: "delete"|"append" }
+// 用 YAML Document 写回,保留文件注释与排版;数组可整体替换,可按数字下标改/删元素,
+// 也可 append 向数组追加一项(新增平台/Key/模型;前端只持有脱敏 key,绝不能整体替换含 key 的数组)。
 router.patch('/', wrap((req, res) => {
   const cfg = cfgOf();
   const text = readConfigText(cfg);
@@ -129,7 +140,7 @@ router.patch('/', wrap((req, res) => {
   if (!pathArr.length) return badRequest(res, new Error('body.path 为空'));
   let nextText;
   try {
-    nextText = applyEditsToText(text, [{ path: pathArr, value: body.value, delete: body.op === 'delete' }]);
+    nextText = applyEditsToText(text, [{ path: pathArr, value: body.value, delete: body.op === 'delete', append: body.op === 'append' }]);
   } catch (e) { return badRequest(res, e); }
   let next;
   try { next = loadConfigFromText(nextText, cfg.config_path); } catch (e) { return badRequest(res, e); }
