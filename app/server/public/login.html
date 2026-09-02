@@ -38,6 +38,25 @@
   </div>
   <script>
     'use strict';
+    const TOKEN_KEY = 'agent_token';
+    // WebView 封装 APK 杀进程后 HttpOnly cookie 可能没落盘，但 localStorage 还在：
+    // 登录成功后把 token 另存一份，下次进来先尝试用旧 token 静默恢复登录态。
+    async function autoRestore() {
+      if (new URLSearchParams(location.search).has('logged_out')) {
+        localStorage.removeItem(TOKEN_KEY); // 显式登出：不恢复，并清掉旧 token
+        return;
+      }
+      const t = localStorage.getItem(TOKEN_KEY);
+      if (!t) return;
+      const form = document.getElementById('login-form');
+      form.style.visibility = 'hidden'; // 恢复期间先藏表单，避免闪现
+      try {
+        const res = await fetch('/api/login_restore', { method: 'POST', headers: { Authorization: 'Bearer ' + t } });
+        if (res.ok) { location.replace('/'); return; }
+      } catch (_) { /* 网络错误交给表单正常登录 */ }
+      localStorage.removeItem(TOKEN_KEY);
+      form.style.visibility = '';
+    }
     async function doLogin(e) {
       e.preventDefault();
       const btn = document.getElementById('login-btn');
@@ -58,6 +77,8 @@
           try { msg = (await res.json()).error || msg; } catch (_) {}
           throw new Error(msg);
         }
+        const j = await res.json().catch(() => ({}));
+        if (j && j.token) localStorage.setItem(TOKEN_KEY, j.token);
         location.href = '/';
       } catch (e2) {
         errEl.textContent = e2.message || '登录失败';
@@ -65,6 +86,7 @@
       }
       return false;
     }
+    autoRestore();
     document.getElementById('login-user').focus();
   </script>
 </body>

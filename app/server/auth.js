@@ -71,7 +71,7 @@ function basicAuthUser(req, users) {
 }
 
 // ---------- 免认证路径（登录页自身需要的资源） ----------
-const PUBLIC_EXACT = new Set(['/login', '/logout', '/api/login', '/api/logout', '/api/health']);
+const PUBLIC_EXACT = new Set(['/login', '/logout', '/api/login', '/api/logout', '/api/login_restore', '/api/health']);
 function isPublicPath(p) {
   if (PUBLIC_EXACT.has(p)) return true;
   if (p.startsWith('/css/')) return true; // 登录页复用 style.css
@@ -104,6 +104,7 @@ function createAuth(cfg) {
     const token = signToken(username, Date.now() + ttlMs, secret);
     res.setHeader('Set-Cookie', COOKIE_NAME + '=' + encodeURIComponent(token)
       + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + Math.floor(ttlMs / 1000));
+    return token;
   }
   function clearAuthCookie(res) {
     res.setHeader('Set-Cookie', COOKIE_NAME + '=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
@@ -124,7 +125,19 @@ function createAuth(cfg) {
       return res.status(401).json({ error: '用户名或密码错误' });
     }
     setAuthCookie(res, String(user));
-    res.json({ ok: true, user: String(user) });
+    // token 一并回给前端：WebView 封装 APK 杀进程后 cookie 可能没落盘，
+    // 前端存 localStorage，下次进登录页用 /api/login_restore 自动恢复。
+    res.json({ ok: true, user: String(user), token: signToken(String(user), Date.now() + ttlMs, secret) });
+  });
+
+  // 自动恢复登录态（主要是 WebView 封装场景）：cookie 丢了但 localStorage 里的 token 还在，
+  // 携 Authorization: Bearer <token> 请求本接口，验签通过则重新下发 cookie。
+  router.post('/api/login_restore', (req, res) => {
+    const h = String(req.headers.authorization || '');
+    const data = readToken(h.startsWith('Bearer ') ? h.slice(7).trim() : '', secret);
+    if (!data || !validUsers.has(data.user)) return res.status(401).json({ error: '登录态已失效，请重新登录' });
+    setAuthCookie(res, data.user); // 重新签发，顺带续期
+    res.json({ ok: true, user: data.user });
   });
 
   router.post('/api/logout', (req, res) => {
@@ -178,7 +191,8 @@ function createAuth(cfg) {
 
   router.get('/logout', (req, res) => {
     clearAuthCookie(res);
-    res.redirect('/login');
+    // 带标记：登录页据此清掉 localStorage 里的恢复 token，避免自动登录把用户“投回去”
+    res.redirect('/login?logged_out=1');
   });
 
   // ----- 全局认证中间件：cookie 或 Basic 任一通过；否则 API 回 401、页面跳登录页 -----

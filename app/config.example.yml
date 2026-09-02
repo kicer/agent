@@ -52,7 +52,9 @@ model_hold:
 # 登录页 /login，会话 token 以 HttpOnly cookie 下发（替代 nginx htpasswd：
 # 手机浏览器原生下载不带 Basic 认证头，cookie 则会自动携带，下载不再失败）。
 # 仍兼容 Authorization: Basic 头（curl/API 脚本可用）。
-# secret：签名密钥；留空则启动时随机生成（重启后需重新登录）。
+# secret：签名密钥；留空则启动时随机生成（重启后需重新登录），建议固定随机串。
+# 登录页支持用 localStorage 里的 token 静默恢复登录态（POST /api/login_restore），
+# 兼容 Android WebView 封装 APK 杀进程后 cookie 未落盘的场景。
 # 整段删除或 users 留空则不启用认证。
 # auth:
 #   secret: "change-me"        # 选填；建议固定，避免重启掉登录态
