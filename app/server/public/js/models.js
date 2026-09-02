@@ -10,8 +10,14 @@ let runtimeById = {};           // 运行池状态,按 id 关联
 let modelsPendingRestart = false;
 let moeIdx = -1;                // 当前编辑弹窗对应的下标;-1 = 新增
 
+// token 用量紧凑显示：1.2k / 9.1M 这种 human-friendly 量级，一眼看出多少。
+// <1000 原样；1k~1M 用 k(1 位小数,去尾零)；≥1M 用 M。0 显示为 0。
 function fmtTok(n) {
-  return (Number(n) || 0).toLocaleString('zh-CN');
+  n = Number(n) || 0;
+  if (n < 1000) return String(n);
+  if (n < 1000000) { const v = (n / 1000).toFixed(1).replace(/\.0$/, ''); return v + 'k'; }
+  const v = (n / 1000000).toFixed(1).replace(/\.0$/, '');
+  return v + 'M';
 }
 
 async function loadModelCards() {
