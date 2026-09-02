@@ -440,6 +440,18 @@ async function runLoopInner(sessionId, run) {
       break;
     }
 
+    // 容错：部分模型把参数多包一层 arguments/function 外层，统一解包后再落库与执行。
+    // 写回历史的 tool_calls 也是解包后的干净形状，避免模型模仿自己上一轮的错误样本。
+    if (result.tool_calls) {
+      for (const tc of result.tool_calls) {
+        const fixed = unwrapToolArgs(tools, tc.name, tc.arguments);
+        if (fixed) {
+          log.info('[tool] ' + sessionId + ' ' + tc.name + ' 参数包裹外层已自动解包');
+          tc.arguments = JSON.stringify(fixed);
+        }
+      }
+    }
+
     // 保存 assistant 消息
     const hasTools = result.tool_calls && result.tool_calls.length > 0;
     const msgRow = {
@@ -469,12 +481,25 @@ async function runLoopInner(sessionId, run) {
       bus.emit(sessionId, 'tool_call', { id, name: tc.function.name, arguments: tc.function.arguments });
       let output;
       let isError = false;
-      try {
-        output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db, vision },
-          tc.function.name, safeParse(tc.function.arguments));
-      } catch (err) {
-        output = 'Error: ' + (err && err.message || String(err));
+      const args = safeParse(tc.function.arguments) || {};
+      // 必填参数校验：解包后仍缺参就直接挡下，绝不把 undefined 交给 shell 执行
+      const def = tools.find(t => t && t.function && t.function.name === tc.function.name);
+      const required = def && def.function.parameters && def.function.parameters.required;
+      const missing = required && required.length
+        ? required.filter(k => args[k] === undefined || args[k] === '') : [];
+      if (missing.length) {
+        // 把正确形状告诉模型，替它纠正包装习惯
+        output = 'Error: 缺少必填参数：' + missing.join('、')
+          + '。参数需直接按工具 schema 在顶层传递，例如 {"' + missing[0] + '": "..."}，不要再包 arguments/function 外层。';
         isError = true;
+      } else {
+        try {
+          output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db, vision },
+            tc.function.name, args);
+        } catch (err) {
+          output = 'Error: ' + (err && err.message || String(err));
+          isError = true;
+        }
       }
       // 工具可返回 {text, image_data_url}（read_file 读图且模型支持 vision）：
       // 落库时把图片以 image_url 内容块拼进 tool 消息（哨兵 JSON，见 llm.js encodeBlocks），
@@ -533,6 +558,44 @@ function hasUserSince(sessionId, sinceId) {
 
 function safeParse(s) {
   try { return JSON.parse(s || '{}'); } catch (_) { return {}; }
+}
+
+function toolSchemaOf(tools, name) {
+  for (const t of tools || []) if (t && t.function && t.function.name === name) return t.function.parameters || null;
+  return null;
+}
+
+// 部分弱模型会把工具参数多包一层外层（{"arguments":{...}} 甚至多层/信封形），
+// 这里按工具 schema 剥回顶层载荷。返回解包后的对象；无包裹或解析失败返回 null（保留原样）。
+function unwrapToolArgs(tools, name, raw) {
+  const schema = toolSchemaOf(tools, name);
+  let cur = raw;
+  let changed = false;
+  for (let i = 0; i < 5 && cur != null; i++) {
+    if (typeof cur === 'string') {
+      try { cur = JSON.parse(cur); changed = true; } catch (_) { return null; }
+      continue;
+    }
+    if (typeof cur !== 'object' || Array.isArray(cur)) return null;
+    const keys = Object.keys(cur);
+    const hasArgProp = !!(schema && schema.properties && schema.properties.arguments);
+    let inner = null;
+    // {"arguments": {...}} / {"parameters": {...}}：仅当该键不是工具自身的参数名
+    if (!hasArgProp && keys.length === 1 && (keys[0] === 'arguments' || keys[0] === 'parameters')
+        && cur[keys[0]] && typeof cur[keys[0]] === 'object') {
+      inner = cur[keys[0]];
+    }
+    // {"function": {...}} 信封
+    if (!inner && keys.length === 1 && keys[0] === 'function' && cur.function && typeof cur.function === 'object') inner = cur.function;
+    // {"name": "...", "arguments": {...}} 信封
+    if (!inner && !hasArgProp && cur.arguments && typeof cur.arguments === 'object') inner = cur.arguments;
+    if (!inner) break;
+    cur = inner;
+    changed = true;
+  }
+  if (typeof cur === 'string') { try { cur = JSON.parse(cur); changed = true; } catch (_) { return null; } }
+  if (!changed || !cur || typeof cur !== 'object' || Array.isArray(cur)) return null;
+  return cur;
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
