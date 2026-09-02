@@ -161,6 +161,12 @@
 
       <div class="messages" id="messages"></div>
 
+      <!-- 滚动到底部按钮:上翻历史时显示;AI 输出中显示加载转圈 -->
+      <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" onclick="clickScrollBottom()" title="回到底部">
+        <svg class="sb-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        <svg class="sb-spinner hidden" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M22 12a10 10 0 0 1-10 10"></path></svg>
+      </button>
+
       <!-- 文件面板 -->
       <div class="files-panel hidden" id="files-panel">
         <div class="files-panel-header">

@@ -424,6 +424,10 @@ async function renderDetail(detail) {
   state.streamEl = null;
   state.streamText = '';
   state.toolCards = {};
+  // 切换会话后重置滚动跟随状态
+  state.autoScroll = true;
+  state.streaming = false;
+  updateScrollBottomBtn();
   copyMap.clear(); copySeq = 0;
   const s = detail.session;
   state.status = s.status;
@@ -441,9 +445,61 @@ async function renderDetail(detail) {
   loadFiles();
 }
 
+// ---------- 滚动跟随 ----------
+// 判断是否「贴近底部」:用户在底部附近时,新内容到来自动滚动跟随;
+// 一旦手动上翻阅读历史,暂停自动滚动以免打斷阅读。
+const SCROLL_BOTTOM_THRESHOLD = 80; // px:距底 80px 内视为「在底部」
+function isNearBottom() {
+  const box = $('messages');
+  return box.scrollHeight - box.scrollTop - box.clientHeight < SCROLL_BOTTOM_THRESHOLD;
+}
+// 智能滚动到底部:仅当用户当前贴近底部(或在渲染初始历史时)才跟随
+function maybeAutoScroll() {
+  if (state.autoScroll) scrollBottom();
+}
 function scrollBottom() {
   const box = $('messages');
   box.scrollTop = box.scrollHeight;
+}
+// 监听用户滚动意图:向上翻阅历史时立即暂停自动跟随,回到底部时恢复。
+// 关键:用 wheel/touchmove 捕获「用户主动向上」的意图(程序滚动不会触发这二者),
+// 避免被 16ms 一次的 flushTypewriter→scrollBottom 反复拉回底部而无法上翻。
+// scroll 事件只负责「回到贴近底部时恢复跟随」(程序 scrollBottom 到底部也会触发,设 true 无副作用)。
+function bindScroll() {
+  const box = $('messages');
+  let touchY = 0;
+  // 滚轮向上(看历史)→ 立即暂停跟随
+  box.addEventListener('wheel', e => {
+    if (e.deltaY < 0) state.autoScroll = false;
+  }, { passive: true });
+  // 触摸下拖(向上看历史)→ 立即暂停跟随
+  box.addEventListener('touchstart', e => { touchY = e.touches[0].clientY; }, { passive: true });
+  box.addEventListener('touchmove', e => {
+    const dy = e.touches[0].clientY - touchY;
+    if (dy > 3) state.autoScroll = false;
+    touchY = e.touches[0].clientY;
+  }, { passive: true });
+  // 仅在贴近底部时恢复跟随;不在此处设 false,避免程序滚动误判
+  box.addEventListener('scroll', () => {
+    if (isNearBottom()) state.autoScroll = true;
+    updateScrollBottomBtn();
+  }, { passive: true });
+}
+// 右下角「移动到底部」按钮:仅当用户上翻(不在底部)时显示;AI 正在输出时叠加加载转圈
+function updateScrollBottomBtn() {
+  const btn = $('scroll-bottom-btn');
+  if (!btn) return;
+  const show = !state.autoScroll;
+  btn.classList.toggle('hidden', !show);
+  const spinner = btn.querySelector('.sb-spinner');
+  if (spinner) spinner.classList.toggle('hidden', !state.streaming);
+  const arrow = btn.querySelector('.sb-arrow');
+  if (arrow) arrow.classList.toggle('hidden', state.streaming);
+}
+function clickScrollBottom() {
+  state.autoScroll = true;
+  scrollBottom();
+  updateScrollBottomBtn();
 }
 
 // ---------- AI 处理中占位 ----------
@@ -474,6 +530,47 @@ function removePendingBubble() {
   if (state.pendingEl) { state.pendingEl.remove(); state.pendingEl = null; }
 }
 
+// ---------- 打字机效果 ----------
+// AI 流式输出时,不直接把全量文本一次性写进气泡,而是逐步「吐」出,
+// 视觉上接近打字机。累计文本存于 state.streamText,已显示长度存于 typewriterShown。
+// 由 flushTypewriter() 定时推进;新增量到达时加速补足,避免严重滞后。
+let typewriterShown = 0;
+let typewriterTimer = null;
+let typewriterBlinkCursor = null; // 光标闪烁 interval
+const TYPEWRITER_INTERVAL = 16; // ms:每次推进间隔
+const TYPEWRIVER_CHUNK = 3;      // 每次推进字符数
+function startTypewriter() {
+  typewriterShown = 0;
+  stopTypewriter();
+  // 光标闪烁
+  if (typewriterBlinkCursor) clearInterval(typewriterBlinkCursor);
+  typewriterBlinkCursor = setInterval(() => {
+    if (state.streamEl) state.streamEl.classList.toggle('typing');
+    if (!state.streamEl && typewriterBlinkCursor) { clearInterval(typewriterBlinkCursor); typewriterBlinkCursor = null; }
+  }, 500);
+  typewriterTimer = setInterval(flushTypewriter, TYPEWRITER_INTERVAL);
+}
+function flushTypewriter() {
+  if (!state.streamEl) return;
+  const total = state.streamText.length;
+  if (typewriterShown >= total) return;
+  // 距离差越大补得越多,避免越堆越远
+  const gap = total - typewriterShown;
+  const step = Math.max(TYPEWRIVER_CHUNK, Math.ceil(gap / 6));
+  typewriterShown = Math.min(total, typewriterShown + step);
+  state.streamEl.textContent = state.streamText.slice(0, typewriterShown);
+  maybeAutoScroll();
+}
+function stopTypewriter() {
+  if (typewriterTimer) { clearInterval(typewriterTimer); typewriterTimer = null; }
+}
+// 结束打字机:一次性补足剩余文本(以原始 markdown 渲染),关闭光标
+function finishTypewriter() {
+  stopTypewriter();
+  if (typewriterBlinkCursor) { clearInterval(typewriterBlinkCursor); typewriterBlinkCursor = null; }
+  if (state.streamEl) state.streamEl.classList.remove('typing');
+}
+
 // ---------- SSE ----------
 function connectStream() {
   if (state.es) { state.es.close(); state.es = null; }
@@ -495,15 +592,18 @@ function connectStream() {
       state.streamEl = wrap.querySelector('.msg-bubble');
       state.streamText = '';
       $('messages').appendChild(wrap);
+      startTypewriter();
     }
     state.streamText += d.text;
-    state.streamEl.textContent = state.streamText;
-    scrollBottom();
+    // 打字机推进在定时器里完成,这里仅设位状态、刷新按钮
+    state.streaming = true;
+    updateScrollBottomBtn();
   });
   es.addEventListener('assistant_message', ev => {
     const d = JSON.parse(ev.data);
     removePendingBubble();
     if (state.streamEl) {
+      finishTypewriter();
       const bubble = state.streamEl;
       bubble.innerHTML = md(d.content || '');
       state.streamEl = null;
@@ -525,8 +625,10 @@ function connectStream() {
     }
     if (d.tool_calls) {
       appendToolCardsFromAssistant({ tool_calls: d.tool_calls }, $('messages'));
-      scrollBottom();
+      maybeAutoScroll();
     }
+    state.streaming = false;
+    updateScrollBottomBtn();
   });
   es.addEventListener('tool_call', ev => {
     const d = JSON.parse(ev.data);
@@ -535,15 +637,18 @@ function connectStream() {
     const card = renderToolCard(d.id, d.name, d.arguments, Date.now());
     $('messages').appendChild(card);
     state.toolCards[d.id] = card;
-    scrollBottom();
+    maybeAutoScroll();
   });
   es.addEventListener('tool_result', ev => {
     const d = JSON.parse(ev.data);
     fillToolResult(d.tool_call_id, d.content, d.is_error, d.image_url);
-    scrollBottom();
+    maybeAutoScroll();
   });
   es.addEventListener('done', ev => {
     removePendingBubble(); // 本轮结束,占位兼终止(如模型报错无回复)
+    finishTypewriter();
+    state.streaming = false;
+    updateScrollBottomBtn();
     loadSessions();
   });
   es.addEventListener('error', ev => {
@@ -731,20 +836,44 @@ const ui = {
     } catch (e) { toast('删除失败:' + e.message); }
   },
   async openSession(id) {
+    // 切会话前收尾上一会话:关闭 SSE、清打字机/占位,避免跨会话残留
+    if (state.es) { state.es.close(); state.es = null; }
+    finishTypewriter();
+    removePendingBubble();
     state.sessionId = id;
     // 待发送附件属于上一个会话的语境,切会话时清空展示(文件已落盘,可在文件面板查看)
     pendingFiles = [];
     renderAttach();
+    // 先清空旧内容并重置状态,避免拉取新会话详情期间仍展示上一会话内容
+    const box = $('messages');
+    box.innerHTML = '<div class="empty-tip">加载中…</div>';
+    state.streamEl = null;
+    state.streamText = '';
+    state.toolCards = {};
+    state.status = '';
+    state.autoScroll = true;
+    state.streaming = false;
+    updateScrollBottomBtn();
+    copyMap.clear(); copySeq = 0;
+    $('chat-title').textContent = '';
+    updatePhaseUI({ model_id: null, queue_pos: null });
     showChat();
     try {
       const detail = await req('GET', '/api/sessions/' + id);
+      // 防止在请求期间已切到别的会话(用户操作很快)
+      if (state.sessionId !== id) return;
       await renderDetail(detail);
       connectStream();
-    } catch (e) { toast('打开会话失败:' + e.message); }
+    } catch (e) {
+      if (state.sessionId === id) toast('打开会话失败:' + e.message);
+    }
   },
   backToList() {
     if (state.es) { state.es.close(); state.es = null; }
+    finishTypewriter();
     removePendingBubble();
+    state.streaming = false;
+    updateScrollBottomBtn();
     state.sessionId = null;
     showList();
     loadSessions();
@@ -775,6 +904,7 @@ const ui = {
       renderAttach();
       // 立即给出回馈:占位气泡 + 等待计时,首个增量/回复到达时移除并填充内容
       if (r.delivered !== 'queued') addPendingBubble();
+      state.autoScroll = true;
       scrollBottom();
     } catch (e) { toast('发送失败:' + e.message); }
   },
@@ -979,3 +1109,6 @@ tabModules.tasks = {
     loadSessions();
   },
 };
+
+// 绑定聊天滚动跟随(只绑一次)
+bindScroll();

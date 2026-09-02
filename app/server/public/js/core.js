@@ -21,6 +21,9 @@ const state = {
   pendingEl: null,
   pendingTimer: null,
   pendingStart: 0,
+  // 滚动跟随相关:用户是否在底部附近、是否因手动向上翻阅而暂停自动跟随
+  autoScroll: true,
+  streaming: false, // AI 是否正在输出(用于滚动到底部按钮显示加载提示)
 };
 
 window.tabModules = window.tabModules || {};
