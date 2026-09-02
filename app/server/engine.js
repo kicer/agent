@@ -79,9 +79,18 @@ function saveMessage(sessionId, msg) {
     msg.tool_call_id || null, msg.name || null, now());
   // 关键动作日志：AI 每轮回复落库（含纯工具调用轮）
   if (msg.role === 'assistant') {
-    const nTools = msg.tool_calls ? msg.tool_calls.length : 0;
-    log.info('[msg] ' + sessionId + ' AI 回复：文本 ' + String(msg.content || '').length + ' 字' +
-      (nTools ? '，工具调用 ×' + nTools : ''));
+    const calls = msg.tool_calls || [];
+    let toolDesc = '';
+    if (calls.length) {
+      // 按出现顺序去重，同名多次调用追加 ×N
+      const counts = new Map();
+      for (const c of calls) {
+        const name = (c && c.function && c.function.name) || '未知工具';
+        counts.set(name, (counts.get(name) || 0) + 1);
+      }
+      toolDesc = '，工具调用：' + [...counts].map(([name, n]) => (n > 1 ? name + '×' + n : name)).join('、');
+    }
+    log.info('[msg] ' + sessionId + ' AI 回复：文本 ' + String(msg.content || '').length + ' 字' + toolDesc);
   }
   return info.lastInsertRowid;
 }
