@@ -743,6 +743,35 @@ function deleteSession(sessionId, deleteDir) {
   return { ok: true };
 }
 
+// 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件。
+// 状态收尾为 completed（释放模型占用、移出等待队列）；此后再次发言从零开始，
+// 不再携带旧历史。执行中的会话不允许清空，需先「终止」。
+function clearSessionMessages(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const run = runs.get(sessionId);
+  if (run && run.looping) {
+    throw Object.assign(new Error('任务正在执行，请先「终止」再清空'), { status_code: 409 });
+  }
+  if (run) {
+    run.cancelled = true;
+    killRunProcs(run);
+    if (run.abortController) { try { run.abortController.abort(); } catch (_) {} }
+  }
+  runs.delete(sessionId);
+  dequeue(sessionId);
+  // 释放模型前先取当前会话信息：清空后如新建会话般重新注入会话上下文（日期/任务目录/模型）
+  const ctxContent = sessionContextContent(session);
+  releaseModel(sessionId);
+  db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+  saveMessage(sessionId, { role: 'user', name: SESSION_CONTEXT_NAME, content: ctxContent });
+  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null });
+  bus.emit(sessionId, 'done', { status: 'completed' });
+  emitStatus(sessionId);
+  dispatchQueued();
+  return { ok: true };
+}
+
 function setModelPool(cfg_, db_, bus_) { cfg = cfg_; db = db_; bus = bus_; }
 
 module.exports = {
@@ -759,6 +788,7 @@ module.exports = {
   releaseHold,
   renameSession,
   deleteSession,
+  clearSessionMessages,
   getSession,
   getRun,
   taskDirOf,

@@ -60,6 +60,14 @@ router.post('/:id/release', wrap((req, res) => {
   res.json(engine.releaseHold(req.params.id));
 }));
 
+// 清空会话内容：删除全部消息记录，保留会话本身与任务目录文件（不再随下条消息重发旧历史）。
+// 状态收尾为已完成并释放模型/出队；正在执行的回合会被拒绝（需先「终止」）。
+router.delete('/:id/messages', wrap((req, res) => {
+  const r = engine.clearSessionMessages(req.params.id);
+  log.info('[msg] ' + (req.user || '-') + ' ' + req.params.id + ' 清空会话内容（文件保留）');
+  res.json(r);
+}));
+
 // SSE 事件流
 router.get('/:id/stream', (req, res) => {
   const session = engine.getSession(req.params.id);

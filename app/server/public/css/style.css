@@ -115,6 +115,8 @@ body {
 }
 .stop-link.muted { color: #8a6400; }
 .stop-link:active { opacity: 0.6; }
+/* 「清空」钮推到状态栏最右；颜色用较暗的警示红，与「终止」区分 */
+#clear-msg-btn { margin-left: auto; color: #b3382c; }
 
 /* ---- 消息 ---- */
 .messages {

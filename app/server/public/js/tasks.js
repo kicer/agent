@@ -578,6 +578,9 @@ function updatePhaseUI(d) {
   // 已完成/已终止时提供「选择模型」,手动指定空闲模型后继续对话
   const msBtn = $('model-switch-btn');
   if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && (state.status === 'completed' || state.status === 'cancelled')));
+  // 执行中(active)不提供「清空」——运行回合内删除历史会破坏上下文；其余状态(含排队中)可清空
+  const clrBtn = $('clear-msg-btn');
+  if (clrBtn) clrBtn.classList.toggle('hidden', !(state.sessionId && state.status && state.status !== 'active'));
 }
 
 // ---------- 文件 ----------
@@ -794,6 +797,22 @@ const ui = {
         toast('已发送终止指令');
       }
     } catch (e) { toast((held ? '断开失败:' : '终止失败:') + e.message); }
+  },
+  async clearChat() {
+    if (!state.sessionId) return;
+    const ok = await confirmModal('清空会话内容',
+      '将删除本会话的全部聊天记录，AI 后续对话不再携带这段历史（从零开始，更省 token）。任务文件全部保留，不受影响。此操作不可恢复。',
+      '清空', true);
+    if (!ok) return;
+    const id = state.sessionId;
+    try {
+      await req('DELETE', '/api/sessions/' + id + '/messages');
+      toast('会话内容已清空，文件已保留');
+      // 服务端已把会话收尾为 completed 并重建首条会话上下文：重新拉取详情即为干净起点
+      const detail = await req('GET', '/api/sessions/' + id);
+      await renderDetail(detail);
+      loadSessions();
+    } catch (e) { toast('清空失败:' + e.message); }
   },
   async uploadFiles(ev) {
     const input = ev.target;
