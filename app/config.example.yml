@@ -40,6 +40,13 @@ agent:
   max_tool_iterations: 50
   max_retries: 2
 
+# 大图上传预处理：图片超过 threshold_kb（默认 1.5M）时，浏览器端询问是否压缩；
+# 同意后在用户本地 canvas 压缩（长边 ≤ image_max_dim，JPEG image_quality）再上传。
+upload:
+  image_compress_threshold_kb: 1536
+  image_max_dim: 2000
+  image_quality: 0.85
+
 # 模型保持占用（held）租约：AI 答完后不立即释放模型，用户追问可直接复用。
 # 页面无人观看超过 idle_release_ms 释放；有人观看最长保持 active_max_ms；sweep_ms 巡检间隔。
 # 新建后从未发言的空闲会话也按同一租约自动释放。

@@ -10,6 +10,9 @@ const DEFAULTS = {
   db_path: '', // 默认为 workspace_root/.agent.db
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
   agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2 },
+  // 大图上传预处理：图片文件超过 threshold_kb 时，浏览器端询问用户后用 canvas 压缩
+  // （长边 ≤ max_dim，JPEG quality）再上传，减轻服务器带宽与存储压力。参数经 /api/system/status 下发给前端。
+  upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85 },
   // 技能（Skill Manager）：skills_root 为技能根目录，所有任务/会话共享（容器内挂我 ./skills → /workspace/skills）；
   // 缺省取 workspace_root 的同级目录 skills（如 /workspace/tasks → /workspace/skills）。timeout_ms 为单个技能执行超时，默认 120000。
   skills: { skills_root: '', timeout_ms: 120000 },
