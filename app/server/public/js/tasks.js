@@ -425,7 +425,7 @@ async function renderDetail(detail) {
   state.streamText = '';
   state.toolCards = {};
   // 切换会话后重置滚动跟随状态
-  state.autoScroll = true;
+  userPaused = false;
   state.streaming = false;
   updateScrollBottomBtn();
   copyMap.clear(); copySeq = 0;
@@ -453,43 +453,46 @@ function isNearBottom() {
   const box = $('messages');
   return box.scrollHeight - box.scrollTop - box.clientHeight < SCROLL_BOTTOM_THRESHOLD;
 }
-// 智能滚动到底部:仅当用户当前贴近底部(或在渲染初始历史时)才跟随
+// 智能滚动到底部:仅当用户当前贴近底部且未主动暂停时才跟随
+// 关键:userPaused 由 wheel/touchmove(用户主动输入)设置,程序滚动(scrollBottom 设 scrollTop)
+// 不会触发 wheel/touchmove,因此能可靠区分用户主动滚动 vs 程序滚动,避免被反复拉回底部。
+let userPaused = false;
 function maybeAutoScroll() {
-  if (state.autoScroll) scrollBottom();
+  if (!userPaused && isNearBottom()) scrollBottom();
 }
 function scrollBottom() {
   const box = $('messages');
   box.scrollTop = box.scrollHeight;
 }
-// 监听用户滚动意图:向上翻阅历史时立即暂停自动跟随,回到底部时恢复。
+// 监听用户滚动意图:向上翻阅历史时立即暂停跟随,回到底部时恢复。
 // 关键:用 wheel/touchmove 捕获「用户主动向上」的意图(程序滚动不会触发这二者),
 // 避免被 16ms 一次的 flushTypewriter→scrollBottom 反复拉回底部而无法上翻。
-// scroll 事件只负责「回到贴近底部时恢复跟随」(程序 scrollBottom 到底部也会触发,设 true 无副作用)。
+// scroll 事件只负责「回到底部时清除暂停」(程序 scrollBottom 到底部也会触发,清暂停无副作用)。
 function bindScroll() {
   const box = $('messages');
   let touchY = 0;
   // 滚轮向上(看历史)→ 立即暂停跟随
   box.addEventListener('wheel', e => {
-    if (e.deltaY < 0) state.autoScroll = false;
+    if (e.deltaY < 0) userPaused = true;
   }, { passive: true });
   // 触摸下拖(向上看历史)→ 立即暂停跟随
   box.addEventListener('touchstart', e => { touchY = e.touches[0].clientY; }, { passive: true });
   box.addEventListener('touchmove', e => {
     const dy = e.touches[0].clientY - touchY;
-    if (dy > 3) state.autoScroll = false;
+    if (dy > 3) userPaused = true;
     touchY = e.touches[0].clientY;
   }, { passive: true });
-  // 仅在贴近底部时恢复跟随;不在此处设 false,避免程序滚动误判
+  // 回到贴近底部时清除暂停(不在此处设暂停,避免程序滚动误判)
   box.addEventListener('scroll', () => {
-    if (isNearBottom()) state.autoScroll = true;
+    if (isNearBottom()) userPaused = false;
     updateScrollBottomBtn();
   }, { passive: true });
 }
-// 右下角「移动到底部」按钮:仅当用户上翻(不在底部)时显示;AI 正在输出时叠加加载转圈
+// 右下角「移动到底部」按钮:不在底部时显示;AI 正在输出时叠加加载转圈
 function updateScrollBottomBtn() {
   const btn = $('scroll-bottom-btn');
   if (!btn) return;
-  const show = !state.autoScroll;
+  const show = !isNearBottom();
   btn.classList.toggle('hidden', !show);
   const spinner = btn.querySelector('.sb-spinner');
   if (spinner) spinner.classList.toggle('hidden', !state.streaming);
@@ -497,7 +500,7 @@ function updateScrollBottomBtn() {
   if (arrow) arrow.classList.toggle('hidden', state.streaming);
 }
 function clickScrollBottom() {
-  state.autoScroll = true;
+  userPaused = false;
   scrollBottom();
   updateScrollBottomBtn();
 }
@@ -531,14 +534,24 @@ function removePendingBubble() {
 }
 
 // ---------- 打字机效果 ----------
-// AI 流式输出时,不直接把全量文本一次性写进气泡,而是逐步「吐」出,
+// AI 流式输出时,不直接把全量文本一次性写进气泡,而是逐字「吐」出,
 // 视觉上接近打字机。累计文本存于 state.streamText,已显示长度存于 typewriterShown。
-// 由 flushTypewriter() 定时推进;新增量到达时加速补足,避免严重滞后。
+// 每次固定推进 typingConfig.chunk 个字符(默认1=真逐字),不随堆积量加速。
+// chunk 与 interval 均可配置:localStorage 持久化 + window.typingConfig 控制台实时调。
+const typingConfig = {
+  chunk: 1,      // 每次推进字符数
+  interval: 16,  // 每次推进间隔(ms)
+};
+// 从 localStorage 读取用户自定义覆盖(便于调参)
+try {
+  const saved = localStorage.getItem('typingConfig');
+  if (saved) Object.assign(typingConfig, JSON.parse(saved));
+} catch (_) {}
+// 暴露到 window,方便在控制台实时调整(改后下一帧生效)
+window.typingConfig = typingConfig;
 let typewriterShown = 0;
 let typewriterTimer = null;
 let typewriterBlinkCursor = null; // 光标闪烁 interval
-const TYPEWRITER_INTERVAL = 16; // ms:每次推进间隔
-const TYPEWRIVER_CHUNK = 3;      // 每次推进字符数
 function startTypewriter() {
   typewriterShown = 0;
   stopTypewriter();
@@ -548,21 +561,25 @@ function startTypewriter() {
     if (state.streamEl) state.streamEl.classList.toggle('typing');
     if (!state.streamEl && typewriterBlinkCursor) { clearInterval(typewriterBlinkCursor); typewriterBlinkCursor = null; }
   }, 500);
-  typewriterTimer = setInterval(flushTypewriter, TYPEWRITER_INTERVAL);
+  // 递归 setTimeout:每次读取最新 interval,改 interval 实时生效
+  typewriterTimer = setTimeout(flushTypewriter, typingConfig.interval);
 }
 function flushTypewriter() {
+  typewriterTimer = null;
   if (!state.streamEl) return;
   const total = state.streamText.length;
-  if (typewriterShown >= total) return;
-  // 距离差越大补得越多,避免越堆越远
-  const gap = total - typewriterShown;
-  const step = Math.max(TYPEWRIVER_CHUNK, Math.ceil(gap / 6));
-  typewriterShown = Math.min(total, typewriterShown + step);
-  state.streamEl.textContent = state.streamText.slice(0, typewriterShown);
-  maybeAutoScroll();
+  if (typewriterShown < total) {
+    // 固定步长,不随堆积量加速(避免一次输出一堆)
+    typewriterShown = Math.min(total, typewriterShown + typingConfig.chunk);
+    state.streamEl.textContent = state.streamText.slice(0, typewriterShown);
+    maybeAutoScroll();
+  }
+  if (state.streamEl) {
+    typewriterTimer = setTimeout(flushTypewriter, typingConfig.interval);
+  }
 }
 function stopTypewriter() {
-  if (typewriterTimer) { clearInterval(typewriterTimer); typewriterTimer = null; }
+  if (typewriterTimer) { clearTimeout(typewriterTimer); typewriterTimer = null; }
 }
 // 结束打字机:一次性补足剩余文本(以原始 markdown 渲染),关闭光标
 function finishTypewriter() {
@@ -851,7 +868,7 @@ const ui = {
     state.streamText = '';
     state.toolCards = {};
     state.status = '';
-    state.autoScroll = true;
+    userPaused = false;
     state.streaming = false;
     updateScrollBottomBtn();
     copyMap.clear(); copySeq = 0;
@@ -904,7 +921,7 @@ const ui = {
       renderAttach();
       // 立即给出回馈:占位气泡 + 等待计时,首个增量/回复到达时移除并填充内容
       if (r.delivered !== 'queued') addPendingBubble();
-      state.autoScroll = true;
+      userPaused = false;
       scrollBottom();
     } catch (e) { toast('发送失败:' + e.message); }
   },
