@@ -435,6 +435,7 @@ async function renderDetail(detail) {
   const s = detail.session;
   state.status = s.status;
   updatePhaseUI({ model_id: s.model_id, queue_pos: detail.queue_pos });
+  updateScrollBottomBtn(); // 打开仍在运行中的会话时,立即恢复右下角转圈
   $('chat-title').textContent = s.title || s.id;
   for (const m of detail.messages) {
     const node = msgNode(m, state.toolCards);
@@ -492,15 +493,20 @@ function bindScroll() {
   }, { passive: true });
 }
 // 右下角「移动到底部」按钮:不在底部时显示;AI 正在输出时叠加加载转圈
+// AI 是否「正在干活」:流式输出中,或会话处于 active(含工具执行与多轮模型调用的间隙)。
+function runBusy() { return state.streaming || state.status === 'active'; }
+
 function updateScrollBottomBtn() {
   const btn = $('scroll-bottom-btn');
   if (!btn) return;
-  const show = !isNearBottom();
+  const busy = runBusy();
+  // 运行中即使贴着底部也保持显示:转圈即「AI 还活着」指示,多轮工具间隙不至于看着像挂掉
+  const show = busy || !isNearBottom();
   btn.classList.toggle('hidden', !show);
   const spinner = btn.querySelector('.sb-spinner');
-  if (spinner) spinner.classList.toggle('hidden', !state.streaming);
+  if (spinner) spinner.classList.toggle('hidden', !busy);
   const arrow = btn.querySelector('.sb-arrow');
-  if (arrow) arrow.classList.toggle('hidden', state.streaming);
+  if (arrow) arrow.classList.toggle('hidden', busy);
 }
 function clickScrollBottom() {
   userPaused = false;
@@ -559,6 +565,7 @@ function connectStream() {
     const d = JSON.parse(ev.data);
     state.status = d.status;
     updatePhaseUI(d);
+    updateScrollBottomBtn(); // 状态切换同步右下角转圈(开始/结束干活)
   });
   es.addEventListener('assistant_delta', ev => {
     const d = JSON.parse(ev.data);

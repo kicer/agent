@@ -508,7 +508,7 @@ body {
     border-radius: 6px; margin-top: 6px; cursor: zoom-in;
   }
 
-  /* 右下角「回到底部」按钮：上翻历史时出现；AI 输出中显示加载转圈 */
+  /* 右下角「回到底部」按钮：上翻历史时出现；AI 工作期间(含多轮工具间隙)常驻转圈 */
   .scroll-bottom-btn {
     position: absolute; right: 14px; bottom: 72px;
     width: 38px; height: 38px; border-radius: 50%;
