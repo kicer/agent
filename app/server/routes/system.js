@@ -6,6 +6,7 @@ const express = require('express');
 const engine = require('../engine');
 const { loadConfig } = require('../config');
 const versionInfo = require('../version');
+const log = require('../log');
 
 const router = express.Router();
 
@@ -62,7 +63,7 @@ router.post('/restart', wrap((req, res) => {
   try { loadConfig(cfg.config_path); } catch (e) {
     return res.status(409).json({ error: '配置文件当前内容不合法,重启将无法启动:' + String(e && e.message || e) });
   }
-  console.log('[system] 收到重启请求(force=' + force + ',打断 ' + running.length + ' 个回合),进程退出,等待 Docker 拉起');
+  log.info('[system] 收到重启请求(force=' + force + ',打断 ' + running.length + ' 个回合),进程退出,等待 Docker 拉起');
   res.json({ ok: true, restarting: true });
   // 稍候再退出,确保响应已发出;容器由 Docker restart 策略自动重启
   setTimeout(() => process.exit(0), 300);

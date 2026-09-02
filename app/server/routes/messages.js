@@ -1,6 +1,7 @@
 // 消息与交互 API（README 10.2）：发消息 / SSE 流 / 开始执行 / 终止
 const express = require('express');
 const engine = require('../engine');
+const log = require('../log');
 
 const router = express.Router();
 
@@ -41,7 +42,7 @@ router.post('/:id/messages', wrap((req, res) => {
   );
   if (!content) return res.status(400).json({ error: 'content 不能为空' });
   const r = engine.postUserMessage(req.params.id, content);
-  console.log('[msg] ' + (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
+  log.info('[msg] ' + (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
     content.slice(0, 60).replace(/\s+/g, ' '));
   res.json(r);
 }));

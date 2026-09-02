@@ -5,6 +5,7 @@ const path = require('path');
 const { buildMessages, callModel } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const mcp = require('./mcp');
+const log = require('./log');
 
 const TOOL_DEFINITIONS = require('./tools/definitions.json');
 
@@ -79,7 +80,7 @@ function saveMessage(sessionId, msg) {
   // 关键动作日志：AI 每轮回复落库（含纯工具调用轮）
   if (msg.role === 'assistant') {
     const nTools = msg.tool_calls ? msg.tool_calls.length : 0;
-    console.log('[msg] ' + sessionId + ' AI 回复：文本 ' + String(msg.content || '').length + ' 字' +
+    log.info('[msg] ' + sessionId + ' AI 回复：文本 ' + String(msg.content || '').length + ' 字' +
       (nTools ? '，工具调用 ×' + nTools : ''));
   }
   return info.lastInsertRowid;
@@ -324,7 +325,7 @@ async function runLoop(sessionId) {
   try {
     await runLoopInner(sessionId, run);
   } catch (err) {
-    console.error('[engine] runLoop ' + sessionId + ' 异常:', err && err.stack || err);
+    log.error('[engine] runLoop ' + sessionId + ' 异常:', err && err.stack || err);
     bus.emit(sessionId, 'error', { message: String(err && err.message || err) });
   } finally {
     run.looping = false;
@@ -412,6 +413,7 @@ async function runLoopInner(sessionId, run) {
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
       const id = tc.id || ('call_' + Math.random().toString(36).slice(2, 10));
+      log.debug('[tool] ' + sessionId + ' 调用 ' + tc.function.name + ' 参数: ' + String(tc.function.arguments || '').slice(0, 500));
       bus.emit(sessionId, 'tool_call', { id, name: tc.function.name, arguments: tc.function.arguments });
       let output;
       let isError = false;
@@ -423,6 +425,7 @@ async function runLoopInner(sessionId, run) {
         isError = true;
       }
       if (run.cancelled && !isError) output = (output ? output + '\n' : '') + '（用户已终止任务）';
+      log.debug('[tool] ' + sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + String(output || '').slice(0, 500));
       bus.emit(sessionId, 'tool_result', { tool_call_id: id, name: tc.function.name, content: output.slice(0, 20000), is_error: isError });
       saveMessage(sessionId, { role: 'tool', tool_call_id: id, name: tc.function.name, content: output });
     }

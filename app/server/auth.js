@@ -5,6 +5,7 @@ const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
 const { readConfigText, applyEditsToText, loadConfigFromText, writeConfigText } = require('./config');
+const log = require('./log');
 
 const COOKIE_NAME = 'agent_token';
 const DEFAULT_TTL_MS = 30 * 24 * 3600 * 1000; // 30 天
@@ -94,7 +95,7 @@ function createAuth(cfg) {
 
   const secret = (cfg.auth.secret && String(cfg.auth.secret)) || crypto.randomBytes(32).toString('hex');
   if (!cfg.auth.secret) {
-    console.log('[auth] 未配置 auth.secret，已使用随机密钥：进程重启后所有登录态失效');
+    log.warn('[auth] 未配置 auth.secret，已使用随机密钥：进程重启后所有登录态失效');
   }
   const ttlMs = Number(cfg.auth.ttl_ms) || DEFAULT_TTL_MS;
   const validUsers = new Map(users.map(u => [String(u.user), String(u.password)]));
@@ -158,7 +159,7 @@ function createAuth(cfg) {
       // 内存同步:users 与 engine.cfg 是同一对象,Basic 认证实时生效;cookie 登录查 validUsers
       users[idx].password = newP;
       validUsers.set(me, newP);
-      console.log('[auth] 用户 ' + me + ' 修改了密码');
+      log.info('[auth] 用户 ' + me + ' 修改了密码');
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: String(e && e.message || e) });

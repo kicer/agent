@@ -3,6 +3,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const engine = require('../engine');
+const log = require('../log');
 
 const router = express.Router();
 
@@ -49,7 +50,7 @@ router.post('/', wrap((req, res) => {
   const title = (req.body && req.body.title || '').trim();
   const modelId = (req.body && req.body.model_id || '').trim();
   const session = engine.createSession(title, modelId);
-  console.log('[task] ' + (req.user || '-') + ' 新建任务 ' + session.id + '「' + (session.title || '未命名') + '」model=' + (modelId || '自动'));
+  log.info('[task] ' + (req.user || '-') + ' 新建任务 ' + session.id + '「' + (session.title || '未命名') + '」model=' + (modelId || '自动'));
   res.json(session);
 }));
 
@@ -121,7 +122,7 @@ router.get('/:id', wrap((req, res) => {
 
 router.delete('/:id', wrap((req, res) => {
   const delDir = req.query.delete_dir === 'true' || req.query.delete_dir === '';
-  console.log('[task] ' + (req.user || '-') + ' 删除任务 ' + req.params.id + (delDir ? '（含任务目录）' : ''));
+  log.info('[task] ' + (req.user || '-') + ' 删除任务 ' + req.params.id + (delDir ? '（含任务目录）' : ''));
   res.json(engine.deleteSession(req.params.id, delDir));
 }));
 

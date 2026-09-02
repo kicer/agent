@@ -6,6 +6,8 @@
 // 与内置工具严格分离：本模块不碰内置定义；MCP 工具默认沿用原始名，
 // 仅当与内置工具或其他 MCP 工具重名时加「服务名__」前缀。
 
+const log = require('./log');
+
 let toolDefs = [];                    // OpenAI function 格式（所有 MCP 工具）
 const toolIndex = new Map();          // 发送名 -> { server, tool }（服务配置 + 原始工具名）
 let builtinNames = new Set();
@@ -78,9 +80,9 @@ async function init(cfg) {
           },
         });
       }
-      console.log('[mcp] ' + s.name + ': 发现 ' + tools.length + ' 个工具');
+      log.info('[mcp] ' + s.name + ': 发现 ' + tools.length + ' 个工具');
     } catch (err) {
-      console.error('[mcp] ' + s.name + ' 工具发现失败（本轮运行该服务不可用）: ' + (err && err.message || err));
+      log.warn('[mcp] ' + s.name + ' 工具发现失败（本轮运行该服务不可用）: ' + (err && err.message || err));
     }
   }
 }

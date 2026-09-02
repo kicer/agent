@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const YAML = require('yaml');
+const log = require('./log');
 
 const DEFAULTS = {
   port: 8080,
@@ -16,6 +17,8 @@ const DEFAULTS = {
   // 即便一直有人观看，最长也只保持 active_max_ms；sweep_ms 为巡检间隔。
   // 「绑定模型但闲置」的会话（从未发言、无未回应消息）同样按此租约释放，防建而不用霸占模型。
   model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },
+  // 日志等级:debug < info < warn < error < none,只输出 >= 阈值等级的日志;none=全部静默。
+  log_level: 'info',
   models: [],
   // 登录认证：{ users: [{user, password}], secret?, ttl_ms? }，密码明文存配置（自用场景）。
   // users 为空则不启用认证（可交给前置 nginx-proxy，但手机浏览器原生下载不带 Basic 头，不推荐）。
@@ -59,6 +62,11 @@ function parseAndValidate(rawText, configPath) {
   cfg.workspace_root = path.resolve(cfg.workspace_root);
   if (!cfg.db_path) cfg.db_path = path.join(cfg.workspace_root, '.agent.db');
 
+  // 日志等级:只认 debug/info/warn/error/none(off 是 none 别名),非法值按 info(不影响启动)
+  cfg.log_level = String(cfg.log_level || 'info').trim().toLowerCase();
+  if (cfg.log_level === 'off') cfg.log_level = 'none';
+  if (['debug', 'info', 'warn', 'error', 'none'].indexOf(cfg.log_level) < 0) cfg.log_level = 'info';
+
   // 技能根目录：显式配置优先；缺省取 workspace_root 的同级 skills 目录（容器内 /workspace/tasks → /workspace/skills）。
   if (!cfg.skills || !cfg.skills.skills_root) {
     cfg.skills_root = path.resolve(cfg.workspace_root, '..', 'skills');
@@ -88,7 +96,7 @@ function parseAndValidate(rawText, configPath) {
       url: ws.url,
       headers: ws.authorization ? { Authorization: ws.authorization } : {},
     }];
-    console.log('[config] 检测到旧配置 web_search.*，已自动转为一条 mcp_servers；建议更新 config.yml 为 mcp_servers 格式');
+    log.info('[config] 检测到旧配置 web_search.*，已自动转为一条 mcp_servers；建议更新 config.yml 为 mcp_servers 格式');
   }
 
   // MCP 服务规范化：url 必填；name 缺省取主机名首段；headers 为普通键值对象（如 Authorization）

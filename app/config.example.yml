@@ -21,6 +21,10 @@ models:
 workspace_root: "./data/tasks"
 # db_path: "/data/.agent.db"
 
+# 日志等级（改后重启生效）：debug < info < warn < error < none，只输出 ≥ 该等级的日志；none=全部静默。
+# info（默认）=关键动作；debug 另加工具调用参数/结果等排查细节。
+log_level: info
+
 terminal:
   default_timeout_ms: 30000
   max_output_chars: 10000

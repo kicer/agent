@@ -10,8 +10,10 @@ const { createBus } = require('./sse');
 const { createAuth } = require('./auth');
 const engine = require('./engine');
 const mcp = require('./mcp');
+const log = require('./log');
 
 const cfg = loadConfig(process.env.AGENT_CONFIG);
+log.setLevel(cfg.log_level); // 分级日志开关(log.js;config.yml log_level,重启生效)
 const db = initDb(cfg.db_path);
 const bus = createBus();
 
@@ -59,11 +61,12 @@ const PORT = process.env.PORT || cfg.port;
 // 启动时先发现各 MCP 服务的工具（单个服务失败只警告，不阻止启动），发现完成后再开始监听。
 mcp.init(cfg).then(() => {
   server.listen(PORT, () => {
-    console.log('Agent server listening on ' + PORT);
-    console.log('  workspace_root=' + cfg.workspace_root);
-    console.log('  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
+    log.info('Agent server listening on ' + PORT);
+    log.info('  workspace_root=' + cfg.workspace_root);
+    log.info('  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
     const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url).join(', ');
-    console.log('  mcp_servers=' + (mcpList || '(none)'));
-    console.log('  auth=' + (auth.enabled ? 'login (' + cfg.auth.users.map(u => u.user).join(', ') + ')' : '(disabled)'));
+    log.info('  mcp_servers=' + (mcpList || '(none)'));
+    log.info('  auth=' + (auth.enabled ? 'login (' + cfg.auth.users.map(u => u.user).join(', ') + ')' : '(disabled)'));
+    log.info('  log_level=' + cfg.log_level);
   });
 });
