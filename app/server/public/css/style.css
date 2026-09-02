@@ -168,6 +168,10 @@ body {
 .copy-btn svg { width: 11px; height: 11px; stroke: #99a; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .copy-btn:active, .copy-btn:hover { opacity: 1; }
 .copy-btn svg.copied { stroke: #2e7d32; }
+/* 图片全屏查看器：transform 缩放/平移由 JS 接管，touch-action: none 防浏览器手势劫持 */
+#img-viewer { position: fixed; inset: 0; z-index: 150; background: rgba(0,0,0,0.93); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#img-viewer.hidden { display: none; }
+#img-viewer-img { max-width: 92vw; max-height: 88vh; touch-action: none; cursor: grab; user-select: none; -webkit-user-drag: none; }
 /* 消息全屏查看器(双击气泡/工具卡打开)：克隆件保留原类名，这里只做查看器内的尺寸适配 */
 #fs-body .msg-bubble { box-shadow: none; font-size: 15.5px; }
 #fs-body .tool-card { max-width: 100%; }

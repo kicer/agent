@@ -358,8 +358,7 @@ function fillToolResult(id, content, isError, liveImageUrl) {
     const el = document.createElement('img');
     el.className = 'tool-img';
     el.src = img;
-    el.title = '点击查看详情';
-    el.onclick = () => window.open(el.src);
+    el.title = '点击放大查看';
     pre.insertAdjacentElement('afterend', el);
   }
 }
@@ -861,10 +860,75 @@ document.addEventListener('input', e => {
 // 双击消息气泡/工具卡全屏查看（长回复/代码更好读）
 document.getElementById('messages').addEventListener('dblclick', function (e) {
   if (e.target.closest('#fs-viewer')) return;
-  if (e.target.closest('.copy-btn')) return; // 双击复制按钮不触发全屏
+  if (e.target.closest('.copy-btn') || e.target.closest('img')) return; // 复制按钮/图片不误触全屏
   const el = e.target.closest('.msg-bubble, .tool-card');
   if (el) ui.openFullscreen(el);
 });
+
+// 点击消息/工具卡里的图片 → 图片全屏查看器（#fs-viewer 里的克隆图也生效）
+function imgViewerDelegate(e) {
+  const im = e.target.closest('.msg-bubble img, .tool-card img');
+  if (im && im.src) openImageViewer(im.src, im.alt || '');
+}
+document.getElementById('messages').addEventListener('click', imgViewerDelegate);
+document.getElementById('fs-viewer').addEventListener('click', imgViewerDelegate);
+
+// 图片全屏查看器：transform 缩放+平移。双指捻合缩放(1~6x)、放大后单指/鼠标拖动、双击切 2.5x。
+let openImageViewer, closeImageViewer;
+(function () {
+  const viewer = document.getElementById('img-viewer');
+  const img = document.getElementById('img-viewer-img');
+  let scale = 1, tx = 0, ty = 0, mode = null;
+  let sx = 0, sy = 0, stx = 0, sty = 0, pDist = 0, pScale = 1;
+  const tdist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  function apply() {
+    img.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
+    img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
+  }
+  openImageViewer = function (src, alt) {
+    scale = 1; tx = ty = 0; mode = null;
+    apply();
+    img.src = src; img.alt = alt || '';
+    viewer.classList.remove('hidden');
+  };
+  closeImageViewer = function () { viewer.classList.add('hidden'); };
+  // 点背景（非图片）关闭
+  viewer.addEventListener('click', function (e) { if (e.target === viewer) closeImageViewer(); });
+  img.addEventListener('dblclick', function () {
+    scale = scale > 1 ? 1 : 2.5;
+    if (scale === 1) { tx = ty = 0; }
+    apply();
+  });
+  img.addEventListener('touchstart', function (e) {
+    if (e.touches.length === 2) { mode = 'pinch'; pDist = tdist(e.touches) || 1; pScale = scale; }
+    else if (e.touches.length === 1 && scale > 1) { mode = 'pan'; sx = e.touches[0].clientX; sy = e.touches[0].clientY; stx = tx; sty = ty; }
+    else mode = null;
+  }, { passive: true });
+  img.addEventListener('touchmove', function (e) {
+    if (mode === 'pinch' && e.touches.length >= 2) {
+      e.preventDefault();
+      scale = Math.min(6, Math.max(1, pScale * tdist(e.touches) / pDist));
+      if (scale === 1) { tx = ty = 0; }
+      apply();
+    } else if (mode === 'pan' && e.touches.length === 1) {
+      e.preventDefault();
+      tx = stx + e.touches[0].clientX - sx;
+      ty = sty + e.touches[0].clientY - sy;
+      apply();
+    }
+  }, { passive: false });
+  img.addEventListener('touchend', function (e) { if (e.touches.length < 2) { if (mode === 'pinch') mode = null; } if (!e.touches.length) mode = null; }, { passive: true });
+  img.addEventListener('touchcancel', function () { mode = null; }, { passive: true });
+  // 桌面：放大后按住拖动平移
+  img.addEventListener('mousedown', function (e) {
+    if (scale <= 1) return;
+    e.preventDefault();
+    const x0 = e.clientX, y0 = e.clientY, tx0 = tx, ty0 = ty;
+    const mv = function (ev) { tx = tx0 + ev.clientX - x0; ty = ty0 + ev.clientY - y0; apply(); };
+    const up = function () { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+  });
+})();
 
 // 全屏查看器双指缩放：页面 viewport 是 user-scalable=no（原生捏合被禁），
 // 在查看器内接管双指手势，用 CSS zoom 缩放内容（1~4 倍，关闭时重置）。
