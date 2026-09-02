@@ -10,8 +10,9 @@
   "dependencies": {
     "better-sqlite3": "11.3.0",
     "express": "4.21.2",
-    "multer": "1.4.5-lts.1",
     "minimatch": "9.0.5",
+    "multer": "1.4.5-lts.1",
+    "sharp": "0.35.4",
     "yaml": "2.6.1"
   }
 }

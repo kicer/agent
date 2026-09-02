@@ -446,5 +446,11 @@ body {
 .cfg-err {
   margin: 8px 12px 0; padding: 8px 12px; border-radius: 8px;
   background: #fdecea; color: #a3352a; font-size: 12.5px;
-  white-space: pre-wrap; word-break: break-all;
-}
+    white-space: pre-wrap; word-break: break-all;
+  }
+
+  /* read_file 读图回传的图片缩略（点开原图） */
+  .tool-img {
+    display: block; max-width: 240px; max-height: 240px;
+    border-radius: 6px; margin-top: 6px; cursor: zoom-in;
+  }

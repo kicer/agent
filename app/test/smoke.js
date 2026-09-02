@@ -118,6 +118,26 @@ async function main() {
     ok(!!taskMd, '开始执行自动追加模板消息');
     ok(d.session.phase === 'execution', '阶段切换为 execution');
 
+    // ---- 2.5 read_file 读图回传（vision）----
+    console.log('\n[2.5] 读图回传');
+    const sharp = require('sharp');
+    const pngBuf = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 200, g: 30, b: 30 } } }).png().toBuffer();
+    const si = await api('POST', '/api/sessions', { title: '冒烟-读图' });
+    await waitSession(si.id, x => x.session.status === 'active', 5000, '绑定');
+    const fdImg = new FormData();
+    fdImg.append('files', new Blob([pngBuf], { type: 'image/png' }), 'pic.png');
+    const upImg = await fetch(BASE + '/api/sessions/' + si.id + '/files', { method: 'POST', body: fdImg });
+    ok(upImg.ok, '上传图片到任务目录');
+    await api('POST', '/api/sessions/' + si.id + '/messages', { content: '读图 pic.png' });
+    d = await waitSession(si.id, x => x.session.status === 'held' && x.messages.some(m => m.role === 'tool'), 15000, '读图回合完成');
+    const imgTool = d.messages.filter(m => m.role === 'tool')
+      .map(m => { try { return JSON.parse(m.content); } catch (_) { return null; } })
+      .find(j => j && Array.isArray(j.__blocks__));
+    ok(!!imgTool && imgTool.__blocks__.some(b =>
+      b.type === 'image_url' && String(b.image_url && b.image_url.url).startsWith('data:image/jpeg;base64,')),
+      'tool 消息含压缩后的 image_url 内容块',
+      imgTool ? JSON.stringify(imgTool.__blocks__.map(b => b.type)) : '无多模态块');
+
     // ---- 3. 路径穿越防护 ----
     console.log('\n[3] 路径防护');
     let blocked = false;
@@ -197,6 +217,15 @@ async function main() {
     ok(fpath.includes('g.txt'), 'find_path 命中', fpath);
     const esc = await executeTool(ctx, 'read_file', { path: '../outside.txt' }).catch(e => 'ERR:' + e.message);
     ok(String(esc).includes('越界'), 'read_file 拒绝越界', String(esc));
+    // read_file 读图：非 vision → 文本提示；vision → {text, image_data_url}（依赖 sharp）
+    const unitPng = await require('sharp')({ create: { width: 4, height: 4, channels: 3, background: { r: 10, g: 120, b: 200 } } }).png().toBuffer();
+    fs.writeFileSync(path.join(ctx.taskDir, 'pic.png'), unitPng);
+    const imgNoVision = await executeTool(ctx, 'read_file', { path: 'pic.png' });
+    ok(typeof imgNoVision === 'string' && imgNoVision.includes('不支持视觉识别'), 'read_file 非 vision 图片返回文本提示', String(imgNoVision).slice(0, 80));
+    const ctxVision = Object.assign({}, ctx, { vision: true });
+    const imgVision = await executeTool(ctxVision, 'read_file', { path: 'pic.png' });
+    ok(imgVision && typeof imgVision === 'object' && String(imgVision.image_data_url).startsWith('data:image/jpeg;base64,'),
+      'read_file vision 图片返回压缩 data URL', imgVision && imgVision.text ? String(imgVision.text).slice(0, 90) : String(imgVision).slice(0, 90));
 
     // ---- 8. 配置读写 API(阶段 2)----
     console.log('\n[8] 配置读写');

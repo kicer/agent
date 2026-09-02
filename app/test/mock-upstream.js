@@ -2,6 +2,7 @@
 // 规则：
 //  - 历史里已有 tool 结果 -> 回纯文本收尾
 //  - 最后一条 user 消息含 "写文件" -> 返回 write_file 工具调用
+//  - 含 "读图" -> 返回 read_file(pic.png) 工具调用（验证 vision 图片回传）
 //  - 含 "慢" -> 慢速输出（用于终止测试）
 //  - 其他 -> 纯文本 "已收到: <最后一条user消息>"
 const http = require('http');
@@ -40,6 +41,17 @@ function streamToolCall(res) {
   res.end();
 }
 
+function streamReadFileCall(res) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+  const id = 'call-img-' + Date.now();
+  sse(res, { choices: [{ delta: { role: 'assistant', tool_calls: [{ id, function: { name: 'read_file' } }] } }] });
+  sse(res, { choices: [{ delta: { tool_calls: [{ function: { arguments: '{"path": "pic.png"}' } }] } }] });
+  sse(res, { choices: [{ delta: {}, finish_reason: 'tool_calls' }] });
+  sse(res, { usage: { prompt_tokens: 60, completion_tokens: 10, total_tokens: 70 } });
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
 const server = http.createServer((req, res) => {
   if (!req.url.includes('/chat/completions')) {
     res.writeHead(404).end('not found');
@@ -60,6 +72,8 @@ const server = http.createServer((req, res) => {
     process.stdout = process.stdout;
     if (hasToolResult) {
       streamText(res, '文件已创建并验证完毕。');
+    } else if (userText.includes('读图')) {
+      streamReadFileCall(res);
     } else if (userText.includes('写文件')) {
       streamToolCall(res);
     } else if (userText.includes('慢')) {

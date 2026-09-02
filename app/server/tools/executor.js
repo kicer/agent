@@ -85,6 +85,12 @@ function truncate(text, max) {
 const AUTO_OUTLINE_SIZE = 16384;
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff', '.tif']);
 
+// read_file 读图（仅当会话绑定的模型 vision: true）：sharp 压缩后转 base64 data URL，
+// 由 engine 拼成下一轮请求里 tool 消息的 image_url 内容块。
+const IMG_MAX_INPUT_BYTES = 50 * 1024 * 1024; // 与上传上限一致
+const IMG_MAX_SIDE = 2000;                    // 长边压缩阈值（px）
+const IMG_JPEG_QUALITY = 80;
+
 // 简化版符号大纲（Zed 用 tree-sitter，这里用正则提取常见语言的顶层符号 + Markdown 标题）。
 // 返回 "# File outline ..." 文本；无法提取时返回 null（调用方回退到首 1KB）。
 const OUTLINE_RES = [
@@ -130,6 +136,29 @@ function outlineWrapper(outlineText) {
     'For example, to read a function shown as [L100-150], use start_line: 100 and end_line: 150.';
 }
 
+// 用 sharp 压缩（按 EXIF 摆正、长边 ≤2000px、JPEG 质量 80）并转 base64 data URL。
+// 成功返回 {text, image_data_url}，engine 侧拼成 tool 消息的多模态内容块；
+// sharp 缺失或解码失败时退回纯文本提示，不让整个工具回合报错。
+async function readImageAsBlocks(abs, rel, size) {
+  let sharp;
+  try { sharp = require('sharp'); }
+  catch (_) { return '[图片文件] ' + rel + '（' + size + ' 字节）。服务端未安装 sharp，无法压缩回传图片内容。'; }
+  try {
+    const r = await sharp(abs)
+      .rotate()
+      .resize({ width: IMG_MAX_SIDE, height: IMG_MAX_SIDE, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: IMG_JPEG_QUALITY })
+      .toBuffer({ resolveWithObject: true });
+    return {
+      text: '[图片文件] ' + rel + '（原 ' + size + ' 字节，已压缩为 ' + r.info.width + '×' + r.info.height +
+        ' JPEG ' + r.data.length + ' 字节，图片见同条消息的 image_url 内容块）',
+      image_data_url: 'data:image/jpeg;base64,' + r.data.toString('base64'),
+    };
+  } catch (err) {
+    return '[图片文件] ' + rel + '（' + size + ' 字节），图片解码/压缩失败：' + (err && err.message || err);
+  }
+}
+
 async function toolReadFile(ctx, args) {
   const abs = resolveInTask(ctx.taskDir, args.path);
   let st;
@@ -137,7 +166,14 @@ async function toolReadFile(ctx, args) {
   catch (_) { throw new Error('文件不存在：' + args.path); }
   if (st.isDirectory()) throw new Error(args.path + ' 是目录不是文件，请用 list_directory 工具查看目录内容。');
   if (IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
-    return '[图片文件] ' + relOf(ctx.taskDir, abs) + '（' + st.size + ' 字节）。当前服务无法把图片内容回传给模型。';
+    const rel = relOf(ctx.taskDir, abs);
+    if (!ctx.vision) {
+      return '[图片文件] ' + rel + '（' + st.size + ' 字节）。图片文件，当前模型不支持视觉识别，无法回传图片内容。';
+    }
+    if (st.size > IMG_MAX_INPUT_BYTES) {
+      return '[图片文件] ' + rel + '（' + st.size + ' 字节）过大（上限 ' + IMG_MAX_INPUT_BYTES + ' 字节），已跳过回传。';
+    }
+    return await readImageAsBlocks(abs, rel, st.size);
   }
   if (isProbablyBinary(abs)) return '[二进制文件，跳过文本读取] ' + relOf(ctx.taskDir, abs);
   const text = await fsp.readFile(abs, 'utf8');
@@ -646,7 +682,8 @@ const HANDLERS = {
   run_skill: (ctx, args) => skills.runSkill(ctx, args.skill_name, args.input_args),
 };
 
-// ctx: {sessionId, taskDir, run, cfg, db}
+// ctx: {sessionId, taskDir, run, cfg, db, vision}
+// 返回值一般为字符串；read_file 读图且 ctx.vision 为 true 时返回 {text, image_data_url}。
 // 内置工具优先；未命中时交给 MCP 注册表（启动时发现的服务工具）。
 async function executeTool(baseCtx, name, args) {
   const handler = HANDLERS[name];

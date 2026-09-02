@@ -2,7 +2,7 @@
 // 单进程内存模型：JS 单线程 + better-sqlite3 同步 API，不存在跨进程竞争。
 const fs = require('fs');
 const path = require('path');
-const { buildMessages, callModel } = require('./llm');
+const { buildMessages, callModel, encodeBlocks } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const mcp = require('./mcp');
 const log = require('./log');
@@ -183,6 +183,12 @@ function freeModel() {
 function modelDisplayName(modelId) {
   const row = db.prepare('SELECT display_name FROM model_pool WHERE id = ?').get(modelId);
   return row ? row.display_name : modelId;
+}
+
+// 会话绑定的模型是否支持 vision（图片回传）；决定 read_file 读图行为（见 tools/executor.js）。
+function modelVision(session) {
+  const m = session.model_id && (cfg.models || []).find(x => x.id === session.model_id);
+  return !!(m && m.vision);
 }
 
 function enqueue(sessionId) {
@@ -419,6 +425,7 @@ async function runLoopInner(sessionId, run) {
     }
 
     // 执行工具
+    const vision = modelVision(session);
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
       const id = tc.id || ('call_' + Math.random().toString(36).slice(2, 10));
@@ -427,16 +434,36 @@ async function runLoopInner(sessionId, run) {
       let output;
       let isError = false;
       try {
-        output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db },
+        output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db, vision },
           tc.function.name, safeParse(tc.function.arguments));
       } catch (err) {
         output = 'Error: ' + (err && err.message || String(err));
         isError = true;
       }
-      if (run.cancelled && !isError) output = (output ? output + '\n' : '') + '（用户已终止任务）';
-      log.debug('[tool] ' + sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + String(output || '').slice(0, 500));
-      bus.emit(sessionId, 'tool_result', { tool_call_id: id, name: tc.function.name, content: output.slice(0, 20000), is_error: isError });
-      saveMessage(sessionId, { role: 'tool', tool_call_id: id, name: tc.function.name, content: output });
+      // 工具可返回 {text, image_data_url}（read_file 读图且模型支持 vision）：
+      // 落库时把图片以 image_url 内容块拼进 tool 消息（哨兵 JSON，见 llm.js encodeBlocks），
+      // buildMessages 发请求前还原为 OpenAI 内容块数组。
+      let outText;
+      let imageDataUrl = null;
+      if (output && typeof output === 'object' && output.image_data_url) {
+        outText = String(output.text || '');
+        imageDataUrl = String(output.image_data_url);
+      } else {
+        outText = String(output == null ? '' : output);
+      }
+      if (run.cancelled && !isError) outText = (outText ? outText + '\n' : '') + '（用户已终止任务）';
+      log.debug('[tool] ' + sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText.slice(0, 500));
+      const toolContent = imageDataUrl
+        ? encodeBlocks([
+            { type: 'text', text: outText },
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+          ])
+        : outText;
+      bus.emit(sessionId, 'tool_result', {
+        tool_call_id: id, name: tc.function.name, content: outText.slice(0, 20000),
+        is_error: isError, image_url: imageDataUrl || undefined,
+      });
+      saveMessage(sessionId, { role: 'tool', tool_call_id: id, name: tc.function.name, content: toolContent });
     }
     iter++;
   }
@@ -483,10 +510,10 @@ function sessionContextContent(session) {
   const model = session.model_id
     ? modelDisplayName(session.model_id)
     : '尚未绑定（排队中，绑定后自动开始处理）';
-  // vision 能力随会话上下文告知 AI：不支持时读图只能拿到元信息，免得白跑一轮 read_file
+  // vision 能力随会话上下文告知 AI：支持时 read_file 读图会回传图片内容，不支持时只能拿到文件信息
   const bound = session.model_id && cfg.models.find(m => m.id === session.model_id);
   const visionLine = bound
-    ? (bound.vision ? '支持' : '不支持')
+    ? (bound.vision ? '支持（read_file 读图会返回压缩后的图片内容）' : '不支持（read_file 读图只能拿到文件信息）')
     : '未知';
   return [
     '【会话上下文】由系统自动注入，无需回复本消息',

@@ -12,6 +12,18 @@ function buildSystemPrompt() {
   return SYSTEM_PROMPT_TEMPLATE;
 }
 
+// 多模态内容块存取：messages.content 列为 TEXT，含图片的 tool 消息
+// 以 {"__blocks__":[content...]} 哨兵 JSON 落库（见需求 §5），
+// 发请求时还原为 OpenAI 内容块数组（text + image_url）。tool/user 消息共用。
+function encodeBlocks(blocks) { return JSON.stringify({ __blocks__: blocks }); }
+function decodeBlocks(content) {
+  if (typeof content !== 'string' || !content.startsWith('{"__blocks__":')) return null;
+  try {
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed.__blocks__) ? parsed.__blocks__ : null;
+  } catch (_) { return null; }
+}
+
 // 将 DB 消息行转为 OpenAI messages 数组（不含 system，由调用方拼接）。
 function buildMessages(session) {
   const messages = [{ role: 'system', content: SYSTEM_PROMPT_TEMPLATE }];
@@ -22,9 +34,10 @@ function buildMessages(session) {
       if (!m.content) delete m.content;
       messages.push(m);
     } else if (row.role === 'tool') {
-      messages.push({ role: 'tool', tool_call_id: row.tool_call_id, name: row.name, content: row.content || '' });
+      // 含图片的 tool 行：content 还原为 [text, image_url] 内容块数组
+      messages.push({ role: 'tool', tool_call_id: row.tool_call_id, name: row.name, content: decodeBlocks(row.content) || row.content || '' });
     } else {
-      messages.push({ role: row.role, content: row.content || '' });
+      messages.push({ role: row.role, content: decodeBlocks(row.content) || row.content || '' });
     }
   }
   return messages;
@@ -128,4 +141,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt };
+module.exports = { callModel, buildMessages, buildSystemPrompt, encodeBlocks, decodeBlocks };

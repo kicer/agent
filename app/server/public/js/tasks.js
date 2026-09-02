@@ -256,13 +256,39 @@ function renderToolCard(id, name, argsStr) {
   return div;
 }
 
-function fillToolResult(id, content, isError) {
+// tool 消息 content：纯文本，或含图片时的哨兵 JSON {"__blocks__":[...]}（read_file 读图回传，见 llm.js）
+function parseToolContent(content) {
+  if (typeof content === 'string' && content.startsWith('{"__blocks__":')) {
+    try {
+      const blocks = JSON.parse(content).__blocks__ || [];
+      const img = blocks.find(b => b.type === 'image_url');
+      return {
+        text: blocks.filter(b => b.type === 'text').map(b => b.text).join('\n'),
+        imageUrl: img && img.image_url && img.image_url.url || null,
+      };
+    } catch (_) { /* 解析失败按原文显示 */ }
+  }
+  return { text: content, imageUrl: null };
+}
+
+function fillToolResult(id, content, isError, liveImageUrl) {
   const card = document.getElementById('tool-' + id);
   if (!card) return;
   if (isError) card.classList.add('error');
   card.querySelector('.spin').textContent = isError ? '✕' : '✓';
+  const parsed = parseToolContent(content);
   const pre = card.querySelector('.tool-result');
-  if (pre) pre.textContent = content || '(空)';
+  if (!pre) return;
+  pre.textContent = parsed.text || '(空)';
+  const img = liveImageUrl || parsed.imageUrl;
+  if (img && !card.querySelector('.tool-img')) {
+    const el = document.createElement('img');
+    el.className = 'tool-img';
+    el.src = img;
+    el.title = '点击查看详情';
+    el.onclick = () => window.open(el.src);
+    pre.insertAdjacentElement('afterend', el);
+  }
 }
 
 function msgNode(m, cardMap) {
@@ -421,7 +447,7 @@ function connectStream() {
   });
   es.addEventListener('tool_result', ev => {
     const d = JSON.parse(ev.data);
-    fillToolResult(d.tool_call_id, d.content, d.is_error);
+    fillToolResult(d.tool_call_id, d.content, d.is_error, d.image_url);
     scrollBottom();
   });
   es.addEventListener('done', ev => {
