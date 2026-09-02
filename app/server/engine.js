@@ -219,6 +219,24 @@ function releaseModel(sessionId) {
   db.prepare('UPDATE sessions SET model_id = NULL, updated_at = ? WHERE id = ?').run(now(), sessionId);
 }
 
+// 手动为已结版/已终止的会话指定模型：选定的模型必须空闲，绑定后状态直接 active，
+// 下一条消息不再排队；若有未回应消息则立刻开跑。绑而不用同样受闲置租约兑底（sweepHeld）。
+function bindToSession(sessionId, modelId) {
+  const s = getSession(sessionId);
+  if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  if (s.status !== 'completed' && s.status !== 'cancelled') {
+    throw Object.assign(new Error('仅已完成/已终止的会话可手动选择模型'), { status_code: 409 });
+  }
+  const model = db.prepare('SELECT * FROM model_pool WHERE id = ? AND is_busy = 0').get(String(modelId || ''));
+  if (!model) throw Object.assign(new Error('模型不存在或正被占用'), { status_code: 409 });
+  touch(sessionId, { cancelled_at: null, completed_at: null, held_at: null });
+  bindModel(s, model);
+  emitStatus(sessionId);
+  log.info('[model] ' + sessionId + ' 手动绑定模型 ' + model.id);
+  if (hasPendingUser(sessionId)) runLoop(sessionId);
+  return { ok: true, model_id: model.id };
+}
+
 // 是否还有待回应的新用户消息（最后一条非 tool 消息是 user）。
 // 会话上下文消息（role=user 但带 SESSION_CONTEXT_NAME 标记）不算待回应消息。
 function hasPendingUser(sessionId) {
@@ -675,6 +693,7 @@ module.exports = {
   recordModelUsage,
   modelUsageStats,
   dispatchQueued,
+  bindToSession,
   TOOL_DEFINITIONS,
   START_EXECUTION_MESSAGE,
 };

@@ -155,6 +155,7 @@
       <div class="phase-bar" id="phase-bar">
         <span class="status-pill" id="status-pill">--</span>
         <button class="stop-link hidden" id="stop-btn" onclick="ui.stopSession()">终止</button>
+        <button class="stop-link muted hidden" id="model-switch-btn" onclick="ui.openModelSwitch()">选择模型</button>
       </div>
 
       <div class="messages" id="messages"></div>
@@ -200,6 +201,18 @@
         <input type="text" id="new-title" placeholder="任务标题（留空自动取首条消息）" style="width:100%">
         <select id="new-model" style="width:100%"><option value="">自动分配</option></select>
         <button class="primary-btn" onclick="ui.createSession()" style="width:100%">创建</button>
+      </div>
+    </div>
+
+    <!-- 已完成会话手动选择模型弹窗 -->
+    <div id="bind-model-modal" class="modal-overlay hidden" onclick="if(event.target===this)ui.closeModelSwitch()">
+      <div class="modal">
+        <button class="modal-close-btn" onclick="ui.closeModelSwitch()">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+        <h3>选择模型继续会话</h3>
+        <p class="empty-tip">为已结束(已完成/已终止)的会话指定一个空闲模型,绑定后继续对话将优先使用该模型。</p>
+        <div class="btn-row" id="bind-model-list" style="flex-direction:column;align-items:stretch;gap:8px;"></div>
       </div>
     </div>
 
@@ -282,10 +295,10 @@
   <div class="toast hidden" id="toast"></div>
 
   <!-- 发版时更新 v 参数,避免移动端浏览器缓存旧 JS -->
-  <script src="/js/core.js?v=20260902b"></script>
-  <script src="/js/tasks.js?v=20260902b"></script>
-  <script src="/js/skills.js?v=20260902b"></script>
-  <script src="/js/models.js?v=20260902b"></script>
-  <script src="/js/settings.js?v=20260902b"></script>
+  <script src="/js/core.js?v=20260902c"></script>
+  <script src="/js/tasks.js?v=20260902c"></script>
+  <script src="/js/skills.js?v=20260902c"></script>
+  <script src="/js/models.js?v=20260902c"></script>
+  <script src="/js/settings.js?v=20260902c"></script>
 </body>
 </html>

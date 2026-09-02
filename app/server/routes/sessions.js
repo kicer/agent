@@ -120,6 +120,10 @@ router.get('/:id', wrap((req, res) => {
   });
 }));
 
+router.post('/:id/bind', wrap((req, res) => {
+  res.json(engine.bindToSession(req.params.id, req.body && req.body.model_id));
+}));
+
 router.delete('/:id', wrap((req, res) => {
   const delDir = req.query.delete_dir === 'true' || req.query.delete_dir === '';
   log.info('[task] ' + (req.user || '-') + ' 删除任务 ' + req.params.id + (delDir ? '（含任务目录）' : ''));

@@ -483,6 +483,9 @@ function updatePhaseUI(d) {
   btn.classList.toggle('hidden', !actionable);
   btn.textContent = state.status === 'held' ? '断开' : '终止';
   btn.classList.toggle('muted', state.status === 'held');
+  // 已完成/已终止时提供「选择模型」,手动指定空闲模型后继续对话
+  const msBtn = $('model-switch-btn');
+  if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && (state.status === 'completed' || state.status === 'cancelled')));
 }
 
 // ---------- 文件 ----------
@@ -535,6 +538,35 @@ const ui = {
     $('new-title').focus();
   },
   closeCreate() { $('create-modal').classList.add('hidden'); },
+  async openModelSwitch() {
+    if (!state.sessionId) return;
+    const list = $('bind-model-list');
+    list.innerHTML = '<div class="empty-tip">加载中…</div>';
+    $('bind-model-modal').classList.remove('hidden');
+    try {
+      const rows = await req('GET', '/api/models');
+      if (!rows.length) {
+        list.innerHTML = '<div class="empty-tip">还没有配置模型。</div>';
+        return;
+      }
+      list.innerHTML = rows.map(m => m.is_busy
+        ? '<button class="ghost-btn" disabled>' + esc(m.display_name || m.id) + ' · 占用中</button>'
+        : '<button class="primary-btn" onclick="ui.bindModel(\'' + esc(m.id) + '\')">' + esc(m.display_name || m.id) + '</button>').join('');
+    } catch (e) {
+      list.innerHTML = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
+    }
+  },
+  closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); },
+  async bindModel(modelId) {
+    if (!state.sessionId) return;
+    try {
+      await req('POST', '/api/sessions/' + state.sessionId + '/bind', { model_id: modelId });
+      toast('已绑定模型 ' + modelId);
+      this.closeModelSwitch();
+    } catch (e) { toast('绑定失败:' + e.message); }
+    // 无论成败都刷新状态(失败多为并发占用,状态可能已变)
+    try { await renderDetail(await req('GET', '/api/sessions/' + state.sessionId)); } catch (_) {}
+  },
   async createSession() {
     try {
       const title = $('new-title').value.trim();
