@@ -318,8 +318,9 @@ function renderToolCard(id, name, argsStr, createdAt) {
     '<span class="tool-name">' + esc(name) + '</span>' +
     '<span class="tool-args">' + esc(toolArgsSummary(name, argsStr)) + '</span></summary>' +
     '<pre class="tool-args-full">' + esc(toolArgsFull(argsStr)) + '</pre>' +
-    '<pre class="tool-result">执行中…</pre></details>' +
-    '<div class="msg-time tool-time">' + fmtTime(createdAt || Date.now()) + '</div>';
+    '<pre class="tool-result">执行中…</pre>' +
+    // 时间行/复制按钮在折叠体内：展开卡片才可见
+    '<div class="msg-time tool-time">' + fmtTime(createdAt || Date.now()) + '</div></details>';
   return div;
 }
 
@@ -633,10 +634,13 @@ const ui = {
   openFullscreen(el) {
     const body = $('fs-body');
     body.innerHTML = '';
+    body.style.zoom = '';
     // 深拷贝并去掉 id：保留原类名使气泡/工具卡样式在查看器内照常生效，且避免 id 重复
     const clone = el.cloneNode(true);
     clone.removeAttribute('id');
     clone.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
+    // 全屏查看直接展开参数/结果，方便观看
+    clone.querySelectorAll('details').forEach(function (d) { d.open = true; });
     body.appendChild(clone);
     $('fs-viewer').classList.remove('hidden');
   },
@@ -861,6 +865,28 @@ document.getElementById('messages').addEventListener('dblclick', function (e) {
   const el = e.target.closest('.msg-bubble, .tool-card');
   if (el) ui.openFullscreen(el);
 });
+
+// 全屏查看器双指缩放：页面 viewport 是 user-scalable=no（原生捏合被禁），
+// 在查看器内接管双指手势，用 CSS zoom 缩放内容（1~4 倍，关闭时重置）。
+(function () {
+  const viewer = document.getElementById('fs-viewer');
+  if (!viewer) return;
+  let startDist = 0, startZoom = 1, pinching = false;
+  const tdist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  viewer.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 2) { pinching = false; return; }
+    pinching = true;
+    startDist = tdist(e.touches) || 1;
+    startZoom = Number($('fs-body').style.zoom) || 1;
+  }, { passive: true });
+  viewer.addEventListener('touchmove', function (e) {
+    if (!pinching || e.touches.length < 2) return;
+    e.preventDefault(); // 双指期间阻止滚动，手势归缩放
+    $('fs-body').style.zoom = Math.min(4, Math.max(1, startZoom * tdist(e.touches) / startDist)) || '';
+  }, { passive: false });
+  viewer.addEventListener('touchend', function (e) { if (e.touches.length < 2) pinching = false; }, { passive: true });
+  viewer.addEventListener('touchcancel', function () { pinching = false; }, { passive: true });
+})();
 
 // ---------- Tab 注册 ----------
 window.tabModules = window.tabModules || {};
