@@ -25,21 +25,41 @@ function decodeBlocks(content) {
 }
 
 // 将 DB 消息行转为 OpenAI messages 数组（不含 system，由调用方拼接）。
+// 省 token：image_url 块仅在其位于最后一条 assistant 消息之后（模型尚未对它回复）时保留；
+// 之前的视为已消费，发请求时替换为文字标记。DB 始终存全量：UI 历史照常渲染图片，
+// 模型如需重看可再次 read_file（新消息在尾部，会重新携带图片）。
 function buildMessages(session) {
   const messages = [{ role: 'system', content: SYSTEM_PROMPT_TEMPLATE }];
-  for (const row of session.history) {
+  const history = session.history;
+  let lastAssistant = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'assistant') { lastAssistant = i; break; }
+  }
+  history.forEach((row, i) => {
     if (row.role === 'assistant') {
       const m = { role: 'assistant', content: row.content || '' };
       if (row.tool_calls) m.tool_calls = JSON.parse(row.tool_calls);
       if (!m.content) delete m.content;
       messages.push(m);
-    } else if (row.role === 'tool') {
-      // 含图片的 tool 行：content 还原为 [text, image_url] 内容块数组
-      messages.push({ role: 'tool', tool_call_id: row.tool_call_id, name: row.name, content: decodeBlocks(row.content) || row.content || '' });
-    } else {
-      messages.push({ role: row.role, content: decodeBlocks(row.content) || row.content || '' });
+      return;
     }
-  }
+    // tool/user 行：含图哨兵 JSON 还原为内容块；已消费的图剥掉 base64，只留文字描述 + 标记
+    const blocks = decodeBlocks(row.content);
+    let content = row.content || '';
+    if (blocks) {
+      if (i < lastAssistant) {
+        content = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n') +
+          '\n[图片数据已省略：模型此前已识别过本图；如需重新查看请再次调用 read_file]';
+      } else {
+        content = blocks;
+      }
+    }
+    if (row.role === 'tool') {
+      messages.push({ role: 'tool', tool_call_id: row.tool_call_id, name: row.name, content });
+    } else {
+      messages.push({ role: row.role, content });
+    }
+  });
   return messages;
 }
 
