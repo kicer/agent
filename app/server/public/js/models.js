@@ -9,6 +9,15 @@ let cfgModels = [];             // 配置里的模型数组(下标即 PATCH 下�
 let runtimeById = {};           // 运行池状态,按 id 关联
 let modelsPendingRestart = false;
 let moeIdx = -1;                // 当前编辑弹窗对应的下标;-1 = 新增
+let moeOrigKey = '';            // 打开编辑弹窗时的原始 api_key;未改动(显示仍含***)则保留原值
+
+// api_key 脱敏显示:sk-***1234 样式。含 *** 作为「未改动」哨兵,保存时据此还原原 key。
+function maskKey(k) {
+  k = k || '';
+  if (k.length > 8) return k.slice(0, 3) + '***' + k.slice(-4);
+  if (k.length > 0) return '***' + k.slice(-2);
+  return '';
+}
 
 // token 用量紧凑显示：1.2k / 9.1M 这种 human-friendly 量级，一眼看出多少。
 // <1000 原样；1k~1M 用 k(1 位小数,去尾零)；≥1M 用 M。0 显示为 0。
@@ -81,7 +90,10 @@ function openModelEditor(rawId) {
   idIn.value = m.id || '';
   idIn.disabled = !add; // 编辑时禁改 id(历史会话按 id 绑定)
   $('moe-url').value = m.url || '';
-  $('moe-key').value = m.api_key || '';
+  moeOrigKey = m.api_key || '';
+  const keyIn = $('moe-key');
+  keyIn.value = maskKey(moeOrigKey);
+  keyIn.placeholder = add ? 'sk-...' : '不改则保留原 key(清空将保存为空)';
   $('moe-vision').checked = !!m.vision;
   $('moe-del-btn').classList.toggle('hidden', add);
   $('model-edit-modal').classList.remove('hidden');
@@ -94,11 +106,14 @@ async function saveModelEditor() {
   const url = $('moe-url').value.trim().replace(/\/+$/, '');
   if (!id) return toast('请填写 id');
   if (!url) return toast('请填写上游地址');
+  // 显示值含 *** = 未改动,还原原 key;否则按用户输入(支持改为新 key 或清空)
+  const keyVal = $('moe-key').value.trim();
+  const api_key = keyVal.includes('***') ? moeOrigKey : keyVal;
   const obj = {
     id,
     display_name: $('moe-name').value.trim() || id,
     url,
-    api_key: $('moe-key').value.trim(),
+    api_key,
     vision: $('moe-vision').checked,
   };
   let body;
