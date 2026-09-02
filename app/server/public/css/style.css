@@ -356,11 +356,17 @@ body {
 .model-card-meta { font-size: 12px; color: #888; margin-top: 4px; }
 
 /* ---- 设置页行 ---- */
-.settings-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  background: #fff; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
-  box-shadow: 0 1px 4px rgba(30,40,90,0.06); font-size: 14px;
+/* 设置页顶部用户卡:头像在上,用户名居中,下方等宽双按钮 */
+.user-card { display: flex; flex-direction: column; align-items: center; padding: 20px 16px 16px; }
+.user-avatar {
+  width: 64px; height: 64px; border-radius: 50%; border: none;
+  color: #fff; font-size: 26px; font-weight: 600; letter-spacing: 1px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px rgba(30, 40, 90, 0.18); user-select: none;
 }
+.user-name { margin-top: 10px; font-size: 16px; font-weight: 600; color: #223; word-break: break-all; text-align: center; }
+.user-acts { display: flex; gap: 10px; width: 100%; max-width: 360px; margin-top: 14px; }
+.user-acts .ghost-btn { flex: 1; }
 .ghost-btn.small { flex: none; padding: 6px 12px; font-size: 13px; border-radius: 8px; }
 
 /* ---- 技能页(阶段 3) ---- */

@@ -57,17 +57,35 @@ function kvPlain(label, v) {
   return '<div class="cfg-kv"><label>' + esc(label) + '</label><b>' + esc(dispVal(v)) + '</b></div>';
 }
 
-// 账号卡(仅启用认证时显示):当前登录 + 修改密码(prompt 弹窗,免原密码,立即生效)
-function accountCard(me) {
-  return '<div class="settings-card"><h4>账号</h4>' +
-    kvPlain('当前登录', me) +
-    '<button class="primary-btn" id="pwd-btn" style="width:100%;margin-top:8px" onclick="cfgUI.changePassword()">修改密码</button>' +
-    '<div class="cfg-note">修改立即生效并写回 config.yml;其他已登录设备需重新登录时才用新密码。</div></div>';
+// 用户信息卡(仅启用认证时显示,页面顶部):Google 风双字母头像 + 用户名 + 操作按钮。
+// 头像字母/配色均前端本地生成,无外部依赖。
+const AVATAR_COLORS = ['#4285F4', '#EA4335', '#FBBC05', '#34A853', '#5C6BC0', '#00897B', '#8E24AA', '#F4511E'];
+
+// 取用户名前两个字符:首字母大写、次字母小写(kicer→Ki);单字符只显一个;
+// 中文取前两字,charAt 大小写对汉字无副作用,无需特判
+function userInitials(name) {
+  const s = String(name || '').trim();
+  if (!s) return '?';
+  const two = s.slice(0, 2);
+  return two.charAt(0).toUpperCase() + (two.length > 1 ? two.charAt(1).toLowerCase() : '');
+}
+function avatarColor(name) {
+  let h = 0;
+  for (const ch of String(name || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+
+function userCard(me) {
+  return '<div class="settings-card user-card">' +
+    '<div class="user-avatar" style="background:' + avatarColor(me) + '">' + esc(userInitials(me)) + '</div>' +
+    '<div class="user-name">' + esc(me) + '</div>' +
+    '<div class="user-acts">' +
+      '<button class="ghost-btn" onclick="cfgUI.changePassword()">修改密码</button>' +
+      '<button class="ghost-btn" onclick="ui.logout()">退出登录</button>' +
+    '</div></div>';
 }
 
 async function changePassword() {
-  const btn = $('pwd-btn');
-  if (btn) btn.disabled = true;
   try {
     const newP = await promptModal('修改密码', '新密码,至少 6 位', '', { type: 'password' });
     if (newP == null) return;
@@ -76,8 +94,6 @@ async function changePassword() {
     toast('密码已修改,立即生效');
   } catch (e) {
     toast('修改失败:' + e.message);
-  } finally {
-    if (btn) btn.disabled = false;
   }
 }
 
@@ -121,7 +137,6 @@ function formCard() {
 }
 
 async function loadSettings() {
-  refreshUser();
   bindDirtyMark();
   const el = $('cfg-sections');
   if (!el) return;
@@ -133,24 +148,10 @@ async function loadSettings() {
       req('GET', '/api/me').catch(function () { return { user: null }; }), // 未启用认证时无此路由
     ]);
     effCfg = cg.effective || {};
-    el.innerHTML = (st.auth_enabled && me && me.user ? accountCard(me.user) : '') + svcCard(st) + formCard();
+    el.innerHTML = (st.auth_enabled && me && me.user ? userCard(me.user) : '') + svcCard(st) + formCard();
   } catch (e) {
     el.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
   }
-}
-
-// 显示登录用户(沿用 1.0 逻辑;未启用认证时静默跳过)
-async function refreshUser() {
-  try {
-    const me = await req('GET', '/api/me');
-    const who = $('whoami');
-    if (who && me && me.user) {
-      who.textContent = me.user;
-      who.classList.remove('hidden');
-    }
-    const out = $('logout-btn');
-    if (out) out.classList.toggle('hidden', !(me && me.user));
-  } catch (_) { /* 未启用认证 */ }
 }
 
 // 未保存改动标红:委托监听(#cfg-sections 容器常驻,innerHTML 重建不影响)
