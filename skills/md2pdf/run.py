@@ -27,6 +27,9 @@ def register_font():
         try:
             pdfmetrics.registerFont(TTFont("CJK", str(font_path)))
             pdfmetrics.registerFont(TTFont("CJKBold", str(font_path)))  # 粗体模拟
+            # 注册字体族:否则段落里的 <b>/<i> 标签解析后找不到 CJK 的粗/斜变体,<b> 不生效。
+            # 中文斜体可读性差且无真斜体变体,italic 映射回常规体(仅西文可见伪斜或不变)。
+            pdfmetrics.registerFontFamily("CJK", normal="CJK", bold="CJKBold", italic="CJK", boldItalic="CJKBold")
             return ("CJK", "CJKBold")
         except Exception as e:
             print(f"字体注册失败：{e}，将使用 Helvetica", file=sys.stderr)
@@ -106,19 +109,33 @@ def build_styles(normal_font, bold_font):
 
 # ---------- Markdown 解析辅助 ----------
 def escape_xml(text):
-    """转义 XML 特殊字符（但保留已生成的 <b>、<i> 等标签）"""
-    # 注意：此函数在 parse_inline 之后调用，因此只处理未被替换的字符
+    """转义 XML 特殊字符。必须在 parse_inline 之前调用:
+    先转义原文、再注入 <b>/<i>/<link> 等标签;顺序反了会把生成的标签也转义成字面量。"""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def parse_inline(text):
-    """处理行内格式：加粗、斜体、行内代码"""
+    """处理行内格式:加粗、斜体、行内代码、链接。入参必须是 escape_xml 之后的文本。"""
+    # 行内代码 `code`:先占位保护,避免其中的 * [ ] 被后续规则误伤
+    code_spans = []
+    def _stash(m):
+        code_spans.append(m.group(1))
+        return '\x00%d\x00' % (len(code_spans) - 1)
+    text = re.sub(r'`(.+?)`', _stash, text)
+    # 链接 [text](url) → reportlab <link>(可点击;转义后 URL 里的 & 已是 &amp;,属性内合法)
+    text = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<link href="\2" color="#3964FE">\1</link>', text)
     # 加粗 **text**
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
-    # 斜体 *text*（避免匹配加粗中的单个星号）
+    # 斜体 *text*(避免匹配加粗中的单个星号)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
-    # 行内代码 `code`
-    text = re.sub(r'`(.+?)`', r'<font face="Courier">\1</font>', text)
+    # 还原行内代码
+    def _restore(m):
+        return '<font face="Courier">' + code_spans[int(m.group(1))] + '</font>'
+    text = re.sub(r'\x00(\d+)\x00', _restore, text)
     return text
+
+def render_inline(text):
+    """统一入口:先转义再走行内格式(顺序错了标签会被转义成字面量显示)。"""
+    return parse_inline(escape_xml(text))
 
 def is_ordered_list(line):
     """判断是否为有序列表行"""
@@ -165,37 +182,37 @@ def parse_markdown(md_text, styles):
         # 标题
         if line.startswith('# '):
             flush_list()
-            story.append(Paragraph(escape_xml(parse_inline(line[2:])), styles["title"]))
+            story.append(Paragraph(render_inline(line[2:]), styles["title"]))
         elif line.startswith('## '):
             flush_list()
-            story.append(Paragraph(escape_xml(parse_inline(line[3:])), styles["h1"]))
+            story.append(Paragraph(render_inline(line[3:]), styles["h1"]))
         elif line.startswith('### '):
             flush_list()
-            story.append(Paragraph(escape_xml(parse_inline(line[4:])), styles["h2"]))
+            story.append(Paragraph(render_inline(line[4:]), styles["h2"]))
         elif line.startswith('#### '):
             flush_list()
-            story.append(Paragraph(escape_xml(parse_inline(line[5:])), styles["h3"]))
+            story.append(Paragraph(render_inline(line[5:]), styles["h3"]))
         # 无序列表
         elif line.startswith(('- ', '* ')):
             if current_list_type != 'ul':
                 flush_list()
                 current_list_type = 'ul'
-            current_list.append(escape_xml(parse_inline(line[2:])))
+            current_list.append(render_inline(line[2:]))
         # 有序列表
         elif is_ordered_list(line):
             if current_list_type != 'ol':
                 flush_list()
                 current_list_type = 'ol'
             text = re.sub(r'^\d+\.\s+', '', line)
-            current_list.append(escape_xml(parse_inline(text)))
+            current_list.append(render_inline(text))
         # 引用
         elif line.startswith('> '):
             flush_list()
-            story.append(Paragraph(escape_xml(parse_inline(line[2:])), styles["quote"]))
+            story.append(Paragraph(render_inline(line[2:]), styles["quote"]))
         # 普通段落
         else:
             flush_list()
-            story.append(Paragraph(escape_xml(parse_inline(line)), styles["body"]))
+            story.append(Paragraph(render_inline(line), styles["body"]))
 
     flush_list()
     return story
