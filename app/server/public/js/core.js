@@ -15,6 +15,7 @@ const state = {
   es: null,
   streamEl: null,
   streamText: '',
+  turnEl: null,
   toolCards: {},
   filePanelOpen: false,
   pendingDeleteId: null,

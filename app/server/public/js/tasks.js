@@ -425,6 +425,7 @@ async function renderDetail(detail) {
   removePendingBubble();
   state.streamEl = null;
   state.streamText = '';
+  state.turnEl = null;
   state.toolCards = {};
   // 切换会话后重置滚动跟随状态
   userPaused = false;
@@ -535,6 +536,19 @@ function removePendingBubble() {
   if (state.pendingEl) { state.pendingEl.remove(); state.pendingEl = null; }
 }
 
+// ---------- 当前 assistant 回合头行 ----------
+// 历史渲染里每次模型调用对应一条 assistant 消息(AI 头行 + 可选文本气泡 + 后续工具卡)。
+// 流式同样按此结构:纯工具调用没有文本气泡,但 AI 头像+名头行必须出现在工具卡前面。
+function ensureTurnWrap() {
+  if (state.turnEl && document.body.contains(state.turnEl)) return state.turnEl;
+  const wrap = document.createElement('div');
+  wrap.className = 'msg other';
+  wrap.innerHTML = '<div class="msg-user"><span class="ai-avatar"></span>AI</div>';
+  $('messages').appendChild(wrap);
+  state.turnEl = wrap;
+  return wrap;
+}
+
 
 // ---------- SSE ----------
 function connectStream() {
@@ -553,13 +567,12 @@ function connectStream() {
     if (!state.streamEl) {
       // 纯工具调用常见只有空白增量:先不产出空气泡,等有真实文本再建
       if (!state.streamText.trim()) return;
-      const wrap = document.createElement('div');
-      wrap.className = 'msg other';
-      wrap.innerHTML = '<div class="msg-user"><span class="ai-avatar"></span>AI</div>' +
-        '<div class="msg-bubble"></div>';
-      state.streamEl = wrap.querySelector('.msg-bubble');
-      state.streamText = d.text; // 新一轮首个可见增量:丢弃可能的旧轮残留文本
-      $('messages').appendChild(wrap);
+      const wrap = ensureTurnWrap();
+      const bubble = document.createElement('div');
+      bubble.className = 'msg-bubble';
+      wrap.appendChild(bubble);
+      state.streamEl = bubble;
+      state.streamText = d.text; // 本轮首个可见增量:丢弃可能的旧轮残留文本
     }
     state.streamEl.textContent = state.streamText;
     state.streaming = true;
@@ -585,18 +598,19 @@ function connectStream() {
         bubble.remove();
       }
     } else if (hasText) {
-      const box = $('messages');
-      const wrap = document.createElement('div');
-      wrap.className = 'msg other';
-      wrap.innerHTML = '<div class="msg-user"><span class="ai-avatar"></span>AI</div>' +
+      // 无流式增量时的兑底(如 SSE 断线重连错过 delta):在当前回合头行里补气泡与时间行
+      const wrap = ensureTurnWrap();
+      wrap.insertAdjacentHTML('beforeend',
         '<div class="msg-bubble">' + md(d.content) + '</div>' +
-        '<div class="msg-time">' + fmtTime(Date.now()) + copyBtnHtml(d.content) + '</div>';
-      box.appendChild(wrap);
+        '<div class="msg-time">' + fmtTime(Date.now()) + copyBtnHtml(d.content) + '</div>');
     }
     if (d.tool_calls) {
+      ensureTurnWrap(); // 纯工具调用无文本:补上 AI 头行,工具卡不孤悬
       appendToolCardsFromAssistant({ tool_calls: d.tool_calls }, $('messages'));
       maybeAutoScroll();
     }
+    // 本次模型调用结束:下一次调用(工具结果后的回合)另起头行,与历史逐条 assistant 消息一致
+    state.turnEl = null;
     state.streaming = false;
     updateScrollBottomBtn();
   });
@@ -604,6 +618,7 @@ function connectStream() {
     const d = JSON.parse(ev.data);
     removePendingBubble(); // 工具卡出现也算即时反馈
     if (state.toolCards[d.id]) return; // assistant_message 已建卡(含完整参数),不重复创建
+    ensureTurnWrap(); // 纯工具调用回合:头行(头像+AI)先于工具卡出现,不能随占位气泡一起消失
     const card = renderToolCard(d.id, d.name, d.arguments, Date.now());
     $('messages').appendChild(card);
     state.toolCards[d.id] = card;
@@ -617,6 +632,9 @@ function connectStream() {
   es.addEventListener('done', ev => {
     removePendingBubble(); // 本轮结束,占位兼终止(如模型报错无回复)
     state.streaming = false;
+    state.streamEl = null; // 防御性清理:回合异常结束(如终止)时不留悬空气泡/头行到下一轮
+    state.streamText = '';
+    state.turnEl = null;
     updateScrollBottomBtn();
     loadSessions();
   });
@@ -817,6 +835,7 @@ const ui = {
     box.innerHTML = '<div class="empty-tip">加载中…</div>';
     state.streamEl = null;
     state.streamText = '';
+    state.turnEl = null;
     state.toolCards = {};
     state.status = '';
     userPaused = false;
