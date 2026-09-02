@@ -309,7 +309,7 @@ function md(text) {
   try { return marked.parse(text || ''); } catch (_) { return esc(text); }
 }
 
-function renderToolCard(id, name, argsStr) {
+function renderToolCard(id, name, argsStr, createdAt) {
   const div = document.createElement('div');
   div.className = 'tool-card';
   div.id = 'tool-' + id;
@@ -318,7 +318,8 @@ function renderToolCard(id, name, argsStr) {
     '<span class="tool-name">' + esc(name) + '</span>' +
     '<span class="tool-args">' + esc(toolArgsSummary(name, argsStr)) + '</span></summary>' +
     '<pre class="tool-args-full">' + esc(toolArgsFull(argsStr)) + '</pre>' +
-    '<pre class="tool-result">执行中…</pre></details>';
+    '<pre class="tool-result">执行中…</pre></details>' +
+    '<div class="msg-time tool-time">' + fmtTime(createdAt || Date.now()) + '</div>';
   return div;
 }
 
@@ -346,6 +347,11 @@ function fillToolResult(id, content, isError, liveImageUrl) {
   const pre = card.querySelector('.tool-result');
   if (!pre) return;
   pre.textContent = parsed.text || '(空)';
+  // 结果就绪后在卡片时间行补复制按钮（复制工具输出）
+  const timeRow = card.querySelector('.tool-time');
+  if (timeRow && !timeRow.querySelector('.copy-btn')) {
+    timeRow.insertAdjacentHTML('beforeend', copyBtnHtml(parsed.text || ''));
+  }
   const img = liveImageUrl || parsed.imageUrl;
   if (img && !card.querySelector('.tool-img')) {
     const el = document.createElement('img');
@@ -405,7 +411,7 @@ function appendToolCardsFromAssistant(m, container) {
   for (const c of calls) {
     const id = c.id || ('c' + Math.random().toString(36).slice(2, 10));
     if (state.toolCards[id]) continue; // tool_call 事件已经建过同一张卡,不重复创建
-    const card = renderToolCard(id, c.function.name, c.function.arguments);
+    const card = renderToolCard(id, c.function.name, c.function.arguments, m.created_at);
     container.appendChild(card);
     state.toolCards[id] = card;
   }
@@ -526,7 +532,7 @@ function connectStream() {
     const d = JSON.parse(ev.data);
     removePendingBubble(); // 工具卡出现也算即时反馈
     if (state.toolCards[d.id]) return; // assistant_message 已建卡(含完整参数),不重复创建
-    const card = renderToolCard(d.id, d.name, d.arguments);
+    const card = renderToolCard(d.id, d.name, d.arguments, Date.now());
     $('messages').appendChild(card);
     state.toolCards[d.id] = card;
     scrollBottom();
@@ -625,7 +631,13 @@ const ui = {
   },
   closeCreate() { $('create-modal').classList.add('hidden'); },
   openFullscreen(el) {
-    $('fs-body').innerHTML = el.innerHTML;
+    const body = $('fs-body');
+    body.innerHTML = '';
+    // 深拷贝并去掉 id：保留原类名使气泡/工具卡样式在查看器内照常生效，且避免 id 重复
+    const clone = el.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
+    body.appendChild(clone);
     $('fs-viewer').classList.remove('hidden');
   },
   closeFullscreen() { $('fs-viewer').classList.add('hidden'); },
@@ -842,11 +854,12 @@ document.addEventListener('input', e => {
   if (e.target.id === 'search-input' && !e.target.value.trim()) loadSessions();
 });
 
-// 双击消息气泡全屏查看（长回复/代码更好读）
+// 双击消息气泡/工具卡全屏查看（长回复/代码更好读）
 document.getElementById('messages').addEventListener('dblclick', function (e) {
   if (e.target.closest('#fs-viewer')) return;
-  const b = e.target.closest('.msg-bubble');
-  if (b) ui.openFullscreen(b);
+  if (e.target.closest('.copy-btn')) return; // 双击复制按钮不触发全屏
+  const el = e.target.closest('.msg-bubble, .tool-card');
+  if (el) ui.openFullscreen(el);
 });
 
 // ---------- Tab 注册 ----------

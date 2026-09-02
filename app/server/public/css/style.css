@@ -168,7 +168,10 @@ body {
 .copy-btn svg { width: 11px; height: 11px; stroke: #99a; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .copy-btn:active, .copy-btn:hover { opacity: 1; }
 .copy-btn svg.copied { stroke: #2e7d32; }
-/* 消息全屏查看器(双击气泡打开) */
+/* 消息全屏查看器(双击气泡/工具卡打开)：克隆件保留原类名，这里只做查看器内的尺寸适配 */
+#fs-body .msg-bubble { box-shadow: none; font-size: 15.5px; }
+#fs-body .tool-card { max-width: 100%; }
+#fs-body .tool-card pre { max-height: 65vh; }
 #fs-viewer { position: fixed; inset: 0; z-index: 130; background: rgba(8,10,20,0.88); padding: 40px 14px 24px; overflow-y: auto; }
 #fs-viewer.hidden { display: none; }
 .fs-panel { max-width: 860px; margin: 0 auto; background: #fff; border-radius: 14px; padding: 18px 20px; font-size: 15.5px; }
