@@ -396,8 +396,10 @@ function msgNode(m, cardMap) {
     const gray = state.status === 'queued' ? ' gray' : '';
     let inner = '<div class="msg-user"><span class="ai-avatar' + gray + '"></span>AI' +
       (m.model_tag ? ' · ' + esc(m.model_tag) : '') + '</div>';
-    if (m.content) inner += '<div class="msg-bubble">' + md(m.content) + '</div>';
-    inner += '<div class="msg-time">' + fmtTime(m.created_at) + copyBtnHtml(m.content) + '</div>';
+    // 纯工具调用的应答为空或仅空白:不渲染空气泡,只保留 AI 头与时间行
+    const hasText = !!(m.content && m.content.trim());
+    if (hasText) inner += '<div class="msg-bubble">' + md(m.content) + '</div>';
+    inner += '<div class="msg-time">' + fmtTime(m.created_at) + (hasText ? copyBtnHtml(m.content) : '') + '</div>';
     wrap.innerHTML = inner;
     return wrap;
   }
@@ -547,36 +549,42 @@ function connectStream() {
   es.addEventListener('assistant_delta', ev => {
     const d = JSON.parse(ev.data);
     removePendingBubble();
+    state.streamText += d.text;
     if (!state.streamEl) {
+      // 纯工具调用常见只有空白增量:先不产出空气泡,等有真实文本再建
+      if (!state.streamText.trim()) return;
       const wrap = document.createElement('div');
       wrap.className = 'msg other';
       wrap.innerHTML = '<div class="msg-user"><span class="ai-avatar"></span>AI</div>' +
         '<div class="msg-bubble"></div>';
       state.streamEl = wrap.querySelector('.msg-bubble');
-        state.streamText = '';
-        $('messages').appendChild(wrap);
-      }
-      state.streamText += d.text;
-      state.streamEl.textContent = state.streamText;
-      state.streaming = true;
-      maybeAutoScroll();
-      updateScrollBottomBtn();
+      state.streamText = d.text; // 新一轮首个可见增量:丢弃可能的旧轮残留文本
+      $('messages').appendChild(wrap);
+    }
+    state.streamEl.textContent = state.streamText;
+    state.streaming = true;
+    maybeAutoScroll();
+    updateScrollBottomBtn();
   });
   es.addEventListener('assistant_message', ev => {
     const d = JSON.parse(ev.data);
     removePendingBubble();
+    const hasText = !!(d.content && d.content.trim());
     if (state.streamEl) {
       const bubble = state.streamEl;
-      bubble.innerHTML = md(d.content || '');
       state.streamEl = null;
       state.streamText = '';
-      if (d.content) {
+      if (hasText) {
+        bubble.innerHTML = md(d.content);
         const timeEl = document.createElement('div');
         timeEl.className = 'msg-time';
         timeEl.innerHTML = fmtTime(Date.now()) + copyBtnHtml(d.content);
         bubble.parentElement.appendChild(timeEl);
+      } else {
+        // 终稿为空/仅空白(纯工具调用):收走已建的气泡,保留 AI 头行(与历史渲染一致)
+        bubble.remove();
       }
-    } else if (d.content) {
+    } else if (hasText) {
       const box = $('messages');
       const wrap = document.createElement('div');
       wrap.className = 'msg other';
