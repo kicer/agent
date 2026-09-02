@@ -4,6 +4,7 @@
 const express = require('express');
 const engine = require('../engine');
 const { loadConfigFromText, readConfigText, applyEditsToText, writeConfigText } = require('../config');
+const balance = require('../balance');
 const log = require('../log');
 
 const router = express.Router();
@@ -92,7 +93,8 @@ router.get('/', wrap((req, res) => {
   const cfg = cfgOf();
   const text = readConfigText(cfg);
   const shown = text === null ? '' : maskApiKeys(text);
-  res.json({ config_path: cfg.config_path || '', exists: text !== null, text: shown, effective: maskEffective(cfg) });
+  // balance_types:已接入余额查询的平台类型,前端据此决定是否展示余额行
+  res.json({ config_path: cfg.config_path || '', exists: text !== null, text: shown, effective: maskEffective(cfg), balance_types: balance.types() });
 }));
 
 // 干跑校验(编辑器保存前预检):body { text }

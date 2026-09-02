@@ -252,11 +252,7 @@
         <div id="moe-newplat-wrap" class="hidden">
           <input type="text" id="moe-np-name" placeholder="平台名称(留空取域名主机段)" style="width:100%">
           <input type="text" id="moe-np-url" placeholder="平台上游地址(OpenAI 兼容 /v1)" style="width:100%">
-          <select id="moe-np-type" style="width:100%">
-            <option value="openai">openai</option>
-            <option value="deepseek">deepseek</option>
-            <option value="custom">custom</option>
-          </select>
+          <input type="text" id="moe-np-type" value="openai" placeholder="类型(任意自定义;余额查询已接入:deepseek)" style="width:100%">
           <input type="text" id="moe-np-key" placeholder="api_key(留空则不带鉴权头)" style="width:100%">
           <input type="number" id="moe-np-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)" style="width:100%">
         </div>

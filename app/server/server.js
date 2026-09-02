@@ -38,6 +38,7 @@ app.use('/api/sessions', require('./routes/messages'));
 app.use('/api/sessions', require('./routes/files'));
 app.use('/api/skills', require('./routes/skills'));
 app.use('/api/config', require('./routes/config'));
+app.use('/api/platforms', require('./routes/platforms'));
 app.use('/api/system', require('./routes/system'));
 
 // 模型池状态(前端可展示空闲/占用)+ 每模型 token 用量(今日/累计,输入/输出分开)

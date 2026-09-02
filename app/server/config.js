@@ -81,7 +81,7 @@ function normalizePlatforms(rawPlatforms) {
     if (!p.url) throw new Error('platforms[' + pi + '] 缺少 url（OpenAI 兼容 /v1 地址）');
     const url = String(p.url).replace(/\/+$/, '');
     const name = String(p.name || '').trim() || (hostnameOf(url) || ('p' + (pi + 1)));
-    // type 决定余额查询适配器（预留）；openai/deepseek/custom 之外也允许，只是查不了余额。
+    // type 可完全自定义（不校验白名单）；它决定余额查询适配器，由 routes/platforms.js 按类型分发（当前仅 deepseek 已接入，其余类型查询时返回不支持）。
     const type = String(p.type || 'openai').trim();
     const keys = [];
     for (let ki = 0; ki < (p.keys || []).length; ki++) {
