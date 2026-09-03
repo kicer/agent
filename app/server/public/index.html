@@ -1267,7 +1267,71 @@
     }
     else if (e.target.closest('.file-act')) downloadFile(path);
   });
-  // 面板内上传:直接写入当前会话任务目录
+  // ---------- 大图上传前压缩(同步 v1:阈值/参数由 /api/system/status 透出) ----------
+  const DEFAULT_UPLOAD_CFG = { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85 };
+  let uploadCfgCache = null;
+  async function getUploadCfg() {
+    if (!uploadCfgCache) {
+      uploadCfgCache = Object.assign({}, DEFAULT_UPLOAD_CFG);
+      try {
+        const s = await req('GET', '/api/system/status');
+        uploadCfgCache = Object.assign(uploadCfgCache, (s && s.upload) || {});
+      } catch (_) { /* 取不到配置就用默认阈值 */ }
+    }
+    return uploadCfgCache;
+  }
+  function loadImageEl(file) {
+    return new Promise(function (resolve, reject) {
+      const fr = new FileReader();
+      fr.onload = function () {
+        const im = new Image();
+        im.onload = function () { resolve(im); };
+        im.onerror = function () { reject(new Error('图片解码失败')); };
+        im.src = fr.result;
+      };
+      fr.onerror = function () { reject(new Error('读取文件失败')); };
+      fr.readAsDataURL(file);
+    });
+  }
+  // 返回待上传的 File:需要时询问并压缩;取消/失败/无收益都按原文件上传
+  async function maybeCompressImage(file) {
+    const cfg = await getUploadCfg();
+    const isImg = /^image\//.test(file.type || '') || /\.(png|jpe?g|gif|bmp|webp)$/i.test(file.name || '');
+    const threshold = Number(cfg.image_compress_threshold_kb || 1536) * 1024;
+    if (!isImg || file.size <= threshold) return file;
+    const maxDim = Number(cfg.image_max_dim || 2000);
+    const quality = Number(cfg.image_quality || 0.85);
+    const ok = await confirmModal('图片文件过大',
+      '「' + file.name + '」有 ' + fmtSize(file.size) + '，超过 ' + fmtSize(threshold) +
+      '。建议在浏览器本地压缩为 JPEG(长边≤' + maxDim + 'px)后再上传。是否压缩？', '压缩后上传');
+    if (!ok) return file;
+    try {
+      const img = await loadImageEl(file);
+      const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+      if (!iw || !ih) throw new Error('无法读取图片尺寸');
+      const scale = Math.min(1, maxDim / Math.max(iw, ih));
+      const w = Math.max(1, Math.round(iw * scale)), h = Math.max(1, Math.round(ih * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      // 透明底(PNG)转 JPEG 前先铺白,避免变黑
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      const blob = await new Promise(function (res) { canvas.toBlob(function (b) { res(b); }, 'image/jpeg', quality); });
+      if (!blob || blob.size >= file.size) {
+        toast('压缩无收益,已按原文件上传');
+        return file;
+      }
+      const newName = String(file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg';
+      toast('已压缩 ' + fmtSize(file.size) + ' → ' + fmtSize(blob.size));
+      return new File([blob], newName, { type: 'image/jpeg' });
+    } catch (e) {
+      toast('压缩失败(' + (e && e.message || e) + '),按原文件上传');
+      return file;
+    }
+  }
+
+  // 面板内上传:直接写入当前会话任务目录(>阈值的图片逐个询问压缩)
   $('file-input').addEventListener('change', async e => {
     const input = e.target;
     const files = Array.prototype.slice.call(input.files || []); // 先快照再清空,FileList 是实时的
@@ -1275,10 +1339,13 @@
     if (!files.length) return;
     if (!state.sessionId) { toast('先发送一条消息创建会话'); return; }
     try {
+      // 大图逐个串行询问压缩(模态弹窗不能并行)
+      const ready = [];
+      for (const f of files) ready.push(await maybeCompressImage(f));
       const fd = new FormData();
-      for (const f of files) fd.append('files', f, f.name);
+      for (const f of ready) fd.append('files', f, f.name);
       await req('POST', '/api/sessions/' + state.sessionId + '/files', fd, true);
-      toast('已上传 ' + files.length + ' 个文件');
+      toast('已上传 ' + ready.length + ' 个文件');
       loadFiles();
     } catch (err) { toast('上传失败:' + err.message); }
   });
