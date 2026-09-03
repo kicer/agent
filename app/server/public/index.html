@@ -61,26 +61,38 @@
 
     <!-- ================= 底部输入区 ================= -->
     <footer>
+      <!-- 任务文件面板:点输入行中部的附件按钮展开(同步 index;标题右上仅保留上传图标) -->
+      <div class="files-panel hidden" id="files-panel">
+        <div class="files-panel-header">
+          <span>任务文件</span>
+          <label class="file-upload" title="上传文件">
+            <input type="file" id="file-input" multiple hidden>
+            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </label>
+        </div>
+        <div class="files-list" id="files-list"></div>
+      </div>
+
       <div class="attach-chips hidden" id="attach-chips"></div>
       <div class="input-shell">
         <textarea id="msg-input" placeholder="传送信息" rows="2" enterkeyhint="send"></textarea>
         <div class="input-actions">
-        <button class="think-toggle" id="deep-think-btn" title="深度思考">
-          <svg viewBox="0 0 24 24" class="ic sm"><path d="M12 10.2a1.8 1.8 0 1 0 0.001 3.6A1.8 1.8 0 0 0 12 10.2z"></path><path stroke-width="1.5" d="M15.76 15.76 C10.955 20.565 5.373 22.779 3.297 20.703 C1.22 18.627 3.434 13.045 8.24 8.24 C13.045 3.435 18.627 1.22 20.703 3.297 C22.779 5.374 20.565 10.955 15.76 15.76z"></path><path stroke-width="1.5" d="M16.096 7.904 C20.905 12.713 22.965 18.298 20.703 20.703 C18.44 23.108 13.003 20.755 8.24 15.76 C3.477 10.76 1.22 5.373 3.297 3.297 C5.374 1.22 10.955 3.434 16.096 7.904z"></path></svg>
-          深度思考
-        </button>
-        <div class="input-actions-right">
-          <button class="plus-btn" id="attach-btn" title="添加附件或图片" aria-label="添加附件">
+          <div class="ia-side ia-left">
+            <button class="think-toggle" id="deep-think-btn" title="深度思考">
+              <svg viewBox="0 0 24 24" class="ic sm"><path d="M12 10.2a1.8 1.8 0 1 0 0.001 3.6A1.8 1.8 0 0 0 12 10.2z"></path><path stroke-width="1.5" d="M15.76 15.76 C10.955 20.565 5.373 22.779 3.297 20.703 C1.22 18.627 3.434 13.045 8.24 8.24 C13.045 3.435 18.627 1.22 20.703 3.297 C22.779 5.374 20.565 10.955 15.76 15.76z"></path><path stroke-width="1.5" d="M16.096 7.904 C20.905 12.713 22.965 18.298 20.703 20.703 C18.44 23.108 13.003 20.755 8.24 15.76 C3.477 10.76 1.22 5.373 3.297 3.297 C5.374 1.22 10.955 3.434 16.096 7.904z"></path></svg>
+              深度思考
+            </button>
+          </div>
+          <button class="plus-btn" id="attach-btn" title="任务文件" aria-label="任务文件">
             <svg viewBox="0 0 24 24" class="ic sm"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
           </button>
-          <button class="send-btn" id="send-btn" title="发送" aria-label="发送">
-            <svg viewBox="0 0 24 24" class="ic sm"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
-          </button>
-          <input type="file" id="file-input" multiple hidden>
-        </div>
+          <div class="ia-side ia-right">
+            <button class="send-btn" id="send-btn" title="发送" aria-label="发送">
+              <svg viewBox="0 0 24 24" class="ic sm"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+            </button>
+          </div>
         </div>
       </div>
-
     </footer>
 
     <!-- 回到底部浮动按钮(搬自 index;上翻历史时出现、AI 输出中常驻转圈) -->
@@ -691,6 +703,7 @@
   async function openSession(id) {
     closeStream();
     removeTyping();
+    setFilesPanel(false); // 会话切换,收起文件面板防旧列表残留
     state.sessionId = id;
     state.status = '';
     state.streamEl = null;
@@ -728,6 +741,7 @@
   function newChat() {
     closeStream();
     removeTyping();
+    setFilesPanel(false); // 新建会话,文件面板随之收起
     state.sessionId = null;
     state.sessionTitle = '';
     state.status = '';
@@ -1131,15 +1145,83 @@
     toast(state.deepThink ? '深度思考已开启(暂不影响后端)' : '深度思考已关闭');
   });
 
-  // 加号:选择附件(仅入队本地展示,发送时才真正上传)
-  $('attach-btn').addEventListener('click', () => $('file-input').click());
-  $('file-input').addEventListener('change', e => {
-    for (const f of Array.prototype.slice.call(e.target.files || [])) {
-      state.attachments.push({ file: f, name: f.name, size: f.size });
-    }
-    e.target.value = '';
-    renderAttachChips();
+  // ---------- 任务文件面板(点输入行中部的附件按钮展开;同步 index) ----------
+  function setFilesPanel(open) {
+    $('files-panel').classList.toggle('hidden', !open);
+    $('attach-btn').classList.toggle('active', open);
+  }
+  function toggleFilesPanel() {
+    const panel = $('files-panel');
+    const open = panel.classList.contains('hidden');
+    if (open && !state.sessionId) { toast('先发送一条消息创建会话,再管理任务文件'); return; }
+    setFilesPanel(open);
+    if (open) loadFiles();
+  }
+  $('attach-btn').addEventListener('click', toggleFilesPanel);
+
+  async function loadFiles() {
+    if (!state.sessionId) return;
+    try {
+      const files = await req('GET', '/api/sessions/' + state.sessionId + '/files');
+      const el = $('files-list');
+      if (!files.length) {
+        el.innerHTML = '<div class="empty-tip">还没有文件,在对话框上传或让 AI 生成</div>';
+        return;
+      }
+      el.innerHTML = files.map(f =>
+        '<div class="file-row" data-path="' + esc(f.filename) + '">' +
+          '<span class="file-name">' + esc(String(f.filename).split('/').pop() || f.filename) + '</span>' +
+          '<span class="file-size">' + fmtSize(f.size) + '</span>' +
+          '<button class="file-act" title="下载">下载</button>' +
+          '<button class="file-act del" title="删除">删</button>' +
+        '</div>').join('');
+    } catch (e) { toast('读取文件失败:' + e.message); }
+  }
+  async function downloadFile(name) {
+    if (!state.sessionId) return;
+    try {
+      const r = await req('GET', '/api/sessions/' + state.sessionId + '/files/download-token?path=' + encodeURIComponent(name));
+      window.location.href = r.url; // 原生导航下载:同源自动带登录 cookie,文件名不乱
+    } catch (e) { toast('下载失败:' + e.message); }
+  }
+  async function deleteFile(name) {
+    if (!await confirmModal('删除文件', '删除文件 ' + name + ' ?', '删除', true)) return;
+    try {
+      await req('DELETE', '/api/sessions/' + state.sessionId + '/files?path=' + encodeURIComponent(name));
+      loadFiles();
+    } catch (e) { toast('删除失败:' + e.message); }
+  }
+  $('files-list').addEventListener('click', e => {
+    const row = e.target.closest('.file-row');
+    if (!row || !state.sessionId) return;
+    const path = row.dataset.path;
+    if (!path) return;
+    if (e.target.closest('.del')) deleteFile(path);
+    else if (e.target.closest('.file-act')) downloadFile(path);
   });
+  // 面板内上传:直接写入当前会话任务目录
+  $('file-input').addEventListener('change', async e => {
+    const input = e.target;
+    const files = Array.prototype.slice.call(input.files || []); // 先快照再清空,FileList 是实时的
+    input.value = '';
+    if (!files.length) return;
+    if (!state.sessionId) { toast('先发送一条消息创建会话'); return; }
+    try {
+      const fd = new FormData();
+      for (const f of files) fd.append('files', f, f.name);
+      await req('POST', '/api/sessions/' + state.sessionId + '/files', fd, true);
+      toast('已上传 ' + files.length + ' 个文件');
+      loadFiles();
+    } catch (err) { toast('上传失败:' + err.message); }
+  });
+  // 面板展开时点外部自动收起(与 index 一致)
+  document.addEventListener('click', e => {
+    const panel = $('files-panel');
+    if (panel.classList.contains('hidden')) return;
+    if (e.target.closest('#attach-btn')) return; // 附件按钮自身负责开合
+    if (!panel.contains(e.target)) setFilesPanel(false);
+  });
+
   function renderAttachChips() {
     const row = $('attach-chips');
     row.classList.toggle('hidden', !state.attachments.length);

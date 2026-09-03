@@ -262,9 +262,18 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .input-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   padding-top: 6px;
 }
+/* 左右侧栏等宽,保证中部的附件按钮位于整行几何中心 */
+.ia-side {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.ia-left { justify-content: flex-start; }
+.ia-right { justify-content: flex-end; }
 
 /* 深度思考开关(左侧功能开关) */
 .think-toggle {
@@ -289,14 +298,10 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .plus-btn {
   flex: none; width: 36px; height: 36px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  color: var(--ink);
+  background: var(--surface); color: var(--ink);
 }
-.plus-btn:active { background: #e4e6ec; }
-/* 右侧操作组:加号 + 发送,靠右排列 */
-.input-actions-right {
-  display: flex; align-items: center;
-  margin-left: auto;
-}
+.plus-btn:active { background: #dde0e6; }
+.plus-btn.active { background: var(--active-soft); color: var(--active); } /* 文件面板展开时高亮 */
 /* 发送按钮:蓝底白向上箭头 */
 .send-btn {
   flex: none; width: 36px; height: 36px; border-radius: 50%;
@@ -305,6 +310,49 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   box-shadow: 0 2px 6px rgba(57, 100, 254, 0.35);
 }
 .send-btn:active { opacity: 0.85; }
+
+/* ================= 任务文件面板(同步 index 的 files-panel;仅保留上传) ================= */
+.files-panel {
+  flex: none; display: flex; flex-direction: column;
+  max-height: 45vh; overflow: hidden;
+  margin-bottom: 8px;
+  border: 1px solid var(--border); border-radius: 14px;
+  background: var(--page);
+}
+.files-panel-header {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px 9px 14px; font-size: 14px; font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.files-panel-header .file-upload {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gray); cursor: pointer;
+}
+.files-panel-header .file-upload:active { background: var(--surface); }
+.files-panel-header .file-upload svg {
+  width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.files-panel .files-list { overflow-y: auto; padding: 4px; }
+.files-panel .file-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 10px; font-size: 13.5px;
+}
+.files-panel .file-row:active { background: var(--surface); }
+.files-panel .file-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.files-panel .file-size { flex: none; color: var(--gray-light); font-size: 12px; }
+.files-panel .file-act {
+  flex: none; color: var(--active); font-size: 13px; padding: 3px 8px; border-radius: 7px;
+}
+.files-panel .file-act:active { background: var(--active-soft); }
+.files-panel .file-act.del { color: #c0392b; }
+.files-panel .file-act.del:active { background: #fdecea; }
+.files-panel .empty-tip {
+  padding: 20px 10px; text-align: center; font-size: 13px; color: var(--gray-light);
+}
 
 /* ================= 历史记录抽屉 ================= */
 #scrim {
