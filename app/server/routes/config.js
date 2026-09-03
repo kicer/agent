@@ -1,6 +1,6 @@
 // 配置读写 API(2.0 阶段 2):设置页管理 config.yml。
 // 语义:写 = 校验 → 覆盖文件(无热重载);POST /api/system/restart 后生效。
-// 注意:GET 返回的原文已对 api_key 脱敏,避免明文外显;PUT/validate 时按顺序还原。
+// 注意:GET 返回的原文已对 api_key / auth password 脱敏,避免明文外显;PUT/validate 时按顺序还原。
 const express = require('express');
 const engine = require('../engine');
 const { loadConfigFromText, readConfigText, applyEditsToText, writeConfigText } = require('../config');
@@ -77,33 +77,72 @@ function restoreApiKeys(submitted, orig) {
   }).join('\n');
 }
 
-// 生效配置的脱敏副本:api_key 在前端仅展示用(模型卡片/Key 下拉标签),真值不会回写文件。
+// password 脱敏(思路同 api_key):auth.users 密码在原文编辑器里统一显示 ******。
+// 行格式如 `      password: "xxx"` / `      password: xxx`(auth.users 列表项写法)。
+const PASSWORD_LINE = /^(\s*(?:-\s+)?password:\s*)(["']?)(.+?)\2\s*$/;
+const PASSWORD_MASK = '******';
+function maskPassword(p) { return p ? PASSWORD_MASK : ''; }
+function maskPasswords(text) {
+  if (!text) return text;
+  return text.split('\n').map(function (line) {
+    const m = line.match(PASSWORD_LINE);
+    if (!m) return line;
+    return m[1] + m[2] + maskPassword(m[3]) + m[2];
+  }).join('\n');
+}
+
+// 还原:提交原文中值恰为 ****** 的 password 行 = 用户未改动,按出现顺序从原文件取回原值;
+// 其他值(含用户新输的密码)原样保留。空密码不会被掩码,自然不会进入还原分支。
+function restorePasswords(submitted, orig) {
+  if (!submitted) return submitted;
+  const origPws = [];
+  (orig || '').split('\n').forEach(function (line) {
+    const m = line.match(PASSWORD_LINE);
+    if (m) origPws.push(m[3]);
+  });
+  let i = 0;
+  return submitted.split('\n').map(function (line) {
+    const m = line.match(PASSWORD_LINE);
+    if (!m) return line;
+    if (m[3] !== PASSWORD_MASK) return line; // 用户改过,保留手输新密码
+    const origPw = i < origPws.length ? origPws[i] : '';
+    i++;
+    return m[1] + m[2] + origPw + m[2];
+  }).join('\n');
+}
+
+// 生效配置的脱敏副本:api_key/password 在前端仅展示用(模型卡片/Key 下拉标签等),真值不会回写文件。
 function maskEffective(cfg) {
   const c = Object.assign({}, cfg);
   c.platforms = (cfg.platforms || []).map(p => Object.assign({}, p, {
     keys: (p.keys || []).map(k => Object.assign({}, k, { api_key: maskKey(k.api_key) })),
   }));
   c.models = (cfg.models || []).map(m => Object.assign({}, m, { api_key: maskKey(m.api_key) }));
+  if (c.auth && Array.isArray(c.auth.users)) {
+    c.auth = Object.assign({}, c.auth, {
+      users: c.auth.users.map(u => Object.assign({}, u, { password: maskPassword(u.password) })),
+    });
+  }
   return c;
 }
 
 // 配置原文 + 路径 + 当前生效配置(设置页表单显示当前值;注释原样保留)
-// GET 返回的原文与生效配置均对 api_key 脱敏;PUT/validate 时按顺序还原。
+// GET 返回的原文与生效配置均对 api_key / password 脱敏;PUT/validate 时按顺序还原。
 router.get('/', wrap((req, res) => {
   const cfg = cfgOf();
   const text = readConfigText(cfg);
-  const shown = text === null ? '' : maskApiKeys(text);
+  const shown = text === null ? '' : maskPasswords(maskApiKeys(text));
   // balance_types:已接入余额查询的平台类型,前端据此决定是否展示余额行
   res.json({ config_path: cfg.config_path || '', exists: text !== null, text: shown, effective: maskEffective(cfg), balance_types: balance.types() });
 }));
 
 // 干跑校验(编辑器保存前预检):body { text }
-// 还原脱敏后的 api_key 再校验,避免 diff 误报 models 段变更。
+// 还原脱敏后的 api_key/password 再校验,避免 diff 误报变更。
 router.post('/validate', wrap((req, res) => {
   const text = req.body && req.body.text;
   if (typeof text !== 'string') return badRequest(res, new Error('body.text 必须是字符串'));
-  const origText = readConfigText(cfgOf());
-  const restored = restoreApiKeys(text, origText || '');
+  const origText = readConfigText(cfgOf()) || '';
+  const restored = restoreApiKeys(restorePasswords(text, origText), origText);
   try {
     const next = loadConfigFromText(restored, '');
     res.json({ ok: true, changed: diffTop(cfgOf(), next) });
@@ -113,13 +152,13 @@ router.post('/validate', wrap((req, res) => {
 }));
 
 // 整文件编辑:body { text }
-// 还原脱敏后的 api_key 再写入,未改动的项保持原值,用户输入的新 key 原样生效。
+// 还原脱敏后的 api_key/password 再写入,未改动的项保持原值,用户输入的新 key/密码原样生效。
 router.put('/', wrap((req, res) => {
   const cfg = cfgOf();
   const text = req.body && req.body.text;
   if (typeof text !== 'string') return badRequest(res, new Error('body.text 必须是字符串'));
-  const origText = readConfigText(cfg);
-  const restored = restoreApiKeys(text, origText || '');
+  const origText = readConfigText(cfg) || '';
+  const restored = restoreApiKeys(restorePasswords(text, origText), origText);
   let next;
   try { next = loadConfigFromText(restored, cfg.config_path); } catch (e) { return badRequest(res, e); }
   writeConfigText(cfg, restored);
