@@ -209,11 +209,16 @@ function dequeue(sessionId) {
   db.prepare('DELETE FROM wait_queue WHERE session_id = ?').run(sessionId);
 }
 
-function bindModel(session, model) {
+// status:绑定后的会话状态。
+// - 'active'(默认)：绑定即开跑(有待回应消息,紧随其后 runLoop);排队派发 dispatchQueued 用。
+// - 'held'：仅预留模型占位(手动选模/新建选模,尚无待回应消息),
+//   用户发首条消息后由 postUserMessage 的 held 分支转 active 开跑。
+function bindModel(session, model, status) {
+  const st = status === 'held' ? 'held' : 'active';
   db.prepare('UPDATE model_pool SET is_busy = 1, current_session_id = ? WHERE id = ?').run(session.id, model.id);
   // last_model_id 不随释放清除：会话再次需要模型时优先回绑（见 pickModelFor）
-  db.prepare("UPDATE sessions SET status='active', model_id=?, last_model_id=?, updated_at=? WHERE id=?")
-    .run(model.id, model.id, now(), session.id);
+  db.prepare("UPDATE sessions SET status=?, model_id=?, last_model_id=?, held_at=?, updated_at=? WHERE id=?")
+    .run(st, model.id, model.id, st === 'held' ? now() : null, session.id);
 }
 
 function releaseModel(sessionId) {
@@ -221,8 +226,10 @@ function releaseModel(sessionId) {
   db.prepare('UPDATE sessions SET model_id = NULL, updated_at = ? WHERE id = ?').run(now(), sessionId);
 }
 
-// 手动为已结版/已终止的会话指定模型：选定的模型必须空闲，绑定后状态直接 active，
-// 下一条消息不再排队；若有未回应消息则立刻开跑。绑而不用同样受闲置租约兑底（sweepHeld）。
+// 手动为已结版/已终止的会话指定模型：选定的模型必须空闲。
+// 绑上 ≠ 开跑：无待回应消息时进入 held（保持中，占用模型免排队），
+// 用户发首条消息后才转 active 开跑；若有未回应消息（如终止时留下未回答的提问）
+// 则直接 active 并立刻开跑。绑而不用同样受保持租约兑底（sweepHeld）。
 function bindToSession(sessionId, modelId) {
   const s = getSession(sessionId);
   if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -232,12 +239,13 @@ function bindToSession(sessionId, modelId) {
   const model = db.prepare('SELECT * FROM model_pool WHERE id = ? AND is_busy = 0').get(String(modelId || ''));
   if (!model) throw Object.assign(new Error('模型不存在或正被占用'), { status_code: 409 });
   touch(sessionId, { cancelled_at: null, completed_at: null, held_at: null });
-  bindModel(s, model);
+  const pending = hasPendingUser(sessionId);
+  bindModel(s, model, pending ? 'active' : 'held');
   emitStatus(sessionId);
   // 手动选好模型后立即注入/刷新会话上下文（换绑时更新为当前模型，避免陈旧信息）
   ensureSessionContext(sessionId);
   log.info('[model] ' + sessionId + ' 手动绑定模型 ' + model.id);
-  if (hasPendingUser(sessionId)) runLoop(sessionId);
+  if (pending) runLoop(sessionId);
   return { ok: true, model_id: model.id };
 }
 
@@ -271,10 +279,12 @@ function dispatchQueued() {
     dequeue(head.session_id);
     const session = getSession(head.session_id);
     if (!session || session.status !== 'queued') continue;
-    // 上面已确认有空闲模型，pickModelFor 必能回退到 freeModel
-    bindModel(session, pickModelFor(session));
+    // 上面已确认有空闲模型，pickModelFor 必能回退到 freeModel；
+    // 无待回应消息的会话（如新建后从未发言）只预留不占跑，绑成 held 等首条消息
+    const pending = hasPendingUser(session.id);
+    bindModel(session, pickModelFor(session), pending ? 'active' : 'held');
     emitStatus(session.id);
-    if (hasPendingUser(session.id)) runLoop(session.id);
+    if (pending) runLoop(session.id);
   }
 }
 
@@ -676,7 +686,9 @@ function createSession(title, preferModelId) {
     ? db.prepare('SELECT * FROM model_pool WHERE id = ? AND is_busy = 0').get(preferModelId)
     : null;
   if (prefer) {
-    bindModel(getSession(id), prefer);
+    // 新建时指定模型 = 仅预留（此时还没有任何消息）：先绑成 held 占住模型，
+    // 用户发首条消息后再转 active 开跑
+    bindModel(getSession(id), prefer, 'held');
     emitStatus(id);
   } else {
     enqueue(id);
