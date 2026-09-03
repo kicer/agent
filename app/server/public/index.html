@@ -1177,29 +1177,39 @@
         return;
       }
       el.innerHTML = files.map(f => {
-        const isMd = /\.md$/i.test(f.filename);
-        return '<div class="file-row' + (isMd ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '">' +
-          '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>' +
+        const pv = /\.(md|txt)$/i.test(f.filename); // md/txt 支持单击预览
+        // 可预览文件的行首图标用眼睛，与普通文件图标区分
+        const ico = pv
+          ? '<svg class="file-ico" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
+          : '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+        return '<div class="file-row' + (pv ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '">' +
+          ico +
           '<span class="file-name">' + esc(String(f.filename).split('/').pop() || f.filename) + '</span>' +
           '<span class="file-size">' + fmtSize(f.size) + '</span>' +
-          (isMd ? '<button class="file-act view" title="预览">预览</button>' : '') +
           '<button class="file-act" title="下载">下载</button>' +
           '<button class="file-act del" title="删除">删除</button>' +
         '</div>';
       }).join('');
     } catch (e) { toast('读取文件失败:' + e.message); }
   }
-  // 单击 md 文件 → 与双击会话消息同一全屏预览窗(#fs-viewer):拉取文本、markdown 渲染后预览
-  async function previewMdFile(name) {
+  // 单击可预览文件 → 与双击会话消息同一全屏预览窗(#fs-viewer)：md 按 markdown 渲染，txt 保持原文排版
+  async function previewTextFile(name) {
     try {
       const r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
       if (r.status === 401) { location.href = '/login'; return; }
       if (!r.ok) { let msg = 'HTTP ' + r.status; try { msg = (await r.json()).error || msg; } catch (_) {} throw new Error(msg); }
       const text = await r.text();
-      const r2 = mdHtml(text);
+      let cls = 'bubble-ai', html;
+      if (/\.md$/i.test(name)) {
+        const r2 = mdHtml(text);
+        html = r2.html;
+        if (r2.fmt) cls += ' md';
+      } else {
+        html = esc(text);
+      }
       const wrap = document.createElement('div');
       wrap.className = 'msg other';
-      wrap.innerHTML = '<div class="bubble-ai' + (r2.fmt ? ' md' : '') + '">' + r2.html + '</div>';
+      wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';
       openFullscreen(wrap.firstChild); // 复用双击气泡的全屏查看器
     } catch (e) { toast('预览失败:' + e.message); }
   }
@@ -1223,7 +1233,7 @@
     const path = row.dataset.path;
     if (!path) return;
     if (e.target.closest('.del')) deleteFile(path);
-    else if (e.target.closest('.view') || (e.target.closest('.file-row.clickable') && !e.target.closest('.file-act'))) previewMdFile(path);
+    else if (e.target.closest('.file-row.clickable') && !e.target.closest('.file-act')) previewTextFile(path);
     else if (e.target.closest('.file-act')) downloadFile(path);
   });
   // 面板内上传:直接写入当前会话任务目录

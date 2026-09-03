@@ -355,7 +355,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 }
 .files-panel .file-row:last-child { border-bottom: none; }
 .files-panel .file-row:active { background: var(--surface); }
-.files-panel .file-row.clickable { cursor: pointer; } /* md 文件：整行可点预览 */
+.files-panel .file-row.clickable { cursor: pointer; } /* md/txt 可预览：整行可点 */
 .files-panel .file-ico {
   width: 16px; height: 16px; flex-shrink: 0;
   stroke: #7f8db0; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
@@ -373,7 +373,6 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   border: none; border-radius: 7px; padding: 4px 9px; font-size: 13px; cursor: pointer;
 }
 .files-panel .file-act:active { opacity: .75; }
-.files-panel .file-act.view { background: var(--surface); color: var(--ink); }
 .files-panel .file-act.del { background: #fdecea; color: #c0392b; }
 .files-panel .file-act.del:active { opacity: .75; }
 .files-panel .empty-tip {
