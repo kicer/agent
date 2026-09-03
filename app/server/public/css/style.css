@@ -445,6 +445,21 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .conv-item .st-dot.queued { background: var(--active); }
 .conv-item .st-dot.active { background: #1c7a2e; animation: pill-pulse 1.2s ease-in-out infinite; }
 .conv-item .st-dot.held { background: #b8860b; }
+/* 会话行内的删除 ×:默认隐藏,hover/focus-within/active 露出,点击变红 */
+.conv-item .conv-del {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; color: var(--gray-light);
+  font-size: 16px; line-height: 1; padding: 0; cursor: pointer;
+  opacity: 0; transition: opacity .12s, color .12s, background .12s;
+}
+.conv-item:hover .conv-del, .conv-item:focus-within .conv-del, .conv-item .conv-del:focus { opacity: 1; }
+.conv-item .conv-del:hover, .conv-item .conv-del:active { color: #fff; background: #c0392b; }
+/* 移动端无 hover:用 :focus-within/active 也能在点会话名字时短暂高亮行,但为了看不见的×也可见,
+   在抽屉打开状态下始终让 × 微透明(以不影响未 hover 行的整洁) */
+@media (hover: none) {
+  .conv-item .conv-del { opacity: .45; }
+}
 .drawer-empty { padding: 24px 10px; font-size: 13px; color: var(--gray-light); text-align: center; }
 
 /* 底部用户区 */

@@ -678,6 +678,7 @@
       if (g !== lastGroup) { html += '<div class="group-label">' + esc(g) + '</div>'; lastGroup = g; }
       html += '<button class="conv-item' + (s.id === state.sessionId ? ' active' : '') + '" data-id="' + esc(s.id) + '">' +
         '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
+        '<button class="conv-del" type="button" aria-label="删除会话" title="删除会话">×</button>' +
         '</button>';
     }
     box.innerHTML = html;
@@ -702,7 +703,28 @@
     } catch (e) { toast('加载会话失败:' + e.message); }
   }
 
-  // ---------- 会话打开 / 新建 / 状态栏(删除会话入口已移除,改用状态栏「清空/终止/选择模型」) ----------
+  // ---------- 会话打开 / 新建 / 状态栏(抽屉行 × 调 deleteSession; 默认含任务目录) ----------
+  async function deleteSession(id) {
+    if (!id) return;
+    if (!await confirmModal('删除会话', '确定删除会话 ' + id + ' ?会话中的任务文件也会一起删除。', '删除', true)) return;
+    try {
+      await req('DELETE', '/api/sessions/' + id + '?delete_dir=true');
+      // 删的是当前打开的会话:回 welcome 视图并清状态
+      if (state.sessionId === id) {
+        closeStream();
+        removeTyping();
+        state.sessionId = null;
+        state.sessionTitle = '';
+        state.streamEl = null;
+        state.streamText = '';
+        state.toolCards = {};
+        state.streaming = false;
+        setView('welcome'); // 复用 newChat 同样的视图切换路径
+      }
+      toast('已删除会话');
+      loadSessionList();
+    } catch (e) { toast('删除失败:' + e.message); }
+  }
   function closeStream() {
     if (state.es) { state.es.close(); state.es = null; }
   }
@@ -1417,6 +1439,11 @@
     searchTimer = setTimeout(loadSessionList, 250);
   });
   $('drawer-list').addEventListener('click', e => {
+    if (e.target.closest('.conv-del')) {
+      const item = e.target.closest('.conv-item');
+      if (item) deleteSession(item.dataset.id);
+      return; // 不打开会话
+    }
     const item = e.target.closest('.conv-item');
     if (!item) return;
     openSession(item.dataset.id);
