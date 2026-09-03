@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Agent 任务台</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <meta name="theme-color" content="#3964FE">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -256,6 +257,14 @@
   // ---------- 工具 ----------
   function $(id) { return document.getElementById(id); }
   function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+  // ---------- markdown 渲染(同步 index:marked CDN;缺失/异常时回退转义纯文本) ----------
+  // 返回 { html, fmt }:fmt=false 表示未做转换,气泡不带 .md 类、保持 pre-wrap 原文排版
+  if (typeof marked !== 'undefined') marked.setOptions({ breaks: true, gfm: true });
+  function mdHtml(text) {
+    if (typeof marked === 'undefined') return { html: esc(text), fmt: false };
+    try { return { html: marked.parse(text || ''), fmt: true }; }
+    catch (_) { return { html: esc(text), fmt: false }; }
+  }
   function fmtTime(ts) {
     if (!ts) return '';
     const d = new Date(ts);
@@ -396,8 +405,9 @@
     const p = parseUploadNotice(m.content);
     const attach = p.files && p.files.length
       ? '<div class="attach-line">📎 ' + esc(p.files.join('、')) + '</div>' : '';
+    const r = mdHtml(p.text);
     return '<div class="msg me">' +
-      '<div class="bubble-user">' + attach + esc(p.text) + '</div>' +
+      '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
       '<div class="msg-actions"><span>' + fmtTime(m.created_at) + '</span></div>' +
     '</div>';
   }
@@ -405,8 +415,9 @@
   function aiMsgHtml(m) {
     const hasText = !!(m.content && m.content.trim());
     if (!hasText) return null; // 纯工具调用的应答:不渲染空气泡,工具卡由 appendToolCardsFromAssistant 铺
+    const r = mdHtml(m.content);
     return '<div class="msg other">' +
-      '<div class="bubble-ai">' + esc(m.content) + '</div>' +
+      '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>' +
       actionsHtml(m.created_at, m.content) +
     '</div>';
   }
@@ -531,9 +542,10 @@
   function appendUserMsg(content, fileNames) {
     const attach = fileNames && fileNames.length
       ? '<div class="attach-line">📎 ' + esc(fileNames.join('、')) + '</div>' : '';
+    const r = mdHtml(content);
     const wrap = document.createElement('div');
     wrap.className = 'msg me';
-    wrap.innerHTML = '<div class="bubble-user">' + attach + esc(content) + '</div>' +
+    wrap.innerHTML = '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
       '<div class="msg-actions"><span>' + fmtTime(Date.now()) + '</span></div>';
     $('chat-view').appendChild(wrap);
     scrollBottom();
@@ -895,15 +907,20 @@
       const d = JSON.parse(ev.data);
       removeTyping();
       const hasText = !!(d.content && d.content.trim());
+      const r = hasText ? mdHtml(d.content) : null;
       if (state.streamEl) {
-        if (hasText) state.streamEl.textContent = d.content;
-        else state.streamEl.remove();
+        if (r) {
+          state.streamEl.className = 'bubble-ai' + (r.fmt ? ' md' : ''); // 增量期间是纯文本,收尾统一换 md 排版
+          state.streamEl.innerHTML = r.html;
+        } else {
+          state.streamEl.remove();
+        }
         state.streamEl = null;
         state.streamText = '';
-      } else if (hasText) {
+      } else if (r) {
         const wrap = document.createElement('div');
         wrap.className = 'msg other';
-        wrap.innerHTML = '<div class="bubble-ai">' + esc(d.content) + '</div>';
+        wrap.innerHTML = '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>';
         $('chat-view').appendChild(wrap);
       }
       if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
