@@ -681,13 +681,13 @@ function loadHistoryForModel(sessionId) {
     .concat(rows.filter(r => r.name !== SESSION_CONTEXT_NAME));
 }
 
-function createSession(title, preferModelId, assistantType) {
+function createSession(title, preferModelId, assistantType, user) {
   const id = genTaskId();
   const dir = taskDirOf(id);
   fs.mkdirSync(dir, { recursive: true });
   db.prepare(
-    "INSERT INTO sessions (id, title, status, phase, model_id, assistant_type, created_at, updated_at) VALUES (?,?,'queued','planning',NULL,?,?,?)"
-  ).run(id, title || '', assistantType || 'secretary', now(), now());
+    "INSERT INTO sessions (id, title, status, phase, model_id, assistant_type, user, created_at, updated_at) VALUES (?,?,'queued','planning',NULL,?,?,?,?)"
+  ).run(id, title || '', assistantType || 'secretary', user || '', now(), now());
   // 指定了模型且它恰好空闲 → 直接绑定，跳过排队；否则回退到 FIFO 队列
   const prefer = preferModelId
     ? db.prepare('SELECT * FROM model_pool WHERE id = ? AND is_busy = 0').get(preferModelId)

@@ -51,7 +51,9 @@ router.post('/', wrap((req, res) => {
   const modelId = (req.body && req.body.model_id || '').trim();
   // 助手类型建档时锁定，后续不可变更；缺省按文秘助理
   const assistantType = String((req.body && req.body.assistant_type) || 'secretary').trim().slice(0, 32) || 'secretary';
-  const session = engine.createSession(title, modelId, assistantType);
+  // 创建者取认证中间件的 req.user(不信客户端传参);未启用认证时为空串
+  const user = String(req.user || '').trim().slice(0, 64);
+  const session = engine.createSession(title, modelId, assistantType, user);
   log.info('[task] ' + (req.user || '-') + ' 新建任务 ' + session.id + '「' + (session.title || '未命名') + '」model=' + (modelId || '自动') + ' type=' + (session.assistant_type || 'secretary'));
   res.json(session);
 }));
@@ -72,6 +74,9 @@ router.get('/', wrap((req, res) => {
 
   const where = [];
   const args = [];
+  // 按创建者隔离:已登录只列自己的会话;未启用认证(req.user 空)不过滤，保持自用场景全可见
+  const me = String(req.user || '').trim();
+  if (me) { where.push('user = ?'); args.push(me); }
   if (status === 'active') where.push("status IN ('queued','active','held')");
   else if (status === 'done') where.push("status IN ('completed','cancelled')");
   if (q) {

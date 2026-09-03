@@ -18,6 +18,7 @@ function initDb(dbPath) {
       model_id TEXT,
       last_model_id TEXT,
       assistant_type TEXT DEFAULT 'secretary',
+      user TEXT DEFAULT '',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       completed_at INTEGER,
@@ -99,6 +100,11 @@ function initDb(dbPath) {
   // 建档时选定，后续不可变更；存量老会话按默认文秘助理回填
   if (!cols.some(c => c.name === 'assistant_type')) {
     db.exec("ALTER TABLE sessions ADD COLUMN assistant_type TEXT DEFAULT 'secretary'");
+  }
+  // 迁移：user 记录建档时的登录用户，列表接口据此按用户隔离；
+  // 存量老会话与未启用认证时建的会话为空串（见 routes/sessions.js 列表过滤）
+  if (!cols.some(c => c.name === 'user')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN user TEXT DEFAULT ''");
   }
   return db;
 }
