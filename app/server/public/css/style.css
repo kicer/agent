@@ -475,10 +475,13 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   z-index: 2;
 }
 @media (hover: hover) and (pointer: fine) {
-  .conv-wrap:hover .conv-del { display: flex; }
-  .conv-del:hover { color: #c0392b; background: #fdf3f2; border-color: #eac2bd; }
+  .conv-wrap:hover .conv-item:not(.active) { background: #f5f6f8; }
+  .conv-wrap:hover .conv-del { display: flex;  }
+  .conv-del:hover { color: #c0392b; background: #fdf3f2; border-color: #eac2bd;  }
 }
 .drawer-empty { padding: 24px 10px; font-size: 13px; color: var(--gray-light); text-align: center; }
+/* 删除会话 modal 副标题:会话 ID 等二级说明,字号小、灰色 */
+.confirm-sub { font-size: 12px; color: var(--gray); margin-top: 6px; }
 
 /* 底部用户区 */
 .drawer-user {

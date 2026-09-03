@@ -711,8 +711,13 @@
   // ---------- 会话打开 / 新建 / 状态栏(抽屉行 × 调 deleteSession; 默认含任务目录) ----------
   async function deleteSession(id) {
     if (!id) return;
-    if (!await confirmModal('删除会话', '确定删除会话 ' + id + ' ?', '删除', true,
-        { checkbox: { label: '同时删除任务文件夹', default: true } })) return;
+    // 从已加载列表查出会话标题,让 modal 能显示「标题 + ID」方便核对
+    const s = (state.sessions || []).find(x => x.id === id);
+    const title = s ? (s.title || s.id) : id;
+    const body = '确定删除会话 <b>「' + esc(title) + '」</b> 吗？删除后无法恢复。' +
+      '<div class="confirm-sub">会话 ID：' + esc(id) + '</div>';
+    if (!await confirmModal('删除会话', body, '删除', true,
+        { checkbox: { label: '同时删除任务文件夹', default: true }, bodyHtml: true })) return;
     const delDir = state._confirmChecked ? 'true' : 'false';
     try {
       await req('DELETE', '/api/sessions/' + id + '?delete_dir=' + delDir);
@@ -1663,7 +1668,10 @@
     return new Promise(resolve => {
       _dlgResolve = resolve;
       $('confirm-title').textContent = title || '请确认';
-      $('confirm-text').textContent = text || '';
+      // bodyHtml: 需要加粗/加附加说明时传 HTML 字符串；缺省仍走 textContent 防 XSS
+      const body = $('confirm-text');
+      if (opts && opts.bodyHtml) body.innerHTML = text || '';
+      else body.textContent = text || '';
       const ok = $('confirm-ok-btn');
       ok.textContent = okText || '确定';
       ok.style.background = danger ? 'linear-gradient(135deg,#a3352a,#d2483c)' : '';
