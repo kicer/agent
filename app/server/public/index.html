@@ -2408,7 +2408,7 @@
         '<svg class="model-group-caret" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>' +
         '<span class="model-group-name">' + esc(p.name || ('平台' + pi)) + '</span>' +
         '<span class="model-group-key">' + esc(k.api_key ? maskKey(k.api_key) : '无 key') + '</span>' +
-        '<span class="model-group-meta">' + models.length + ' 模型</span>' +
+        '<span class="model-group-meta">' + models.filter(m => m.enable !== false).length + ' / ' + models.length + '</span>' +
       '</div>' +
       '<div class="model-group-body' + (open ? '' : ' hidden') + '">' +
         (hasBal ?
