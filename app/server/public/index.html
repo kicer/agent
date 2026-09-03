@@ -367,7 +367,8 @@
     title.className = 'header-title';
     title.style.cursor = 'pointer';
     title.title = '点击重命名';
-    title.innerHTML = (modeIcons[state.mode] || '') + esc(state.sessionTitle || state.sessionId);
+    title.innerHTML = (modeIcons[state.mode] || '') +
+      '<span class="header-title-text">' + esc(state.sessionTitle || state.sessionId) + '</span>';
     title.addEventListener('click', renameSession); // 点标题重命名(同步 index)
     c.innerHTML = '';
     c.appendChild(title);
