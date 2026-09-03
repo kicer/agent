@@ -448,9 +448,13 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   flex: none; display: flex; align-items: center; gap: 2px;
   padding: 6px 12px; background: var(--page); border-bottom: 1px solid var(--border);
 }
-/* 状态栏随会话状态染色:执行中=绿底、保持中=黄底 */
+/* 状态栏随会话状态染色:排队=淡蓝、执行中=绿底、保持中=黄底;
+   完成=中性浅灰、终止=淡红底,均与顶部白底标题栏区分 */
+.phase-bar.queued { background: #f1f4ff; border-bottom-color: #dfe4fb; }
 .phase-bar.active { background: #f0f9f2; border-bottom-color: #cde8d3; }
 .phase-bar.held { background: #fffbe8; border-bottom-color: #f5e3b3; }
+.phase-bar.completed { background: #f4f5f8; border-bottom-color: #e3e6ed; }
+.phase-bar.cancelled { background: #fdf3f2; border-bottom-color: #f5d7d3; }
 .status-pill {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12px; padding: 3px 10px; border-radius: 10px;
