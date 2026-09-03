@@ -71,10 +71,10 @@
               深度思考
             </button>
           </div>
-          <button class="plus-btn" id="attach-btn" title="任务文件" aria-label="任务文件">
-            <svg viewBox="0 0 24 24" class="ic sm"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-          </button>
           <div class="ia-side ia-right">
+            <button class="plus-btn" id="attach-btn" title="任务文件" aria-label="任务文件">
+              <svg viewBox="0 0 24 24" class="ic sm"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+            </button>
             <button class="send-btn" id="send-btn" title="发送" aria-label="发送">
               <svg viewBox="0 0 24 24" class="ic sm"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
             </button>
@@ -108,14 +108,14 @@
       </div>
     </aside>
 
-    <!-- ================= 任务文件面板(浮层:点输入行中部的附件按钮展开;盖住输入区+遮罩) ================= -->
+    <!-- ================= 任务文件面板(浮层:点输入行右侧发送旁的附件按钮展开;盖住输入区+遮罩) ================= -->
     <div id="files-mask" aria-hidden="true"></div>
     <div class="files-panel" id="files-panel" aria-label="任务文件">
       <div class="files-panel-header">
         <span>任务文件</span>
         <label class="file-upload" title="上传文件">
           <input type="file" id="file-input" multiple hidden>
-          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
         </label>
       </div>
       <div class="files-list" id="files-list"></div>
@@ -1146,7 +1146,7 @@
     toast(state.deepThink ? '深度思考已开启(暂不影响后端)' : '深度思考已关闭');
   });
 
-  // ---------- 任务文件面板(底部浮层:点输入行中部的附件按钮展开,遮罩盖住输入区) ----------
+  // ---------- 任务文件面板(底部浮层:点输入行右侧发送旁的附件按钮展开,遮罩盖住输入区) ----------
   function setFilesPanel(open) {
     const panel = $('files-panel');
     if (open) {
@@ -1176,14 +1176,32 @@
         el.innerHTML = '<div class="empty-tip">还没有文件,在对话框上传或让 AI 生成</div>';
         return;
       }
-      el.innerHTML = files.map(f =>
-        '<div class="file-row" data-path="' + esc(f.filename) + '">' +
+      el.innerHTML = files.map(f => {
+        const isMd = /\.md$/i.test(f.filename);
+        return '<div class="file-row' + (isMd ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '">' +
+          '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>' +
           '<span class="file-name">' + esc(String(f.filename).split('/').pop() || f.filename) + '</span>' +
           '<span class="file-size">' + fmtSize(f.size) + '</span>' +
+          (isMd ? '<button class="file-act view" title="预览">预览</button>' : '') +
           '<button class="file-act" title="下载">下载</button>' +
-          '<button class="file-act del" title="删除">删</button>' +
-        '</div>').join('');
+          '<button class="file-act del" title="删除">删除</button>' +
+        '</div>';
+      }).join('');
     } catch (e) { toast('读取文件失败:' + e.message); }
+  }
+  // 单击 md 文件 → 与双击会话消息同一全屏预览窗(#fs-viewer):拉取文本、markdown 渲染后预览
+  async function previewMdFile(name) {
+    try {
+      const r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
+      if (r.status === 401) { location.href = '/login'; return; }
+      if (!r.ok) { let msg = 'HTTP ' + r.status; try { msg = (await r.json()).error || msg; } catch (_) {} throw new Error(msg); }
+      const text = await r.text();
+      const r2 = mdHtml(text);
+      const wrap = document.createElement('div');
+      wrap.className = 'msg other';
+      wrap.innerHTML = '<div class="bubble-ai' + (r2.fmt ? ' md' : '') + '">' + r2.html + '</div>';
+      openFullscreen(wrap.firstChild); // 复用双击气泡的全屏查看器
+    } catch (e) { toast('预览失败:' + e.message); }
   }
   async function downloadFile(name) {
     if (!state.sessionId) return;
@@ -1205,6 +1223,7 @@
     const path = row.dataset.path;
     if (!path) return;
     if (e.target.closest('.del')) deleteFile(path);
+    else if (e.target.closest('.view') || (e.target.closest('.file-row.clickable') && !e.target.closest('.file-act'))) previewMdFile(path);
     else if (e.target.closest('.file-act')) downloadFile(path);
   });
   // 面板内上传:直接写入当前会话任务目录
