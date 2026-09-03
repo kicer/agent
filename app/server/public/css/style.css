@@ -424,7 +424,15 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .search-box input::placeholder { color: var(--gray-light); }
 
 .drawer-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
-.group-label { padding: 14px 10px 6px; font-size: 11px; color: var(--gray); }
+/* 会话分组表头(按今天/昨天分组):滚动时吸顶,下一个 group-label 滚过来时把它顶走
+   背景色与抽屉一致,避免 sticky 时下面会话透过看到上一组的尾巴 */
+.group-label {
+  position: sticky; top: 0; z-index: 1;
+  margin-top: 8px;
+  padding: 8px 10px 4px;
+  font-size: 11px; color: var(--gray);
+  background: var(--page);
+}
 .conv-item {
   display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
   padding: 12px 10px; border-radius: 12px;
