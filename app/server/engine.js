@@ -167,13 +167,16 @@ function syncModelPool() {
   const stmt = db.prepare(
     'INSERT INTO model_pool (id, display_name, is_busy, current_session_id) VALUES (?,?,0,NULL) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name'
   );
-  for (const m of cfg.models) stmt.run(m.id, m.display_name);
-  // 清理配置中已删除的模型
-  const ids = cfg.models.map(m => m.id);
+  // enable:false 的模型不进池：分配/绑定均按池取模型，天然跳过禁用项（与其他模型配置一致，重启生效）。
+  const enabled = cfg.models.filter(m => m.enable !== false);
+  for (const m of enabled) stmt.run(m.id, m.display_name);
+  // 清理配置中已删除/已禁用的模型
+  const ids = enabled.map(m => m.id);
   for (const row of db.prepare('SELECT id FROM model_pool').all()) {
     if (!ids.includes(row.id)) db.prepare('DELETE FROM model_pool WHERE id = ?').run(row.id);
   }
-  // 进程重启后：释放所有绑定、把 active 会话退回队列；held 会话直接结版（释放）
+  // 进程重启后：释放所有绑定、把 active 会话退回队列；held 会话直接结版（释放）。
+  // 禁用模型同样走这里收尾：重启后池里已无它，绑过它的会话被退回队列/结版，后续重新分配启用中的模型。
   db.prepare('UPDATE model_pool SET is_busy = 0, current_session_id = NULL').run();
   db.prepare("UPDATE sessions SET status='completed', completed_at=?, held_at=NULL, model_id=NULL WHERE status='held'").run(now());
   for (const s of db.prepare("SELECT id FROM sessions WHERE status = 'active'").all()) {

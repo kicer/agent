@@ -1605,6 +1605,7 @@
     editorPath: null, editorOrig: '', editorText: '', editorLabel: '',
     // 模型池(搬自 models.js)
     cfgPlatforms: [], cfgModels: [], runtimeById: {}, modelsPendingRestart: false,
+    pendingEnable: {},              // 已写盘但重启前 effective 仍是旧值的 enable 覆盖(id → bool),防卡片回弹
     moeIdx: -1, expandedGroups: {}, balanceByGroup: {}, balanceRequested: {}, balanceTypes: [],
   };
   let setTok = 0;                     // 异步渲染防竞态令牌
@@ -2281,19 +2282,44 @@
       fetchBalance(gk, Number(parts[0]), Number(parts[1]), false);
     }
   }
+  // 启停切换:写 platforms[pi].keys[ki].models[mi].enable(缺省启用),重启后生效。
+  // 重启前后端 effective 仍返旧值,成功后本地记入 SET.pendingEnable 保持卡片显示不回弹。
+  async function toggleModelEnable(rawId) {
+    const m = SET.cfgModels[idxOf(decodeURIComponent(rawId))];
+    if (!m) return toast('模型不存在');
+    const next = m.enable === false; // 当前禁用 → 目标启用
+    try {
+      await req('PATCH', '/api/config', { path: ['platforms', m.platform_index, 'keys', m.key_index, 'models', m.model_index, 'enable'], value: next });
+      m.enable = next;
+      SET.pendingEnable[m.id] = next;
+      afterWrite();
+    } catch (e) {
+      toast('切换失败:' + e.message);
+      loadModelCards(); // 失败时重拉,回滚开关显示
+    }
+  }
   // 单个模型的子卡片;余额是 Key 级概念,统一在分组头显示
   function modelCardHtml(m) {
     const run = SET.runtimeById[m.id];
-    // 运行池里没有 = 配置新增但还没重启生效
-    const stateHtml = run
-      ? '<span class="model-card-state ' + (run.is_busy ? 'busy' : 'idle') + '">' + (run.is_busy ? '占用中' : '空闲') + '</span>'
-      : '<span class="model-card-state pending">待重启</span>';
-    return '<div class="model-card">' +
+    const disabled = m.enable === false;
+    // 运行池里没有 = 配置新增但还没重启生效;禁用后若仍在池里(未重启)也提示待重启
+    const stateHtml = disabled
+      ? (run
+          ? '<span class="model-card-state pending">待重启</span>'
+          : '<span class="model-card-state off">已禁用</span>')
+      : run
+        ? '<span class="model-card-state ' + (run.is_busy ? 'busy' : 'idle') + '">' + (run.is_busy ? '占用中' : '空闲') + '</span>'
+        : '<span class="model-card-state pending">待重启</span>';
+    return '<div class="model-card' + (disabled ? ' off' : '') + '">' +
       '<div class="model-card-head">' +
         '<span class="model-card-name" title="点击编辑" onclick="sUI.mEdit(\'' + encodeURIComponent(m.id) + '\')">' + esc(m.display_name || m.mid || m.id) + '</span>' +
         '<span class="model-card-meta">' + esc(m.mid || m.id) +
           (run && run.is_busy && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</span>' +
         stateHtml +
+        '<label class="model-en-sw" title="' + (disabled ? '已禁用,点击启用' : '启用中,点击禁用') + '">' +
+          '<input type="checkbox"' + (disabled ? '' : ' checked') + ' onchange="sUI.mToggleEnable(\'' + encodeURIComponent(m.id) + '\')">' +
+          '<span class="sw-track"></span>' +
+        '</label>' +
       '</div>' +
       '<div class="cfg-kv"><label>今日 token</label><b title="输入 / 输出">' + (run ? fmtTok(run.today_prompt) + ' / ' + fmtTok(run.today_completion) : '--') + '</b></div>' +
       '<div class="cfg-kv"><label>累计 token</label><b title="输入 / 输出">' + (run ? fmtTok(run.total_prompt) + ' / ' + fmtTok(run.total_completion) : '--') + '</b></div>' +
@@ -2335,6 +2361,8 @@
       for (const m of rt || []) SET.runtimeById[m.id] = m;
       SET.cfgPlatforms = (cg.effective && cg.effective.platforms) || [];
       SET.cfgModels = (cg.effective && cg.effective.models) || [];
+      // 重启前 effective 仍是旧配置:叠加已写盘的启停结果,保证卡片显示与已保存配置一致
+      for (const m of SET.cfgModels) if (m.id in SET.pendingEnable) m.enable = SET.pendingEnable[m.id];
       SET.balanceTypes = cg.balance_types || [];
       const box = $('model-cards');
       if (!SET.cfgModels.length) {
@@ -2431,11 +2459,13 @@
   async function saveModelEditor() {
     const id = $('moe-id').value.trim();
     if (!id) return toast('请填写 id');
-    // 模型项本身只含 id/display_name/vision;url/key/concurrency 在平台/Key 层,这里不动。
+    // 模型项本身只含 id/display_name/vision/enable;url/key/concurrency 在平台/Key 层,这里不动。
+    // 编辑是整体覆盖写,须携带当前 enable,否则编辑一次会把禁用态洗回启用。
     const model = {
       id,
       display_name: $('moe-name').value.trim() || id,
       vision: $('moe-vision').checked,
+      enable: SET.moeIdx < 0 ? true : SET.cfgModels[SET.moeIdx].enable !== false,
     };
     const add = SET.moeIdx < 0;
     let body;
@@ -2524,6 +2554,7 @@
     mDel: delModelFromModal,
     toggleGroup: toggleModelGroup,
     refreshBalance: refreshBalance,
+    mToggleEnable: toggleModelEnable,
   };
 
   // ---------- 初始化 ----------

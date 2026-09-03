@@ -2,7 +2,7 @@
 # 复制为 config.yml 后按需修改；容器内通过 AGENT_CONFIG 指定路径。
 
 # 模型池：平台(platforms) → Key → 模型 三层层级。url/type 配在平台，api_key/concurrency 配在 Key，
-# 模型只声明 {id, display_name, vision}。加载时自动打平成全局模型列表。
+# 模型只声明 {id, display_name, vision, enable}。加载时自动打平成全局模型列表。
 # 暂按每模型 1 会话调度；concurrency 已解析入库，多会话并发后续再接调度。
 platforms:
   - name: proxy-a                        # 平台名；留空取 url 主机名首段。注意：它是模型唯一键的一部分，改名等于重建其下所有模型（历史会话回绑失效、用量统计分家）
@@ -15,6 +15,7 @@ platforms:
           - id: ds1                       # 上游模型名；只需同平台内唯一（不同平台可同名），内部唯一键 = 平台名/模型id，历史会话按它绑定，页面不可改
             display_name: "AMD DeepSeek 1" # 显示名，缺省同 id
             # vision: true                # 选填，默认 false；支持时 read_file 读图会压缩回传（长边≤2000px JPEG），会话上下文会告知 AI
+            # enable: false               # 选填，默认 true；禁用后不进模型池，不参与分配/绑定（重启生效）
           - id: ds2
             display_name: "AMD DeepSeek 2"
       - api_key: "sk-..."                 # 同平台的第二个 Key

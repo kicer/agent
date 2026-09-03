@@ -70,7 +70,7 @@ function migrateLegacyModels(models) {
   return groups;
 }
 
-// 规范化并校验 platforms 层级：平台(name/url/type) → keys(api_key/concurrency) → models(id/display_name/vision)。
+// 规范化并校验 platforms 层级：平台(name/url/type) → keys(api_key/concurrency) → models(id/display_name/vision/enable)。
 // 内部唯一键 = 平台名/模型id：不同平台允许同模型 id，同平台内必须唯一（会话/模型池/用量均按该键认模型）；
 // 允许键/列表为空（便于页面增删）。
 function normalizePlatforms(rawPlatforms) {
@@ -98,6 +98,7 @@ function normalizePlatforms(rawPlatforms) {
           id: String(m.id),
           display_name: m.display_name ? String(m.display_name) : String(m.id),
           vision: m.vision === true, // 支持时 read_file 读图会回传图片，会话上下文会告知 AI
+          enable: m.enable !== false, // 选填，默认启用；禁用后不进模型池，不参与分配/绑定（重启生效）
         });
       }
       keys.push({ api_key: String(k.api_key || ''), concurrency, models });
@@ -129,7 +130,7 @@ function parseAndValidate(rawText, configPath) {
       // id = 内部唯一键「平台名/模型id」（池/会话/用量/前端均按它认模型，调用处无需区分）；
       // mid = 发给上游的原始模型名（请求体 body.model 用它）。
       id: p.name + '/' + m.id, mid: m.id,
-      display_name: m.display_name, vision: m.vision,
+      display_name: m.display_name, vision: m.vision, enable: m.enable,
       url: p.url, api_key: k.api_key, platform: p.name, type: p.type, concurrency: k.concurrency,
       platform_index: pi, key_index: ki, model_index: mi,
     });

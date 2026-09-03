@@ -759,7 +759,7 @@ label.icon-btn { cursor: pointer; }
 .model-group-empty { font-size: 12px; color: var(--gray-light); padding: 12px 4px 2px; text-align: center; }
 .model-card { background: #fafbfd; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin: 10px 0 0; }
 .model-card:last-child { margin-bottom: 2px; }
-.model-card-head { display: flex; align-items: baseline; gap: 8px; }
+.model-card-head { display: flex; align-items: center; gap: 8px; }
 .model-card-name { font-weight: 600; font-size: 15px; flex-shrink: 0; cursor: pointer; }
 .model-card-name:active { opacity: 0.55; }
 .model-card-meta { font-size: 12px; color: var(--gray); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -767,6 +767,17 @@ label.icon-btn { cursor: pointer; }
 .model-card-state.idle { background: #e3f2e6; color: #217a34; }
 .model-card-state.busy { background: #fdecea; color: #b3382c; }
 .model-card-state.pending { background: #fff4dc; color: #a06a00; }
+.model-card-state.off { background: var(--surface); color: var(--gray); }
+/* 禁用态卡片:背景转灰、名称/token 区淡化,开关保持正常亮度可点 */
+.model-card.off { background: #f5f6f8; }
+.model-card.off .model-card-name, .model-card.off .cfg-kv { opacity: 0.5; }
+/* 启用/禁用小开关:卡片头部最右侧;勾选=启用(蓝),取消=禁用(灰) */
+.model-en-sw { position: relative; flex-shrink: 0; width: 34px; height: 20px; display: inline-block; }
+.model-en-sw input { position: absolute; left: 0; top: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.model-en-sw .sw-track { position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: var(--gray-light); border-radius: 999px; transition: background .15s; }
+.model-en-sw .sw-track::after { content: ''; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s; }
+.model-en-sw input:checked + .sw-track { background: var(--active); }
+.model-en-sw input:checked + .sw-track::after { transform: translateX(14px); }
 
 /* ---------- 编辑器页(config.yml 原文 / 技能文件) ---------- */
 .set-editor {
