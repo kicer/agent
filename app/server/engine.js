@@ -221,7 +221,7 @@ function bindModel(session, model, status) {
   db.prepare('UPDATE model_pool SET is_busy = 1, current_session_id = ? WHERE id = ?').run(session.id, model.id);
   // last_model_id 不随释放清除：会话再次需要模型时优先回绑（见 pickModelFor）
   db.prepare("UPDATE sessions SET status=?, model_id=?, last_model_id=?, held_at=?, updated_at=? WHERE id=?")
-    .run(st, model.id, model.id, st === 'held' ? now() : null, session.id);
+    .run(st, model.id, model.id, st === 'held' ? now() : null, now(), session.id);
 }
 
 function releaseModel(sessionId) {
