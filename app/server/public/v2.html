@@ -23,6 +23,14 @@
       </button>
     </header>
 
+    <!-- ================= 会话状态栏(搬自 index 的 phase-bar;仅在对话中显示) ================= -->
+    <div id="phase-bar" class="phase-bar hidden">
+      <span class="status-pill" id="status-pill">--</span>
+      <button class="stop-link hidden" id="stop-btn" onclick="stopSession()">终止</button>
+      <button class="stop-link muted hidden" id="model-switch-btn" onclick="openModelSwitch()">选择模型</button>
+      <button class="stop-link hidden" id="clear-msg-btn" onclick="clearChat()">清空</button>
+    </div>
+
     <main>
       <!-- ================= 未对话状态:模式切换区 ================= -->
       <section id="welcome-view">
@@ -68,6 +76,12 @@
       </div>
 
     </footer>
+
+    <!-- 回到底部浮动按钮(搬自 index;上翻历史时出现、AI 输出中常驻转圈) -->
+    <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" onclick="clickScrollBottom()" title="回到底部" aria-label="回到底部">
+      <svg class="sb-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      <svg class="sb-spinner hidden" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M22 12a10 10 0 0 1-10 10"></path></svg>
+    </button>
 
     <!-- ================= 历史记录抽屉 ================= -->
     <div id="scrim"></div>
@@ -172,7 +186,31 @@
       </div>
     </div>
 
+    <!-- 已完成/已终止会话:选择模型继续(搬自 index;phase-bar「选择模型」入口) -->
+    <div id="bind-model-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeModelSwitch()">
+      <div class="modal">
+        <button class="modal-close-btn" onclick="closeModelSwitch()">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+        <h3>选择模型继续会话</h3>
+        <p class="empty-tip" style="margin-bottom:10px">为已结束(已完成/已终止)的会话指定一个空闲模型，绑定后继续对话将优先使用该模型。</p>
+        <div class="btn-row" id="bind-model-list" style="flex-direction:column;align-items:stretch;gap:8px;"></div>
+      </div>
+    </div>
+
     <div id="toast" class="hidden"></div>
+  </div>
+
+  <!-- 图片全屏查看器(点击消息/工具卡中图片打开;双指缩放、放大后可拖动) -->
+  <div id="img-viewer" class="hidden">
+    <button class="fs-close" onclick="closeImageViewer()">✕</button>
+    <img id="img-viewer-img" alt="">
+  </div>
+
+  <!-- 消息全屏查看器(双击气泡/工具卡打开;支持双指缩放) -->
+  <div id="fs-viewer" class="hidden" onclick="if(event.target===this)closeFullscreen()">
+    <button class="fs-close" onclick="closeFullscreen()">✕</button>
+    <div class="fs-panel" id="fs-body"></div>
   </div>
 
   <script>
@@ -186,10 +224,13 @@
    *   GET    /api/sessions?q=..&limit=50                       抽屉搜索
    *   POST   /api/sessions {title:'', model_id:''}             首条消息自动建档
    *   GET    /api/sessions/:id                                 打开会话(消息+文件)
-   *   DELETE /api/sessions/:id?delete_dir=true                 删除会话(操作栏删除按钮)
    *   POST   /api/sessions/:id/messages {content, attachments} 发送消息
    *   POST   /api/sessions/:id/files                           附件上传(multipart)
    *   GET    /api/sessions/:id/stream                          SSE 流式输出
+   *   POST   /api/sessions/:id/stop | /release                  状态栏「终止/断开」
+   *   POST   /api/sessions/:id/bind {model_id}                  状态栏「选择模型」(已完成/已终止会话)
+   *   DELETE /api/sessions/:id/messages                         状态栏「清空」(会话内删除已移除,清空由这里承担)
+   *   GET    /api/models                                        状态栏「选择模型」弹窗模型列表
    *
    * 设置区(侧边栏用户区整行点击进入;页面搬自 index.html,未新增任何接口):
    *   GET    /api/system/status | POST /api/system/restart[?force=true]   服务·状态与重启
@@ -200,15 +241,13 @@
    *
    * 后端已有但 v2 尚未接入 UI 的接口(先列出,不实现):
    *   PATCH  /api/sessions/:id                                重命名(后端已支持)
-   *   POST   /api/sessions/:id/stop | /release | /bind        终止/断开/绑定模型
-   *   DELETE /api/sessions/:id/messages                        清空会话内容
-   *   GET    /api/sessions/:id/files/download-token?path=      文件下载
+   *   GET    /api/sessions/:id/files/download-token?path=      文件下载(配合文件面板)
    *
    * 无后端支撑、仅前端占位的概念(先不实现):
    *   · 「文秘助理 / 识图专家」模式 —— 后端无 mode 字段,当前仅影响提示文案
    *   · 「深度思考」开关 —— 后端无 reasoning/deep-think 参数,当前仅本地视觉状态
    *   · 「思考过程」折叠块(已思考 N 秒) —— 后端不产出 reasoning,已移除 mock
-   *   · 按消息粒度删除 —— 现有接口为会话级删除,故操作栏删除按钮指向删除会话
+   *   · 按条删除消息 —— 后端无消息级删除接口;消息下方的删除会话按钮已整体移除(改用状态栏「清空」)
    * 鉴权:任意请求 401 时跳转 /login(与 core.js 的 req 一致)。
    * ============================================================================
    */
@@ -292,7 +331,7 @@
     es: null,                   // EventSource
     streamText: '',             // 当前流式累积文本
     streamEl: null,             // 当前流式 AI 气泡
-    toolLines: {},              // tool_call_id -> 工具行元素
+    toolCards: {},              // tool_call_id -> 工具卡片元素(同步 index 工具卡样式)
     typingEl: null,             // 「思考中」占位
     streaming: false,
   };
@@ -304,17 +343,17 @@
     $('chat-view').classList.toggle('hidden', view !== 'chat');
     $('new-chat-btn').classList.toggle('hidden', view !== 'chat'); // 新建按钮仅对话状态显示
     renderHeader();
+    updatePhaseBar(); // 状态栏仅对话视图显示
+    updateScrollBottomBtn();
   }
 
   function renderHeader() {
     const c = $('header-center');
     if (state.view !== 'chat' || !state.sessionId) { c.innerHTML = ''; return; }
-    const stMap = { queued: '排队中', active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
-    const st = stMap[state.status] || '';
+    // 会话状态改由顶部 phase-bar 状态胶囊展示(自 index 同步);标题下仅保留模式文案
     c.innerHTML =
       '<div class="header-title">' + esc(state.sessionTitle || state.sessionId) + '</div>' +
-      '<div class="header-sub"><span class="mode">' + esc(MODES[state.mode].label) + '</span>' +
-      (st ? ' · ' + esc(st) : '') + ' · 回答由 AI 产生，仅供参考</div>';
+      '<div class="header-sub"><span class="mode">' + esc(MODES[state.mode].label) + '</span></div>';
   }
 
   // ---------- 模式切换区 ----------
@@ -348,9 +387,6 @@
       '<button class="act act-copy" title="复制" data-b64="' + b64 + '">' +
         '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
       '</button>' +
-      '<button class="act act-del" title="删除会话">' +
-        '<svg class="ic sm" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>' +
-      '</button>' +
     '</div>';
   }
 
@@ -366,19 +402,98 @@
 
   function aiMsgHtml(m) {
     const hasText = !!(m.content && m.content.trim());
-    let toolLines = '';
-    if (m.tool_calls) {
-      let calls = m.tool_calls;
-      try { if (typeof calls === 'string') calls = JSON.parse(calls); } catch (_) { calls = null; }
-      if (Array.isArray(calls)) {
-        toolLines = calls.map(c => '<div class="tool-line">🔧 ' + esc(c.function && c.function.name || '工具') + '</div>').join('');
-      }
-    }
+    if (!hasText) return null; // 纯工具调用的应答:不渲染空气泡,工具卡由 appendToolCardsFromAssistant 铺
     return '<div class="msg other">' +
-      toolLines +
-      (hasText ? '<div class="bubble-ai">' + esc(m.content) + '</div>' : '') +
-      (hasText ? actionsHtml(m.created_at, m.content) : '') +
+      '<div class="bubble-ai">' + esc(m.content) + '</div>' +
+      actionsHtml(m.created_at, m.content) +
     '</div>';
+  }
+
+  // ---------- 工具调用卡片(样式/交互同步 index;流式与历史共用) ----------
+  function toolArgsSummary(name, argsStr) {
+    let s = '';
+    try {
+      const o = JSON.parse(argsStr || '{}');
+      const key = ['path', 'command', 'regex', 'glob', 'url', 'query', 'source_path', 'destination_path'];
+      for (const k of key) if (o[k]) { s = String(o[k]); break; }
+      if (!s) s = argsStr || '';
+    } catch (_) { s = argsStr || ''; }
+    if (s.length > 80) s = s.slice(0, 80) + '…';
+    return s;
+  }
+  function toolArgsFull(argsStr) {
+    try { return JSON.stringify(JSON.parse(argsStr || '{}'), null, 2); }
+    catch (_) { return argsStr || ''; }
+  }
+  function toolCopyBtnHtml(text) {
+    if (!text) return '';
+    const b64 = btoa(unescape(encodeURIComponent(text)));
+    return '<button class="act act-copy" title="复制工具输出" data-b64="' + b64 + '">' +
+      '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>';
+  }
+  function renderToolCard(id, name, argsStr, createdAt) {
+    const div = document.createElement('div');
+    div.className = 'tool-card';
+    div.id = 'tool-' + id;
+    div.innerHTML =
+      '<details><summary><span class="spin">◌</span>' +
+      '<span class="tool-name">' + esc(name) + '</span>' +
+      '<span class="tool-args">' + esc(toolArgsSummary(name, argsStr)) + '</span></summary>' +
+      '<pre class="tool-args-full">' + esc(toolArgsFull(argsStr)) + '</pre>' +
+      '<pre class="tool-result">执行中…</pre>' +
+      // 时间行/复制按钮在折叠体内:展开卡片才可见
+      '<div class="tool-time">' + fmtTime(createdAt || Date.now()) + '</div></details>';
+    return div;
+  }
+  // tool 消息 content:纯文本,或含图片时的哨兵 JSON {"__blocks__":[...]}(read_file 读图回传)
+  function parseToolContent(content) {
+    if (typeof content === 'string' && content.startsWith('{"__blocks__":')) {
+      try {
+        const blocks = JSON.parse(content).__blocks__ || [];
+        const img = blocks.find(b => b.type === 'image_url');
+        return {
+          text: blocks.filter(b => b.type === 'text').map(b => b.text).join('\n'),
+          imageUrl: img && img.image_url && img.image_url.url || null,
+        };
+      } catch (_) { /* 解析失败按原文显示 */ }
+    }
+    return { text: content, imageUrl: null };
+  }
+  function fillToolResult(id, content, isError, liveImageUrl) {
+    const card = document.getElementById('tool-' + id);
+    if (!card) return;
+    if (isError) card.classList.add('error');
+    card.querySelector('.spin').textContent = isError ? '✕' : '✓';
+    const parsed = parseToolContent(content);
+    const pre = card.querySelector('.tool-result');
+    if (!pre) return;
+    pre.textContent = parsed.text || '(空)';
+    // 结果就绪后在卡片时间行补复制按钮(复制工具输出)
+    const timeRow = card.querySelector('.tool-time');
+    if (timeRow && !timeRow.querySelector('.act-copy')) {
+      timeRow.insertAdjacentHTML('beforeend', toolCopyBtnHtml(parsed.text || ''));
+    }
+    const img = liveImageUrl || parsed.imageUrl;
+    if (img && !card.querySelector('.tool-img')) {
+      const el = document.createElement('img');
+      el.className = 'tool-img';
+      el.src = img;
+      el.title = '点击放大查看';
+      pre.insertAdjacentElement('afterend', el);
+    }
+  }
+  // 把 assistant 消息里的 tool_calls 建成工具卡片(历史渲染与 assistant_message 事件共用)
+  function appendToolCardsFromAssistant(m, container) {
+    if (!m.tool_calls) return;
+    let calls;
+    try { calls = typeof m.tool_calls === 'string' ? JSON.parse(m.tool_calls) : m.tool_calls; } catch (_) { return; }
+    for (const c of calls) {
+      const id = c.id || ('c' + Math.random().toString(36).slice(2, 10));
+      if (state.toolCards[id]) continue; // tool_call 事件已经建过同一张卡,不重复创建
+      const card = renderToolCard(id, c.function && c.function.name || '工具', c.function && c.function.arguments, m.created_at);
+      container.appendChild(card);
+      state.toolCards[id] = card;
+    }
   }
 
   function msgNode(m) {
@@ -391,17 +506,24 @@
     const s = detail.session;
     state.sessionTitle = (s && s.title) || '';
     state.status = (s && s.status) || '';
+    state.toolCards = {};
+    userPaused = false;
+    removeTyping();
     renderHeader();
+    updatePhaseBar({ model_id: s && s.model_id, queue_pos: detail.queue_pos });
     const box = $('chat-view');
     box.innerHTML = '';
     for (const m of detail.messages || []) {
       const node = msgNode(m);
       if (node) box.insertAdjacentHTML('beforeend', node);
+      if (m.role === 'assistant') appendToolCardsFromAssistant(m, box);
+      else if (m.role === 'tool' && m.tool_call_id) fillToolResult(m.tool_call_id, m.content, false);
     }
     if (!(detail.messages || []).length) {
       box.innerHTML = '<div class="drawer-empty">描述你的需求，AI 会和你讨论并直接干活。</div>';
     }
     scrollBottom();
+    updateScrollBottomBtn();
   }
 
   function appendUserMsg(content, fileNames) {
@@ -415,9 +537,58 @@
     scrollBottom();
   }
 
+  // ---------- 滚动跟随(同步 index:上翻历史自动暂停跟随;右下角浮动钮可回底/转圈) ----------
+  const SCROLL_BOTTOM_THRESHOLD = 80; // 距底 80px 内视为「在底部」
+  function isNearBottom() {
+    const box = $('chat-view');
+    return box.scrollHeight - box.scrollTop - box.clientHeight < SCROLL_BOTTOM_THRESHOLD;
+  }
   function scrollBottom() {
     const box = $('chat-view');
     box.scrollTop = box.scrollHeight;
+  }
+  // 仅当用户贴近底部且未主动暂停时才自动滚动(AI 内容增量到达)
+  let userPaused = false;
+  function maybeAutoScroll() {
+    if (!userPaused && isNearBottom()) scrollBottom();
+  }
+  // AI 是否「正在干活」:流式输出中,或会话处于 active(含工具执行与多轮模型调用的间隙)
+  function scrollBusy() { return state.streaming || state.status === 'active'; }
+  function updateScrollBottomBtn() {
+    const btn = $('scroll-bottom-btn');
+    if (!btn) return;
+    const inChat = state.view === 'chat' && !!state.sessionId;
+    const busy = inChat && scrollBusy();
+    // 运行中即使贴着底部也保持显示:转圈即「AI 还活着」指示,多轮工具间隙不至于看着像挂掉
+    const show = busy || (inChat && !isNearBottom());
+    btn.classList.toggle('hidden', !show);
+    const spinner = btn.querySelector('.sb-spinner');
+    if (spinner) spinner.classList.toggle('hidden', !busy);
+    const arrow = btn.querySelector('.sb-arrow');
+    if (arrow) arrow.classList.toggle('hidden', !!busy);
+  }
+  function clickScrollBottom() {
+    userPaused = false;
+    scrollBottom();
+    updateScrollBottomBtn();
+  }
+  // 监听用户滚动意图:向上翻阅历史(滚轮向上/手指下拖)立即暂停跟随,回到底部时恢复。
+  // 关键:用 wheel/touchmove 捕获「用户主动向上」的意图(程序滚动不会触发这二者),
+  // 避免被自动跟随的 scrollBottom 反复拉回底部而无法上翻。
+  function bindChatScroll() {
+    const box = $('chat-view');
+    let touchY = 0;
+    box.addEventListener('wheel', e => { if (e.deltaY < 0) userPaused = true; }, { passive: true });
+    box.addEventListener('touchstart', e => { touchY = e.touches[0].clientY; }, { passive: true });
+    box.addEventListener('touchmove', e => {
+      const dy = e.touches[0].clientY - touchY;
+      if (dy > 3) userPaused = true;
+      touchY = e.touches[0].clientY;
+    }, { passive: true });
+    box.addEventListener('scroll', () => {
+      if (isNearBottom()) userPaused = false;
+      updateScrollBottomBtn();
+    }, { passive: true });
   }
 
   function addTyping() {
@@ -476,7 +647,7 @@
     } catch (e) { toast('加载会话失败:' + e.message); }
   }
 
-  // ---------- 会话打开 / 新建 / 删除 ----------
+  // ---------- 会话打开 / 新建 / 状态栏(删除会话入口已移除,改用状态栏「清空/终止/选择模型」) ----------
   function closeStream() {
     if (state.es) { state.es.close(); state.es = null; }
   }
@@ -485,11 +656,13 @@
     closeStream();
     removeTyping();
     state.sessionId = id;
+    state.status = '';
     state.streamEl = null;
     state.streamText = '';
-    state.toolLines = {};
+    state.toolCards = {};
     state.streaming = false;
     state.attachments = [];
+    userPaused = false;
     renderAttachChips();
     setView('chat');
     $('chat-view').innerHTML = '<div class="drawer-empty">加载中…</div>';
@@ -511,6 +684,7 @@
     state.sessionTitle = (s && s.title) || '';
     setView('chat');
     renderHeader();
+    updatePhaseBar();
     connectStream();
     return s.id;
   }
@@ -524,25 +698,111 @@
     state.attachments = [];
     state.streamEl = null;
     state.streamText = '';
-    state.toolLines = {};
+    state.toolCards = {};
     state.streaming = false;
+    userPaused = false;
     renderAttachChips();
     selectMode('secretary'); // 置顶逻辑:新建时自动选中【文秘助理】
     setView('welcome');
     $('chat-view').innerHTML = '';
     $('msg-input').value = '';
     autosize();
+    updateScrollBottomBtn();
   }
 
-  async function deleteSession() {
+  // ---------- 会话状态栏(搬自 index 的 phase-bar 功能) ----------
+  function updatePhaseBar(d) {
+    const bar = $('phase-bar');
+    if (!bar) return;
+    if (!(state.view === 'chat' && state.sessionId)) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    const pill = $('status-pill');
+    const stMap = { queued: '排队中', active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
+    let text = stMap[state.status] || state.status || '--';
+    if (d && d.queue_pos) text += '(第 ' + d.queue_pos + ' 位)';
+    // active/held 时附带当前占用的模型
+    if ((state.status === 'active' || state.status === 'held') && d && d.model_id) {
+      text += ' · ' + d.model_id;
+    }
+    pill.textContent = text;
+    // 状态胶囊配色:活跃中绿(执行中)、保持中黄(已答完、保持模型中)等;状态栏整体同步染色
+    pill.className = 'status-pill ' + (state.status || '');
+    bar.className = 'phase-bar ' + (state.status || '');
+    // 活跃中提供「终止」;保持中改为「断开」(主动放弃保持租约,会话结为已完成)
+    const btn = $('stop-btn');
+    const actionable = state.status === 'active' || state.status === 'held';
+    btn.classList.toggle('hidden', !actionable);
+    btn.textContent = state.status === 'held' ? '断开' : '终止';
+    btn.classList.toggle('muted', state.status === 'held');
+    // 已完成/已终止时提供「选择模型」,手动指定空闲模型后继续对话
+    const msBtn = $('model-switch-btn');
+    if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && (state.status === 'completed' || state.status === 'cancelled')));
+    // 执行中(active)不提供「清空」——运行回合内删除历史会破坏上下文;其余状态(含排队中)可清空
+    const clrBtn = $('clear-msg-btn');
+    if (clrBtn) clrBtn.classList.toggle('hidden', !(state.sessionId && state.status && state.status !== 'active'));
+  }
+  async function stopSession() {
+    if (!state.sessionId) return;
+    const held = state.status === 'held';
+    try {
+      if (held) {
+        await req('POST', '/api/sessions/' + state.sessionId + '/release');
+        toast('已断开,模型已释放');
+      } else {
+        await req('POST', '/api/sessions/' + state.sessionId + '/stop');
+        toast('已发送终止指令');
+      }
+    } catch (e) { toast((held ? '断开失败:' : '终止失败:') + e.message); }
+  }
+  async function openModelSwitch() {
+    if (!state.sessionId) return;
+    const list = $('bind-model-list');
+    list.innerHTML = '<div class="empty-tip">加载中…</div>';
+    $('bind-model-modal').classList.remove('hidden');
+    try {
+      const rows = await req('GET', '/api/models');
+      if (!rows.length) {
+        list.innerHTML = '<div class="empty-tip">还没有配置模型。</div>';
+        return;
+      }
+      list.innerHTML = rows.map(m => m.is_busy
+        ? '<button class="ghost-btn" disabled>' + esc(m.display_name || m.id) + ' · 占用中</button>'
+        : '<button class="primary-btn" onclick="bindModel(\'' + esc(m.id) + '\')">' + esc(m.display_name || m.id) + '</button>').join('');
+    } catch (e) {
+      list.innerHTML = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
+    }
+  }
+  function closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); }
+  async function bindModel(modelId) {
     if (!state.sessionId) return;
     const id = state.sessionId;
-    if (!confirm('删除整个会话？其任务文件也将一并删除，且不可恢复。')) return;
+    closeModelSwitch();
     try {
-      await req('DELETE', '/api/sessions/' + id + '?delete_dir=true');
-      newChat();
+      await req('POST', '/api/sessions/' + id + '/bind', { model_id: modelId });
+      toast('已绑定模型 ' + modelId);
+    } catch (e) { toast('绑定失败:' + e.message); }
+    // 无论成败都刷新会话详情(失败多为并发占用,状态可能已变)
+    try {
+      const detail = await req('GET', '/api/sessions/' + id);
+      if (state.sessionId === id) { renderDetail(detail); connectStream(); }
       loadSessionList();
-    } catch (e) { toast('删除失败:' + e.message); }
+    } catch (_) {}
+  }
+  async function clearChat() {
+    if (!state.sessionId) return;
+    const id = state.sessionId;
+    const ok = await confirmModal('清空会话内容',
+      '将删除本会话的全部聊天记录,AI 后续对话不再携带这段历史(从零开始,更省 token)。任务文件全部保留,不受影响。此操作不可恢复。',
+      '清空', true);
+    if (!ok) return;
+    try {
+      await req('DELETE', '/api/sessions/' + id + '/messages');
+      toast('会话内容已清空,文件已保留');
+      // 服务端已将会话收尾为 completed 并清空消息(不再预置会话上下文):重新拉取详情即为干净起点
+      const detail = await req('GET', '/api/sessions/' + id);
+      if (state.sessionId === id) { renderDetail(detail); connectStream(); }
+      loadSessionList();
+    } catch (e) { toast('清空失败:' + e.message); }
   }
 
   // ---------- 发送 ----------
@@ -597,6 +857,8 @@
       const d = JSON.parse(ev.data);
       state.status = d.status;
       renderHeader();
+      updatePhaseBar(d);
+      updateScrollBottomBtn(); // 状态切换同步右下角转圈(开始/结束干活)
     });
     es.addEventListener('assistant_delta', ev => {
       const d = JSON.parse(ev.data);
@@ -615,7 +877,8 @@
       }
       state.streamEl.textContent = state.streamText;
       state.streaming = true;
-      scrollBottom();
+      maybeAutoScroll();
+      updateScrollBottomBtn();
     });
     es.addEventListener('assistant_message', ev => {
       const d = JSON.parse(ev.data);
@@ -632,34 +895,32 @@
         wrap.innerHTML = '<div class="bubble-ai">' + esc(d.content) + '</div>';
         $('chat-view').appendChild(wrap);
       }
+      if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
       state.streaming = false;
-      scrollBottom();
+      maybeAutoScroll();
+      updateScrollBottomBtn();
     });
     es.addEventListener('tool_call', ev => {
       const d = JSON.parse(ev.data);
-      removeTyping();
-      const wrap = document.createElement('div');
-      wrap.className = 'msg other';
-      wrap.innerHTML = '<div class="tool-line">🔧 ' + esc(d.name || '工具') + '</div>';
-      $('chat-view').appendChild(wrap);
-      state.toolLines[d.id] = wrap;
-      scrollBottom();
+      removeTyping(); // 工具卡出现也算即时反馈
+      if (state.toolCards[d.id]) return; // assistant_message 已建卡(含完整参数),不重复创建
+      const card = renderToolCard(d.id, d.name, d.arguments, Date.now());
+      $('chat-view').appendChild(card);
+      state.toolCards[d.id] = card;
+      maybeAutoScroll();
     });
     es.addEventListener('tool_result', ev => {
       const d = JSON.parse(ev.data);
-      const wrap = state.toolLines[d.tool_call_id];
-      if (wrap && d.is_error) {
-        const line = wrap.querySelector('.tool-line');
-        if (line) line.textContent += ' ⚠️ 失败';
-      }
-      scrollBottom();
+      fillToolResult(d.tool_call_id, d.content, d.is_error, d.image_url);
+      maybeAutoScroll();
     });
     es.addEventListener('done', ev => {
-      removeTyping();
+      removeTyping(); // 本轮结束,占位兼终止(如模型报错无回复)
       state.streaming = false;
-      state.streamEl = null;
+      state.streamEl = null; // 防御性清理:回合异常结束(如终止)时不留悬空气泡到下一轮
       state.streamText = '';
-      state.toolLines = {};
+      state.toolCards = {};
+      updateScrollBottomBtn();
       loadSessionList();
     });
     es.addEventListener('error', ev => {
@@ -671,23 +932,130 @@
     });
   }
 
-  // ---------- 消息区点击代理(复制 / 删除) ----------
-  $('chat-view').addEventListener('click', async e => {
+  // ---------- 消息区点击代理(复制;全屏查看器内的克隆按钮同样可复制) ----------
+  async function onCopyClick(e) {
     const copyBtn = e.target.closest('.act-copy');
-    if (copyBtn) {
-      let text = '';
-      try { text = decodeURIComponent(escape(atob(copyBtn.dataset.b64 || ''))); } catch (_) {}
-      const ok = await copyText(text);
-      toast(ok ? '已复制' : '复制失败');
-      if (ok) {
-        copyBtn.classList.add('copied');
-        setTimeout(() => copyBtn.classList.remove('copied'), 1200);
-      }
-      return;
+    if (!copyBtn) return;
+    let text = '';
+    try { text = decodeURIComponent(escape(atob(copyBtn.dataset.b64 || ''))); } catch (_) {}
+    const ok = await copyText(text);
+    toast(ok ? '已复制' : '复制失败');
+    if (ok) {
+      copyBtn.classList.add('copied');
+      setTimeout(() => copyBtn.classList.remove('copied'), 1200);
     }
-    const delBtn = e.target.closest('.act-del');
-    if (delBtn) { deleteSession(); }
+  }
+  $('chat-view').addEventListener('click', onCopyClick);
+  $('fs-viewer').addEventListener('click', onCopyClick);
+
+  // ---------- 全屏查看器(双击气泡/工具卡放大;图片单击放大;均同步 index) ----------
+  function openFullscreen(el) {
+    const body = $('fs-body');
+    body.innerHTML = '';
+    body.style.zoom = '';
+    // 深拷贝并去掉 id:保留原类名使气泡/工具卡样式在查看器内照常生效,且避免 id 重复
+    const clone = el.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
+    // 全屏查看直接展开参数/结果,方便观看
+    clone.querySelectorAll('details').forEach(function (d) { d.open = true; });
+    body.appendChild(clone);
+    $('fs-viewer').classList.remove('hidden');
+  }
+  function closeFullscreen() { $('fs-viewer').classList.add('hidden'); }
+  // 双击消息气泡/工具卡 → 全屏查看(操作钮/图片不误触全屏)
+  $('chat-view').addEventListener('dblclick', function (e) {
+    if (e.target.closest('.act') || e.target.closest('img')) return;
+    const el = e.target.closest('.bubble-ai, .bubble-user, .tool-card');
+    if (el) openFullscreen(el);
   });
+
+  // 点击消息/工具卡里的图片 → 图片全屏查看器(#fs-viewer 里的克隆图也生效)
+  function imgViewerDelegate(e) {
+    const im = e.target.closest('.bubble-ai img, .bubble-user img, .tool-card img');
+    if (im && im.src) openImageViewer(im.src, im.alt || '');
+  }
+  $('chat-view').addEventListener('click', imgViewerDelegate);
+  $('fs-viewer').addEventListener('click', imgViewerDelegate);
+
+  // 图片全屏查看器:transform 缩放+平移。双指捻合缩放(1~6x)、放大后单指/鼠标拖动、双击切 2.5x。
+  let openImageViewer, closeImageViewer;
+  (function () {
+    const viewer = document.getElementById('img-viewer');
+    const img = document.getElementById('img-viewer-img');
+    let scale = 1, tx = 0, ty = 0, mode = null;
+    let sx = 0, sy = 0, stx = 0, sty = 0, pDist = 0, pScale = 1;
+    const tdist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    function apply() {
+      img.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
+      img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
+    }
+    openImageViewer = function (src, alt) {
+      scale = 1; tx = ty = 0; mode = null;
+      apply();
+      img.src = src; img.alt = alt || '';
+      viewer.classList.remove('hidden');
+    };
+    closeImageViewer = function () { viewer.classList.add('hidden'); };
+    // 点背景(非图片)关闭
+    viewer.addEventListener('click', function (e) { if (e.target === viewer) closeImageViewer(); });
+    img.addEventListener('dblclick', function () {
+      scale = scale > 1 ? 1 : 2.5;
+      if (scale === 1) { tx = ty = 0; }
+      apply();
+    });
+    img.addEventListener('touchstart', function (e) {
+      if (e.touches.length === 2) { mode = 'pinch'; pDist = tdist(e.touches) || 1; pScale = scale; }
+      else if (e.touches.length === 1 && scale > 1) { mode = 'pan'; sx = e.touches[0].clientX; sy = e.touches[0].clientY; stx = tx; sty = ty; }
+      else mode = null;
+    }, { passive: true });
+    img.addEventListener('touchmove', function (e) {
+      if (mode === 'pinch' && e.touches.length >= 2) {
+        e.preventDefault();
+        scale = Math.min(6, Math.max(1, pScale * tdist(e.touches) / pDist));
+        if (scale === 1) { tx = ty = 0; }
+        apply();
+      } else if (mode === 'pan' && e.touches.length === 1) {
+        e.preventDefault();
+        tx = stx + e.touches[0].clientX - sx;
+        ty = sty + e.touches[0].clientY - sy;
+        apply();
+      }
+    }, { passive: false });
+    img.addEventListener('touchend', function (e) { if (e.touches.length < 2) { if (mode === 'pinch') mode = null; } if (!e.touches.length) mode = null; }, { passive: true });
+    img.addEventListener('touchcancel', function () { mode = null; }, { passive: true });
+    // 桌面:放大后按住拖动平移
+    img.addEventListener('mousedown', function (e) {
+      if (scale <= 1) return;
+      e.preventDefault();
+      const x0 = e.clientX, y0 = e.clientY, tx0 = tx, ty0 = ty;
+      const mv = function (ev) { tx = tx0 + ev.clientX - x0; ty = ty0 + ev.clientY - y0; apply(); };
+      const up = function () { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+      window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+    });
+  })();
+
+  // 消息全屏查看器双指缩放:viewport 是 user-scalable=no(原生捏合被禁),
+  // 在查看器内接管双指手势,用 CSS zoom 缩放内容(1~4 倍,关闭时重置)。
+  (function () {
+    const viewer = document.getElementById('fs-viewer');
+    if (!viewer) return;
+    let startDist = 0, startZoom = 1, pinching = false;
+    const tdist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    viewer.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 2) { pinching = false; return; }
+      pinching = true;
+      startDist = tdist(e.touches) || 1;
+      startZoom = Number($('fs-body').style.zoom) || 1;
+    }, { passive: true });
+    viewer.addEventListener('touchmove', function (e) {
+      if (!pinching || e.touches.length < 2) return;
+      e.preventDefault(); // 双指期间阻止滚动,手势归缩放
+      $('fs-body').style.zoom = Math.min(4, Math.max(1, startZoom * tdist(e.touches) / startDist)) || '';
+    }, { passive: false });
+    viewer.addEventListener('touchend', function (e) { if (e.touches.length < 2) pinching = false; }, { passive: true });
+    viewer.addEventListener('touchcancel', function () { pinching = false; }, { passive: true });
+  })();
 
   // ---------- 输入区 ----------
   const ta = $('msg-input');
@@ -1673,6 +2041,7 @@
   };
 
   // ---------- 初始化 ----------
+  bindChatScroll(); // 聊天区滚动跟随/右下角回底按钮(只绑一次)
   selectMode('secretary'); // 默认选中【文秘助理】
   setView('welcome');
   loadSessionList();
