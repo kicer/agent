@@ -680,7 +680,9 @@
       html += '<div class="conv-wrap">' +
         '<button class="conv-item' + (s.id === state.sessionId ? ' active' : '') + '" data-id="' + esc(s.id) + '">' +
           '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
-          '<button class="conv-del-inline" type="button" aria-label="删除会话" title="删除会话">×</button>' +
+        '</button>' +
+        '<button class="conv-del" data-del="' + esc(s.id) + '" title="删除会话" aria-label="删除会话">' +
+          '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
         '</button>' +
       '</div>';
     }
@@ -1445,14 +1447,9 @@
     searchTimer = setTimeout(loadSessionList, 250);
   });
   $('drawer-list').addEventListener('click', e => {
-    if (e.target.closest('.conv-del-inline')) {
-      const wrap = e.target.closest('.conv-wrap');
-      const item = wrap && wrap.querySelector('.conv-item');
-      if (item) { deleteSession(item.dataset.id); collapseAllSwiped(); }
-      return; // 不打开会话
-    }
-    // 点击后收起其他已滑开的行
-    collapseAllSwiped();
+    // 桌面端 hover 删除按钮:先于打开会话处理,点击弹删除确认 modal
+    const delBtn = e.target.closest('.conv-del');
+    if (delBtn) { e.stopPropagation(); deleteSession(delBtn.dataset.del); return; }
     const item = e.target.closest('.conv-item');
     if (!item) return;
     openSession(item.dataset.id);
@@ -1460,13 +1457,6 @@
   });
 
   // ---------- 移动端右滑会话行露出删除按钮(iOS 风格) ----------
-  function collapseAllSwiped(except) {
-    document.querySelectorAll('.conv-wrap.swiped').forEach(el => {
-      if (el === except) return; // 保留当前手势的行,避免自己滑回去时弹回
-      el.classList.remove('swiped');
-      const it = el.querySelector('.conv-item'); if (it) it.style.transform = '';
-    });
-  }
   (function bindSwipeToDelete() {
     const list = $('drawer-list');
     const THRESHOLD = 60;  // 滑过这个距离开
@@ -1479,7 +1469,7 @@
       if (!item || !wrap) { g = null; return; }
       // 关闭 transform 动画,保证跟手不粘滞
       item.style.transition = 'none';
-      g = { x0: t.clientX, y0: t.clientY, t0: Date.now(), wrap, item, horiz: false, lastX: t.clientX, wasSwiped: wrap.classList.contains('swiped') };
+      g = { x0: t.clientX, y0: t.clientY, t0: Date.now(), wrap, item, horiz: false, lastX: t.clientX };
     }
     function onMove(e) {
       if (!g) return;
@@ -1489,21 +1479,13 @@
       // 先判断为横向手势才接管
       if (!g.horiz) {
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-        if (Math.abs(dy) > Math.abs(dx) + 6) { g = null; restoreTrans(); return; } // 竖向滚动,不接管
+        if (Math.abs(dy) > Math.abs(dx) + 6) { g = null; g.item.style.transition = ''; return; } // 竖向滚动,不接管
         g.horiz = true;
-        // 横向识别:收起其他已滑开的行(自己保留)
-        collapseAllSwiped(g.wrap);
       }
-      // 统一 clamp 到 [-60, 0]:负值左滑出删除、正值表示右滑回去
-      // 起手已 swiped 状态:基线是 -60
-      const base = g.wasSwiped ? -60 : 0;
-      const off = Math.max(-60, Math.min(0, base + dx));
+      // 跟手 clamp 到 [-60, 0]:负值左滑,正值右滑
+      const off = Math.max(-60, Math.min(0, dx));
       g.item.style.transform = 'translateX(' + off + 'px)';
       g.lastX = t.clientX;
-    }
-    function restoreTrans() {
-      // 还原 conv-item 的 transition,让后续 swipe 动作有弹回动画
-      if (g && g.item) g.item.style.transition = '';
     }
     function onUp(e) {
       if (!g) return;
@@ -1513,21 +1495,13 @@
       // 恢复 transition(为 snap 提供动画)
       g.item.style.transition = '';
       if (g.horiz) {
-        if (moved >= THRESHOLD) {
-          // 起手已是已滑开态 + 右滑回去:不应该触发删除,直接恢复原状
-          if (g.wasSwiped && dx > 0) {
-            // 保持 swiped 状态(因为这是从 -60 滑回 -30 不到 0 的情况)
-            // 但本次手不是超阈值出去的,既然收回去就令弹回
-            g.wrap.classList.remove('swiped');
-            g.item.style.transform = '';
-          } else {
-            // 滑到位:不露 conv-del,直接弹删除确认 modal
-            g.wrap.classList.remove('swiped');
-            g.item.style.transform = '';
-            deleteSession(g.item.dataset.id);
-          }
+        if (moved >= THRESHOLD && dx < 0) {
+          // 左滑到位:弹删除确认 modal(不露 conv-del)
+          g.wrap.classList.remove('swiped');
+          g.item.style.transform = '';
+          deleteSession(g.item.dataset.id);
         } else {
-          // 未达阈值:弹回
+          // 右滑到位 或 未达阈值:弹回
           g.wrap.classList.remove('swiped');
           g.item.style.transform = '';
         }

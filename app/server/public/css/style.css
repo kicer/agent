@@ -465,23 +465,18 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   width: 100%;
 }
 
-/* 桌面端用的内联小 ×:默认隐藏,hover/focus 露出 */
-.conv-item .conv-del-inline {
-  display: none;
-  flex: none; width: 22px; height: 22px; border-radius: 50%;
-  background: transparent; border: 0; color: var(--gray-light);
-  font-size: 16px; line-height: 1; padding: 0; cursor: pointer;
-  align-items: center; justify-content: center;
+/* 桌面端 hover 删除按钮:鼠标经过会话行时右侧显示,点击弹删除确认 modal
+   (触屏设备不显示,移动端删除仍走左滑手势) */
+.conv-del {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; border-radius: 7px;
+  display: none; align-items: center; justify-content: center;
+  color: var(--gray); background: var(--surface); border: 1px solid var(--border);
+  z-index: 2;
 }
 @media (hover: hover) and (pointer: fine) {
-  /* 仅带精确指针(鼠标/触摸板)且能 hover 的设备才在行内露小 ×
-     触屏设备即使满足 (hover: hover) 也不命中,避免点按后持续 hover 露出 × */
-  .conv-item .conv-del-inline { display: flex; }
-  .conv-item:hover .conv-del-inline,
-  .conv-item:focus-within .conv-del-inline,
-  .conv-item .conv-del-inline:focus { color: var(--ink); }
-  .conv-item .conv-del-inline:hover,
-  .conv-item .conv-del-inline:active { color: #fff; background: #c0392b; }
+  .conv-wrap:hover .conv-del { display: flex; }
+  .conv-del:hover { color: #c0392b; background: #fdf3f2; border-color: #eac2bd; }
 }
 .drawer-empty { padding: 24px 10px; font-size: 13px; color: var(--gray-light); text-align: center; }
 
