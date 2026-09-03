@@ -39,6 +39,12 @@
   <script>
     'use strict';
     const TOKEN_KEY = 'agent_token';
+    // bfcache(前进/后退缓存)恢复会绕过服务端“已登录访问 /login → 302 回主页”的判定，
+    // 侧滑返回可能直接复活旧登录表单。能走到这里说明 /login 是历史残留条目，立刻踢回主页；
+    // 若其实已登出，服务端会再 302 回 /login，拿到的也是新鲜表单而非僵尸页。
+    window.addEventListener('pageshow', e => {
+      if (e.persisted) location.replace('/');
+    });
     // WebView 封装 APK 杀进程后 HttpOnly cookie 可能没落盘，但 localStorage 还在：
     // 登录成功后把 token 另存一份，下次进来先尝试用旧 token 静默恢复登录态。
     async function autoRestore() {
@@ -79,7 +85,7 @@
         }
         const j = await res.json().catch(() => ({}));
         if (j && j.token) localStorage.setItem(TOKEN_KEY, j.token);
-        location.href = '/';
+        location.replace('/'); // 替换而非压栈：历史里不留 /login 条目，登录后侧滑不会退回登录页
       } catch (e2) {
         errEl.textContent = e2.message || '登录失败';
         btn.disabled = false;
