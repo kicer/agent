@@ -343,6 +343,22 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   background: var(--active-soft); color: var(--active); cursor: pointer;
 }
 .files-panel-header .file-upload:active { background: var(--active); color: #fff; }
+/* 上传总进度条(header 中间,上传中显示) */
+.files-panel-progress {
+  flex: 1; min-width: 0; height: 6px; margin: 0 10px;
+  background: var(--surface); border-radius: 3px; overflow: hidden; position: relative;
+}
+.files-panel-progress .bar {
+  height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--active) 0%, #6b8cff 100%);
+  border-radius: 3px;
+  transition: width .12s linear;
+}
+.files-panel-progress .pct {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  font-size: 10px; color: var(--gray); background: var(--page); padding: 0 4px; line-height: 1;
+  white-space: nowrap; pointer-events: none;
+}
 .files-panel-header .file-upload svg {
   width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round;
