@@ -167,7 +167,7 @@
         <div id="moe-newplat-wrap" class="hidden">
           <input type="text" id="moe-np-name" placeholder="平台名称(留空取域名主机段)">
           <input type="text" id="moe-np-url" placeholder="平台上游地址(OpenAI 兼容 /v1)">
-          <input type="text" id="moe-np-type" value="openai" placeholder="类型(任意自定义;余额查询已接入:deepseek)">
+          <input type="text" id="moe-np-type" value="" placeholder="类型(任意自定义;余额查询已接入:deepseek)">
           <input type="text" id="moe-np-key" placeholder="api_key(留空则不带鉴权头)">
           <input type="number" id="moe-np-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)">
         </div>
@@ -2557,7 +2557,7 @@
         body = { op: 'append', path: ['platforms'], value: {
           name: $('moe-np-name').value.trim(),
           url,
-          type: $('moe-np-type').value.trim() || 'openai',
+          type: $('moe-np-type').value.trim() || 'custom',
           keys: [{ api_key: $('moe-np-key').value.trim(), concurrency: parseInt($('moe-np-con').value, 10) || 1, models: [model] }],
         } };
       } else if (t === 'newkey') {
