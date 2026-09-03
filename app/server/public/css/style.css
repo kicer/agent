@@ -327,12 +327,14 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 }
 .conv-item:active { background: var(--surface); }
 .conv-item.active { background: var(--active-soft); color: var(--active); }
-/* 会话行内状态胶囊:比状态栏版本更紧凑 */
-.conv-item .status-pill {
-  flex: none; font-size: 10px; line-height: 1.2; padding: 2px 7px; border-radius: 8px;
-  gap: 4px;
+/* 会话行内状态指示:状态色圆点(排队=蓝/活跃=绿/保持=黄;活跃呼吸闪烁) */
+.conv-item .st-dot {
+  flex: none; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--gray-light);
 }
-.conv-item .status-pill::before { width: 5px; height: 5px; }
+.conv-item .st-dot.queued { background: var(--active); }
+.conv-item .st-dot.active { background: #1c7a2e; animation: pill-pulse 1.2s ease-in-out infinite; }
+.conv-item .st-dot.held { background: #b8860b; }
 .drawer-empty { padding: 24px 10px; font-size: 13px; color: var(--gray-light); text-align: center; }
 
 /* 底部用户区 */

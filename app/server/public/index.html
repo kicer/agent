@@ -363,8 +363,14 @@
       secretary: '<svg class="header-mode-icon" viewBox="0 0 24 24"><path d="M6 3h12l4 6-10 13L2 9z"></path><polyline points="2 9 22 9"></polyline><polyline points="10 3 8 9 12 22"></polyline><polyline points="14 3 16 9 12 22"></polyline></svg>',
       vision:    '<svg class="header-mode-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
     };
-    c.innerHTML =
-      '<div class="header-title">' + (modeIcons[state.mode] || '') + esc(state.sessionTitle || state.sessionId) + '</div>';
+    const title = document.createElement('div');
+    title.className = 'header-title';
+    title.style.cursor = 'pointer';
+    title.title = '点击重命名';
+    title.innerHTML = (modeIcons[state.mode] || '') + esc(state.sessionTitle || state.sessionId);
+    title.addEventListener('click', renameSession); // 点标题重命名(同步 index)
+    c.innerHTML = '';
+    c.appendChild(title);
   }
 
   // ---------- 模式切换区 ----------
@@ -628,12 +634,13 @@
     return d.getFullYear() + '年' + (d.getMonth() + 1) + '月';
   }
 
-  // 抽屉行状态胶囊:仅进行中的会话(排队/活跃/保持)展示,已完成/已终止不展示
+  // 抽屉行状态指示:仅进行中的会话(排队/活跃/保持)展示彩色圆点,已完成/已终止不显示
   const DRAWER_STATUS_TEXT = { queued: '排队中', active: '活跃中', held: '保持中' };
-  function drawerPillHtml(s) {
+  function drawerStatusDot(s) {
     const st = s && s.status;
-    if (!DRAWER_STATUS_TEXT[st]) return '';
-    return '<span class="status-pill ' + esc(st) + '">' + DRAWER_STATUS_TEXT[st] + '</span>';
+    const label = DRAWER_STATUS_TEXT[st];
+    if (!label) return '';
+    return '<span class="st-dot ' + esc(st) + '" aria-label="' + label + '"></span>';
   }
 
   function renderDrawerList() {
@@ -645,7 +652,7 @@
       const g = groupLabel(s.updated_at);
       if (g !== lastGroup) { html += '<div class="group-label">' + esc(g) + '</div>'; lastGroup = g; }
       html += '<button class="conv-item' + (s.id === state.sessionId ? ' active' : '') + '" data-id="' + esc(s.id) + '">' +
-        '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerPillHtml(s) +
+        '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
         '</button>';
     }
     box.innerHTML = html;
@@ -731,6 +738,23 @@
     $('msg-input').value = '';
     autosize();
     updateScrollBottomBtn();
+  }
+
+  // ---------- 会话重命名(点击 header 标题触发;PATCH 接口,同步 index 交互) ----------
+  async function renameSession() {
+    if (!state.sessionId) return;
+    const cur = state.sessionTitle || state.sessionId;
+    // 标题与 id 相同时(未命名)输入框留空
+    const t = await promptModal('重命名会话', '输入新的会话名称', cur === state.sessionId ? '' : cur);
+    if (t === null) return; // 取消
+    const title = String(t).trim();
+    try {
+      await req('PATCH', '/api/sessions/' + state.sessionId, { title: title });
+      toast('已重命名');
+      state.sessionTitle = title;
+      renderHeader();
+      loadSessionList();
+    } catch (e) { toast('重命名失败:' + e.message); }
   }
 
   // ---------- 会话状态栏(搬自 index 的 phase-bar 功能) ----------
