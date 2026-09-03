@@ -526,7 +526,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 
 /* ================= 回到底部浮动按钮(同步 index 右下角导航浮动图标) ================= */
 .scroll-bottom-btn {
-  position: absolute; right: 14px; bottom: 130px;
+  position: absolute; right: 14px; bottom: 140px;
   width: 38px; height: 38px; border-radius: 50%;
   border: none; cursor: pointer; padding: 0;
   display: flex; align-items: center; justify-content: center;
