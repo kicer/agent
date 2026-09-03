@@ -1036,7 +1036,7 @@
     body.appendChild(clone);
     $('fs-viewer').classList.remove('hidden');
   }
-  function closeFullscreen() { $('fs-viewer').classList.add('hidden'); }
+  function closeFullscreen() { $('fs-viewer').classList.add('hidden'); $('fs-viewer').dispatchEvent(new Event('fs:close')); }
   // 双击消息气泡/工具卡 → 全屏查看(操作钮/图片不误触全屏)
   $('chat-view').addEventListener('dblclick', function (e) {
     if (e.target.closest('.act') || e.target.closest('img')) return;
@@ -1178,15 +1178,13 @@
         return;
       }
       el.innerHTML = files.map(f => {
-        // 预览策略：md/txt/html 进 fs-viewer 预览；pdf/图片浏览器原生渲染更稳，转 blob URL 新标签页打开
+        // 预览策略：md/txt/html + 图片在 fs-viewer 预览（pdf 不预）
         const low = f.filename.toLowerCase();
-        const fsPv = /\.(md|txt|html?)$/.test(low);
-        const tabOpen = /\.(pdf|png|jpe?g|gif|webp|svg)$/.test(low);
-        let ico;
-        if (fsPv) ico = '<svg class="file-ico" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
-        else if (tabOpen) ico = '<svg class="file-ico" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>';
-        else ico = '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
-        return '<div class="file-row' + ((fsPv || tabOpen) ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '">' +
+        const fsPv = /\.(md|txt|html?|png|jpe?g|gif|webp|svg)$/.test(low);
+        const ico = fsPv
+          ? '<svg class="file-ico" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
+          : '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+        return '<div class="file-row' + (fsPv ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '">' +
           ico +
           '<span class="file-name">' + esc(String(f.filename).split('/').pop() || f.filename) + '</span>' +
           '<span class="file-size">' + fmtSize(f.size) + '</span>' +
@@ -1196,7 +1194,7 @@
       }).join('');
     } catch (e) { toast('读取文件失败:' + e.message); }
   }
-  // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe
+  // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe、图片用 <img>
   async function previewInFs(name) {
     try {
       const r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
@@ -1212,7 +1210,23 @@
         iframe.srcdoc = html;
         body.appendChild(iframe);
         $('fs-viewer').classList.remove('hidden');
+      } else if (/\.(png|jpe?g|gif|webp|svg)$/i.test(name)) {
+        // 图片：走 blob URL 在 fs-viewer 里居中显示；blob 需保留到查看器关闭后再释放
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const body = $('fs-body');
+        body.innerHTML = '';
+        const img = document.createElement('img');
+        img.className = 'fs-img-frame';
+        img.alt = name;
+        img.src = url;
+        body.appendChild(img);
+        $('fs-viewer').classList.remove('hidden');
+        // 关闭全屏时回收 blob URL（closeFullscreen 会清空 #fs-body，顺便干掉 img.src）
+        const onClose = function () { try { URL.revokeObjectURL(url); } catch (_) {} $('fs-viewer').removeEventListener('fs:close', onClose); };
+        $('fs-viewer').addEventListener('fs:close', onClose);
       } else {
+        // md/txt：复用双击气泡的全屏查看器
         const text = await r.text();
         let cls = 'bubble-ai', html;
         if (/\.md$/i.test(name)) {
@@ -1225,21 +1239,9 @@
         const wrap = document.createElement('div');
         wrap.className = 'msg other';
         wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';
-        openFullscreen(wrap.firstChild); // 复用双击气泡的全屏查看器
+        openFullscreen(wrap.firstChild);
       }
     } catch (e) { toast('预览失败:' + e.message); }
-  }
-  // 单击 pdf/图片 → 浏览器原生渲染最稳；拉流走同源 cookie 鉴权，转 blob URL 后新标签页打开
-  async function openInTab(name) {
-    try {
-      const r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
-      if (r.status === 401) { location.href = '/login'; return; }
-      if (!r.ok) { let msg = 'HTTP ' + r.status; try { msg = (await r.json()).error || msg; } catch (_) {} throw new Error(msg); }
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank', 'noopener');
-      setTimeout(function () { URL.revokeObjectURL(url); }, 60 * 1000);
-    } catch (e) { toast('打开失败:' + e.message); }
   }
   async function downloadFile(name) {
     if (!state.sessionId) return;
@@ -1261,10 +1263,7 @@
     const path = row.dataset.path;
     if (!path) return;
     if (e.target.closest('.del')) deleteFile(path);
-    else if (e.target.closest('.file-row.clickable') && !e.target.closest('.file-act')) {
-      if (/\.(pdf|png|jpe?g|gif|webp|svg)$/i.test(path)) openInTab(path);
-      else previewInFs(path);
-    }
+    else if (e.target.closest('.file-row.clickable') && !e.target.closest('.file-act')) previewInFs(path);
     else if (e.target.closest('.file-act')) downloadFile(path);
   });
   // ---------- 大图上传前压缩(同步 v1:阈值/参数由 /api/system/status 透出) ----------
