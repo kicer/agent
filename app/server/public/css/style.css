@@ -48,7 +48,7 @@ input, textarea { font: inherit; color: inherit; border: 0; outline: none; backg
   min-height: 56px;
 }
 .header .icon-btn {
-  width: 40px; height: 40px; border-radius: 50%;
+  width: 36px; height: 36px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   color: var(--ink);
 }
