@@ -41,7 +41,9 @@ router.post('/:id/messages', wrap((req, res) => {
     req.body && req.body.attachments
   );
   if (!content) return res.status(400).json({ error: 'content 不能为空' });
-  const r = engine.postUserMessage(req.params.id, content);
+  // deepThink：是否启用模型该「深度思考」参数（thinking_params 合并进上游请求体）
+  const deepThink = !!(req.body && req.body.deepThink);
+  const r = engine.postUserMessage(req.params.id, content, { deepThink });
   log.info('[msg] ' + (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
     content.slice(0, 60).replace(/\s+/g, ' '));
   res.json(r);

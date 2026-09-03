@@ -562,6 +562,8 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       signal: run.abortController.signal,
       shouldCancel: () => run.cancelled,
       onText: delta => bus.emit(sessionId, 'assistant_delta', { text: delta }),
+      // 本轮是否启用深度思考；由 postUserMessage 从消息 POST 参数写进 run
+      deepThink: !!run.deepThink,
     });
   } finally {
     run.abortController = null;
@@ -705,6 +707,8 @@ function createSession(title, preferModelId) {
 }
 
 // 用户消息（或“开始执行”的模板消息）入口。
+// opts.deepThink: true 时启用深度思考；参数会记在会话 run 上，
+// 正在跑的回合下一轮迭代会取到最新值。新建会话需在 runLoop 之前先预建 run 以携带该值。
 function postUserMessage(sessionId, content, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -712,8 +716,10 @@ function postUserMessage(sessionId, content, opts) {
   if (!session.title) {
     touch(sessionId, { title: content.slice(0, 24) });
   }
-  const run = runs.get(sessionId);
-  if (session.status === 'active' && run && run.looping) {
+  // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
+  const run = getRun(sessionId, true);
+  run.deepThink = !!(opts && opts.deepThink);
+  if (session.status === 'active' && run.looping) {
     // 正在跑：下一轮迭代会从 DB 重新加载历史，自动带上这条消息
     return { message_id: messageId, delivered: 'live' };
   }
@@ -724,7 +730,7 @@ function postUserMessage(sessionId, content, opts) {
     runLoop(sessionId);
     return { message_id: messageId, delivered: 'live' };
   }
-  if (session.status === 'active' && (!run || !run.looping)) {
+  if (session.status === 'active' && !run.looping) {
     runLoop(sessionId);
     return { message_id: messageId, delivered: 'live' };
   }

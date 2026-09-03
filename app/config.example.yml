@@ -16,6 +16,11 @@ platforms:
             display_name: "AMD DeepSeek 1" # 显示名，缺省同 id
             # vision: true                # 选填，默认 false；支持时 read_file 读图会压缩回传（长边≤2000px JPEG），会话上下文会告知 AI
             # enable: false               # 选填，默认 true；禁用后不进模型池，不参与分配/绑定（重启生效）
+            # extra_params:                # 选填：每次发往上游都会合并进 body 顶层的对象；同 key 覆盖默认（model/messages/stream/temperature/tools）
+            #   top_p: 0.9
+            #   response_format: { type: "json_object" }
+            # thinking_params:              # 选填：仅「深度思考」开启时合并进 body（优先级高于 extra_params）
+            #   thinking: { type: "enabled", budget_tokens: 4096 }
           - id: ds2
             display_name: "AMD DeepSeek 2"
       - api_key: "sk-..."                 # 同平台的第二个 Key

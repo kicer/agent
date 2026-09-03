@@ -99,6 +99,10 @@ function normalizePlatforms(rawPlatforms) {
           display_name: m.display_name ? String(m.display_name) : String(m.id),
           vision: m.vision === true, // 支持时 read_file 读图会回传图片，会话上下文会告知 AI
           enable: m.enable !== false, // 选填，默认启用；禁用后不进模型池，不参与分配/绑定（重启生效）
+          // 选填：模型特有的请求体参数对象。发往上游时整体合并进 body 顶层。
+          extra_params: (m.extra_params && typeof m.extra_params === 'object' && !Array.isArray(m.extra_params)) ? m.extra_params : {},
+          // 选填：前端启用「深度思考」时合并进 body。可覆盖 extra_params 的同名键。
+          thinking_params: (m.thinking_params && typeof m.thinking_params === 'object' && !Array.isArray(m.thinking_params)) ? m.thinking_params : {},
         });
       }
       keys.push({ api_key: String(k.api_key || ''), concurrency, models });
@@ -131,6 +135,7 @@ function parseAndValidate(rawText, configPath) {
       // mid = 发给上游的原始模型名（请求体 body.model 用它）。
       id: p.name + '/' + m.id, mid: m.id,
       display_name: m.display_name, vision: m.vision, enable: m.enable,
+      extra_params: m.extra_params, thinking_params: m.thinking_params,
       url: p.url, api_key: k.api_key, platform: p.name, type: p.type, concurrency: k.concurrency,
       platform_index: pi, key_index: ki, model_index: mi,
     });

@@ -269,7 +269,6 @@
    *
    * 无后端支撑、仅前端占位的概念(先不实现):
    *   · 「文秘助理 / 识图专家」模式 —— 后端无 mode 字段,当前仅影响提示文案
-   *   · 「深度思考」开关 —— 后端无 reasoning/deep-think 参数,当前仅本地视觉状态
    *   · 「思考过程」折叠块(已思考 N 秒) —— 后端不产出 reasoning,已移除 mock
    *   · 按条删除消息 —— 后端无消息级删除接口;消息下方的删除会话按钮已整体移除(改用状态栏「清空」)
    * 鉴权:任意请求 401 时跳转 /login(与 core.js 的 req 一致)。
@@ -937,7 +936,7 @@
       const id = await ensureSession();
       let atts = [];
       if (pending.length) atts = await uploadFiles(id, pending);
-      const body = { content };
+      const body = { content, deepThink: !!state.deepThink };
       if (atts.length) body.attachments = atts;
       await req('POST', '/api/sessions/' + id + '/messages', body);
 
@@ -1180,11 +1179,11 @@
   });
   $('send-btn').addEventListener('click', () => send()); // 发送按钮与 Enter 行为一致
 
-  // 深度思考开关(仅本地视觉状态,后端无 reasoning 参数)
+  // 深度思考开关：每次发消息随 body 传给后端，后端会合并该模型的 thinking_params
   $('deep-think-btn').addEventListener('click', () => {
     state.deepThink = !state.deepThink;
     $('deep-think-btn').classList.toggle('on', state.deepThink);
-    toast(state.deepThink ? '深度思考已开启(暂不影响后端)' : '深度思考已关闭');
+    toast(state.deepThink ? '深度思考已开启' : '深度思考已关闭');
   });
 
   // ---------- 任务文件面板(底部浮层:点输入行右侧发送旁的附件按钮展开,遮罩盖住输入区) ----------

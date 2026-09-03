@@ -99,8 +99,23 @@ async function forEachSSEData(response, onEvent) {
   }
 }
 
+// 深度合并 src 到 dst（就地改 dst）：同名键两边都是普通对象则递归；其余 src 覆盖 dst。
+// 用于将模型的 extra_params / thinking_params 合入上游请求体。
+function deepMergeInto(dst, src) {
+  for (const k of Object.keys(src || {})) {
+    const sv = src[k];
+    if (sv && typeof sv === 'object' && !Array.isArray(sv) && dst[k] && typeof dst[k] === 'object' && !Array.isArray(dst[k])) {
+      deepMergeInto(dst[k], sv);
+    } else {
+      dst[k] = sv;
+    }
+  }
+  return dst;
+}
+
 // 调模型一次。onText(textDelta) 回调流式文本。
 // 返回 { content, tool_calls: [{id,name,arguments(string)}], finish_reason, usage, aborted }
+// options.deepThink: true 时将 modelCfg.thinking_params 合并进 body。
 async function callModel(cfg, modelId, messages, tools, options) {
   const opts = options || {};
   const controller = new AbortController();
@@ -120,6 +135,13 @@ async function callModel(cfg, modelId, messages, tools, options) {
     temperature: cfg.agent.temperature,
   };
   if (tools && tools.length) body.tools = tools;
+  // 模型特有请求参数：与内置字段同名时额外优先（同时思考参数可覆盖）
+  if (modelCfg.extra_params && Object.keys(modelCfg.extra_params).length) {
+    deepMergeInto(body, modelCfg.extra_params);
+  }
+  if (opts.deepThink && modelCfg.thinking_params && Object.keys(modelCfg.thinking_params).length) {
+    deepMergeInto(body, modelCfg.thinking_params);
+  }
 
   const headers = { 'Content-Type': 'application/json' };
   if (modelCfg.api_key) headers.Authorization = 'Bearer ' + modelCfg.api_key;
