@@ -431,9 +431,10 @@
     const attach = p.files && p.files.length
       ? '<div class="attach-line">📎 ' + esc(p.files.join('、')) + '</div>' : '';
     const r = mdHtml(p.text);
+    // 复制内容取纯文本（不含【系统通知】附件行），与气泡里显示一致
     return '<div class="msg me">' +
       '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
-      '<div class="msg-actions"><span>' + fmtTime(m.created_at) + '</span></div>' +
+      actionsHtml(m.created_at, p.text) +
     '</div>';
   }
 
@@ -571,7 +572,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'msg me';
     wrap.innerHTML = '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
-      '<div class="msg-actions"><span>' + fmtTime(Date.now()) + '</span></div>';
+      actionsHtml(Date.now(), content);
     $('chat-view').appendChild(wrap);
     scrollBottom();
   }
@@ -1177,12 +1178,15 @@
         return;
       }
       el.innerHTML = files.map(f => {
-        const pv = /\.(md|txt)$/i.test(f.filename); // md/txt 支持单击预览
-        // 可预览文件的行首图标用眼睛，与普通文件图标区分
-        const ico = pv
-          ? '<svg class="file-ico" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
-          : '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
-        return '<div class="file-row' + (pv ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '">' +
+        // 预览策略：md/txt/html 进 fs-viewer 预览；pdf/图片浏览器原生渲染更稳，转 blob URL 新标签页打开
+        const low = f.filename.toLowerCase();
+        const fsPv = /\.(md|txt|html?)$/.test(low);
+        const tabOpen = /\.(pdf|png|jpe?g|gif|webp|svg)$/.test(low);
+        let ico;
+        if (fsPv) ico = '<svg class="file-ico" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+        else if (tabOpen) ico = '<svg class="file-ico" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>';
+        else ico = '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+        return '<div class="file-row' + ((fsPv || tabOpen) ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '">' +
           ico +
           '<span class="file-name">' + esc(String(f.filename).split('/').pop() || f.filename) + '</span>' +
           '<span class="file-size">' + fmtSize(f.size) + '</span>' +
@@ -1192,26 +1196,50 @@
       }).join('');
     } catch (e) { toast('读取文件失败:' + e.message); }
   }
-  // 单击可预览文件 → 与双击会话消息同一全屏预览窗(#fs-viewer)：md 按 markdown 渲染，txt 保持原文排版
-  async function previewTextFile(name) {
+  // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe
+  async function previewInFs(name) {
     try {
       const r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
       if (r.status === 401) { location.href = '/login'; return; }
       if (!r.ok) { let msg = 'HTTP ' + r.status; try { msg = (await r.json()).error || msg; } catch (_) {} throw new Error(msg); }
-      const text = await r.text();
-      let cls = 'bubble-ai', html;
-      if (/\.md$/i.test(name)) {
-        const r2 = mdHtml(text);
-        html = r2.html;
-        if (r2.fmt) cls += ' md';
+      if (/\.html?$/i.test(name)) {
+        const html = await r.text();
+        const body = $('fs-body');
+        body.innerHTML = '';
+        const iframe = document.createElement('iframe');
+        iframe.className = 'fs-html-frame';
+        iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+        iframe.srcdoc = html;
+        body.appendChild(iframe);
+        $('fs-viewer').classList.remove('hidden');
       } else {
-        html = esc(text);
+        const text = await r.text();
+        let cls = 'bubble-ai', html;
+        if (/\.md$/i.test(name)) {
+          const r2 = mdHtml(text);
+          html = r2.html;
+          if (r2.fmt) cls += ' md';
+        } else {
+          html = esc(text);
+        }
+        const wrap = document.createElement('div');
+        wrap.className = 'msg other';
+        wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';
+        openFullscreen(wrap.firstChild); // 复用双击气泡的全屏查看器
       }
-      const wrap = document.createElement('div');
-      wrap.className = 'msg other';
-      wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';
-      openFullscreen(wrap.firstChild); // 复用双击气泡的全屏查看器
     } catch (e) { toast('预览失败:' + e.message); }
+  }
+  // 单击 pdf/图片 → 浏览器原生渲染最稳；拉流走同源 cookie 鉴权，转 blob URL 后新标签页打开
+  async function openInTab(name) {
+    try {
+      const r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
+      if (r.status === 401) { location.href = '/login'; return; }
+      if (!r.ok) { let msg = 'HTTP ' + r.status; try { msg = (await r.json()).error || msg; } catch (_) {} throw new Error(msg); }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(function () { URL.revokeObjectURL(url); }, 60 * 1000);
+    } catch (e) { toast('打开失败:' + e.message); }
   }
   async function downloadFile(name) {
     if (!state.sessionId) return;
@@ -1233,7 +1261,10 @@
     const path = row.dataset.path;
     if (!path) return;
     if (e.target.closest('.del')) deleteFile(path);
-    else if (e.target.closest('.file-row.clickable') && !e.target.closest('.file-act')) previewTextFile(path);
+    else if (e.target.closest('.file-row.clickable') && !e.target.closest('.file-act')) {
+      if (/\.(pdf|png|jpe?g|gif|webp|svg)$/i.test(path)) openInTab(path);
+      else previewInFs(path);
+    }
     else if (e.target.closest('.file-act')) downloadFile(path);
   });
   // 面板内上传:直接写入当前会话任务目录
