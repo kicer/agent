@@ -742,6 +742,7 @@
     state.attachments = [];
     userPaused = false;
     renderAttachChips();
+    renderDrawerList(); // 会话切换后立刻重画抽屉高亮,避免下次打开才看到更新
     setView('chat');
     $('chat-view').innerHTML = '<div class="drawer-empty">加载中…</div>';
     try {
@@ -1441,14 +1442,94 @@
   $('drawer-list').addEventListener('click', e => {
     if (e.target.closest('.conv-del')) {
       const item = e.target.closest('.conv-item');
-      if (item) deleteSession(item.dataset.id);
+      if (item) { deleteSession(item.dataset.id); collapseAllSwiped(); }
       return; // 不打开会话
     }
+    // 点击后收起其他已滑开的行
+    collapseAllSwiped();
     const item = e.target.closest('.conv-item');
     if (!item) return;
     openSession(item.dataset.id);
     openDrawer(false);
   });
+
+  // ---------- 移动端右滑会话行露出删除按钮(iOS 风格) ----------
+  function collapseAllSwiped() {
+    document.querySelectorAll('.conv-item.swiped').forEach(el => el.classList.remove('swiped'));
+  }
+  (function bindSwipeToDelete() {
+    const list = $('drawer-list');
+    const THRESHOLD = 60;  // 滑过这个距离开
+    const CLOSE = 30;      // 不够这个距离弹回
+    let g = null;          // {x0, y0, t0, item, horiz, lastX, swiped}
+    function onDown(e) {
+      if (e.touches.length !== 1) { g = null; return; }
+      const t = e.touches[0];
+      const item = e.target.closest('.conv-item');
+      if (!item) { g = null; return; }
+      g = { x0: t.clientX, y0: t.clientY, t0: Date.now(), item, horiz: false, lastX: t.clientX, swiped: item.classList.contains('swiped') };
+    }
+    function onMove(e) {
+      if (!g) return;
+      const t = e.touches[0];
+      const dx = t.clientX - g.x0;
+      const dy = t.clientY - g.y0;
+      // 先判断为横向手势才接管
+      if (!g.horiz) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        if (Math.abs(dy) > Math.abs(dx) + 6) { g = null; return; } // 竖向滚动,不接管
+        g.horiz = true;
+        // 右滑起手:收起其他已滑开的行
+        if (g.swiped) collapseAllSwiped();
+      }
+      // 只允许左滑出删除(dx<0)
+      if (dx >= 0) {
+        // 还在右侧:仅在原本已滑开时跟手
+        if (g.item.classList.contains('swiped')) {
+          // 从 -60 跟着手指向 0 走
+          const off = Math.max(-60, Math.min(0, -60 + dx));
+          g.item.style.transform = 'translateX(' + off + 'px)';
+          g.lastX = t.clientX;
+        }
+        return;
+      }
+      // 已滑开:从 -60 跟着手指走
+      if (g.item.classList.contains('swiped')) {
+        const off = Math.max(-60, Math.min(0, -60 + dx));
+        g.item.style.transform = 'translateX(' + off + 'px)';
+        g.lastX = t.clientX;
+        return;
+      }
+      // 未滑开:左滑逐渐出
+      const off = Math.max(-60, dx); // 不超过 -60
+      g.item.style.transform = 'translateX(' + off + 'px)';
+      g.lastX = t.clientX;
+    }
+    function onUp(e) {
+      if (!g) return;
+      const t = (e.changedTouches && e.changedTouches[0]) || null;
+      const dx = t ? t.clientX - g.x0 : (g.lastX - g.x0);
+      const moved = Math.abs(dx);
+      if (g.horiz) {
+        // 当前是否滑开:阈值判断
+        if (moved >= THRESHOLD) {
+          g.item.classList.add('swiped');
+          g.item.style.transform = ''; // CSS 接管
+        } else {
+          g.item.classList.remove('swiped');
+          g.item.style.transform = '';
+        }
+      } else {
+        // 未识别为横向:不动(交给 click 委派处理打开)
+        g.item.style.transform = '';
+      }
+      g = null;
+    }
+    list.addEventListener('touchstart', onDown, { passive: true });
+    list.addEventListener('touchmove', onMove, { passive: true });
+    list.addEventListener('touchend', onUp, { passive: true });
+    list.addEventListener('touchcancel', onUp, { passive: true });
+  })();
 
   // 会话页左缘右滑 → 拉出历史抽屉:跟随手指平移,超过阈值/快速右滑松手即打开。
   (function bindEdgeSwipe() {
