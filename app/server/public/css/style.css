@@ -125,6 +125,37 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .msg.me { align-items: flex-end; }
 .msg.other { align-items: flex-start; }
 
+/* 思考过程折叠面板:位于 AI 气泡上方。summary 小圆点+灰文字,body 等宽字体淡背景 */
+.msg-think {
+  width: 100%; max-width: 100%;
+  margin: 0 0 6px; padding: 0;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  font-size: 13px; color: var(--ink);
+  overflow: hidden;
+}
+.msg-think > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  padding: 6px 10px; display: flex; align-items: center; gap: 6px;
+  color: var(--gray); font-size: 12px;
+}
+.msg-think > summary::-webkit-details-marker { display: none; }
+.msg-think > summary::before {
+  content: '▸'; font-size: 10px; color: var(--gray-light);
+  transition: transform .15s; display: inline-block;
+}
+.msg-think[open] > summary::before { transform: rotate(90deg); }
+.msg-think-body {
+  padding: 4px 12px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.55;
+  color: var(--ink); white-space: pre-wrap; word-break: break-word;
+  max-height: 360px; overflow-y: auto;
+  border-top: 1px solid var(--border);
+  background: #fafbfd;
+}
+/* 流式阶段给一点视觉提示：边色稍亮，收尾（assistant_message）后去除 */
+.msg-think.streaming { border-color: #d8e0f5; }
+
 /* 用户气泡:右侧,浅色背景,圆角矩形 */
 .bubble-user {
   background: var(--active-soft); color: var(--ink);

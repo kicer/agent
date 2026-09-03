@@ -363,6 +363,9 @@
     es: null,                   // EventSource
     streamText: '',             // 当前流式累积文本
     streamEl: null,             // 当前流式 AI 气泡
+    streamWrap: null,           // 当前流式消息容器（.msg.other）；思考面板与气泡都挂它上面
+    streamReasoning: '',        // 当前流式累积思考文本
+    streamThinkEl: null,        // 当前流式思考面板的 body 节点（未出现思考时为 null）
     toolCards: {},              // tool_call_id -> 工具卡片元素(同步 index 工具卡样式)
     typingEl: null,             // 「思考中」占位
     streaming: false,
@@ -444,13 +447,16 @@
   }
 
   function aiMsgHtml(m) {
-    const hasText = !!(m.content && m.content.trim());
-    if (!hasText) return null; // 纯工具调用的应答:不渲染空气泡,工具卡由 appendToolCardsFromAssistant 铺
-    const r = mdHtml(m.content);
-    return '<div class="msg other">' +
-      '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>' +
-      actionsHtml(m.created_at, m.content) +
-    '</div>';
+    const text = (m.content || '').trim();
+    const reason = (m.reasoning || '').trim();
+    if (!text && !reason) return null; // 纯工具调用的应答:不渲染气泡,工具卡由 appendToolCardsFromAssistant 铺
+    const think = reason ? thinkPanelHtml(m.reasoning) : '';
+    const bubble = text ? (() => { const r = mdHtml(m.content); return '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>'; })() : '';
+    return '<div class="msg other">' + think + bubble + actionsHtml(m.created_at, m.content || '') + '</div>';
+  }
+  // 思考过程折叠面板:summary 固定名「思考过程」,body 展示推理全文
+  function thinkPanelHtml(text) {
+    return '<details class="msg-think"><summary>思考过程</summary><div class="msg-think-body">' + esc(text) + '</div></details>';
   }
 
   // ---------- 工具调用卡片(样式/交互同步 index;流式与历史共用) ----------
@@ -955,7 +961,39 @@
     }
   }
 
-  // ---------- SSE 流式 ----------
+  // ---------- SSE 流 ----------
+  // 助手消息流式容器：首个 delta 到达时创建，同时为思考面板预留挂载点
+  function ensureStreamWrap() {
+    if (state.streamWrap) return state.streamWrap;
+    const wrap = document.createElement('div');
+    wrap.className = 'msg other';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble-ai';
+    wrap.appendChild(bubble);
+    $('chat-view').appendChild(wrap);
+    state.streamWrap = wrap;
+    state.streamEl = bubble;
+    return wrap;
+  }
+  // 思考面板:首次思考 delta 到达时创建,带 open 状态（流式中默认展开）
+  function ensureStreamThinkPanel() {
+    if (state.streamThinkEl) return state.streamThinkEl;
+    if (!state.streamWrap) ensureStreamWrap();
+    const det = document.createElement('details');
+    det.className = 'msg-think streaming';
+    det.open = true; // 流式阶段默认展开，看思考增量
+    const sum = document.createElement('summary');
+    sum.textContent = '思考过程';
+    const body = document.createElement('div');
+    body.className = 'msg-think-body';
+    det.appendChild(sum);
+    det.appendChild(body);
+    // 插在气泡之前（思考 → 结论 的顺序）
+    state.streamWrap.insertBefore(det, state.streamEl);
+    state.streamThinkEl = body;
+    return body;
+  }
+
   function connectStream() {
     closeStream();
     if (!state.sessionId) return;
@@ -974,16 +1012,21 @@
       state.streamText += d.text;
       if (!state.streamEl) {
         if (!state.streamText.trim()) return; // 忽略前导空白(纯工具调用回合无文本)
-        const wrap = document.createElement('div');
-        wrap.className = 'msg other';
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble-ai';
-        wrap.appendChild(bubble);
-        $('chat-view').appendChild(wrap);
-        state.streamEl = bubble;
-        state.streamText = d.text;
+        ensureStreamWrap();
+        state.streamText = d.text; // 上面 if 已 trim 为非空
       }
       state.streamEl.textContent = state.streamText;
+      state.streaming = true;
+      maybeAutoScroll();
+      updateScrollBottomBtn();
+    });
+    es.addEventListener('reasoning_delta', ev => {
+      const d = JSON.parse(ev.data);
+      removeTyping();
+      state.streamReasoning += d.text;
+      if (!state.streamWrap) ensureStreamWrap();
+      ensureStreamThinkPanel();
+      state.streamThinkEl.textContent = state.streamReasoning;
       state.streaming = true;
       maybeAutoScroll();
       updateScrollBottomBtn();
@@ -993,23 +1036,40 @@
       removeTyping();
       const hasText = !!(d.content && d.content.trim());
       const r = hasText ? mdHtml(d.content) : null;
+      // 思考面板：本轮结束时锁定为后端返回的完整文本（不清空 streamReasoning 以防与历史回填不一致）
+      if (d.reasoning && d.reasoning.trim()) {
+        if (!state.streamWrap) ensureStreamWrap();
+        ensureStreamThinkPanel();
+        state.streamThinkEl.textContent = d.reasoning;
+      }
       if (state.streamEl) {
         if (r) {
           state.streamEl.className = 'bubble-ai' + (r.fmt ? ' md' : ''); // 增量期间是纯文本,收尾统一换 md 排版
           state.streamEl.innerHTML = r.html;
         } else {
+          // 无文本时去掉气泡（纯工具调用/纯思考也要保留思考面板）
           state.streamEl.remove();
         }
         state.streamEl = null;
         state.streamText = '';
       } else if (r) {
-        const wrap = document.createElement('div');
-        wrap.className = 'msg other';
-        wrap.innerHTML = '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>';
-        $('chat-view').appendChild(wrap);
+        // 没起过气泡但收到文本：现在才创建（思考先行、文本后到的罕见场景）
+        if (!state.streamWrap) ensureStreamWrap();
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble-ai' + (r.fmt ? ' md' : '');
+        bubble.innerHTML = r.html;
+        state.streamWrap.appendChild(bubble);
       }
       if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
       state.streaming = false;
+      // 思考面板默认折叠，避免挡着后续气泡；点击展开
+      if (state.streamWrap) {
+        const t = state.streamWrap.querySelector('.msg-think');
+        if (t && t.open) t.open = false;
+      }
+      state.streamWrap = null;
+      state.streamReasoning = '';
+      state.streamThinkEl = null;
       maybeAutoScroll();
       updateScrollBottomBtn();
     });
@@ -1032,6 +1092,9 @@
       state.streaming = false;
       state.streamEl = null; // 防御性清理:回合异常结束(如终止)时不留悬空气泡到下一轮
       state.streamText = '';
+      state.streamWrap = null;
+      state.streamReasoning = '';
+      state.streamThinkEl = null;
       state.toolCards = {};
       updateScrollBottomBtn();
       loadSessionList();

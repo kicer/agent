@@ -160,6 +160,7 @@ async function callModel(cfg, modelId, messages, tools, options) {
   }
 
   let content = '';
+  let reasoning = '';
   let finishReason = null;
   let usage = null;
   let aborted = false;
@@ -177,6 +178,14 @@ async function callModel(cfg, modelId, messages, tools, options) {
         content += delta.content;
         if (opts.onText) opts.onText(delta.content);
       }
+      // 思考/推理字段：各家上游不一致，同时支持 reasoning 和 reasoning_content；只走一个，优先级 reasoning
+      const rPiece = (typeof delta.reasoning === 'string' && delta.reasoning)
+        || (typeof delta.reasoning_content === 'string' && delta.reasoning_content)
+        || '';
+      if (rPiece) {
+        reasoning += rPiece;
+        if (opts.onReasoning) opts.onReasoning(rPiece);
+      }
       for (const tc of delta.tool_calls || []) {
         const idx = tc.index || 0;
         if (!toolCalls.has(idx)) toolCalls.set(idx, { id: '', name: '', arguments: '' });
@@ -193,7 +202,7 @@ async function callModel(cfg, modelId, messages, tools, options) {
   }
   if (opts.shouldCancel && opts.shouldCancel()) aborted = true;
 
-  return { content, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted };
+  return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted };
 }
 
 module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, encodeBlocks, decodeBlocks };

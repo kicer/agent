@@ -109,7 +109,7 @@ router.get('/:id', wrap((req, res) => {
   const session = engine.getSession(req.params.id);
   if (!session) return sendErr(res, Object.assign(new Error('会话不存在'), { status_code: 404 }));
   const db = engine.getDb();
-  const messages = db.prepare('SELECT id, role, content, tool_calls, tool_call_id, name, created_at FROM messages WHERE session_id = ? ORDER BY id').all(session.id);
+  const messages = db.prepare('SELECT id, role, content, reasoning, tool_calls, tool_call_id, name, created_at FROM messages WHERE session_id = ? ORDER BY id').all(session.id);
   const taskDir = engine.taskDirOf(session.id);
   res.json({
     session,

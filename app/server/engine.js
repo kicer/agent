@@ -75,8 +75,8 @@ function loadHistory(sessionId) {
 
 function saveMessage(sessionId, msg) {
   const info = db.prepare(
-    'INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, name, created_at) VALUES (?,?,?,?,?,?,?)'
-  ).run(sessionId, msg.role, msg.content || null,
+    'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, created_at) VALUES (?,?,?,?,?,?,?,?)'
+  ).run(sessionId, msg.role, msg.content || null, msg.reasoning || null,
     msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
     msg.tool_call_id || null, msg.name || null, now());
   // 关键动作日志：AI 每轮回复落库（含纯工具调用轮）
@@ -476,6 +476,7 @@ async function runLoopInner(sessionId, run) {
     const msgRow = {
       role: 'assistant',
       content: result.content || '',
+      reasoning: result.reasoning || null,
       tool_calls: hasTools ? result.tool_calls.map(tc => ({
         id: tc.id, type: 'function',
         function: { name: tc.name, arguments: tc.arguments },
@@ -483,7 +484,7 @@ async function runLoopInner(sessionId, run) {
     };
     const assistantId = saveMessage(sessionId, msgRow);
     recordModelUsage(sessionId, session.model_id, result.usage);
-    bus.emit(sessionId, 'assistant_message', { id: assistantId, content: msgRow.content, tool_calls: msgRow.tool_calls });
+    bus.emit(sessionId, 'assistant_message', { id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning, tool_calls: msgRow.tool_calls });
 
     if (!hasTools) {
       // 回合结束；但若期间用户又发了新消息（live 投递），继续下一轮而不是收尾
@@ -562,6 +563,7 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       signal: run.abortController.signal,
       shouldCancel: () => run.cancelled,
       onText: delta => bus.emit(sessionId, 'assistant_delta', { text: delta }),
+      onReasoning: delta => bus.emit(sessionId, 'reasoning_delta', { text: delta }),
       // 本轮是否启用深度思考；由 postUserMessage 从消息 POST 参数写进 run
       deepThink: !!run.deepThink,
     });
