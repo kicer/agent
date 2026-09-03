@@ -36,8 +36,10 @@ function initDb(dbPath) {
       created_at INTEGER NOT NULL,
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
-    // 升级老库：早期表不带 reasoning 列，补上（重入安全）
-    try { db.exec('ALTER TABLE messages ADD COLUMN reasoning TEXT'); } catch (_) { /* 已存在 */ }
+  `);
+  // 升级老库：早期表不带 reasoning 列，补上（重入安全；不在上面 db.exec 模板串里，免得被当作 SQL 解析）
+  try { db.exec('ALTER TABLE messages ADD COLUMN reasoning TEXT'); } catch (_) { /* 已存在 */ }
+  db.exec(`
 
     CREATE TABLE IF NOT EXISTS files (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
