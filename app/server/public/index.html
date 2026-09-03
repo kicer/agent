@@ -187,6 +187,7 @@
       <div class="modal">
         <h3 id="confirm-title">请确认</h3>
         <div class="modal-text" id="confirm-text"></div>
+        <label class="del-dir hidden" id="confirm-check-wrap"><input type="checkbox" id="confirm-check"> <span id="confirm-check-label"></span></label>
         <div class="btn-row">
           <button class="ghost-btn" onclick="confirmClose(false)">取消</button>
           <button class="primary-btn" id="confirm-ok-btn" onclick="confirmClose(true)">确定</button>
@@ -681,7 +682,6 @@
           '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
           '<button class="conv-del-inline" type="button" aria-label="删除会话" title="删除会话">×</button>' +
         '</button>' +
-        '<button class="conv-del" type="button" aria-label="删除会话" title="删除会话">×</button>' +
       '</div>';
     }
     box.innerHTML = html;
@@ -709,9 +709,11 @@
   // ---------- 会话打开 / 新建 / 状态栏(抽屉行 × 调 deleteSession; 默认含任务目录) ----------
   async function deleteSession(id) {
     if (!id) return;
-    if (!await confirmModal('删除会话', '确定删除会话 ' + id + ' ?会话中的任务文件也会一起删除。', '删除', true)) return;
+    if (!await confirmModal('删除会话', '确定删除会话 ' + id + ' ?', '删除', true,
+        { checkbox: { label: '同时删除任务文件夹', default: true } })) return;
+    const delDir = state._confirmChecked ? 'true' : 'false';
     try {
-      await req('DELETE', '/api/sessions/' + id + '?delete_dir=true');
+      await req('DELETE', '/api/sessions/' + id + '?delete_dir=' + delDir);
       // 删的是当前打开的会话:回 welcome 视图并清状态
       if (state.sessionId === id) {
         closeStream();
@@ -1443,7 +1445,7 @@
     searchTimer = setTimeout(loadSessionList, 250);
   });
   $('drawer-list').addEventListener('click', e => {
-    if (e.target.closest('.conv-del, .conv-del-inline')) {
+    if (e.target.closest('.conv-del-inline')) {
       const wrap = e.target.closest('.conv-wrap');
       const item = wrap && wrap.querySelector('.conv-item');
       if (item) { deleteSession(item.dataset.id); collapseAllSwiped(); }
@@ -1512,11 +1514,22 @@
       g.item.style.transition = '';
       if (g.horiz) {
         if (moved >= THRESHOLD) {
-          g.wrap.classList.add('swiped');
-          g.item.style.transform = ''; // CSS 接管到 -60
+          // 起手已是已滑开态 + 右滑回去:不应该触发删除,直接恢复原状
+          if (g.wasSwiped && dx > 0) {
+            // 保持 swiped 状态(因为这是从 -60 滑回 -30 不到 0 的情况)
+            // 但本次手不是超阈值出去的,既然收回去就令弹回
+            g.wrap.classList.remove('swiped');
+            g.item.style.transform = '';
+          } else {
+            // 滑到位:不露 conv-del,直接弹删除确认 modal
+            g.wrap.classList.remove('swiped');
+            g.item.style.transform = '';
+            deleteSession(g.item.dataset.id);
+          }
         } else {
+          // 未达阈值:弹回
           g.wrap.classList.remove('swiped');
-          g.item.style.transform = ''; // CSS 接管回 0
+          g.item.style.transform = '';
         }
       } else {
         // 未识别为横向:不动(交给 click 委派处理打开)
@@ -1657,7 +1670,21 @@
     _dlgResolve = null;
     if (r) r(val);
   }
-  function confirmModal(title, text, okText, danger) {
+  // confirmModal(title, text, okText, danger, opts?)
+  // opts.checkbox = {label, default=true} 可选:展示一个默认勾选状态可改的复选框
+  // 确认/取消后在 state._confirmChecked 读出勾选状态(不破坏现有调用方签名)
+  function confirmModal(title, text, okText, danger, opts) {
+    state._confirmChecked = !!(opts && opts.checkbox); // 未传 opts 时 reset 为 false
+    const wrap = $('confirm-check-wrap');
+    if (opts && opts.checkbox) {
+      $('confirm-check-label').textContent = opts.checkbox.label;
+      $('confirm-check').checked = opts.checkbox.default !== false;
+      state._confirmChecked = $('confirm-check').checked;
+      wrap.classList.remove('hidden');
+    } else {
+      wrap.classList.add('hidden');
+    }
+    $('confirm-check').onchange = function () { state._confirmChecked = this.checked; };
     return new Promise(resolve => {
       _dlgResolve = resolve;
       $('confirm-title').textContent = title || '请确认';

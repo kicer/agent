@@ -453,34 +453,17 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .conv-item .st-dot.queued { background: var(--active); }
 .conv-item .st-dot.active { background: #1c7a2e; animation: pill-pulse 1.2s ease-in-out infinite; }
 .conv-item .st-dot.held { background: #b8860b; }
-/* 会话行包装:负责裁剪 + 提供 conv-del 绝对定位的参照
-   conv-del(外层大红按钮)是 conv-item 的兄弟(不在 transform 子树内),
-   这样 swiped 状态 transform:translateX(-60px) 不会一起带走删除按钮
-   conv-del-inline 是 conv-item 的子元素,仅桌面端 hover/focus-within 露出 */
+/* 会话行包装:为桌面端 hover 的内联 × 提供定位;移动端不需要 swiped 类
+   (滑到位直接弹 modal,不再保留 swiped 状态) */
 .conv-wrap {
   position: relative;
-  overflow: hidden;
   border-radius: 12px;
 }
 .conv-item {
   position: relative;
-  transition: transform .18s ease, background .12s;
+  transition: background .12s;
   width: 100%;
 }
-.conv-wrap.swiped .conv-item { transform: translateX(-60px); }
-
-/* 移动端右滑用的大红钮:默认完全不渲染,swiped 才露 */
-.conv-wrap .conv-del {
-  display: none;
-  position: absolute; right: 0; top: 0; bottom: 0;
-  width: 60px;
-  background: #c0392b; border: 0; color: #fff;
-  font-size: 18px; line-height: 1; padding: 0; cursor: pointer;
-  align-items: center; justify-content: center;
-  border-radius: 0 12px 12px 0;
-}
-.conv-wrap.swiped .conv-del { display: flex; }
-.conv-wrap .conv-del:active { background: #a83224; }
 
 /* 桌面端用的内联小 ×:默认隐藏,hover/focus 露出 */
 .conv-item .conv-del-inline {
