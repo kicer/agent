@@ -4,270 +4,162 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Agent 任务台</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <meta name="theme-color" content="#3964FE">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-  <div class="app" id="app">
+  <div id="app">
 
-    <!-- ================= Tab:任务(会话列表) ================= -->
-    <div id="tab-tasks" class="tab-page hidden">
-      <div class="header">
-        <div class="header-left"><h2>Agent 任务台</h2></div>
-        <div style="display:flex; gap:2px; align-items:center;">
-          <button class="icon-btn" id="search-toggle-btn" onclick="ui.toggleSearch()" title="搜索任务">
-            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          </button>
-          <button class="icon-btn" id="create-session-btn" onclick="ui.openCreate()" title="新建任务">
-            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-          </button>
-        </div>
-      </div>
-      <div class="search-bar hidden" id="search-bar">
-        <input type="search" id="search-input" placeholder="搜索任务标题或消息内容" enterkeyhint="search">
-        <button class="search-cancel" onclick="ui.toggleSearch()">取消</button>
-      </div>
-      <div class="session-list" id="session-list"></div>
-    </div>
-
-    <!-- ================= Tab:技能 ================= -->
-    <div id="tab-skills" class="tab-page hidden">
-      <div class="header">
-        <button class="icon-btn hidden" id="skills-back-btn" onclick="skillsUI.back()" title="返回">
-          <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
-        </button>
-        <div class="header-left"><h2 id="skills-title">技能管理</h2></div>
-        <div class="header-right">
-          <label class="icon-btn hidden" id="skill-upload-btn" title="上传文件">
-            <input type="file" id="skill-file-input" style="display:none;" onchange="skillsUI.onUpload(event)">
-            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-          </label>
-          <button class="icon-btn" id="skill-new-btn" onclick="skillsUI.openCreate()" title="新建技能">
-            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-          </button>
-        </div>
-      </div>
-      <div class="tab-body-area" id="skills-list"></div>
-      <div class="tab-body-area hidden" id="skill-detail"></div>
-
-      <!-- 技能文件编辑器(全屏覆盖本 Tab) -->
-      <div id="skill-editor" class="hidden">
-        <div class="header">
-          <button class="icon-btn" onclick="skillsUI.closeEditor()" title="关闭编辑器">
-            <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
-          </button>
-          <span class="chat-title" id="skill-editor-name"></span>
-          <div class="header-right">
-            <button class="icon-btn" onclick="skillsUI.saveFile()" title="保存">
-              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            </button>
-          </div>
-        </div>
-        <textarea id="skill-editor-area" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
-      </div>
-    </div>
-
-    <!-- ================= Tab:模型 ================= -->
-    <div id="tab-models" class="tab-page hidden">
-      <div class="header">
-        <div class="header-left"><h2>模型池</h2></div>
-        <div class="header-right">
-          <button class="icon-btn" onclick="modelsUI.openAdd()" title="添加模型">
-            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-          </button>
-        </div>
-      </div>
-      <div class="tab-body-area" id="model-cards">
-        <div class="empty-tip">加载中…</div>
-      </div>
-    </div>
-
-    <!-- ================= Tab:设置 ================= -->
-    <div id="tab-settings" class="tab-page hidden">
-      <div class="header">
-        <div class="header-left"><h2>设置</h2></div>
-        <div class="header-right">
-          <button class="icon-btn" onclick="cfgUI.open()" title="编辑配置文件">
-            <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"></path></svg>
-          </button>
-        </div>
-      </div>
-      <div class="tab-body-area">
-        <div id="cfg-sections"><div class="empty-tip">加载中…</div></div>
-      </div>
-
-      <!-- config.yml 原文编辑器(全屏覆盖本 Tab) -->
-      <div id="cfg-editor" class="hidden">
-        <div class="header">
-          <button class="icon-btn" onclick="cfgUI.close()" title="关闭">
-            <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
-          </button>
-          <span class="chat-title">config.yml 原文</span>
-          <div class="header-right">
-            <button class="icon-btn" onclick="cfgUI.save()" title="校验并保存">
-              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            </button>
-          </div>
-        </div>
-        <div id="cfg-editor-err" class="cfg-err hidden"></div>
-        <textarea id="cfg-editor-area" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
-      </div>
-    </div>
-
-    <!-- ================= 底部导航 ================= -->
-    <nav class="tabbar" id="tabbar">
-      <a class="tab-item" href="#/tasks" data-tab="tasks">
-        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-        <span>任务</span>
-      </a>
-      <a class="tab-item" href="#/skills" data-tab="skills">
-        <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-        <span>技能</span>
-      </a>
-      <a class="tab-item" href="#/models" data-tab="models">
-        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
-        <span>模型</span>
-      </a>
-      <a class="tab-item" href="#/settings" data-tab="settings">
-        <svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
-        <span>设置</span>
-      </a>
-    </nav>
-
-    <!-- ================= 聊天/任务详情(全屏覆盖,盖住底部导航) ================= -->
-    <div id="chat-page" class="page hidden">
-      <div class="header">
-        <button class="icon-btn back-btn" onclick="ui.backToList()">
-          <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
-        </button>
-        <span class="chat-title" id="chat-title" onclick="ui.renameSession()" title="点击重命名" style="cursor:pointer"></span>
-        <div class="header-right">
-          <button class="icon-btn" onclick="ui.toggleFiles(event)" title="文件">
-            <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-          </button>
-        </div>
-      </div>
-
-      <!-- 任务状态栏 -->
-      <div class="phase-bar" id="phase-bar">
-        <span class="status-pill" id="status-pill">--</span>
-        <button class="stop-link hidden" id="stop-btn" onclick="ui.stopSession()">终止</button>
-        <button class="stop-link muted hidden" id="model-switch-btn" onclick="ui.openModelSwitch()">选择模型</button>
-        <button class="stop-link hidden" id="clear-msg-btn" onclick="ui.clearChat()">清空</button>
-      </div>
-
-      <div class="messages" id="messages"></div>
-
-      <!-- 滚动到底部按钮:上翻历史时显示;AI 输出中显示加载转圈 -->
-      <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" onclick="clickScrollBottom()" title="回到底部">
-        <svg class="sb-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
-        <svg class="sb-spinner hidden" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M22 12a10 10 0 0 1-10 10"></path></svg>
+    <!-- ================= 顶部导航栏 ================= -->
+    <header class="header">
+      <button class="icon-btn" id="menu-btn" title="历史记录" aria-label="打开历史记录">
+        <svg class="ic" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
       </button>
+      <div class="header-center" id="header-center"><!-- 未对话状态为空白,JS 注入对话信息 --></div>
+      <button class="icon-btn hidden" id="new-chat-btn" title="新建对话" aria-label="新建对话">
+        <svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      </button>
+    </header>
 
-      <!-- 文件面板 -->
-      <div class="files-panel hidden" id="files-panel">
-        <div class="files-panel-header">
-          <span>任务文件</span>
-          <div>
-            <label class="icon-btn" title="上传文件">
-              <input type="file" id="file-input" multiple style="display:none;" onchange="ui.uploadFiles(event)">
-              <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </label>
-            <button class="icon-btn" onclick="ui.toggleFiles()">
-              <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
+    <!-- ================= 会话状态栏(搬自 index 的 phase-bar;仅在对话中显示) ================= -->
+    <div id="phase-bar" class="phase-bar hidden">
+      <span class="status-pill" id="status-pill">--</span>
+      <button class="stop-link hidden" id="stop-btn" onclick="stopSession()">终止</button>
+      <button class="stop-link muted hidden" id="model-switch-btn" onclick="openModelSwitch()">选择模型</button>
+      <button class="stop-link hidden" id="clear-msg-btn" onclick="clearChat()">清空</button>
+    </div>
+
+    <main>
+      <!-- ================= 未对话状态:模式切换区 ================= -->
+      <section id="welcome-view">
+        <div class="welcome-head">
+          <div class="logo-badge">
+            <svg class="ic" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"></rect><line x1="12" y1="4" x2="12" y2="8"></line><circle cx="12" cy="3" r="1.4"></circle><circle cx="9" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><circle cx="15" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><line x1="9.5" y1="17" x2="14.5" y2="17"></line></svg>
           </div>
+          <div class="welcome-slog</title>an">选择模式开始对话</div>
         </div>
-        <div class="files-list" id="files-list"></div>
+
+        <div class="mode-switch" role="tablist" id="mode-switch">
+          <button class="mode-chip on" data-mode="secretary" role="tab" aria-selected="true">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="M6 3h12l4 6-10 13L2 9z"></path><polyline points="2 9 22 9"></polyline><polyline points="10 3 8 9 12 22"></polyline><polyline points="14 3 16 9 12 22"></polyline></svg>
+            文秘助理
+          </button>
+          <button class="mode-chip" data-mode="vision" role="tab" aria-selected="false">
+            <svg class="ic sm" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+            识图专家
+          </button>
+        </div>
+        <div class="mode-hint" id="mode-hint"></div>
+      </section>
+
+      <!-- ================= 对话状态:对话内容区 ================= -->
+      <section id="chat-view" class="hidden"></section>
+    </main>
+
+    <!-- ================= 底部输入区 ================= -->
+    <footer>
+      <div class="attach-chips hidden" id="attach-chips"></div>
+      <div class="input-shell">
+        <textarea id="msg-input" placeholder="传送信息" rows="2" enterkeyhint="send"></textarea>
+        <div class="input-actions">
+        <button class="think-toggle" id="deep-think-btn" title="深度思考">
+          <svg viewBox="0 0 24 24" class="ic sm"><path d="M12 10.2a1.8 1.8 0 1 0 0.001 3.6A1.8 1.8 0 0 0 12 10.2z"></path><path stroke-width="1.5" d="M15.76 15.76 C10.955 20.565 5.373 22.779 3.297 20.703 C1.22 18.627 3.434 13.045 8.24 8.24 C13.045 3.435 18.627 1.22 20.703 3.297 C22.779 5.374 20.565 10.955 15.76 15.76z"></path><path stroke-width="1.5" d="M16.096 7.904 C20.905 12.713 22.965 18.298 20.703 20.703 C18.44 23.108 13.003 20.755 8.24 15.76 C3.477 10.76 1.22 5.373 3.297 3.297 C5.374 1.22 10.955 3.434 16.096 7.904z"></path></svg>
+          深度思考
+        </button>
+        <button class="plus-btn" id="attach-btn" title="添加附件或图片" aria-label="添加附件">
+          <svg viewBox="0 0 24 24" class="ic sm"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+        </button>
+        <input type="file" id="file-input" multiple hidden>
+        </div>
       </div>
 
-      <div class="attach-row hidden" id="attach-row"></div>
-      <div class="input-area">
-        <label class="file-upload-btn" id="attach-btn" title="上传文件(随下一条消息发送)">
-          <input type="file" id="msg-file-input" multiple style="display:none;" onchange="ui.uploadFiles(event)">
-          <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-          <span class="up-pct hidden" id="up-pct">0%</span>
-        </label>
-        <textarea id="msg-input" placeholder="输入消息..." rows="1"></textarea>
-        <button class="send-btn" onclick="ui.send()">
-          <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+    </footer>
+
+    <!-- 回到底部浮动按钮(搬自 index;上翻历史时出现、AI 输出中常驻转圈) -->
+    <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" onclick="clickScrollBottom()" title="回到底部" aria-label="回到底部">
+      <svg class="sb-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      <svg class="sb-spinner hidden" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M22 12a10 10 0 0 1-10 10"></path></svg>
+    </button>
+
+    <!-- ================= 历史记录抽屉 ================= -->
+    <div id="scrim"></div>
+    <aside id="drawer" aria-label="对话历史">
+      <div class="drawer-search">
+        <div class="search-box">
+          <svg class="ic sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="search" id="search-input" placeholder="搜寻对话内容..." enterkeyhint="search">
+        </div>
+      </div>
+      <div class="drawer-list" id="drawer-list"></div>
+      <div class="drawer-user" id="drawer-user">
+        <div class="avatar">A</div>
+        <div class="user-name">Agent 用户</div>
+        <button class="user-more" id="user-more-btn" title="更多设置" aria-label="更多设置">
+          <svg class="ic sm" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle></svg>
         </button>
       </div>
-    </div>
+    </aside>
 
-    <!-- 新建会话弹窗 -->
-    <div id="create-modal" class="modal-overlay hidden" onclick="if(event.target===this)ui.closeCreate()">
-      <div class="modal">
-        <button class="modal-close-btn" onclick="ui.closeCreate()">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+    <!-- ================= 设置区(覆盖层;入口:侧边栏用户区) ================= -->
+    <section id="settings-page" class="hidden" aria-label="设置">
+      <!-- 顶栏:左侧返回 + 中间标题 + 右侧操作按钮,风格与对话页 header 一致 -->
+      <header class="header">
+        <button class="icon-btn" id="set-back-btn" title="返回" aria-label="返回">
+          <svg class="ic" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
         </button>
-        <h3>新建任务会话</h3>
-        <input type="text" id="new-title" placeholder="任务标题（留空自动取首条消息）" style="width:100%">
-        <select id="new-model" style="width:100%"><option value="">自动分配</option></select>
-        <button class="primary-btn" onclick="ui.createSession()" style="width:100%">创建</button>
-      </div>
-    </div>
+        <div class="header-center"><div class="header-title" id="set-title">设置</div></div>
+        <div class="header-right" id="set-actions"><!-- JS 按页注入操作按钮 --></div>
+      </header>
+      <div id="set-body"><!-- JS 按页渲染 --></div>
+    </section>
 
-    <!-- 已完成会话手动选择模型弹窗 -->
-    <div id="bind-model-modal" class="modal-overlay hidden" onclick="if(event.target===this)ui.closeModelSwitch()">
+    <!-- 新建技能弹窗(搬自 index) -->
+    <div id="skill-create-modal" class="modal-overlay hidden" onclick="if(event.target===this)sUI.closeCreate()">
       <div class="modal">
-        <button class="modal-close-btn" onclick="ui.closeModelSwitch()">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
-        <h3>选择模型继续会话</h3>
-        <p class="empty-tip">为已结束(已完成/已终止)的会话指定一个空闲模型,绑定后继续对话将优先使用该模型。</p>
-        <div class="btn-row" id="bind-model-list" style="flex-direction:column;align-items:stretch;gap:8px;"></div>
-      </div>
-    </div>
-
-    <!-- 新建技能弹窗 -->
-    <div id="skill-create-modal" class="modal-overlay hidden" onclick="if(event.target===this)skillsUI.closeCreate()">
-      <div class="modal">
-        <button class="modal-close-btn" onclick="skillsUI.closeCreate()">
+        <button class="modal-close-btn" onclick="sUI.closeCreate()">
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         <h3>新建技能</h3>
-        <input type="text" id="skill-new-name" placeholder="技能名(字母/数字/-/_)" style="width:100%">
-        <input type="text" id="skill-new-desc" placeholder="一句话描述(何时使用该技能)" style="width:100%">
-        <button class="primary-btn" style="width:100%" onclick="skillsUI.createSkill()">创建</button>
+        <input type="text" id="skill-new-name" placeholder="技能名(字母/数字/-/_)">
+        <input type="text" id="skill-new-desc" placeholder="一句话描述(何时使用该技能)">
+        <button class="primary-btn" onclick="sUI.createSkill()">创建</button>
       </div>
     </div>
 
-    <!-- 模型编辑/新增弹窗 -->
-    <div id="model-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)modelsUI.close()">
+    <!-- 模型编辑/新增弹窗(搬自 index) -->
+    <div id="model-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)sUI.mClose()">
       <div class="modal">
-        <button class="modal-close-btn" onclick="modelsUI.close()">
+        <button class="modal-close-btn" onclick="sUI.mClose()">
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         <h3 id="moe-title">编辑模型</h3>
-        <select id="moe-target" style="width:100%"></select>
+        <select id="moe-target"></select>
         <div id="moe-newkey-wrap" class="hidden">
-          <select id="moe-nk-plat" style="width:100%"></select>
-          <input type="text" id="moe-nk-key" placeholder="api_key(留空则不带鉴权头)" style="width:100%">
-          <input type="number" id="moe-nk-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)" style="width:100%">
+          <select id="moe-nk-plat"></select>
+          <input type="text" id="moe-nk-key" placeholder="api_key(留空则不带鉴权头)">
+          <input type="number" id="moe-nk-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)">
         </div>
         <div id="moe-newplat-wrap" class="hidden">
-          <input type="text" id="moe-np-name" placeholder="平台名称(留空取域名主机段)" style="width:100%">
-          <input type="text" id="moe-np-url" placeholder="平台上游地址(OpenAI 兼容 /v1)" style="width:100%">
-          <input type="text" id="moe-np-type" value="openai" placeholder="类型(任意自定义;余额查询已接入:deepseek)" style="width:100%">
-          <input type="text" id="moe-np-key" placeholder="api_key(留空则不带鉴权头)" style="width:100%">
-          <input type="number" id="moe-np-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)" style="width:100%">
+          <input type="text" id="moe-np-name" placeholder="平台名称(留空取域名主机段)">
+          <input type="text" id="moe-np-url" placeholder="平台上游地址(OpenAI 兼容 /v1)">
+          <input type="text" id="moe-np-type" value="openai" placeholder="类型(任意自定义;余额查询已接入:deepseek)">
+          <input type="text" id="moe-np-key" placeholder="api_key(留空则不带鉴权头)">
+          <input type="number" id="moe-np-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)">
         </div>
-        <input type="text" id="moe-name" placeholder="显示名(留空同 id)" style="width:100%">
-        <input type="text" id="moe-id" placeholder="id(上游模型名,全局唯一)" style="width:100%">
+        <input type="text" id="moe-name" placeholder="显示名(留空同 id)">
+        <input type="text" id="moe-id" placeholder="id(上游模型名,全局唯一)">
         <label class="del-dir"><input type="checkbox" id="moe-vision">支持图片输入(vision)</label>
         <div class="btn-row">
-          <button class="ghost-btn danger hidden" id="moe-del-btn" onclick="modelsUI.del()">删除</button>
-          <button class="primary-btn" onclick="modelsUI.save()">保存</button>
+          <button class="ghost-btn danger hidden" id="moe-del-btn" onclick="sUI.mDel()">删除</button>
+          <button class="primary-btn" onclick="sUI.mSave()">保存</button>
         </div>
-        <div class="cfg-note">写入 config.yml,到「设置」页重启服务后生效。id 不可在此修改(历史会话按 id 绑定),如需改动请编辑配置文件原文。</div>
+        <div class="cfg-note">写入 config.yml,到「服务」页重启服务后生效。id 不可在此修改(历史会话按 id 绑定),如需改动请编辑配置文件原文。</div>
       </div>
     </div>
 
-    <!-- 全局确认弹窗(替代原生 confirm) -->
+    <!-- 全局确认弹窗(替代原生 confirm;搬自 index) -->
     <div id="confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)confirmClose(false)">
       <div class="modal">
         <h3 id="confirm-title">请确认</h3>
@@ -279,14 +171,14 @@
       </div>
     </div>
 
-    <!-- 全局输入弹窗(替代原生 prompt) -->
+    <!-- 全局输入弹窗(替代原生 prompt;搬自 index) -->
     <div id="prompt-modal" class="modal-overlay hidden" onclick="if(event.target===this)promptCancel()">
       <div class="modal">
         <button class="modal-close-btn" onclick="promptCancel()">
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         <h3 id="prompt-title">请输入</h3>
-        <input type="text" id="prompt-input" style="width:100%">
+        <input type="text" id="prompt-input">
         <div class="btn-row">
           <button class="ghost-btn" onclick="promptCancel()">取消</button>
           <button class="primary-btn" onclick="promptOk()">确定</button>
@@ -294,41 +186,1867 @@
       </div>
     </div>
 
-    <!-- 删除会话弹窗 -->
-    <div id="delete-modal" class="modal-overlay hidden" onclick="if(event.target===this)ui.closeDelete()">
+    <!-- 已完成/已终止会话:选择模型继续(搬自 index;phase-bar「选择模型」入口) -->
+    <div id="bind-model-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeModelSwitch()">
       <div class="modal">
-        <h3>删除会话</h3>
-        <br>
-        <div class="modal-text" id="delete-modal-text">确定删除该会话？</div>
-        <label class="del-dir"><input type="checkbox" id="del-dir-check" checked>同时删除任务目录（文件将不可恢复）</label>
-        <br>
-        <div class="btn-row">
-          <button class="ghost-btn" onclick="ui.closeDelete()">取消</button>
-          <button class="primary-btn" style="background:linear-gradient(135deg,#a3352a,#d2483c);" onclick="ui.confirmDelete()">删除</button>
-        </div>
+        <button class="modal-close-btn" onclick="closeModelSwitch()">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+        <h3>选择模型继续会话</h3>
+        <p class="empty-tip" style="margin-bottom:10px">为已结束(已完成/已终止)的会话指定一个空闲模型，绑定后继续对话将优先使用该模型。</p>
+        <div class="btn-row" id="bind-model-list" style="flex-direction:column;align-items:stretch;gap:8px;"></div>
       </div>
     </div>
+
+    <div id="toast" class="hidden"></div>
   </div>
 
-  <div class="toast hidden" id="toast"></div>
-
-  <!-- 图片全屏查看器(点击消息中图片打开；双指缩放、放大后可拖动) -->
+  <!-- 图片全屏查看器(点击消息/工具卡中图片打开;双指缩放、放大后可拖动) -->
   <div id="img-viewer" class="hidden">
     <button class="fs-close" onclick="closeImageViewer()">✕</button>
     <img id="img-viewer-img" alt="">
   </div>
 
-  <!-- 消息全屏查看器(双击气泡/工具卡打开) -->
-  <div id="fs-viewer" class="hidden" onclick="if(event.target===this)ui.closeFullscreen()">
-    <button class="fs-close" onclick="ui.closeFullscreen()">✕</button>
+  <!-- 消息全屏查看器(双击气泡/工具卡打开;支持双指缩放) -->
+  <div id="fs-viewer" class="hidden" onclick="if(event.target===this)closeFullscreen()">
+    <button class="fs-close" onclick="closeFullscreen()">✕</button>
     <div class="fs-panel" id="fs-body"></div>
   </div>
 
-  <!-- 发版时更新 v 参数,避免移动端浏览器缓存旧 JS -->
-  <script src="/js/core.js?v=20260902k"></script>
-  <script src="/js/tasks.js?v=20260902k"></script>
-  <script src="/js/skills.js?v=20260902k"></script>
-  <script src="/js/models.js?v=20260902k"></script>
-  <script src="/js/settings.js?v=20260902k"></script>
+  <script>
+  /*
+   * ============================================================================
+   * Agent 任务台 v2 —— 接入真实后端(全部沿用 /api 现有接口,未新增任何接口)
+   * ----------------------------------------------------------------------------
+   * 已接入:
+   *   GET    /api/sessions?status=active&limit=100             抽屉「今天/昨天」活跃列表
+   *   GET    /api/sessions?status=done&limit=50&with_total=1   抽屉归档列表
+   *   GET    /api/sessions?q=..&limit=50                       抽屉搜索
+   *   POST   /api/sessions {title:'', model_id:''}             首条消息自动建档
+   *   GET    /api/sessions/:id                                 打开会话(消息+文件)
+   *   POST   /api/sessions/:id/messages {content, attachments} 发送消息
+   *   POST   /api/sessions/:id/files                           附件上传(multipart)
+   *   GET    /api/sessions/:id/stream                          SSE 流式输出
+   *   POST   /api/sessions/:id/stop | /release                  状态栏「终止/断开」
+   *   POST   /api/sessions/:id/bind {model_id}                  状态栏「选择模型」(已完成/已终止会话)
+   *   DELETE /api/sessions/:id/messages                         状态栏「清空」(会话内删除已移除,清空由这里承担)
+   *   GET    /api/models                                        状态栏「选择模型」弹窗模型列表
+   *
+   * 设置区(侧边栏用户区整行点击进入;页面搬自 index.html,未新增任何接口):
+   *   GET    /api/system/status | POST /api/system/restart[?force=true]   服务·状态与重启
+   *   GET/PUT/PATCH /api/config | POST /api/config/validate               系统配置 / 原文编辑 / 模型增删改
+   *   GET    /api/models | GET /api/platforms/balance                     模型·模型池与余额
+   *   GET/POST/PUT/DELETE /api/skills[/:name][/file|/upload|/rename]      技能·技能与文件管理
+   *   GET    /api/me | POST /api/password | GET /logout                    账户·信息/改密/退出
+   *
+   * 后端已有但 v2 尚未接入 UI 的接口(先列出,不实现):
+   *   PATCH  /api/sessions/:id                                重命名(后端已支持)
+   *   GET    /api/sessions/:id/files/download-token?path=      文件下载(配合文件面板)
+   *
+   * 无后端支撑、仅前端占位的概念(先不实现):
+   *   · 「文秘助理 / 识图专家」模式 —— 后端无 mode 字段,当前仅影响提示文案
+   *   · 「深度思考」开关 —— 后端无 reasoning/deep-think 参数,当前仅本地视觉状态
+   *   · 「思考过程」折叠块(已思考 N 秒) —— 后端不产出 reasoning,已移除 mock
+   *   · 按条删除消息 —— 后端无消息级删除接口;消息下方的删除会话按钮已整体移除(改用状态栏「清空」)
+   * 鉴权:任意请求 401 时跳转 /login(与 core.js 的 req 一致)。
+   * ============================================================================
+   */
+  'use strict';
+
+  // ---------- 工具 ----------
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+  function fmtTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const p = n => String(n).padStart(2, '0');
+    const now = new Date();
+    const hm = p(d.getHours()) + ':' + p(d.getMinutes());
+    if (now.toDateString() === d.toDateString()) return hm;
+    const md = (d.getMonth() + 1) + '/' + d.getDate();
+    return (d.getFullYear() === now.getFullYear() ? md : d.getFullYear() + '/' + md) + ' ' + hm;
+  }
+  function toast(msg) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.add('hidden'), 2000);
+  }
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+    } catch (_) { /* 落入降级 */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '-9999px'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (_) { return false; }
+  }
+
+  // ---------- API(与 core.js 的 req 保持一致) ----------
+  async function req(method, url, body, isForm) {
+    const opt = { method, headers: {} };
+    if (body && !isForm) {
+      opt.headers['Content-Type'] = 'application/json';
+      opt.body = JSON.stringify(body);
+    } else if (body && isForm) {
+      opt.body = body;
+    }
+    const res = await fetch(url, opt);
+    if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+    if (!res.ok) {
+      let msg = 'HTTP ' + res.status;
+      try { msg = (await res.json()).error || msg; } catch (_) {}
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  }
+
+  // ---------- 模式配置 ----------
+  const MODES = {
+    secretary: { label: '文秘助理', hint: '支持文字输入，可起草、润色、整理文书' },
+    vision:    { label: '识图专家', hint: '支持图片识别输入' },
+  };
+
+  // ---------- 全局状态 ----------
+  const state = {
+    view: 'welcome',            // welcome | chat
+    mode: 'secretary',          // 模式选择区当前选中
+    deepThink: false,           // 深度思考开关(仅本地视觉状态,无后端参数)
+    sessionId: null,            // 当前会话
+    sessionTitle: '',           // 当前会话标题
+    status: '',                 // 当前会话状态(SSE 更新)
+    sessions: [],               // 抽屉列表缓存
+    attachments: [],            // 待发送附件 {file, name, size}
+    es: null,                   // EventSource
+    streamText: '',             // 当前流式累积文本
+    streamEl: null,             // 当前流式 AI 气泡
+    toolCards: {},              // tool_call_id -> 工具卡片元素(同步 index 工具卡样式)
+    typingEl: null,             // 「思考中」占位
+    streaming: false,
+  };
+
+  // ---------- 视图切换 ----------
+  function setView(view) {
+    state.view = view;
+    $('welcome-view').classList.toggle('hidden', view !== 'welcome');
+    $('chat-view').classList.toggle('hidden', view !== 'chat');
+    $('new-chat-btn').classList.toggle('hidden', view !== 'chat'); // 新建按钮仅对话状态显示
+    renderHeader();
+    updatePhaseBar(); // 状态栏仅对话视图显示
+    updateScrollBottomBtn();
+  }
+
+  function renderHeader() {
+    const c = $('header-center');
+    if (state.view !== 'chat' || !state.sessionId) { c.innerHTML = ''; return; }
+    const modeIcons = {
+      secretary: '<svg class="header-mode-icon" viewBox="0 0 24 24"><path d="M6 3h12l4 6-10 13L2 9z"></path><polyline points="2 9 22 9"></polyline><polyline points="10 3 8 9 12 22"></polyline><polyline points="14 3 16 9 12 22"></polyline></svg>',
+      vision:    '<svg class="header-mode-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
+    };
+    c.innerHTML =
+      '<div class="header-title">' + (modeIcons[state.mode] || '') + esc(state.sessionTitle || state.sessionId) + '</div>';
+  }
+
+  // ---------- 模式切换区 ----------
+  function selectMode(mode) {
+    state.mode = mode;
+    for (const chip of document.querySelectorAll('.mode-chip')) {
+      const on = chip.dataset.mode === mode;
+      chip.classList.toggle('on', on);
+      chip.setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+    $('mode-hint').textContent = MODES[mode].hint;
+  }
+  $('mode-switch').addEventListener('click', e => {
+    const chip = e.target.closest('.mode-chip');
+    if (chip) selectMode(chip.dataset.mode);
+  });
+
+  // ---------- 消息渲染 ----------
+  // 服务端把附件说明拼在正文前(【系统通知】用户上传了文件：...),此处拆开单独展示 📎 行
+  function parseUploadNotice(content) {
+    const m = /^【系统通知】用户上传了文件：([^\n]*)(?:\n([\s\S]*))?$/.exec(content || '');
+    if (!m) return { text: content || '', files: null };
+    const files = m[1].split('、').map(s => s.replace(/（大小[^）]*）$/, '').trim()).filter(Boolean);
+    return { text: m[2] || '', files: files };
+  }
+
+  function actionsHtml(ts, content) {
+    const b64 = btoa(unescape(encodeURIComponent(content)));
+    return '<div class="msg-actions">' +
+      '<span>' + fmtTime(ts) + '</span>' +
+      '<button class="act act-copy" title="复制" data-b64="' + b64 + '">' +
+        '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
+      '</button>' +
+    '</div>';
+  }
+
+  function userMsgHtml(m) {
+    const p = parseUploadNotice(m.content);
+    const attach = p.files && p.files.length
+      ? '<div class="attach-line">📎 ' + esc(p.files.join('、')) + '</div>' : '';
+    return '<div class="msg me">' +
+      '<div class="bubble-user">' + attach + esc(p.text) + '</div>' +
+      '<div class="msg-actions"><span>' + fmtTime(m.created_at) + '</span></div>' +
+    '</div>';
+  }
+
+  function aiMsgHtml(m) {
+    const hasText = !!(m.content && m.content.trim());
+    if (!hasText) return null; // 纯工具调用的应答:不渲染空气泡,工具卡由 appendToolCardsFromAssistant 铺
+    return '<div class="msg other">' +
+      '<div class="bubble-ai">' + esc(m.content) + '</div>' +
+      actionsHtml(m.created_at, m.content) +
+    '</div>';
+  }
+
+  // ---------- 工具调用卡片(样式/交互同步 index;流式与历史共用) ----------
+  function toolArgsSummary(name, argsStr) {
+    let s = '';
+    try {
+      const o = JSON.parse(argsStr || '{}');
+      const key = ['path', 'command', 'regex', 'glob', 'url', 'query', 'source_path', 'destination_path'];
+      for (const k of key) if (o[k]) { s = String(o[k]); break; }
+      if (!s) s = argsStr || '';
+    } catch (_) { s = argsStr || ''; }
+    if (s.length > 80) s = s.slice(0, 80) + '…';
+    return s;
+  }
+  function toolArgsFull(argsStr) {
+    try { return JSON.stringify(JSON.parse(argsStr || '{}'), null, 2); }
+    catch (_) { return argsStr || ''; }
+  }
+  function toolCopyBtnHtml(text) {
+    if (!text) return '';
+    const b64 = btoa(unescape(encodeURIComponent(text)));
+    return '<button class="act act-copy" title="复制工具输出" data-b64="' + b64 + '">' +
+      '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>';
+  }
+  function renderToolCard(id, name, argsStr, createdAt) {
+    const div = document.createElement('div');
+    div.className = 'tool-card';
+    div.id = 'tool-' + id;
+    div.innerHTML =
+      '<details><summary><span class="spin">◌</span>' +
+      '<span class="tool-name">' + esc(name) + '</span>' +
+      '<span class="tool-args">' + esc(toolArgsSummary(name, argsStr)) + '</span></summary>' +
+      '<pre class="tool-args-full">' + esc(toolArgsFull(argsStr)) + '</pre>' +
+      '<pre class="tool-result">执行中…</pre>' +
+      // 时间行/复制按钮在折叠体内:展开卡片才可见
+      '<div class="tool-time">' + fmtTime(createdAt || Date.now()) + '</div></details>';
+    return div;
+  }
+  // tool 消息 content:纯文本,或含图片时的哨兵 JSON {"__blocks__":[...]}(read_file 读图回传)
+  function parseToolContent(content) {
+    if (typeof content === 'string' && content.startsWith('{"__blocks__":')) {
+      try {
+        const blocks = JSON.parse(content).__blocks__ || [];
+        const img = blocks.find(b => b.type === 'image_url');
+        return {
+          text: blocks.filter(b => b.type === 'text').map(b => b.text).join('\n'),
+          imageUrl: img && img.image_url && img.image_url.url || null,
+        };
+      } catch (_) { /* 解析失败按原文显示 */ }
+    }
+    return { text: content, imageUrl: null };
+  }
+  function fillToolResult(id, content, isError, liveImageUrl) {
+    const card = document.getElementById('tool-' + id);
+    if (!card) return;
+    if (isError) card.classList.add('error');
+    card.querySelector('.spin').textContent = isError ? '✕' : '✓';
+    const parsed = parseToolContent(content);
+    const pre = card.querySelector('.tool-result');
+    if (!pre) return;
+    pre.textContent = parsed.text || '(空)';
+    // 结果就绪后在卡片时间行补复制按钮(复制工具输出)
+    const timeRow = card.querySelector('.tool-time');
+    if (timeRow && !timeRow.querySelector('.act-copy')) {
+      timeRow.insertAdjacentHTML('beforeend', toolCopyBtnHtml(parsed.text || ''));
+    }
+    const img = liveImageUrl || parsed.imageUrl;
+    if (img && !card.querySelector('.tool-img')) {
+      const el = document.createElement('img');
+      el.className = 'tool-img';
+      el.src = img;
+      el.title = '点击放大查看';
+      pre.insertAdjacentElement('afterend', el);
+    }
+  }
+  // 把 assistant 消息里的 tool_calls 建成工具卡片(历史渲染与 assistant_message 事件共用)
+  function appendToolCardsFromAssistant(m, container) {
+    if (!m.tool_calls) return;
+    let calls;
+    try { calls = typeof m.tool_calls === 'string' ? JSON.parse(m.tool_calls) : m.tool_calls; } catch (_) { return; }
+    for (const c of calls) {
+      const id = c.id || ('c' + Math.random().toString(36).slice(2, 10));
+      if (state.toolCards[id]) continue; // tool_call 事件已经建过同一张卡,不重复创建
+      const card = renderToolCard(id, c.function && c.function.name || '工具', c.function && c.function.arguments, m.created_at);
+      container.appendChild(card);
+      state.toolCards[id] = card;
+    }
+  }
+
+  function msgNode(m) {
+    if (m.role === 'user') return userMsgHtml(m);
+    if (m.role === 'assistant') return aiMsgHtml(m);
+    return null; // tool 结果不单独展示
+  }
+
+  function renderDetail(detail) {
+    const s = detail.session;
+    state.sessionTitle = (s && s.title) || '';
+    state.status = (s && s.status) || '';
+    state.toolCards = {};
+    userPaused = false;
+    removeTyping();
+    renderHeader();
+    updatePhaseBar({ model_id: s && s.model_id, queue_pos: detail.queue_pos });
+    const box = $('chat-view');
+    box.innerHTML = '';
+    for (const m of detail.messages || []) {
+      const node = msgNode(m);
+      if (node) box.insertAdjacentHTML('beforeend', node);
+      if (m.role === 'assistant') appendToolCardsFromAssistant(m, box);
+      else if (m.role === 'tool' && m.tool_call_id) fillToolResult(m.tool_call_id, m.content, false);
+    }
+    if (!(detail.messages || []).length) {
+      box.innerHTML = '<div class="drawer-empty">描述你的需求，AI 会和你讨论并直接干活。</div>';
+    }
+    scrollBottom();
+    updateScrollBottomBtn();
+  }
+
+  function appendUserMsg(content, fileNames) {
+    const attach = fileNames && fileNames.length
+      ? '<div class="attach-line">📎 ' + esc(fileNames.join('、')) + '</div>' : '';
+    const wrap = document.createElement('div');
+    wrap.className = 'msg me';
+    wrap.innerHTML = '<div class="bubble-user">' + attach + esc(content) + '</div>' +
+      '<div class="msg-actions"><span>' + fmtTime(Date.now()) + '</span></div>';
+    $('chat-view').appendChild(wrap);
+    scrollBottom();
+  }
+
+  // ---------- 滚动跟随(同步 index:上翻历史自动暂停跟随;右下角浮动钮可回底/转圈) ----------
+  const SCROLL_BOTTOM_THRESHOLD = 80; // 距底 80px 内视为「在底部」
+  function isNearBottom() {
+    const box = $('chat-view');
+    return box.scrollHeight - box.scrollTop - box.clientHeight < SCROLL_BOTTOM_THRESHOLD;
+  }
+  function scrollBottom() {
+    const box = $('chat-view');
+    box.scrollTop = box.scrollHeight;
+  }
+  // 仅当用户贴近底部且未主动暂停时才自动滚动(AI 内容增量到达)
+  let userPaused = false;
+  function maybeAutoScroll() {
+    if (!userPaused && isNearBottom()) scrollBottom();
+  }
+  // AI 是否「正在干活」:流式输出中,或会话处于 active(含工具执行与多轮模型调用的间隙)
+  function scrollBusy() { return state.streaming || state.status === 'active'; }
+  function updateScrollBottomBtn() {
+    const btn = $('scroll-bottom-btn');
+    if (!btn) return;
+    const inChat = state.view === 'chat' && !!state.sessionId;
+    const busy = inChat && scrollBusy();
+    // 运行中即使贴着底部也保持显示:转圈即「AI 还活着」指示,多轮工具间隙不至于看着像挂掉
+    const show = busy || (inChat && !isNearBottom());
+    btn.classList.toggle('hidden', !show);
+    const spinner = btn.querySelector('.sb-spinner');
+    if (spinner) spinner.classList.toggle('hidden', !busy);
+    const arrow = btn.querySelector('.sb-arrow');
+    if (arrow) arrow.classList.toggle('hidden', !!busy);
+  }
+  function clickScrollBottom() {
+    userPaused = false;
+    scrollBottom();
+    updateScrollBottomBtn();
+  }
+  // 监听用户滚动意图:向上翻阅历史(滚轮向上/手指下拖)立即暂停跟随,回到底部时恢复。
+  // 关键:用 wheel/touchmove 捕获「用户主动向上」的意图(程序滚动不会触发这二者),
+  // 避免被自动跟随的 scrollBottom 反复拉回底部而无法上翻。
+  function bindChatScroll() {
+    const box = $('chat-view');
+    let touchY = 0;
+    box.addEventListener('wheel', e => { if (e.deltaY < 0) userPaused = true; }, { passive: true });
+    box.addEventListener('touchstart', e => { touchY = e.touches[0].clientY; }, { passive: true });
+    box.addEventListener('touchmove', e => {
+      const dy = e.touches[0].clientY - touchY;
+      if (dy > 3) userPaused = true;
+      touchY = e.touches[0].clientY;
+    }, { passive: true });
+    box.addEventListener('scroll', () => {
+      if (isNearBottom()) userPaused = false;
+      updateScrollBottomBtn();
+    }, { passive: true });
+  }
+
+  function addTyping() {
+    removeTyping();
+    const ph = document.createElement('div');
+    ph.className = 'msg other';
+    ph.innerHTML = '<div class="typing"><i></i><i></i><i></i></div>';
+    $('chat-view').appendChild(ph);
+    state.typingEl = ph;
+    scrollBottom();
+  }
+  function removeTyping() {
+    if (state.typingEl) { state.typingEl.remove(); state.typingEl = null; }
+  }
+
+  // ---------- 会话列表(抽屉) ----------
+  function groupLabel(ts) {
+    const d = new Date(ts), n = new Date();
+    const sod = t => new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
+    const diff = (sod(n) - sod(d)) / 86400000;
+    if (diff <= 0) return '今天';
+    if (diff === 1) return '昨天';
+    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月';
+  }
+
+  function renderDrawerList() {
+    const list = state.sessions.slice().sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    const box = $('drawer-list');
+    if (!list.length) { box.innerHTML = '<div class="drawer-empty">没有找到相关对话</div>'; return; }
+    let html = '', lastGroup = null;
+    for (const s of list) {
+      const g = groupLabel(s.updated_at);
+      if (g !== lastGroup) { html += '<div class="group-label">' + esc(g) + '</div>'; lastGroup = g; }
+      html += '<button class="conv-item' + (s.id === state.sessionId ? ' active' : '') + '" data-id="' + esc(s.id) + '">' +
+        esc(s.title || s.id) + '</button>';
+    }
+    box.innerHTML = html;
+  }
+
+  async function loadSessionList() {
+    const q = $('search-input').value.trim();
+    try {
+      let list;
+      if (q) {
+        const r = await req('GET', '/api/sessions?q=' + encodeURIComponent(q) + '&limit=50&with_total=1');
+        list = r.rows || [];
+      } else {
+        const [active, done] = await Promise.all([
+          req('GET', '/api/sessions?status=active&limit=100'),
+          req('GET', '/api/sessions?status=done&limit=50&with_total=1'),
+        ]);
+        list = (active || []).concat((done && done.rows) || []);
+      }
+      state.sessions = list;
+      renderDrawerList();
+    } catch (e) { toast('加载会话失败:' + e.message); }
+  }
+
+  // ---------- 会话打开 / 新建 / 状态栏(删除会话入口已移除,改用状态栏「清空/终止/选择模型」) ----------
+  function closeStream() {
+    if (state.es) { state.es.close(); state.es = null; }
+  }
+
+  async function openSession(id) {
+    closeStream();
+    removeTyping();
+    state.sessionId = id;
+    state.status = '';
+    state.streamEl = null;
+    state.streamText = '';
+    state.toolCards = {};
+    state.streaming = false;
+    state.attachments = [];
+    userPaused = false;
+    renderAttachChips();
+    setView('chat');
+    $('chat-view').innerHTML = '<div class="drawer-empty">加载中…</div>';
+    try {
+      const detail = await req('GET', '/api/sessions/' + id);
+      if (state.sessionId !== id) return; // 期间已切到别的会话
+      renderDetail(detail);
+      connectStream();
+    } catch (e) {
+      if (state.sessionId === id) toast('打开会话失败:' + e.message);
+    }
+  }
+
+  // 确保存在当前会话:首条消息自动建档(POST /api/sessions)
+  async function ensureSession() {
+    if (state.sessionId) return state.sessionId;
+    const s = await req('POST', '/api/sessions', { title: '', model_id: '' });
+    state.sessionId = s.id;
+    state.sessionTitle = (s && s.title) || '';
+    setView('chat');
+    renderHeader();
+    updatePhaseBar();
+    connectStream();
+    return s.id;
+  }
+
+  function newChat() {
+    closeStream();
+    removeTyping();
+    state.sessionId = null;
+    state.sessionTitle = '';
+    state.status = '';
+    state.attachments = [];
+    state.streamEl = null;
+    state.streamText = '';
+    state.toolCards = {};
+    state.streaming = false;
+    userPaused = false;
+    renderAttachChips();
+    selectMode('secretary'); // 置顶逻辑:新建时自动选中【文秘助理】
+    setView('welcome');
+    $('chat-view').innerHTML = '';
+    $('msg-input').value = '';
+    autosize();
+    updateScrollBottomBtn();
+  }
+
+  // ---------- 会话状态栏(搬自 index 的 phase-bar 功能) ----------
+  function updatePhaseBar(d) {
+    const bar = $('phase-bar');
+    if (!bar) return;
+    if (!(state.view === 'chat' && state.sessionId)) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    const pill = $('status-pill');
+    const stMap = { queued: '排队中', active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
+    let text = stMap[state.status] || state.status || '--';
+    if (d && d.queue_pos) text += '(第 ' + d.queue_pos + ' 位)';
+    // active/held 时附带当前占用的模型
+    if ((state.status === 'active' || state.status === 'held') && d && d.model_id) {
+      text += ' · ' + d.model_id;
+    }
+    pill.textContent = text;
+    // 状态胶囊配色:活跃中绿(执行中)、保持中黄(已答完、保持模型中)等;状态栏整体同步染色
+    pill.className = 'status-pill ' + (state.status || '');
+    bar.className = 'phase-bar ' + (state.status || '');
+    // 活跃中提供「终止」;保持中改为「断开」(主动放弃保持租约,会话结为已完成)
+    const btn = $('stop-btn');
+    const actionable = state.status === 'active' || state.status === 'held';
+    btn.classList.toggle('hidden', !actionable);
+    btn.textContent = state.status === 'held' ? '断开' : '终止';
+    btn.classList.toggle('muted', state.status === 'held');
+    // 已完成/已终止时提供「选择模型」,手动指定空闲模型后继续对话
+    const msBtn = $('model-switch-btn');
+    if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && (state.status === 'completed' || state.status === 'cancelled')));
+    // 执行中(active)不提供「清空」——运行回合内删除历史会破坏上下文;其余状态(含排队中)可清空
+    const clrBtn = $('clear-msg-btn');
+    if (clrBtn) clrBtn.classList.toggle('hidden', !(state.sessionId && state.status && state.status !== 'active'));
+  }
+  async function stopSession() {
+    if (!state.sessionId) return;
+    const held = state.status === 'held';
+    try {
+      if (held) {
+        await req('POST', '/api/sessions/' + state.sessionId + '/release');
+        toast('已断开,模型已释放');
+      } else {
+        await req('POST', '/api/sessions/' + state.sessionId + '/stop');
+        toast('已发送终止指令');
+      }
+    } catch (e) { toast((held ? '断开失败:' : '终止失败:') + e.message); }
+  }
+  async function openModelSwitch() {
+    if (!state.sessionId) return;
+    const list = $('bind-model-list');
+    list.innerHTML = '<div class="empty-tip">加载中…</div>';
+    $('bind-model-modal').classList.remove('hidden');
+    try {
+      const rows = await req('GET', '/api/models');
+      if (!rows.length) {
+        list.innerHTML = '<div class="empty-tip">还没有配置模型。</div>';
+        return;
+      }
+      list.innerHTML = rows.map(m => m.is_busy
+        ? '<button class="ghost-btn" disabled>' + esc(m.display_name || m.id) + ' · 占用中</button>'
+        : '<button class="primary-btn" onclick="bindModel(\'' + esc(m.id) + '\')">' + esc(m.display_name || m.id) + '</button>').join('');
+    } catch (e) {
+      list.innerHTML = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
+    }
+  }
+  function closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); }
+  async function bindModel(modelId) {
+    if (!state.sessionId) return;
+    const id = state.sessionId;
+    closeModelSwitch();
+    try {
+      await req('POST', '/api/sessions/' + id + '/bind', { model_id: modelId });
+      toast('已绑定模型 ' + modelId);
+    } catch (e) { toast('绑定失败:' + e.message); }
+    // 无论成败都刷新会话详情(失败多为并发占用,状态可能已变)
+    try {
+      const detail = await req('GET', '/api/sessions/' + id);
+      if (state.sessionId === id) { renderDetail(detail); connectStream(); }
+      loadSessionList();
+    } catch (_) {}
+  }
+  async function clearChat() {
+    if (!state.sessionId) return;
+    const id = state.sessionId;
+    const ok = await confirmModal('清空会话内容',
+      '将删除本会话的全部聊天记录,AI 后续对话不再携带这段历史(从零开始,更省 token)。任务文件全部保留,不受影响。此操作不可恢复。',
+      '清空', true);
+    if (!ok) return;
+    try {
+      await req('DELETE', '/api/sessions/' + id + '/messages');
+      toast('会话内容已清空,文件已保留');
+      // 服务端已将会话收尾为 completed 并清空消息(不再预置会话上下文):重新拉取详情即为干净起点
+      const detail = await req('GET', '/api/sessions/' + id);
+      if (state.sessionId === id) { renderDetail(detail); connectStream(); }
+      loadSessionList();
+    } catch (e) { toast('清空失败:' + e.message); }
+  }
+
+  // ---------- 发送 ----------
+  async function uploadFiles(sessionId, files) {
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f.file, f.name);
+    const r = await req('POST', '/api/sessions/' + sessionId + '/files', fd, true);
+    return (r.uploaded || []).map(u => ({ name: u.filename, size: u.size }));
+  }
+
+  async function send() {
+    const ta = $('msg-input');
+    const content = ta.value.trim();
+    if (!content && !state.attachments.length) return;
+
+    const pending = state.attachments.slice();
+    state.attachments = [];
+    renderAttachChips();
+    ta.value = '';
+    autosize();
+
+    try {
+      const id = await ensureSession();
+      let atts = [];
+      if (pending.length) atts = await uploadFiles(id, pending);
+      const body = { content };
+      if (atts.length) body.attachments = atts;
+      await req('POST', '/api/sessions/' + id + '/messages', body);
+
+      appendUserMsg(content, atts.map(a => a.name));
+      if (!state.sessionTitle && content) {
+        state.sessionTitle = content.length > 24 ? content.slice(0, 24) : content;
+      }
+      renderHeader();
+      addTyping();
+      loadSessionList();
+    } catch (e) {
+      // 发送失败:附件还原,交由用户决定重试或移除
+      state.attachments = pending.concat(state.attachments);
+      renderAttachChips();
+      toast('发送失败:' + e.message);
+    }
+  }
+
+  // ---------- SSE 流式 ----------
+  function connectStream() {
+    closeStream();
+    if (!state.sessionId) return;
+    const es = new EventSource('/api/sessions/' + state.sessionId + '/stream');
+    state.es = es;
+    es.addEventListener('status', ev => {
+      const d = JSON.parse(ev.data);
+      state.status = d.status;
+      renderHeader();
+      updatePhaseBar(d);
+      updateScrollBottomBtn(); // 状态切换同步右下角转圈(开始/结束干活)
+    });
+    es.addEventListener('assistant_delta', ev => {
+      const d = JSON.parse(ev.data);
+      removeTyping();
+      state.streamText += d.text;
+      if (!state.streamEl) {
+        if (!state.streamText.trim()) return; // 忽略前导空白(纯工具调用回合无文本)
+        const wrap = document.createElement('div');
+        wrap.className = 'msg other';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble-ai';
+        wrap.appendChild(bubble);
+        $('chat-view').appendChild(wrap);
+        state.streamEl = bubble;
+        state.streamText = d.text;
+      }
+      state.streamEl.textContent = state.streamText;
+      state.streaming = true;
+      maybeAutoScroll();
+      updateScrollBottomBtn();
+    });
+    es.addEventListener('assistant_message', ev => {
+      const d = JSON.parse(ev.data);
+      removeTyping();
+      const hasText = !!(d.content && d.content.trim());
+      if (state.streamEl) {
+        if (hasText) state.streamEl.textContent = d.content;
+        else state.streamEl.remove();
+        state.streamEl = null;
+        state.streamText = '';
+      } else if (hasText) {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg other';
+        wrap.innerHTML = '<div class="bubble-ai">' + esc(d.content) + '</div>';
+        $('chat-view').appendChild(wrap);
+      }
+      if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
+      state.streaming = false;
+      maybeAutoScroll();
+      updateScrollBottomBtn();
+    });
+    es.addEventListener('tool_call', ev => {
+      const d = JSON.parse(ev.data);
+      removeTyping(); // 工具卡出现也算即时反馈
+      if (state.toolCards[d.id]) return; // assistant_message 已建卡(含完整参数),不重复创建
+      const card = renderToolCard(d.id, d.name, d.arguments, Date.now());
+      $('chat-view').appendChild(card);
+      state.toolCards[d.id] = card;
+      maybeAutoScroll();
+    });
+    es.addEventListener('tool_result', ev => {
+      const d = JSON.parse(ev.data);
+      fillToolResult(d.tool_call_id, d.content, d.is_error, d.image_url);
+      maybeAutoScroll();
+    });
+    es.addEventListener('done', ev => {
+      removeTyping(); // 本轮结束,占位兼终止(如模型报错无回复)
+      state.streaming = false;
+      state.streamEl = null; // 防御性清理:回合异常结束(如终止)时不留悬空气泡到下一轮
+      state.streamText = '';
+      state.toolCards = {};
+      updateScrollBottomBtn();
+      loadSessionList();
+    });
+    es.addEventListener('error', ev => {
+      removeTyping();
+      try {
+        const d = JSON.parse(ev.data);
+        if (d && d.message) toast('错误:' + d.message);
+      } catch (_) { /* EventSource 连接错误,自动重连 */ }
+    });
+  }
+
+  // ---------- 消息区点击代理(复制;全屏查看器内的克隆按钮同样可复制) ----------
+  async function onCopyClick(e) {
+    const copyBtn = e.target.closest('.act-copy');
+    if (!copyBtn) return;
+    let text = '';
+    try { text = decodeURIComponent(escape(atob(copyBtn.dataset.b64 || ''))); } catch (_) {}
+    const ok = await copyText(text);
+    toast(ok ? '已复制' : '复制失败');
+    if (ok) {
+      copyBtn.classList.add('copied');
+      setTimeout(() => copyBtn.classList.remove('copied'), 1200);
+    }
+  }
+  $('chat-view').addEventListener('click', onCopyClick);
+  $('fs-viewer').addEventListener('click', onCopyClick);
+
+  // ---------- 全屏查看器(双击气泡/工具卡放大;图片单击放大;均同步 index) ----------
+  function openFullscreen(el) {
+    const body = $('fs-body');
+    body.innerHTML = '';
+    body.style.zoom = '';
+    // 深拷贝并去掉 id:保留原类名使气泡/工具卡样式在查看器内照常生效,且避免 id 重复
+    const clone = el.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
+    // 全屏查看直接展开参数/结果,方便观看
+    clone.querySelectorAll('details').forEach(function (d) { d.open = true; });
+    body.appendChild(clone);
+    $('fs-viewer').classList.remove('hidden');
+  }
+  function closeFullscreen() { $('fs-viewer').classList.add('hidden'); }
+  // 双击消息气泡/工具卡 → 全屏查看(操作钮/图片不误触全屏)
+  $('chat-view').addEventListener('dblclick', function (e) {
+    if (e.target.closest('.act') || e.target.closest('img')) return;
+    const el = e.target.closest('.bubble-ai, .bubble-user, .tool-card');
+    if (el) openFullscreen(el);
+  });
+
+  // 点击消息/工具卡里的图片 → 图片全屏查看器(#fs-viewer 里的克隆图也生效)
+  function imgViewerDelegate(e) {
+    const im = e.target.closest('.bubble-ai img, .bubble-user img, .tool-card img');
+    if (im && im.src) openImageViewer(im.src, im.alt || '');
+  }
+  $('chat-view').addEventListener('click', imgViewerDelegate);
+  $('fs-viewer').addEventListener('click', imgViewerDelegate);
+
+  // 图片全屏查看器:transform 缩放+平移。双指捻合缩放(1~6x)、放大后单指/鼠标拖动、双击切 2.5x。
+  let openImageViewer, closeImageViewer;
+  (function () {
+    const viewer = document.getElementById('img-viewer');
+    const img = document.getElementById('img-viewer-img');
+    let scale = 1, tx = 0, ty = 0, mode = null;
+    let sx = 0, sy = 0, stx = 0, sty = 0, pDist = 0, pScale = 1;
+    const tdist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    function apply() {
+      img.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
+      img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
+    }
+    openImageViewer = function (src, alt) {
+      scale = 1; tx = ty = 0; mode = null;
+      apply();
+      img.src = src; img.alt = alt || '';
+      viewer.classList.remove('hidden');
+    };
+    closeImageViewer = function () { viewer.classList.add('hidden'); };
+    // 点背景(非图片)关闭
+    viewer.addEventListener('click', function (e) { if (e.target === viewer) closeImageViewer(); });
+    img.addEventListener('dblclick', function () {
+      scale = scale > 1 ? 1 : 2.5;
+      if (scale === 1) { tx = ty = 0; }
+      apply();
+    });
+    img.addEventListener('touchstart', function (e) {
+      if (e.touches.length === 2) { mode = 'pinch'; pDist = tdist(e.touches) || 1; pScale = scale; }
+      else if (e.touches.length === 1 && scale > 1) { mode = 'pan'; sx = e.touches[0].clientX; sy = e.touches[0].clientY; stx = tx; sty = ty; }
+      else mode = null;
+    }, { passive: true });
+    img.addEventListener('touchmove', function (e) {
+      if (mode === 'pinch' && e.touches.length >= 2) {
+        e.preventDefault();
+        scale = Math.min(6, Math.max(1, pScale * tdist(e.touches) / pDist));
+        if (scale === 1) { tx = ty = 0; }
+        apply();
+      } else if (mode === 'pan' && e.touches.length === 1) {
+        e.preventDefault();
+        tx = stx + e.touches[0].clientX - sx;
+        ty = sty + e.touches[0].clientY - sy;
+        apply();
+      }
+    }, { passive: false });
+    img.addEventListener('touchend', function (e) { if (e.touches.length < 2) { if (mode === 'pinch') mode = null; } if (!e.touches.length) mode = null; }, { passive: true });
+    img.addEventListener('touchcancel', function () { mode = null; }, { passive: true });
+    // 桌面:放大后按住拖动平移
+    img.addEventListener('mousedown', function (e) {
+      if (scale <= 1) return;
+      e.preventDefault();
+      const x0 = e.clientX, y0 = e.clientY, tx0 = tx, ty0 = ty;
+      const mv = function (ev) { tx = tx0 + ev.clientX - x0; ty = ty0 + ev.clientY - y0; apply(); };
+      const up = function () { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+      window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+    });
+  })();
+
+  // 消息全屏查看器双指缩放:viewport 是 user-scalable=no(原生捏合被禁),
+  // 在查看器内接管双指手势,用 CSS zoom 缩放内容(1~4 倍,关闭时重置)。
+  (function () {
+    const viewer = document.getElementById('fs-viewer');
+    if (!viewer) return;
+    let startDist = 0, startZoom = 1, pinching = false;
+    const tdist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    viewer.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 2) { pinching = false; return; }
+      pinching = true;
+      startDist = tdist(e.touches) || 1;
+      startZoom = Number($('fs-body').style.zoom) || 1;
+    }, { passive: true });
+    viewer.addEventListener('touchmove', function (e) {
+      if (!pinching || e.touches.length < 2) return;
+      e.preventDefault(); // 双指期间阻止滚动,手势归缩放
+      $('fs-body').style.zoom = Math.min(4, Math.max(1, startZoom * tdist(e.touches) / startDist)) || '';
+    }, { passive: false });
+    viewer.addEventListener('touchend', function (e) { if (e.touches.length < 2) pinching = false; }, { passive: true });
+    viewer.addEventListener('touchcancel', function () { pinching = false; }, { passive: true });
+  })();
+
+  // ---------- 输入区 ----------
+  const ta = $('msg-input');
+  function autosize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }
+  ta.addEventListener('input', autosize);
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  // 深度思考开关(仅本地视觉状态,后端无 reasoning 参数)
+  $('deep-think-btn').addEventListener('click', () => {
+    state.deepThink = !state.deepThink;
+    $('deep-think-btn').classList.toggle('on', state.deepThink);
+    toast(state.deepThink ? '深度思考已开启(暂不影响后端)' : '深度思考已关闭');
+  });
+
+  // 加号:选择附件(仅入队本地展示,发送时才真正上传)
+  $('attach-btn').addEventListener('click', () => $('file-input').click());
+  $('file-input').addEventListener('change', e => {
+    for (const f of Array.prototype.slice.call(e.target.files || [])) {
+      state.attachments.push({ file: f, name: f.name, size: f.size });
+    }
+    e.target.value = '';
+    renderAttachChips();
+  });
+  function renderAttachChips() {
+    const row = $('attach-chips');
+    row.classList.toggle('hidden', !state.attachments.length);
+    row.innerHTML = state.attachments.map((f, i) =>
+      '<span class="attach-chip"><span class="name">' + esc(f.name) + '</span>' +
+      '<button class="rm" data-i="' + i + '" aria-label="移除附件">' +
+      '<svg class="ic sm" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' +
+      '</button></span>').join('');
+  }
+  $('attach-chips').addEventListener('click', e => {
+    const rm = e.target.closest('.rm');
+    if (rm) { state.attachments.splice(+rm.dataset.i, 1); renderAttachChips(); }
+  });
+
+  // ---------- 抽屉 ----------
+  function openDrawer(open) {
+    $('drawer').classList.toggle('open', open);
+    $('scrim').classList.toggle('show', open);
+  }
+  $('menu-btn').addEventListener('click', () => {
+    const open = !$('drawer').classList.contains('open');
+    openDrawer(open);
+    if (open) loadSessionList();
+  });
+  $('scrim').addEventListener('click', () => openDrawer(false));
+
+  let searchTimer = null;
+  $('search-input').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadSessionList, 250);
+  });
+  $('drawer-list').addEventListener('click', e => {
+    const item = e.target.closest('.conv-item');
+    if (!item) return;
+    openSession(item.dataset.id);
+    openDrawer(false);
+  });
+
+  // 抽屉底部用户区:整行点击 → 设置主页(逻辑见文末「设置区」一节)
+  $('drawer-user').addEventListener('click', () => {
+    openDrawer(false);
+    showSettings();
+  });
+
+  // ---------- 顶栏 ----------
+  $('new-chat-btn').addEventListener('click', newChat);
+
+  // ============================================================================
+  // 设置区(侧边栏用户区点击进入;页面搬自 index.html,接口全部复用既有 /api)
+  // ----------------------------------------------------------------------------
+  // · 覆盖层 #settings-page:顶栏「左返回 + 中标题 + 右操作」,风格与对话页一致;
+  //   导航走 SET.stack 页面栈,返回弹一层、栈空即关闭;不再有底部导航。
+  // · 页面:home 设置主页卡片 / account 账户 / service 服务(状态+配置) /
+  //        cfg-editor config.yml 原文 / skills 列表 / skill-detail 详情 /
+  //        skill-editor 技能文件编辑 / models 模型池。
+  // ============================================================================
+
+  const SET = {
+    stack: [],
+    pendingKeys: new Set(),           // 已写盘、尚未重启生效的顶层配置段
+    effCfg: null, cfgOrig: '',
+    curSkill: null,                   // 技能详情/编辑视图对应的技能名
+    editorPath: null, editorOrig: '', editorText: '', editorLabel: '',
+    // 模型池(搬自 models.js)
+    cfgPlatforms: [], cfgModels: [], runtimeById: {}, modelsPendingRestart: false,
+    moeIdx: -1, expandedGroups: {}, balanceByGroup: {}, balanceRequested: {}, balanceTypes: [],
+  };
+  let setTok = 0;                     // 异步渲染防竞态令牌
+
+  // ---------- 通用小工具(搬自 core.js / settings.js) ----------
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  function fmtSize(n) {
+    if (n == null) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+  function att(s) { return esc(s).replace(/"/g, '&quot;'); } // 属性上下文转义(esc 不处理引号)
+  function getByPath(obj, p) {
+    return String(p).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+  }
+  function fmtUptime(ms) {
+    const s = Math.floor((ms || 0) / 1000);
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    if (d) return d + ' 天 ' + h + ' 小时';
+    if (h) return h + ' 小时 ' + m + ' 分';
+    if (m) return m + ' 分 ' + (s % 60) + ' 秒';
+    return s + ' 秒';
+  }
+  function dispVal(v) {
+    if (v === undefined || v === null || v === '') return '(未设置)';
+    if (typeof v === 'boolean') return v ? '是' : '否';
+    return String(v);
+  }
+
+  // ---------- 统一确认/输入弹窗(搬自 core.js;会话删除仍用原生 confirm) ----------
+  let _dlgResolve = null;
+  function _dlgSettle(val) {
+    $('confirm-modal').classList.add('hidden');
+    $('prompt-modal').classList.add('hidden');
+    const r = _dlgResolve;
+    _dlgResolve = null;
+    if (r) r(val);
+  }
+  function confirmModal(title, text, okText, danger) {
+    return new Promise(resolve => {
+      _dlgResolve = resolve;
+      $('confirm-title').textContent = title || '请确认';
+      $('confirm-text').textContent = text || '';
+      const ok = $('confirm-ok-btn');
+      ok.textContent = okText || '确定';
+      ok.style.background = danger ? 'linear-gradient(135deg,#a3352a,#d2483c)' : '';
+      $('confirm-modal').classList.remove('hidden');
+    });
+  }
+  function confirmClose(v) { _dlgSettle(v); }
+  function promptModal(title, placeholder, initial, opts) {
+    return new Promise(resolve => {
+      _dlgResolve = resolve;
+      $('prompt-title').textContent = title || '请输入';
+      const inp = $('prompt-input');
+      inp.placeholder = placeholder || '';
+      inp.value = initial || '';
+      inp.type = opts && opts.type ? opts.type : 'text';
+      $('prompt-modal').classList.remove('hidden');
+      setTimeout(() => inp.focus(), 60);
+    });
+  }
+  function promptOk() { _dlgSettle($('prompt-input').value); }
+  function promptCancel() { _dlgSettle(null); }
+  $('prompt-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); promptOk(); }
+  });
+
+  // ---------- 页面栈与顶栏 ----------
+  function setTop() { return SET.stack[SET.stack.length - 1] || 'home'; }
+  function showSettings() { SET.stack = ['home']; $('settings-page').classList.remove('hidden'); renderSetPage(); }
+  function closeSettings() { SET.stack = []; $('settings-page').classList.add('hidden'); }
+  function setPush(p) { SET.stack.push(p); renderSetPage(); }
+  function setPopRaw() { SET.stack.pop(); renderSetPage(); }
+  function onSetBack() {
+    const p = setTop();
+    if (p === 'skill-editor') return sUI.closeEditor();
+    if (p === 'cfg-editor') return sUI.closeCfg();
+    if (SET.stack.length > 1) setPopRaw(); else closeSettings();
+  }
+  $('set-back-btn').addEventListener('click', onSetBack);
+
+  function setTitle(t) { $('set-title').textContent = t; }
+  function setActions(html) { $('set-actions').innerHTML = html || ''; }
+  function setBody(html) { $('set-body').innerHTML = html; }
+
+  function renderSetPage() {
+    const tok = ++setTok;
+    const p = setTop();
+    const ctx = () => tok === setTok && setTop() === p; // 异步回包时页面可能已切走
+    if (p === 'home') return setPageHome(ctx);
+    if (p === 'account') return setPageAccount(ctx);
+    if (p === 'service') return setPageService(ctx);
+    if (p === 'cfg-editor') return setPageCfgEditor(ctx);
+    if (p === 'skills') return setPageSkills(ctx);
+    if (p === 'skill-detail') return setPageSkillDetail(ctx);
+    if (p === 'skill-editor') return setPageSkillEditor(ctx);
+    if (p === 'models') return setPageModels(ctx);
+  }
+  // 主页卡片跳转与配置表单脏值标红(容器常驻,各自委托一次)
+  $('set-body').addEventListener('click', e => {
+    const card = e.target.closest('.set-card');
+    if (card && card.dataset.go) setPush(card.dataset.go);
+  });
+  $('set-body').addEventListener('input', e => {
+    const inp = e.target;
+    if (inp.classList && inp.classList.contains('cfg-input')) {
+      inp.classList.toggle('cfg-dirty', inp.value.trim() !== inp.dataset.orig);
+    }
+  });
+
+  // ---------- 页:设置主页(卡片入口) ----------
+  const SET_CARDS = [
+    { go: 'account', name: '账户', desc: '修改密码 · 退出登录',
+      icon: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 4-6 8-6s8 2 8 6"></path></svg>' },
+    { go: 'service', name: '服务', desc: '服务状态 · 系统配置',
+      icon: '<svg class="ic" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>' },
+    { go: 'skills', name: '技能', desc: '技能管理 · 技能文件编辑',
+      icon: '<svg class="ic" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>' },
+    { go: 'models', name: '模型', desc: '模型池状态 · 增删改',
+      icon: '<svg class="ic" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>' },
+  ];
+  function setPageHome(ctx) {
+    setTitle('设置');
+    setActions('');
+    setBody('<div class="set-scroll set-home">' + SET_CARDS.map(c =>
+      '<button class="set-card" data-go="' + c.go + '">' +
+        '<span class="set-ico">' + c.icon + '</span>' +
+        '<span class="set-tt"><span class="set-name">' + c.name + '</span>' +
+        '<span class="set-desc">' + c.desc + '</span></span>' +
+        '<svg class="ic sm set-arrow" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>' +
+      '</button>').join('') + '</div>');
+  }
+
+  // ---------- 页:账户(修改密码 / 退出登录) ----------
+  const AVATAR_COLORS = ['#4285F4', '#EA4335', '#FBBC05', '#34A853', '#5C6BC0', '#00897B', '#8E24AA', '#F4511E'];
+  function userInitials(name) {
+    const s = String(name || '').trim();
+    if (!s) return '?';
+    const two = s.slice(0, 2);
+    return two.charAt(0).toUpperCase() + (two.length > 1 ? two.charAt(1).toLowerCase() : '');
+  }
+  function avatarColor(name) {
+    let h = 0;
+    for (const ch of String(name || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    return AVATAR_COLORS[h % AVATAR_COLORS.length];
+  }
+  function userCardHtml(me) {
+    return '<div class="settings-card user-card">' +
+      '<div class="user-avatar" style="background:' + avatarColor(me) + '">' + esc(userInitials(me)) + '</div>' +
+      '<div class="set-user-name">' + esc(me) + '</div>' +
+      '<div class="user-acts">' +
+        '<button class="ghost-btn" onclick="sUI.changePassword()">修改密码</button>' +
+        '<button class="ghost-btn" onclick="sUI.logout()">退出登录</button>' +
+      '</div></div>';
+  }
+  async function setPageAccount(ctx) {
+    setTitle('账户');
+    setActions('');
+    setBody('<div class="set-scroll"><div class="empty-tip">加载中…</div></div>');
+    try {
+      const [st, me] = await Promise.all([
+        req('GET', '/api/system/status'),
+        req('GET', '/api/me').catch(function () { return { user: null }; }), // 未启用认证时无此路由
+      ]);
+      if (!ctx()) return;
+      if (!st.auth_enabled || !me || !me.user) {
+        setBody('<div class="set-scroll"><div class="empty-tip">未启用登录认证,无账户设置。</div></div>');
+        return;
+      }
+      setBody('<div class="set-scroll">' + userCardHtml(me.user) + '</div>');
+    } catch (e) {
+      if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">加载失败:' + esc(e.message) + '</div></div>');
+    }
+  }
+  async function changePassword() {
+    try {
+      const newP = await promptModal('修改密码', '新密码,至少 6 位', '', { type: 'password' });
+      if (newP == null) return;
+      if (newP.length < 6) { toast('新密码至少 6 位'); return; }
+      await req('POST', '/api/password', { new_password: newP });
+      toast('密码已修改,立即生效');
+    } catch (e) { toast('修改失败:' + e.message); }
+  }
+
+  // ---------- 页:服务(服务状态 + 系统配置;搬自 settings.js) ----------
+  const CFG_FORM = [
+    { group: 'Agent 会话', items: [
+      { path: 'agent.temperature', label: '温度 temperature', type: 'float' },
+      { path: 'agent.max_tool_iterations', label: '单会话最大工具轮次', type: 'int' },
+      { path: 'agent.max_retries', label: '上游失败重试次数', type: 'int' },
+      { path: 'agent.language', label: '回复语言(留空不限)', type: 'text' },
+    ] },
+    { group: '终端工具', items: [
+      { path: 'terminal.default_timeout_ms', label: '命令默认超时(ms)', type: 'int' },
+      { path: 'terminal.max_output_chars', label: '输出最大字符数', type: 'int' },
+    ] },
+    { group: '技能', items: [
+      { path: 'skills.timeout_ms', label: '技能执行超时(ms)', type: 'int' },
+    ] },
+    { group: '图片上传压缩（浏览器端）', items: [
+      { path: 'upload.image_compress_threshold_kb', label: '大图阈值(KB)', type: 'int' },
+      { path: 'upload.image_max_dim', label: '压缩后长边上限(px)', type: 'int' },
+      { path: 'upload.image_quality', label: 'JPEG 质量(0~1)', type: 'float' },
+    ] },
+    { group: '模型租约(会话结束后的保持)', items: [
+      { path: 'model_hold.idle_release_ms', label: '无人观看释放(ms)', type: 'int' },
+      { path: 'model_hold.active_max_ms', label: '最长保持(ms)', type: 'int' },
+      { path: 'model_hold.sweep_ms', label: '巡检间隔(ms)', type: 'int' },
+    ] },
+  ];
+  function kvPlain(label, v) {
+    return '<div class="cfg-kv"><label>' + esc(label) + '</label><b>' + esc(dispVal(v)) + '</b></div>';
+  }
+  function svcCardHtml(st) {
+    let html = '<div class="settings-card"><h4>服务状态' +
+      (SET.pendingKeys.size ? ' <span class="badge held">待重启生效</span>' : '') + '</h4>';
+    html += kvPlain('版本 / Node', st.version + ' / ' + st.node);
+    html += kvPlain('已运行', fmtUptime(st.uptime_ms) + '(启动于 ' + new Date(st.started_at).toLocaleString() + ')');
+    html += kvPlain('端口', st.port);
+    html += kvPlain('配置文件', st.config_path);
+    html += kvPlain('工作区', st.workspace_root);
+    html += kvPlain('技能目录', st.skills_root);
+    if (SET.pendingKeys.size) html += kvPlain('待生效改动', Array.from(SET.pendingKeys).join(', '));
+    html += '<button class="primary-btn" id="restart-btn" style="margin-top:8px" onclick="sUI.restart()">重启服务</button>' +
+      '<div class="cfg-note">配置改动重启后生效;重启约需十几秒,期间页面暂不可用。非 Docker 部署不会自动拉起。</div></div>';
+    return html;
+  }
+  function cfgInputHtml(it) {
+    const cur = getByPath(SET.effCfg, it.path);
+    const v = cur == null ? '' : String(cur);
+    if (it.type === 'text') {
+      return '<div class="cfg-kv"><label>' + esc(it.label) + '</label>' +
+        '<input class="cfg-input" type="text"' +
+        ' data-path="' + att(it.path) + '" data-type="text" data-label="' + att(it.label) + '" data-orig="' + att(v) + '"' +
+        ' value="' + att(v) + '" placeholder="如：中文 / English"></div>';
+    }
+    const step = it.type === 'float' ? ' step="any"' : ' step="1"';
+    return '<div class="cfg-kv"><label>' + esc(it.label) + '</label>' +
+      '<input class="cfg-input" type="number"' + step +
+      ' inputmode="decimal"' +
+      ' data-path="' + att(it.path) + '" data-type="' + it.type + '" data-label="' + att(it.label) + '" data-orig="' + att(v) + '"' +
+      ' value="' + att(v) + '"></div>';
+  }
+  function formCardHtml() {
+    let html = '';
+    for (const g of CFG_FORM) {
+      html += '<div class="settings-card"><h4>' + esc(g.group) + '</h4>';
+      html += g.items.map(cfgInputHtml).join('');
+      html += '</div>';
+    }
+    html += '<button class="primary-btn" id="cfg-save-btn" onclick="sUI.saveForm()">更新配置</button>' +
+      '<div class="cfg-note" style="margin-bottom:12px">更新即写入 config.yml(注释保留);多数配置需重启服务后生效。' +
+      '模型、账号、MCP 等请用右上角配置文件编辑。</div>';
+    return html;
+  }
+  async function setPageService(ctx) {
+    setTitle('服务');
+    setActions('<button class="icon-btn" title="编辑配置文件" onclick="sUI.openCfg()">' +
+      '<svg class="ic" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"></path></svg></button>');
+    setBody('<div class="set-scroll" id="svc-body"><div class="empty-tip">加载中…</div></div>');
+    try {
+      const [st, cg] = await Promise.all([
+        req('GET', '/api/system/status'),
+        req('GET', '/api/config'),
+      ]);
+      if (!ctx()) return;
+      SET.effCfg = cg.effective || {};
+      const el = $('svc-body');
+      if (el) el.innerHTML = svcCardHtml(st) + formCardHtml();
+    } catch (e) {
+      if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">加载失败:' + esc(e.message) + '</div></div>');
+    }
+  }
+  // 表单保存:收集与打开时不同的项,逐项 PATCH(搬自 settings.js saveForm)
+  async function saveForm() {
+    const inputs = document.querySelectorAll('#set-body .cfg-input');
+    const edits = [];
+    for (const inp of inputs) {
+      const v = inp.value.trim();
+      if (v === inp.dataset.orig) continue;
+      let val = v;
+      if (inp.dataset.type === 'int' || inp.dataset.type === 'float') {
+        val = Number(v);
+        if (v === '' || !isFinite(val)) { toast('「' + inp.dataset.label + '」需填数字'); return; }
+        if (inp.dataset.type === 'int' && !Number.isInteger(val)) { toast('「' + inp.dataset.label + '」需为整数'); return; }
+      }
+      edits.push({ path: inp.dataset.path, value: val });
+    }
+    if (!edits.length) { toast('没有改动'); return; }
+    const btn = $('cfg-save-btn');
+    if (btn) btn.disabled = true;
+    let lastChanged = [];
+    try {
+      for (const e of edits) {
+        const r = await req('PATCH', '/api/config', { path: e.path, value: e.value });
+        lastChanged = r.changed || [];
+        lastChanged.forEach(k => SET.pendingKeys.add(k));
+      }
+      toast('已保存 ' + edits.length + ' 项' + (lastChanged.length ? ',重启后生效' : ''));
+    } catch (e) {
+      toast('保存失败:' + e.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+    renderSetPage();
+  }
+  // 重启服务(搬自 settings.js restart)
+  async function restart() {
+    if (!await confirmModal('重启服务', '重启服务使新配置生效?正在执行的 AI 会话会被打断。', '重启')) return;
+    try {
+      await req('POST', '/api/system/restart');
+    } catch (e) {
+      // 仅「有会话在跑」值得二次确认强打;配置不合法等 409 强打也无法启动,直接报给用户
+      if (e.status === 409 && /个任务.*执行中/.test(e.message)) {
+        if (!await confirmModal('有任务在跑', e.message, '强制重启', true)) return;
+        try { await req('POST', '/api/system/restart?force=true'); }
+        catch (e2) { toast('重启失败:' + e2.message); return; }
+      } else { toast('重启失败:' + e.message); return; }
+    }
+    const btn = $('restart-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '重启中,请勿关闭页面…'; }
+    toast('服务重启中…');
+    for (let i = 0; i < 90; i++) {
+      await sleep(1000);
+      try { const r = await fetch('/api/health'); if (r.ok) { location.reload(); return; } } catch (_) {}
+    }
+    toast('90 秒内未恢复,请检查容器状态(非 Docker 部署需手动启动)');
+    if (btn) { btn.disabled = false; btn.textContent = '重启服务'; }
+  }
+
+  // ---------- 页:config.yml 原文编辑器(搬自 settings.js) ----------
+  function openCfgEditor() { setPush('cfg-editor'); }
+  async function setPageCfgEditor(ctx) {
+    setTitle('config.yml 原文');
+    setActions('<button class="icon-btn" title="校验并保存" onclick="sUI.saveCfg()">' +
+      '<svg class="ic" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg></button>');
+    setBody('<div class="set-editor"><div class="cfg-err hidden" id="cfg-editor-err"></div>' +
+      '<textarea id="set-editor-area" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></div>');
+    try {
+      const cg = await req('GET', '/api/config');
+      if (!ctx()) return;
+      SET.cfgOrig = cg.text;
+      $('set-editor-area').value = cg.text;
+    } catch (e) {
+      // 读取失败不能留下空编辑器:保存会把空文本写回配置，改展示错误态
+      if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">读取失败:' + esc(e.message) + '</div></div>');
+    }
+  }
+  async function saveCfg() {
+    const area = $('set-editor-area');
+    if (!area) { toast('配置未加载'); return; }
+    const text = area.value;
+    const errEl = $('cfg-editor-err');
+    if (errEl) errEl.classList.add('hidden');
+    try {
+      await req('POST', '/api/config/validate', { text }); // 先干跑,错误信息更友好
+      const r = await req('PUT', '/api/config', { text });
+      SET.cfgOrig = text;
+      (r.changed || []).forEach(k => SET.pendingKeys.add(k));
+      toast('配置已保存');
+      setPopRaw(); // 保存成功直接退出编辑页,回服务页即刷新生效值展示
+    } catch (e) {
+      if (errEl) { errEl.textContent = '校验失败:' + e.message; errEl.classList.remove('hidden'); }
+      toast('配置不合法,未写入');
+    }
+  }
+  async function closeCfg() {
+    const area = $('set-editor-area');
+    if (area && area.value !== SET.cfgOrig &&
+        !await confirmModal('未保存的修改', '有未保存的修改,确定关闭并丢弃?', '关闭', true)) return;
+    setPopRaw();
+  }
+
+  // ---------- 页:技能(列表/详情/文件编辑;搬自 skills.js) ----------
+  async function setPageSkills(ctx) {
+    SET.curSkill = null;
+    setTitle('技能管理');
+    setActions('<button class="icon-btn" title="新建技能" onclick="sUI.openCreate()">' +
+      '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
+    setBody('<div class="set-scroll" id="skills-list"><div class="empty-tip">加载中…</div></div>');
+    try {
+      const rows = await req('GET', '/api/skills');
+      if (!ctx()) return;
+      const el = $('skills-list');
+      if (!el) return;
+      if (!rows.length) {
+        el.innerHTML = '<div class="empty-tip">还没有技能,点右上角 + 新建一个。</div>';
+        return;
+      }
+      el.innerHTML = rows.map(s => {
+        const a = encodeURIComponent(s.name);
+        return '<div class="session-card" onclick="sUI.open(\'' + a + '\')">' +
+          '<div class="session-main">' +
+            '<div class="session-name">' + esc(s.name) +
+              (s.has_md ? '' : ' <span class="badge cancelled">缺 SKILL.md</span>') +
+              (s.entry ? ' <span class="badge active">' + s.entry + ' 入口</span>' : '') +
+            '</div>' +
+            '<div class="skill-desc">' + esc(s.description || '') + '</div>' +
+            '<div class="session-meta"><span>' + s.file_count + ' 个文件</span>' +
+              '<span>' + fmtSize(s.size) + '</span>' +
+              (s.mtime ? '<span>' + fmtTime(s.mtime) + '</span>' : '') + '</div>' +
+          '</div>' +
+          '<div class="card-acts">' +
+            '<button class="card-act" onclick="event.stopPropagation();sUI.renameSkill(\'' + a + '\')">改名</button>' +
+            '<button class="card-act del" onclick="event.stopPropagation();sUI.deleteSkill(\'' + a + '\')">删除</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    } catch (e) {
+      if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">加载失败:' + esc(e.message) + '</div></div>');
+    }
+  }
+  async function openSkill(nameEnc) {
+    SET.curSkill = decodeURIComponent(nameEnc);
+    setPush('skill-detail');
+  }
+  async function setPageSkillDetail(ctx) {
+    if (!SET.curSkill) { if (SET.stack.length > 1) setPopRaw(); return; }
+    setTitle(SET.curSkill);
+    setActions('<label class="icon-btn" title="上传文件">' +
+      '<input type="file" style="display:none;" onchange="sUI.onUpload(event)">' +
+      '<svg class="ic" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg></label>');
+    setBody('<div class="set-scroll" id="skill-detail"><div class="empty-tip">加载中…</div></div>');
+    try {
+      const d = await req('GET', '/api/skills/' + encodeURIComponent(SET.curSkill));
+      if (!ctx()) return;
+      setTitle(d.name);
+      const el = $('skill-detail');
+      if (!el) return;
+      const newBtn = '<button class="primary-btn" style="margin-top:10px" onclick="sUI.newFile()">+ 新建文件</button>';
+      if (!d.files.length) {
+        el.innerHTML = '<div class="skill-files"><div class="empty-tip">技能目录是空的</div></div>' + newBtn;
+        return;
+      }
+      el.innerHTML = '<div class="skill-files">' + d.files.map(f => {
+        const a = encodeURIComponent(f.filename);
+        return '<div class="file-row" onclick="sUI.editFile(\'' + a + '\')">' +
+          '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>' +
+          '<span class="file-name">' + esc(f.filename) + '</span>' +
+          '<span class="file-size">' + fmtSize(f.size) + '</span>' +
+          '<button class="file-act" onclick="event.stopPropagation();sUI.editFile(\'' + a + '\')">编辑</button>' +
+          '<button class="file-act del" onclick="event.stopPropagation();sUI.deleteFile(\'' + a + '\')">删除</button>' +
+          '</div>';
+      }).join('') + '</div>' + newBtn;
+    } catch (e) {
+      if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">加载失败:' + esc(e.message) + '</div></div>');
+    }
+  }
+  function setPageSkillEditor(ctx) {
+    setTitle(SET.editorLabel || '编辑文件');
+    setActions('<button class="icon-btn" title="保存" onclick="sUI.saveFile()">' +
+      '<svg class="ic" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg></button>');
+    setBody('<div class="set-editor"><textarea id="set-editor-area" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></div>');
+    $('set-editor-area').value = SET.editorText;
+  }
+  async function openSkillFile(pathEnc) {
+    const rel = decodeURIComponent(pathEnc);
+    try {
+      const f = await req('GET', '/api/skills/' + encodeURIComponent(SET.curSkill) + '/file?path=' + encodeURIComponent(rel));
+      SET.editorPath = f.path; SET.editorOrig = f.content;
+      SET.editorText = f.content;
+      SET.editorLabel = SET.curSkill + ' / ' + f.path;
+      setPush('skill-editor');
+    } catch (e) { toast('打开失败:' + e.message); }
+  }
+  async function newSkillFile() {
+    if (!SET.curSkill) return;
+    const p = await promptModal('新建文件', '相对技能目录的路径,可含子目录(如 scripts/run.sh)', '');
+    if (p == null) return;
+    const rel = p.trim();
+    if (!rel) { toast('路径为空'); return; }
+    SET.editorPath = rel; SET.editorOrig = '';
+    SET.editorText = '';
+    SET.editorLabel = SET.curSkill + ' / ' + rel + '(新建)';
+    setPush('skill-editor');
+  }
+  async function saveSkillFile() {
+    if (!SET.curSkill || SET.editorPath == null) return;
+    const content = $('set-editor-area').value;
+    try {
+      await req('PUT', '/api/skills/' + encodeURIComponent(SET.curSkill) + '/file', { path: SET.editorPath, content });
+      SET.editorOrig = content;
+      toast('已保存 ' + SET.editorPath);
+      SET.editorPath = null;
+      setPopRaw(); // 保存成功直接退出编辑页,回详情即刷新文件列表
+    } catch (e) { toast('保存失败:' + e.message); }
+  }
+  async function closeSkillEditor() {
+    const area = $('set-editor-area');
+    if (area && area.value !== SET.editorOrig &&
+        !await confirmModal('未保存的修改', '有未保存的修改,确定关闭编辑器并丢弃?', '关闭', true)) return;
+    SET.editorPath = null; SET.editorOrig = ''; SET.editorText = '';
+    setPopRaw();
+  }
+  async function deleteSkillFile(pathEnc) {
+    const rel = decodeURIComponent(pathEnc);
+    if (!await confirmModal('删除文件', '删除文件 ' + rel + ' ?', '删除', true)) return;
+    try {
+      await req('DELETE', '/api/skills/' + encodeURIComponent(SET.curSkill) + '/file?path=' + encodeURIComponent(rel));
+      toast('已删除');
+      renderSetPage();
+    } catch (e) { toast('删除失败:' + e.message); }
+  }
+  // 单文件上传;重名默认 409,询问后带 overwrite 重试(搬自 skills.js)
+  async function uploadSkillFile(ev) {
+    const input = ev.target;
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file || !SET.curSkill) return;
+    const send = async function (overwrite) {
+      const fd = new FormData();
+      fd.append('file', file);
+      return req('POST', '/api/skills/' + encodeURIComponent(SET.curSkill) + '/upload' + (overwrite ? '?overwrite=true' : ''), fd, true);
+    };
+    try {
+      await send(false);
+      toast('已上传 ' + file.name);
+    } catch (e) {
+      if (/已存在/.test(e.message)) {
+        if (!await confirmModal('文件已存在', file.name + ' 已存在,覆盖?', '覆盖')) return;
+        try { await send(true); toast('已覆盖 ' + file.name); }
+        catch (e2) { toast('上传失败:' + e2.message); }
+      } else {
+        toast('上传失败:' + e.message);
+      }
+    }
+    renderSetPage();
+  }
+  function openCreateSkill() {
+    $('skill-new-name').value = '';
+    $('skill-new-desc').value = '';
+    $('skill-create-modal').classList.remove('hidden');
+    $('skill-new-name').focus();
+  }
+  function closeCreateSkill() { $('skill-create-modal').classList.add('hidden'); }
+  async function createSkill() {
+    const name = $('skill-new-name').value.trim();
+    if (!name) { toast('请填写技能名'); return; }
+    try {
+      await req('POST', '/api/skills', { name, description: $('skill-new-desc').value.trim() });
+      closeCreateSkill();
+      toast('已创建 ' + name);
+      SET.curSkill = name;
+      setPush('skill-detail'); // 新建后直接进详情,方便继续编辑 SKILL.md
+    } catch (e) { toast('创建失败:' + e.message); }
+  }
+  async function renameSkill(nameEnc) {
+    const name = nameEnc ? decodeURIComponent(nameEnc) : SET.curSkill;
+    if (!name) return;
+    const nn = await promptModal('重命名技能', '新的技能名', name);
+    if (nn == null) return;
+    const newName = nn.trim();
+    if (!newName || newName === name) return;
+    try {
+      await req('POST', '/api/skills/' + encodeURIComponent(name) + '/rename', { newName });
+      toast('已重命名为 ' + newName);
+      if (SET.curSkill === name) SET.curSkill = newName;
+      renderSetPage();
+    } catch (e) { toast('重命名失败:' + e.message); }
+  }
+  async function deleteSkill(nameEnc) {
+    const name = nameEnc ? decodeURIComponent(nameEnc) : SET.curSkill;
+    if (!name) return;
+    if (!await confirmModal('删除技能', '确定删除技能「' + name + '」?目录下所有文件将不可恢复。', '删除', true)) return;
+    try {
+      await req('DELETE', '/api/skills/' + encodeURIComponent(name));
+      toast('已删除 ' + name);
+      if (SET.curSkill === name) SET.curSkill = null;
+      if (setTop() === 'skill-detail') setPopRaw(); else renderSetPage();
+    } catch (e) { toast('删除失败:' + e.message); }
+  }
+
+  // ---------- 页:模型池(状态 + 增/改/删;搬自 models.js) ----------
+  // api_key 脱敏显示兼容后端已脱敏结果(幂等)
+  function maskKey(k) {
+    k = k || '';
+    if (k.includes('***')) return k;
+    if (k.length > 8) return k.slice(0, 3) + '***' + k.slice(-4);
+    if (k.length > 0) return '***' + k.slice(-2);
+    return '';
+  }
+  // token 用量紧凑显示:<1000 原样;k(1 位小数去尾零);≥1M 用 M
+  function fmtTok(n) {
+    n = Number(n) || 0;
+    if (n < 1000) return String(n);
+    if (n < 1000000) { const v = (n / 1000).toFixed(1).replace(/\.0$/, ''); return v + 'k'; }
+    const v = (n / 1000000).toFixed(1).replace(/\.0$/, '');
+    return v + 'M';
+  }
+  function balText(gk) {
+    const b = SET.balanceByGroup[gk];
+    if (!b) return '余额 --';
+    if (b.error) return '余额 查询失败';
+    return '余额 ' + (b.total_balance == null ? '--' : b.total_balance) + (b.currency ? ' ' + esc(b.currency) : '');
+  }
+  function balTitle(gk) {
+    const b = SET.balanceByGroup[gk];
+    if (!b) return '';
+    if (b.error) return '查询失败:' + b.error;
+    const parts = [];
+    if (b.available === false) parts.push('上游报告余额不可用');
+    if (b.granted_balance != null) parts.push('赠送 ' + b.granted_balance);
+    if (b.topped_up_balance != null) parts.push('充值 ' + b.topped_up_balance);
+    return parts.join(' · ');
+  }
+  async function fetchBalance(gk, pi, ki, manual) {
+    SET.balanceRequested[gk] = true; // 无论成败,本页会话不再自动重查(手动刷新不受限)
+    const btn = $('mbrg-' + gk);
+    if (btn) btn.classList.add('spin');
+    const el = $('mbal-' + gk);
+    if (el) el.textContent = '余额 …';
+    try {
+      const r = await req('GET', '/api/platforms/balance?pi=' + pi + '&ki=' + ki);
+      const b = r.balance || {};
+      SET.balanceByGroup[gk] = {
+        total_balance: b.total_balance, currency: b.currency,
+        granted_balance: b.granted_balance, topped_up_balance: b.topped_up_balance,
+        available: b.is_available,
+      };
+    } catch (e) {
+      SET.balanceByGroup[gk] = { error: e.message };
+      if (manual) toast('查余额失败:' + e.message); // 自动查询失败只落悬停详情,不打扰
+    }
+    if (btn) btn.classList.remove('spin');
+    const el2 = $('mbal-' + gk);
+    if (el2) { el2.textContent = balText(gk); el2.title = balTitle(gk); }
+  }
+  // 点刷新图标:无视「本页已查过」标记,总是重新请求
+  function refreshBalance(ev, pi, ki) {
+    if (ev) ev.stopPropagation(); // 冒泡到分组头会误触折叠/展开
+    fetchBalance(pi + '-' + ki, pi, ki, true);
+  }
+  const BAL_REFRESH_SVG = '<svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
+  function toggleModelGroup(gk) {
+    const on = !SET.expandedGroups[gk];
+    SET.expandedGroups[gk] = on;
+    const el = $('mgrp-' + gk);
+    if (!el) return;
+    el.classList.toggle('open', on);
+    const body = el.querySelector('.model-group-body');
+    if (body) body.classList.toggle('hidden', !on);
+    // 首次展开自动查一次余额(余额由平台名+key 决定);标记随每次进入本页重置
+    if (on && !SET.balanceRequested[gk] && $('mbal-' + gk)) {
+      const parts = gk.split('-');
+      fetchBalance(gk, Number(parts[0]), Number(parts[1]), false);
+    }
+  }
+  // 单个模型的子卡片;余额是 Key 级概念,统一在分组头显示
+  function modelCardHtml(m) {
+    const run = SET.runtimeById[m.id];
+    // 运行池里没有 = 配置新增但还没重启生效
+    const stateHtml = run
+      ? '<span class="model-card-state ' + (run.is_busy ? 'busy' : 'idle') + '">' + (run.is_busy ? '占用中' : '空闲') + '</span>'
+      : '<span class="model-card-state pending">待重启</span>';
+    return '<div class="model-card">' +
+      '<div class="model-card-head">' +
+        '<span class="model-card-name" title="点击编辑" onclick="sUI.mEdit(\'' + encodeURIComponent(m.id) + '\')">' + esc(m.display_name || m.mid || m.id) + '</span>' +
+        '<span class="model-card-meta">' + esc(m.mid || m.id) +
+          (run && run.is_busy && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</span>' +
+        stateHtml +
+      '</div>' +
+      '<div class="cfg-kv"><label>今日 token</label><b title="输入 / 输出">' + (run ? fmtTok(run.today_prompt) + ' / ' + fmtTok(run.today_completion) : '--') + '</b></div>' +
+      '<div class="cfg-kv"><label>累计 token</label><b title="输入 / 输出">' + (run ? fmtTok(run.total_prompt) + ' / ' + fmtTok(run.total_completion) : '--') + '</b></div>' +
+    '</div>';
+  }
+  function modelGroupHtml(pi, ki) {
+    const p = SET.cfgPlatforms[pi] || {};
+    const k = (p.keys || [])[ki] || {};
+    const gk = pi + '-' + ki;
+    const models = SET.cfgModels.filter(m => m.platform_index === pi && m.key_index === ki);
+    const open = !!SET.expandedGroups[gk];
+    // 仅已接入余额查询的类型显示余额行(未接入的显示出来也只会是报错,不如不显示)
+    const hasBal = SET.balanceTypes.indexOf(String(p.type || '')) >= 0;
+    return '<div class="model-group' + (open ? ' open' : '') + '" id="mgrp-' + gk + '">' +
+      '<div class="model-group-head" onclick="sUI.toggleGroup(\'' + gk + '\')">' +
+        '<svg class="model-group-caret" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>' +
+        '<span class="model-group-name">' + esc(p.name || ('平台' + pi)) + '</span>' +
+        '<span class="model-group-key">' + esc(k.api_key ? maskKey(k.api_key) : '无 key') + '</span>' +
+        '<span class="model-group-meta">' + models.length + ' 模型</span>' +
+      '</div>' +
+      '<div class="model-group-body' + (open ? '' : ' hidden') + '">' +
+        (hasBal ?
+          '<div class="model-group-bal">' +
+            '<span id="mbal-' + gk + '" title="' + esc(balTitle(gk)) + '">' + balText(gk) + '</span>' +
+            '<button class="mbal-refresh" id="mbrg-' + gk + '" title="重新查询余额" onclick="sUI.refreshBalance(event,' + pi + ',' + ki + ')">' + BAL_REFRESH_SVG + '</button>' +
+          '</div>' : '') +
+        (models.length ? models.map(modelCardHtml).join('') : '<div class="model-group-empty">该 Key 下暂无模型</div>') +
+      '</div>' +
+    '</div>';
+  }
+  async function loadModelCards(ctx) {
+    const el = $('model-cards');
+    if (!el || (ctx && !ctx())) return;
+    try {
+      const [rt, cg] = await Promise.all([req('GET', '/api/models'), req('GET', '/api/config')]);
+      if (ctx && !ctx()) return;
+      if (!$('model-cards')) return; // 异步期间已离开本页
+      SET.runtimeById = {};
+      for (const m of rt || []) SET.runtimeById[m.id] = m;
+      SET.cfgPlatforms = (cg.effective && cg.effective.platforms) || [];
+      SET.cfgModels = (cg.effective && cg.effective.models) || [];
+      SET.balanceTypes = cg.balance_types || [];
+      const box = $('model-cards');
+      if (!SET.cfgModels.length) {
+        box.innerHTML = '<div class="empty-tip">尚未配置模型,点右上角 + 添加。</div>';
+        return;
+      }
+      let html = '';
+      SET.cfgPlatforms.forEach((p, pi) => (p.keys || []).forEach((k, ki) => {
+        html += modelGroupHtml(pi, ki);
+      }));
+      box.innerHTML = html +
+        (SET.modelsPendingRestart
+          ? '<div class="empty-tip">已写入 config.yml,到「服务」页重启服务后生效。</div>'
+          : '<div class="empty-tip">token 格式为「输入 / 输出」;余额在分组首次展开时自动查询,点刷新图标可重查;改动写入 config.yml,重启服务后生效。</div>');
+    } catch (e) {
+      const box = $('model-cards');
+      if (box && (!ctx || ctx())) box.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
+    }
+  }
+  function setPageModels(ctx) {
+    setTitle('模型池');
+    setActions('<button class="icon-btn" title="添加模型" onclick="sUI.openAdd()">' +
+      '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
+    setBody('<div class="set-scroll" id="model-cards"><div class="empty-tip">加载中…</div></div>');
+    // 每次进入本页:余额结果与「已自动查过」标记重置(同 index 的 Tab onShow)
+    SET.balanceByGroup = {};
+    SET.balanceRequested = {};
+    loadModelCards(ctx);
+  }
+  function idxOf(id) {
+    for (let i = 0; i < SET.cfgModels.length; i++) if (SET.cfgModels[i].id === id) return i;
+    return -1;
+  }
+  function afterWrite() {
+    SET.modelsPendingRestart = true;
+    SET.balanceByGroup = {};      // 配置变了,旧余额不再对应现有 pi/ki 槽位
+    SET.balanceRequested = {};
+    toast('已写入 config.yml,到「服务」页重启后生效');
+    loadModelCards();
+  }
+  // Key 标签:「平台名 · sk-***1234」;下拉里用它标识可挂模型的目标 Key。
+  function keyLabel(pi, ki) {
+    const p = SET.cfgPlatforms[pi] || {};
+    const k = (p.keys || [])[ki] || {};
+    return (p.name || ('平台' + pi)) + ' · ' + (k.api_key ? maskKey(k.api_key) : '无 key');
+  }
+  function targetOptions() {
+    let html = '';
+    SET.cfgPlatforms.forEach((p, pi) => (p.keys || []).forEach((k, ki) => {
+      html += '<option value="exist:' + pi + ':' + ki + '">' +
+        esc(keyLabel(pi, ki)) + '(' + ((k.models || []).length) + ' 模型)</option>';
+    }));
+    html += '<option value="newkey">＋ 在已有平台下新增 Key</option>';
+    html += '<option value="newplat">＋ 新增平台</option>';
+    return html;
+  }
+  // 切换「新增 Key / 新增平台」时显隐对应字段。
+  function onTargetChange() {
+    const t = $('moe-target').value || '';
+    $('moe-newkey-wrap').classList.toggle('hidden', t !== 'newkey');
+    $('moe-newplat-wrap').classList.toggle('hidden', t !== 'newplat');
+  }
+  function fillNewKeyPlatforms() {
+    $('moe-nk-plat').innerHTML = SET.cfgPlatforms.map((p, i) =>
+      '<option value="' + i + '">' + esc(p.name || ('平台' + i)) + '</option>').join('');
+  }
+  function openModelEditor(rawId) {
+    const add = rawId == null;
+    SET.moeIdx = add ? -1 : idxOf(decodeURIComponent(rawId));
+    if (!add && SET.moeIdx < 0) return toast('模型不存在');
+    const m = add ? null : SET.cfgModels[SET.moeIdx];
+    $('moe-title').textContent = add ? '添加模型' : '编辑模型';
+    const idIn = $('moe-id');
+    idIn.value = m ? (m.mid || m.id) : '';
+    idIn.disabled = !add; // 编辑时禁改 id(历史会话按「平台名/模型id」绑定,改 id 等于换模型)
+    $('moe-name').value = m ? (m.display_name || '') : '';
+    $('moe-vision').checked = m ? !!m.vision : false;
+    const tgt = $('moe-target');
+    if (add) {
+      tgt.disabled = false;
+      tgt.innerHTML = targetOptions();
+      fillNewKeyPlatforms();
+    } else {
+      // 编辑时锁定目标为本模型所属 Key(移动模型 = 删除后重建,不支持就地挪)
+      tgt.innerHTML = '<option value="exist:' + m.platform_index + ':' + m.key_index + '">' + esc(keyLabel(m.platform_index, m.key_index)) + '</option>';
+      tgt.disabled = true;
+    }
+    tgt.onchange = onTargetChange;
+    onTargetChange(); // add 模式默认 exist → 两组附加字段都隐藏
+    $('moe-del-btn').classList.toggle('hidden', add);
+    $('model-edit-modal').classList.remove('hidden');
+  }
+  function closeModelEditor() { $('model-edit-modal').classList.add('hidden'); }
+  async function saveModelEditor() {
+    const id = $('moe-id').value.trim();
+    if (!id) return toast('请填写 id');
+    // 模型项本身只含 id/display_name/vision;url/key/concurrency 在平台/Key 层,这里不动。
+    const model = {
+      id,
+      display_name: $('moe-name').value.trim() || id,
+      vision: $('moe-vision').checked,
+    };
+    const add = SET.moeIdx < 0;
+    let body;
+    if (!add) {
+      // 编辑:精确改到 platforms[pi].keys[ki].models[mi]
+      const m = SET.cfgModels[SET.moeIdx];
+      body = { path: ['platforms', m.platform_index, 'keys', m.key_index, 'models', m.model_index], value: model };
+    } else {
+      const t = $('moe-target').value;
+      // id 唯一性只看同平台(内部键 = 平台名/模型id);不同平台可同名。
+      let platName = '';
+      if (t === 'newkey') platName = (SET.cfgPlatforms[parseInt($('moe-nk-plat').value, 10)] || {}).name || '';
+      else if (t.indexOf('exist:') === 0) platName = (SET.cfgPlatforms[Number(t.split(':')[1])] || {}).name || '';
+      if (platName && SET.cfgModels.some(x => x.platform === platName && x.mid === id)) return toast('平台「' + platName + '」下已有模型 id:' + id);
+      if (t === 'newplat') {
+        const url = $('moe-np-url').value.trim().replace(/\/+$/, '');
+        if (!url) return toast('请填写平台上游地址');
+        // append 一整个新平台:含一个新 Key + 这个模型;key 明文只在此时输入一次。
+        body = { op: 'append', path: ['platforms'], value: {
+          name: $('moe-np-name').value.trim(),
+          url,
+          type: $('moe-np-type').value.trim() || 'openai',
+          keys: [{ api_key: $('moe-np-key').value.trim(), concurrency: parseInt($('moe-np-con').value, 10) || 1, models: [model] }],
+        } };
+      } else if (t === 'newkey') {
+        const pi = parseInt($('moe-nk-plat').value, 10);
+        if (!(pi >= 0)) return toast('请选择平台');
+        // append 一个新 Key 到已有平台;模型挂在它下面。
+        body = { op: 'append', path: ['platforms', pi, 'keys'], value: {
+          api_key: $('moe-nk-key').value.trim(), concurrency: parseInt($('moe-nk-con').value, 10) || 1, models: [model] } };
+      } else {
+        // exist:pi:ki → append 模型到已有 Key 的 models 数组
+        const parts = t.split(':');
+        body = { op: 'append', path: ['platforms', Number(parts[1]), 'keys', Number(parts[2]), 'models'], value: model };
+      }
+    }
+    try {
+      await req('PATCH', '/api/config', body);
+      closeModelEditor();
+      afterWrite();
+    } catch (e) { toast('保存失败:' + e.message); }
+  }
+  async function delModelFromModal() {
+    if (SET.moeIdx < 0) return;
+    const m = SET.cfgModels[SET.moeIdx];
+    closeModelEditor();
+    if (SET.cfgModels.length <= 1) return toast('至少要保留一个模型');
+    const ok = await confirmModal('删除模型', '删除模型「' + (m.display_name || m.id) + '」?将从 platforms 中移除该模型项。', '删除', true);
+    if (!ok) return;
+    try {
+      // delete 到 platforms[pi].keys[ki].models[mi];YAML 数组删项会自动收紧,不影响其他行注释。
+      await req('PATCH', '/api/config', { path: ['platforms', m.platform_index, 'keys', m.key_index, 'models', m.model_index], op: 'delete' });
+      afterWrite();
+    } catch (e) { toast('删除失败:' + e.message); }
+  }
+
+  // ---------- 设置区对外接口(动态卡片里的 onclick 均指向这里) ----------
+  window.sUI = {
+    // 账户
+    changePassword: changePassword,
+    logout: function () { location.href = '/logout'; },
+    // 服务
+    saveForm: saveForm,
+    restart: restart,
+    openCfg: openCfgEditor,
+    saveCfg: saveCfg,
+    closeCfg: closeCfg,
+    // 技能
+    open: openSkill,
+    openCreate: openCreateSkill,
+    closeCreate: closeCreateSkill,
+    createSkill: createSkill,
+    renameSkill: renameSkill,
+    deleteSkill: deleteSkill,
+    editFile: openSkillFile,
+    saveFile: saveSkillFile,
+    closeEditor: closeSkillEditor,
+    newFile: newSkillFile,
+    deleteFile: deleteSkillFile,
+    onUpload: uploadSkillFile,
+    // 模型
+    openAdd: function () { openModelEditor(null); },
+    mEdit: openModelEditor,
+    mClose: closeModelEditor,
+    mSave: saveModelEditor,
+    mDel: delModelFromModal,
+    toggleGroup: toggleModelGroup,
+    refreshBalance: refreshBalance,
+  };
+
+  // ---------- 初始化 ----------
+  bindChatScroll(); // 聊天区滚动跟随/右下角回底按钮(只绑一次)
+  selectMode('secretary'); // 默认选中【文秘助理】
+  setView('welcome');
+  loadSessionList();
+  </script>
 </body>
 </html>
