@@ -292,6 +292,19 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   color: var(--ink);
 }
 .plus-btn:active { background: #e4e6ec; }
+/* 右侧操作组:加号 + 发送,靠右排列 */
+.input-actions-right {
+  display: flex; align-items: center;
+  margin-left: auto;
+}
+/* 发送按钮:蓝底白向上箭头 */
+.send-btn {
+  flex: none; width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--active); color: #fff;
+  box-shadow: 0 2px 6px rgba(57, 100, 254, 0.35);
+}
+.send-btn:active { opacity: 0.85; }
 
 /* ================= 历史记录抽屉 ================= */
 #scrim {
