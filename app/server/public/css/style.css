@@ -36,6 +36,7 @@ input, textarea { font: inherit; color: inherit; border: 0; outline: none; backg
   flex-direction: column;
   position: relative;
   background: var(--page);
+  overflow: hidden; /* 裁掉底部浮层收起时滑出屏幕的部分 */
 }
 
 /* ================= 顶部导航栏 ================= */
@@ -311,18 +312,30 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 }
 .send-btn:active { opacity: 0.85; }
 
-/* ================= 任务文件面板(同步 index 的 files-panel;仅保留上传) ================= */
-.files-panel {
-  flex: none; display: flex; flex-direction: column;
-  max-height: 45vh; overflow: hidden;
-  margin-bottom: 8px;
-  border: 1px solid var(--border); border-radius: 14px;
-  background: var(--page);
+/* ================= 任务文件面板浮层(底部弹出:盖住输入区,背景遮罩;scroll-bottom-btn 在其下方) ================= */
+#files-mask {
+  position: absolute; inset: 0; z-index: 44;
+  background: rgba(10, 14, 30, 0.38);
+  opacity: 0; pointer-events: none; transition: opacity .22s;
 }
+#files-mask.show { opacity: 1; pointer-events: auto; }
+.files-panel {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 45;
+  display: flex; flex-direction: column;
+  max-height: 62%;
+  background: var(--page);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -6px 24px rgba(20, 30, 70, 0.16);
+  transform: translateY(105%); transition: transform .25s ease; /* 收起时滑出屏幕 */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  overflow: hidden;
+}
+.files-panel.open { transform: translateY(0); }
 .files-panel-header {
   flex: none; display: flex; align-items: center; justify-content: space-between;
-  padding: 9px 12px 9px 14px; font-size: 14px; font-weight: 600;
+  padding: 12px 14px; font-size: 14px; font-weight: 600;
   border-bottom: 1px solid var(--border);
+  background: var(--page);
 }
 .files-panel-header .file-upload {
   width: 30px; height: 30px; border-radius: 50%;
