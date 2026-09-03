@@ -453,36 +453,51 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .conv-item .st-dot.queued { background: var(--active); }
 .conv-item .st-dot.active { background: #1c7a2e; animation: pill-pulse 1.2s ease-in-out infinite; }
 .conv-item .st-dot.held { background: #b8860b; }
-/* 会话行内的删除按钮 ×:
-   桌面端:hover/focus-within 露出;
-   移动端:默认隐藏,右滑行(.conv-item.swiped)露出 */
+/* 会话行包装:负责裁剪 + 提供 conv-del 绝对定位的参照
+   conv-del(外层大红按钮)是 conv-item 的兄弟(不在 transform 子树内),
+   这样 swiped 状态 transform:translateX(-60px) 不会一起带走删除按钮
+   conv-del-inline 是 conv-item 的子元素,仅桌面端 hover/focus-within 露出 */
+.conv-wrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+}
 .conv-item {
   position: relative;
-  overflow: visible; /* 允许右滑后的删除按钮溢出到行右侧 */
   transition: transform .18s ease, background .12s;
+  width: 100%;
 }
-.conv-item .conv-del {
-  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-  width: 36px; height: 36px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
+.conv-wrap.swiped .conv-item { transform: translateX(-60px); }
+
+/* 移动端右滑用的大红钮:默认完全不渲染,swiped 才露 */
+.conv-wrap .conv-del {
+  display: none;
+  position: absolute; right: 0; top: 0; bottom: 0;
+  width: 60px;
   background: #c0392b; border: 0; color: #fff;
   font-size: 18px; line-height: 1; padding: 0; cursor: pointer;
-  opacity: 0; transition: opacity .12s, transform .12s;
-  pointer-events: none; /* 默认不接收点击,避免未划开时误触 */
+  align-items: center; justify-content: center;
+  border-radius: 0 12px 12px 0;
+}
+.conv-wrap.swiped .conv-del { display: flex; }
+.conv-wrap .conv-del:active { background: #a83224; }
+
+/* 桌面端用的内联小 ×:默认隐藏,hover/focus 露出 */
+.conv-item .conv-del-inline {
+  display: none;
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  background: transparent; border: 0; color: var(--gray-light);
+  font-size: 16px; line-height: 1; padding: 0; cursor: pointer;
+  align-items: center; justify-content: center;
 }
 @media (hover: hover) {
-  /* 桌面端:hover 时 conv-del 变内联小圆按钮,不占绝对定位的大块位置 */
-  .conv-item .conv-del {
-    position: static; transform: none;
-    width: 22px; height: 22px;
-    background: transparent; color: var(--gray-light);
-    font-size: 16px; pointer-events: auto;
-  }
-  .conv-item:hover .conv-del, .conv-item:focus-within .conv-del, .conv-item .conv-del:focus { opacity: 1; }
-  .conv-item .conv-del:hover, .conv-item .conv-del:active { color: #fff; background: #c0392b; }
+  .conv-item .conv-del-inline { display: flex; }
+  .conv-item:hover .conv-del-inline,
+  .conv-item:focus-within .conv-del-inline,
+  .conv-item .conv-del-inline:focus { color: var(--ink); }
+  .conv-item .conv-del-inline:hover,
+  .conv-item .conv-del-inline:active { color: #fff; background: #c0392b; }
 }
-.conv-item.swiped { transform: translateX(-60px); }
-.conv-item.swiped .conv-del { opacity: 1; pointer-events: auto; }
 .drawer-empty { padding: 24px 10px; font-size: 13px; color: var(--gray-light); text-align: center; }
 
 /* 底部用户区 */
