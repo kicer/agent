@@ -1773,6 +1773,71 @@
   }
   $('set-back-btn').addEventListener('click', onSetBack);
 
+  // 设置区任意页内：从左向右滑 → 返回上级（等同顶栏返回：子页弹栈/主页收起设置）。
+  // 可编辑控件(输入框/文本域/下拉/启停开关)上不发起；方向锁定后才接管(不抢纵向滚动)。
+  (function bindSettingsBackSwipe() {
+    const page = $('settings-page');
+    let g = null;        // {x0,y0,t0,horiz,off}
+    let exiting = false; // 右滑退场动画中：忽略新触摸
+    function blocked() {
+      if (exiting || page.classList.contains('hidden')) return true;
+      if ($('drawer').classList.contains('open')) return true;
+      return !!document.querySelector('.modal-overlay:not(.hidden)');
+    }
+    page.addEventListener('touchstart', e => {
+      if (blocked() || e.touches.length !== 1) { g = null; return; }
+      if (e.target.closest('textarea, input, select, .model-en-sw')) { g = null; return; }
+      const t = e.touches[0];
+      page.style.transition = '';
+      g = { x0: t.clientX, y0: t.clientY, t0: Date.now(), horiz: false, off: 0 };
+    }, { passive: true });
+    page.addEventListener('touchmove', e => {
+      if (!g) return;
+      const t = e.touches[0];
+      const dx = t.clientX - g.x0, dy = t.clientY - g.y0;
+      if (!g.horiz) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; // 方向未定，等待
+        if (Math.abs(dy) >= Math.abs(dx)) { g = null; return; } // 纵向滚动，不接管
+        g.horiz = true;
+      }
+      e.preventDefault(); // 横向手势归返回：屏蔽滚动/选择
+      const w = page.offsetWidth || 360;
+      g.off = Math.max(0, Math.min(dx, w));
+      page.style.transform = 'translateX(' + g.off + 'px)';
+      page.style.opacity = String(1 - 0.25 * (g.off / w));
+    }, { passive: false });
+    function end(commit) {
+      if (!g) return;
+      const w = page.offsetWidth || 360;
+      const dist = g.horiz ? g.off : 0;
+      const dt = Date.now() - g.t0;
+      const speed = dt > 0 ? dist / dt : 0;
+      const back = commit && g.horiz && (dist >= 60 || dist / w >= 0.3 || (dist >= 24 && speed > 0.8));
+      g = null;
+      if (back) {
+        // 先滑出再执行与顶栏一致的返回(编辑器页会路由到放弃确认)
+        exiting = true;
+        page.style.transition = 'transform .16s ease-in, opacity .16s ease-in';
+        page.style.transform = 'translateX(100%)';
+        page.style.opacity = '0';
+        setTimeout(() => {
+          onSetBack();
+          page.style.transition = 'none';
+          page.style.transform = '';
+          page.style.opacity = '';
+          exiting = false;
+        }, 160);
+      } else {
+        page.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
+        page.style.transform = '';
+        page.style.opacity = '';
+        setTimeout(() => { if (!g && !exiting) page.style.transition = ''; }, 200);
+      }
+    }
+    page.addEventListener('touchend', () => end(true), { passive: true });
+    page.addEventListener('touchcancel', () => end(false), { passive: true });
+  })();
+
   function setTitle(t) { $('set-title').textContent = t; }
   function setActions(html) { $('set-actions').innerHTML = html || ''; }
   function setBody(html) { $('set-body').innerHTML = html; }
