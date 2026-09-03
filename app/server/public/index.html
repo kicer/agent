@@ -1458,8 +1458,9 @@
   });
 
   // ---------- 移动端右滑会话行露出删除按钮(iOS 风格) ----------
-  function collapseAllSwiped() {
+  function collapseAllSwiped(except) {
     document.querySelectorAll('.conv-wrap.swiped').forEach(el => {
+      if (el === except) return; // 保留当前手势的行,避免自己滑回去时弹回
       el.classList.remove('swiped');
       const it = el.querySelector('.conv-item'); if (it) it.style.transform = '';
     });
@@ -1474,6 +1475,8 @@
       const item = e.target.closest('.conv-item');
       const wrap = e.target.closest('.conv-wrap');
       if (!item || !wrap) { g = null; return; }
+      // 关闭 transform 动画,保证跟手不粘滞
+      item.style.transition = 'none';
       g = { x0: t.clientX, y0: t.clientY, t0: Date.now(), wrap, item, horiz: false, lastX: t.clientX, wasSwiped: wrap.classList.contains('swiped') };
     }
     function onMove(e) {
@@ -1484,45 +1487,36 @@
       // 先判断为横向手势才接管
       if (!g.horiz) {
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-        if (Math.abs(dy) > Math.abs(dx) + 6) { g = null; return; } // 竖向滚动,不接管
+        if (Math.abs(dy) > Math.abs(dx) + 6) { g = null; restoreTrans(); return; } // 竖向滚动,不接管
         g.horiz = true;
-        // 右滑起手:收起其他已滑开的行
-        if (g.wasSwiped) collapseAllSwiped();
+        // 横向识别:收起其他已滑开的行(自己保留)
+        collapseAllSwiped(g.wrap);
       }
-      // 只允许左滑出删除(dx<0)
-      if (dx >= 0) {
-        // 还在右侧:仅在原本已滑开时跟手往回
-        if (g.wrap.classList.contains('swiped')) {
-          const off = Math.max(-60, Math.min(0, -60 + dx));
-          g.item.style.transform = 'translateX(' + off + 'px)';
-          g.lastX = t.clientX;
-        }
-        return;
-      }
-      // 已滑开:从 -60 跟着手指走
-      if (g.wrap.classList.contains('swiped')) {
-        const off = Math.max(-60, Math.min(0, -60 + dx));
-        g.item.style.transform = 'translateX(' + off + 'px)';
-        g.lastX = t.clientX;
-        return;
-      }
-      // 未滑开:左滑逐渐出,上限 -60
-      const off = Math.max(-60, dx);
+      // 统一 clamp 到 [-60, 0]:负值左滑出删除、正值表示右滑回去
+      // 起手已 swiped 状态:基线是 -60
+      const base = g.wasSwiped ? -60 : 0;
+      const off = Math.max(-60, Math.min(0, base + dx));
       g.item.style.transform = 'translateX(' + off + 'px)';
       g.lastX = t.clientX;
+    }
+    function restoreTrans() {
+      // 还原 conv-item 的 transition,让后续 swipe 动作有弹回动画
+      if (g && g.item) g.item.style.transition = '';
     }
     function onUp(e) {
       if (!g) return;
       const t = (e.changedTouches && e.changedTouches[0]) || null;
       const dx = t ? t.clientX - g.x0 : (g.lastX - g.x0);
       const moved = Math.abs(dx);
+      // 恢复 transition(为 snap 提供动画)
+      g.item.style.transition = '';
       if (g.horiz) {
         if (moved >= THRESHOLD) {
           g.wrap.classList.add('swiped');
           g.item.style.transform = ''; // CSS 接管到 -60
         } else {
           g.wrap.classList.remove('swiped');
-          g.item.style.transform = '';
+          g.item.style.transform = ''; // CSS 接管回 0
         }
       } else {
         // 未识别为横向:不动(交给 click 委派处理打开)

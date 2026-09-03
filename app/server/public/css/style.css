@@ -490,7 +490,9 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   font-size: 16px; line-height: 1; padding: 0; cursor: pointer;
   align-items: center; justify-content: center;
 }
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
+  /* 仅带精确指针(鼠标/触摸板)且能 hover 的设备才在行内露小 ×
+     触屏设备即使满足 (hover: hover) 也不命中,避免点按后持续 hover 露出 × */
   .conv-item .conv-del-inline { display: flex; }
   .conv-item:hover .conv-del-inline,
   .conv-item:focus-within .conv-del-inline,
