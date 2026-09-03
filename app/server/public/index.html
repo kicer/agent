@@ -127,15 +127,20 @@
 
     <!-- ================= 设置区(覆盖层;入口:侧边栏用户区) ================= -->
     <section id="settings-page" class="hidden" aria-label="设置">
-      <!-- 顶栏:左侧返回 + 中间标题 + 右侧操作按钮,风格与对话页 header 一致 -->
-      <header class="header">
-        <button class="icon-btn" id="set-back-btn" title="返回" aria-label="返回">
-          <svg class="ic" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
-        </button>
-        <div class="header-center"><div class="header-title" id="set-title">设置</div></div>
-        <div class="header-right" id="set-actions"><!-- JS 按页注入操作按钮 --></div>
-      </header>
-      <div id="set-body"><!-- JS 按页渲染 --></div>
+      <!-- 垫底静态快照层:子页右滑返回时,父页快照垫在这里(仅动画背景,pointer-events:none;滑完重渲染真页) -->
+      <div id="set-under" aria-hidden="true"></div>
+      <!-- 当前页层:返回滑动只平移这一层,底下露出垫底的父页 -->
+      <div id="set-top">
+        <!-- 顶栏:左侧返回 + 中间标题 + 右侧操作按钮,风格与对话页 header 一致 -->
+        <header class="header">
+          <button class="icon-btn" id="set-back-btn" title="返回" aria-label="返回">
+            <svg class="ic" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </button>
+          <div class="header-center"><div class="header-title" id="set-title">设置</div></div>
+          <div class="header-right" id="set-actions"><!-- JS 按页注入操作按钮 --></div>
+        </header>
+        <div id="set-body"><!-- JS 按页渲染 --></div>
+      </div>
     </section>
 
     <!-- 新建技能弹窗(搬自 index) -->
@@ -1678,6 +1683,7 @@
 
   const SET = {
     stack: [],
+    snaps: {},                        // 页名 → 静态快照 HTML(setPush 时刷新;右滑返回垫底用)
     pendingKeys: new Set(),           // 已写盘、尚未重启生效的顶层配置段
     effCfg: null, cfgOrig: '',
     curSkill: null,                   // 技能详情/编辑视图对应的技能名
@@ -1773,9 +1779,34 @@
 
   // ---------- 页面栈与顶栏 ----------
   function setTop() { return SET.stack[SET.stack.length - 1] || 'home'; }
-  function showSettings() { SET.stack = ['home']; $('settings-page').classList.remove('hidden'); renderSetPage(); }
-  function closeSettings() { SET.stack = []; $('settings-page').classList.add('hidden'); }
-  function setPush(p) { SET.stack.push(p); renderSetPage(); }
+  function setUnderHide() {
+    const u = $('set-under');
+    u.classList.remove('show'); u.innerHTML = '';
+  }
+  function showSettings() {
+    SET.stack = ['home']; SET.snaps = {}; setUnderHide();
+    $('settings-page').classList.remove('hidden'); renderSetPage();
+  }
+  function closeSettings() {
+    SET.stack = []; SET.snaps = {}; setUnderHide();
+    $('settings-page').classList.add('hidden');
+  }
+  // 当前页静态快照(顶栏+正文):右滑返回时垫底,呈现原生导航栈的视差感。
+  // 快照里的 id 全部剥除,防止重复 id 干扰 $('…') 查找;仅作动画背景,滑完由 renderSetPage 重渲染真页。
+  function snapSetPage() {
+    const box = document.createElement('div');
+    box.innerHTML = '<header class="header"><button class="icon-btn" tabindex="-1"><svg class="ic" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg></button>' +
+      '<div class="header-center"><div class="header-title">' + esc($('set-title').textContent) + '</div></div>' +
+      '<div class="header-right">' + $('set-actions').innerHTML + '</div></header>' +
+      '<div class="set-under-body">' + $('set-body').innerHTML + '</div>';
+    box.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    return box.innerHTML;
+  }
+  function setPush(p) {
+    const prev = setTop();
+    if (prev) SET.snaps[prev] = snapSetPage(); // 垫底快照跟随最新渲染结果刷新
+    SET.stack.push(p); renderSetPage();
+  }
   function setPopRaw() { SET.stack.pop(); renderSetPage(); }
   function onSetBack() {
     const p = setTop();
@@ -1787,9 +1818,13 @@
 
   // 设置区任意页内：从左向右滑 → 返回上级（等同顶栏返回：子页弹栈/主页收起设置）。
   // 可编辑控件(输入框/文本域/下拉/启停开关)上不发起；方向锁定后才接管(不抢纵向滚动)。
+  // 子页返回：只平移当前页层，底下垫父页静态快照(原生导航栈观感)；
+  // 设置主页无父页：保持整层滑出，底下露出的就是主聊天页，观感本就正确。
   (function bindSettingsBackSwipe() {
     const page = $('settings-page');
-    let g = null;        // {x0,y0,t0,horiz,off}
+    const topLayer = $('set-top');
+    const under = $('set-under');
+    let g = null;        // {x0,y0,t0,horiz,off,under}
     let exiting = false; // 右滑退场动画中：忽略新触摸
     function blocked() {
       if (exiting || page.classList.contains('hidden')) return true;
@@ -1801,7 +1836,8 @@
       if (e.target.closest('textarea, input, select, .model-en-sw')) { g = null; return; }
       const t = e.touches[0];
       page.style.transition = '';
-      g = { x0: t.clientX, y0: t.clientY, t0: Date.now(), horiz: false, off: 0 };
+      topLayer.style.transition = '';
+      g = { x0: t.clientX, y0: t.clientY, t0: Date.now(), horiz: false, off: 0, under: false };
     }, { passive: true });
     page.addEventListener('touchmove', e => {
       if (!g) return;
@@ -1811,15 +1847,24 @@
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; // 方向未定，等待
         if (Math.abs(dy) >= Math.abs(dx)) { g = null; return; } // 纵向滚动，不接管
         g.horiz = true;
+        // 子页且父页快照存在(setPush 时已刷新) → 垫底，后续只平移当前页层
+        const par = SET.stack[SET.stack.length - 2];
+        if (par && SET.snaps[par]) {
+          g.under = true;
+          under.innerHTML = SET.snaps[par];
+          under.classList.add('show');
+        }
       }
       e.preventDefault(); // 横向手势归返回：屏蔽滚动/选择
+      const tgt = g.under ? topLayer : page;
       const w = page.offsetWidth || 360;
       g.off = Math.max(0, Math.min(dx, w));
-      page.style.transform = 'translateX(' + g.off + 'px)';
-      page.style.opacity = String(1 - 0.25 * (g.off / w));
+      tgt.style.transform = 'translateX(' + g.off + 'px)';
+      tgt.style.opacity = String(1 - 0.25 * (g.off / w));
     }, { passive: false });
     function end(commit) {
       if (!g) return;
+      const tgt = g.under ? topLayer : page;
       const w = page.offsetWidth || 360;
       const dist = g.horiz ? g.off : 0;
       const dt = Date.now() - g.t0;
@@ -1829,21 +1874,22 @@
       if (back) {
         // 先滑出再执行与顶栏一致的返回(编辑器页会路由到放弃确认)
         exiting = true;
-        page.style.transition = 'transform .16s ease-in, opacity .16s ease-in';
-        page.style.transform = 'translateX(100%)';
-        page.style.opacity = '0';
+        tgt.style.transition = 'transform .16s ease-in, opacity .16s ease-in';
+        tgt.style.transform = 'translateX(100%)';
+        tgt.style.opacity = '0';
         setTimeout(() => {
-          onSetBack();
-          page.style.transition = 'none';
-          page.style.transform = '';
-          page.style.opacity = '';
+          onSetBack(); // 重渲染父页，替换垫底快照
+          tgt.style.transition = 'none';
+          tgt.style.transform = '';
+          tgt.style.opacity = '';
+          setUnderHide();
           exiting = false;
         }, 160);
       } else {
-        page.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
-        page.style.transform = '';
-        page.style.opacity = '';
-        setTimeout(() => { if (!g && !exiting) page.style.transition = ''; }, 200);
+        tgt.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
+        tgt.style.transform = '';
+        tgt.style.opacity = '';
+        setTimeout(() => { if (!g && !exiting) tgt.style.transition = ''; setUnderHide(); }, 200);
       }
     }
     page.addEventListener('touchend', () => end(true), { passive: true });

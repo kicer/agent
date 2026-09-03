@@ -649,6 +649,22 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   background: var(--page);
   display: flex; flex-direction: column;
 }
+/* 当前页层:右滑返回时只平移它,底下露出 #set-under 垫底的父页快照 */
+#set-top {
+  position: relative; z-index: 1;
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--page); /* 不透明,滑动前完全盖住垫底层 */
+}
+/* 垫底静态快照层:仅返回滑动动画期间显示,不可交互 */
+#set-under { display: none; }
+#set-under.show {
+  display: flex; flex-direction: column;
+  position: absolute; inset: 0; z-index: 0;
+  background: var(--page);
+  pointer-events: none;
+}
+.set-under-body { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
 .header-right { flex: none; min-width: 40px; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .header-right .icon-btn, .header-right label.icon-btn { color: var(--ink); }
 .header-right .icon-btn:active, .header-right label.icon-btn:active { background: var(--surface); }
