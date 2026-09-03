@@ -309,3 +309,220 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 
 /* ================= 工具调用行(v2 轻量展示,替代工具卡片) ================= */
 .tool-line { font-size: 12px; color: var(--gray); line-height: 1.6; padding: 2px 0; }
+
+/* ================= 设置区(覆盖层页面;卡片/表单样式搬自 style.css 适配 v2 变量) ================= */
+#settings-page {
+  position: absolute; inset: 0; z-index: 60;
+  background: var(--page);
+  display: flex; flex-direction: column;
+}
+.header-right { flex: none; min-width: 40px; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.header-right .icon-btn, .header-right label.icon-btn { color: var(--ink); }
+.header-right .icon-btn:active, .header-right label.icon-btn:active { background: var(--surface); }
+label.icon-btn { cursor: pointer; }
+#set-body { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; }
+.set-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px calc(16px + env(safe-area-inset-bottom, 0px)); }
+.empty-tip { color: var(--gray-light); text-align: center; padding: 18px; font-size: 13px; }
+
+/* ---------- 设置主页卡片 ---------- */
+.set-home { display: flex; flex-direction: column; gap: 12px; }
+.set-card {
+  display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+  background: var(--page); border: 1px solid var(--border); border-radius: 16px; padding: 15px 16px;
+}
+.set-card:active { background: var(--surface); }
+.set-ico {
+  width: 42px; height: 42px; border-radius: 12px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--active-soft); color: var(--active);
+}
+.set-tt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.set-name { font-size: 15px; font-weight: 600; }
+.set-desc { font-size: 12px; color: var(--gray); }
+.set-arrow { color: var(--gray-light); }
+
+/* ---------- 抽屉底部用户区:整行可点 ---------- */
+.drawer-user { cursor: pointer; }
+.drawer-user:active { background: var(--surface); }
+
+/* ---------- 通用白卡与设置表单(搬自 style.css 设置页) ---------- */
+.settings-card {
+  background: var(--page); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 14px 12px; margin-bottom: 12px;
+}
+.settings-card h4 { font-size: 14px; color: var(--ink); margin: 4px 0 2px; display: flex; align-items: center; gap: 8px; }
+.cfg-kv {
+  display: flex; align-items: baseline; gap: 10px;
+  font-size: 13px; padding: 7px 0; border-bottom: 1px dashed var(--border);
+}
+.cfg-kv:last-of-type { border-bottom: none; }
+.cfg-kv label { color: var(--gray); flex: none; max-width: 42%; }
+.cfg-kv b {
+  font-weight: 500; flex: 1; text-align: right; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.cfg-note { font-size: 11.5px; color: var(--gray-light); line-height: 1.5; margin-top: 6px; }
+.cfg-input {
+  flex: 1; min-width: 0; text-align: right; font-size: 13px; color: var(--ink);
+  background: var(--surface); border: 1px solid transparent; border-radius: 8px;
+  padding: 6px 10px; font-variant-numeric: tabular-nums; font-family: inherit;
+  -webkit-appearance: none; appearance: none;
+}
+.cfg-input:focus { border-color: var(--active); background: #fff; }
+.cfg-input::-webkit-outer-spin-button, .cfg-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.cfg-input.cfg-dirty { color: #c0392b; border-color: #e8b4b0; background: #fdf3f2; }
+.cfg-err {
+  margin: 0 0 8px; padding: 8px 12px; border-radius: 8px;
+  background: #fdecea; color: #a3352a; font-size: 12.5px;
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* ---------- 账户卡(搬自 index 用户卡) ---------- */
+.user-card { display: flex; flex-direction: column; align-items: center; padding: 20px 16px 16px; }
+.user-avatar {
+  width: 64px; height: 64px; border-radius: 50%; border: none;
+  color: #fff; font-size: 26px; font-weight: 600; letter-spacing: 1px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px rgba(30, 40, 90, 0.18); user-select: none;
+}
+.set-user-name { margin-top: 10px; font-size: 16px; font-weight: 600; word-break: break-all; text-align: center; }
+.user-acts { display: flex; gap: 10px; width: 100%; max-width: 360px; margin-top: 14px; }
+.user-acts .ghost-btn { flex: 1; }
+
+/* ---------- 徽章 ---------- */
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 8px; white-space: nowrap; }
+.badge.active { background: #e3f2e6; color: #217a34; }
+.badge.held { background: #fff4dc; color: #a06a00; }
+.badge.cancelled { background: #fdecea; color: #b3382c; }
+
+/* ---------- 列表卡(技能)与操作钮 ---------- */
+.session-card {
+  background: var(--page); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 10px; cursor: pointer;
+}
+.session-card:active { background: var(--surface); }
+.session-main { flex: 1; overflow: hidden; }
+.session-name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { font-size: 12px; color: var(--gray); margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; }
+.skill-desc {
+  font-size: 12px; color: var(--gray); margin-top: 3px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.card-acts { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; flex-shrink: 0; }
+.card-act { background: var(--active-soft); color: var(--active); border: none; border-radius: 8px; font-size: 12px; padding: 5px 10px; cursor: pointer; }
+.card-act.del { background: #fdecea; color: #c0392b; }
+.card-act:active { opacity: 0.7; }
+
+/* ---------- 技能详情文件列表 ---------- */
+.skill-files { background: var(--page); border: 1px solid var(--border); border-radius: 12px; padding: 6px 8px; }
+.skill-files .file-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px;
+  border-radius: 8px; font-size: 13.5px; cursor: pointer;
+  border-bottom: 1px dashed var(--border);
+}
+.skill-files .file-row:last-child { border-bottom: none; }
+.skill-files .file-row:active { background: var(--surface); }
+.skill-files .file-ico {
+  width: 16px; height: 16px; flex-shrink: 0;
+  stroke: #7f8db0; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.skill-files .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.skill-files .file-size { background: var(--surface); color: var(--gray); font-size: 11px; padding: 2px 8px; border-radius: 9px; flex: none; }
+.skill-files .file-act { background: var(--active-soft); color: var(--active); border: none; border-radius: 7px; padding: 4px 9px; font-size: 13px; flex: none; cursor: pointer; }
+.skill-files .file-act.del { background: #fdecea; color: #c0392b; }
+
+/* ---------- 模型池分组与卡片 ---------- */
+.model-group { background: var(--page); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+.model-group-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; cursor: pointer; user-select: none; }
+.model-group-head:active { opacity: 0.7; }
+.model-group-caret {
+  width: 15px; height: 15px; flex-shrink: 0;
+  stroke: #7f8db0; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  transition: transform 0.15s ease;
+}
+.model-group.open .model-group-caret { transform: rotate(90deg); }
+.model-group-name { font-weight: 600; font-size: 14.5px; }
+.model-group-key {
+  font-size: 11.5px; color: var(--gray); word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.model-group-meta { margin-left: auto; flex-shrink: 0; font-size: 12px; color: var(--gray); white-space: nowrap; }
+.model-group-body { padding: 0 10px 10px; border-top: 1px dashed var(--border); }
+.model-group-bal { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 10px 4px 0; font-size: 12.5px; color: #556; }
+.mbal-refresh { border: none; background: none; padding: 2px; margin: 0; cursor: pointer; display: flex; color: #7f8db0; }
+.mbal-refresh svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mbal-refresh:active { opacity: 0.6; }
+.mbal-refresh.spin svg { animation: mbal-spin 0.8s linear infinite; }
+@keyframes mbal-spin { to { transform: rotate(360deg); } }
+.model-group-empty { font-size: 12px; color: var(--gray-light); padding: 12px 4px 2px; text-align: center; }
+.model-card { background: #fafbfd; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin: 10px 0 0; }
+.model-card:last-child { margin-bottom: 2px; }
+.model-card-head { display: flex; align-items: baseline; gap: 8px; }
+.model-card-name { font-weight: 600; font-size: 15px; flex-shrink: 0; cursor: pointer; }
+.model-card-name:active { opacity: 0.55; }
+.model-card-meta { font-size: 12px; color: var(--gray); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-card-state { font-size: 11px; padding: 2px 8px; border-radius: 9px; flex-shrink: 0; }
+.model-card-state.idle { background: #e3f2e6; color: #217a34; }
+.model-card-state.busy { background: #fdecea; color: #b3382c; }
+.model-card-state.pending { background: #fff4dc; color: #a06a00; }
+
+/* ---------- 编辑器页(config.yml 原文 / 技能文件) ---------- */
+.set-editor {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+}
+.set-editor textarea {
+  flex: 1; width: 100%; resize: none; background: #fff; color: var(--ink);
+  border: 1px solid #dde1ea; border-radius: 10px; padding: 10px 12px;
+  font-size: 12.5px; line-height: 1.55; tab-size: 4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+  white-space: pre; overflow: auto;
+}
+
+/* ---------- 按钮与弹窗(搬自 style.css,按 v2 调性去渐变) ---------- */
+.primary-btn {
+  width: 100%; background: var(--active); color: #fff; border: none; border-radius: 10px;
+  padding: 11px; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.primary-btn:active { opacity: 0.9; }
+.primary-btn:disabled { opacity: 0.5; cursor: default; }
+.ghost-btn {
+  background: var(--surface); color: #445; border: 1px solid #dde; border-radius: 10px;
+  padding: 11px; font-size: 15px; cursor: pointer;
+}
+.ghost-btn:active { background: #e8eaf0; }
+.ghost-btn.danger { background: #fdf3f2; color: #c0392b; border-color: #eac2bd; }
+.btn-row { display: flex; gap: 10px; }
+.btn-row .primary-btn { flex: 1; }
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(20, 25, 50, 0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.modal {
+  background: var(--page); border-radius: 14px; padding: 20px; width: 84%; max-width: 360px;
+  position: relative; max-height: 88%; overflow-y: auto;
+}
+.modal h3 { margin-bottom: 12px; font-size: 16px; }
+.modal input {
+  width: 100%; border: 1px solid #dde1ea; border-radius: 10px;
+  padding: 10px 12px; font-size: 15px; margin-bottom: 10px; background: #fff; color: var(--ink);
+}
+.modal input:focus { border-color: var(--active); }
+.modal input:disabled { background: var(--surface); color: var(--gray-light); }
+.modal select {
+  width: 100%; border: 1px solid #dde1ea; border-radius: 10px;
+  padding: 10px 12px; font-size: 15px; margin-bottom: 10px;
+  background: #fff; color: var(--ink); appearance: none; -webkit-appearance: none;
+}
+.modal select:focus { border-color: var(--active); }
+.modal-close-btn {
+  position: absolute; right: 10px; top: 10px;
+  background: none; border: none; cursor: pointer; color: var(--gray-light);
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+}
+.modal-close-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+.modal .modal-text { font-size: 14px; color: #556; margin-bottom: 12px; white-space: pre-wrap; }
+.modal .del-dir { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink); margin-bottom: 14px; cursor: pointer; }
+.modal .del-dir input { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--active); }
