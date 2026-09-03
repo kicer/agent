@@ -224,7 +224,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 36px;
+  height: 32px;
   padding: 0 12px;
   border-radius: 999px;
   border: 1px solid var(--gray-light);
@@ -592,7 +592,7 @@ label.icon-btn { cursor: pointer; }
 .primary-btn:active { opacity: 0.9; }
 .primary-btn:disabled { opacity: 0.5; cursor: default; }
 .ghost-btn {
-  background: var(--surface); color: #445; border: 1px solid #dde; border-radius: 10px;
+  flex:1; background: var(--surface); color: #445; border: 1px solid #dde; border-radius: 10px;
   padding: 11px; font-size: 15px; cursor: pointer;
 }
 .ghost-btn:active { background: #e8eaf0; }

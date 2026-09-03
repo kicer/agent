@@ -1137,7 +1137,7 @@
   // 会话页左缘右滑 → 拉出历史抽屉:跟随手指平移,超过阈值/快速右滑松手即打开。
   (function bindEdgeSwipe() {
     const drawer = $('drawer'), scrim = $('scrim');
-    const EDGE = 28;             // 触发识别的左缘宽度(px)
+    const EDGE = 100;            // 触发识别的左缘宽度(px)
     const MAX_OPACITY = 0.4;     // 与 #scrim.show 背景一致
     let g = null;                // 当前手势 {x0,y0,t0,horiz,cancelled,off}
     function uiBlocked() {
