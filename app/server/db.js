@@ -17,6 +17,7 @@ function initDb(dbPath) {
       phase TEXT NOT NULL DEFAULT 'planning',
       model_id TEXT,
       last_model_id TEXT,
+      assistant_type TEXT DEFAULT 'secretary',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       completed_at INTEGER,
@@ -93,6 +94,11 @@ function initDb(dbPath) {
   if (!cols.some(c => c.name === 'last_model_id')) {
     db.exec('ALTER TABLE sessions ADD COLUMN last_model_id TEXT');
     db.exec('UPDATE sessions SET last_model_id = model_id WHERE last_model_id IS NULL AND model_id IS NOT NULL');
+  }
+  // 迁移：assistant_type 标记会话的 AI 助手类型（secretary=文秘助理 / vision=识图专家），
+  // 建档时选定，后续不可变更；存量老会话按默认文秘助理回填
+  if (!cols.some(c => c.name === 'assistant_type')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN assistant_type TEXT DEFAULT 'secretary'");
   }
   return db;
 }

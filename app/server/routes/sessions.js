@@ -49,8 +49,10 @@ function listTaskFiles(dir) {
 router.post('/', wrap((req, res) => {
   const title = (req.body && req.body.title || '').trim();
   const modelId = (req.body && req.body.model_id || '').trim();
-  const session = engine.createSession(title, modelId);
-  log.info('[task] ' + (req.user || '-') + ' 新建任务 ' + session.id + '「' + (session.title || '未命名') + '」model=' + (modelId || '自动'));
+  // 助手类型建档时锁定，后续不可变更；缺省按文秘助理
+  const assistantType = String((req.body && req.body.assistant_type) || 'secretary').trim().slice(0, 32) || 'secretary';
+  const session = engine.createSession(title, modelId, assistantType);
+  log.info('[task] ' + (req.user || '-') + ' 新建任务 ' + session.id + '「' + (session.title || '未命名') + '」model=' + (modelId || '自动') + ' type=' + (session.assistant_type || 'secretary'));
   res.json(session);
 }));
 
