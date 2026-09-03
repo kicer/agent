@@ -94,8 +94,8 @@
       </div>
       <div class="drawer-list" id="drawer-list"></div>
       <div class="drawer-user" id="drawer-user">
-        <div class="avatar">A</div>
-        <div class="user-name">Agent 用户</div>
+        <div class="avatar" id="drawer-avatar">A</div>
+        <div class="user-name" id="drawer-user-name">Agent 用户</div>
         <button class="user-more" id="user-more-btn" title="更多设置" aria-label="更多设置">
           <svg class="ic sm" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle></svg>
         </button>
@@ -616,6 +616,14 @@
     return d.getFullYear() + '年' + (d.getMonth() + 1) + '月';
   }
 
+  // 抽屉行状态胶囊:仅进行中的会话(排队/活跃/保持)展示,已完成/已终止不展示
+  const DRAWER_STATUS_TEXT = { queued: '排队中', active: '活跃中', held: '保持中' };
+  function drawerPillHtml(s) {
+    const st = s && s.status;
+    if (!DRAWER_STATUS_TEXT[st]) return '';
+    return '<span class="status-pill ' + esc(st) + '">' + DRAWER_STATUS_TEXT[st] + '</span>';
+  }
+
   function renderDrawerList() {
     const list = state.sessions.slice().sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
     const box = $('drawer-list');
@@ -625,7 +633,8 @@
       const g = groupLabel(s.updated_at);
       if (g !== lastGroup) { html += '<div class="group-label">' + esc(g) + '</div>'; lastGroup = g; }
       html += '<button class="conv-item' + (s.id === state.sessionId ? ' active' : '') + '" data-id="' + esc(s.id) + '">' +
-        esc(s.title || s.id) + '</button>';
+        '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerPillHtml(s) +
+        '</button>';
     }
     box.innerHTML = html;
   }
@@ -1099,8 +1108,12 @@
 
   // ---------- 抽屉 ----------
   function openDrawer(open) {
-    $('drawer').classList.toggle('open', open);
-    $('scrim').classList.toggle('show', open);
+    // 清掉手势拖动遗留的内联位移/透明度,改由 CSS transition 负责开合动画
+    const drawer = $('drawer'), scrim = $('scrim');
+    drawer.style.transform = ''; drawer.style.transition = '';
+    scrim.style.opacity = '';
+    drawer.classList.toggle('open', open);
+    scrim.classList.toggle('show', open);
   }
   $('menu-btn').addEventListener('click', () => {
     const open = !$('drawer').classList.contains('open');
@@ -1120,6 +1133,66 @@
     openSession(item.dataset.id);
     openDrawer(false);
   });
+
+  // 会话页左缘右滑 → 拉出历史抽屉:跟随手指平移,超过阈值/快速右滑松手即打开。
+  (function bindEdgeSwipe() {
+    const drawer = $('drawer'), scrim = $('scrim');
+    const EDGE = 28;             // 触发识别的左缘宽度(px)
+    const MAX_OPACITY = 0.4;     // 与 #scrim.show 背景一致
+    let g = null;                // 当前手势 {x0,y0,t0,horiz,cancelled,off}
+    function uiBlocked() {
+      if (!$('settings-page').classList.contains('hidden')) return true;
+      if (!$('img-viewer').classList.contains('hidden')) return true;
+      if (!$('fs-viewer').classList.contains('hidden')) return true;
+      return !!document.querySelector('.modal-overlay:not(.hidden)');
+    }
+    function reset() {
+      drawer.style.transform = ''; drawer.style.transition = '';
+      scrim.style.opacity = '';
+      drawer.classList.remove('open');
+      scrim.classList.remove('show');
+    }
+    document.addEventListener('touchstart', e => {
+      if (drawer.classList.contains('open') || uiBlocked() || e.touches.length !== 1) { g = null; return; }
+      const t = e.touches[0];
+      if (t.clientX > EDGE) { g = null; return; } // 仅左缘起手
+      g = { x0: t.clientX, y0: t.clientY, t0: Date.now(), horiz: false, cancelled: false, off: 0 };
+    }, { passive: true });
+    document.addEventListener('touchmove', e => {
+      if (!g || g.cancelled) return;
+      const t = e.touches[0];
+      const dx = t.clientX - g.x0, dy = t.clientY - g.y0;
+      if (!g.horiz) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;      // 方向未定,等待
+        if (dy > dx || dx < 0) { g.cancelled = true; return; } // 纵向滚动或向左,放弃
+        g.horiz = true;
+      }
+      e.preventDefault(); // 手势归属抽屉:阻止页面滚动/系统返回
+      const w = drawer.offsetWidth || 300;
+      g.off = Math.max(0, Math.min(dx, w));
+      if (!drawer.style.transition) drawer.style.transition = 'none'; // 跟手时不走 CSS 动画
+      drawer.classList.remove('open');
+      scrim.classList.add('show');
+      drawer.style.transform = 'translateX(calc(-102% + ' + g.off + 'px))';
+      scrim.style.opacity = (g.off / w) * MAX_OPACITY;
+    }, { passive: false });
+    function endDrag(e, commit) {
+      if (!g) return;
+      const w = drawer.offsetWidth || 300;
+      const dist = g.horiz ? g.off : 0;
+      const dt = Date.now() - g.t0;
+      const speed = dt > 0 ? dist / dt : 0; // px/ms
+      const open = commit && g.horiz && (dist >= 60 || dist / w >= 0.35 || (dist >= 24 && speed > 0.8));
+      reset();
+      if (open) {
+        openDrawer(true);
+        loadSessionList();
+      }
+      g = null;
+    }
+    document.addEventListener('touchend', e => endDrag(e, true), { passive: true });
+    document.addEventListener('touchcancel', e => endDrag(e, false), { passive: true });
+  })();
 
   // 抽屉底部用户区:整行点击 → 设置主页(逻辑见文末「设置区」一节)
   $('drawer-user').addEventListener('click', () => {
@@ -1295,6 +1368,19 @@
     let h = 0;
     for (const ch of String(name || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
     return AVATAR_COLORS[h % AVATAR_COLORS.length];
+  }
+  // 侧边栏底部用户区:拉取真实登录用户名,头像样式与设置页 user-card 一致(按用户名取色+首两字)
+  async function loadDrawerUser() {
+    const av = $('drawer-avatar'), un = $('drawer-user-name');
+    if (!av || !un) return;
+    try {
+      const r = await req('GET', '/api/me');
+      const name = r && r.user ? String(r.user) : '';
+      if (!name) return; // 未登录态(理论上不会出现,401 已自动跳登录页)
+      av.textContent = userInitials(name);
+      av.style.background = avatarColor(name);
+      un.textContent = name;
+    } catch (_) { /* 未启用认证时无 /api/me,保留默认占位 */ }
   }
   function userCardHtml(me) {
     return '<div class="settings-card user-card">' +
@@ -2047,6 +2133,7 @@
   selectMode('secretary'); // 默认选中【文秘助理】
   setView('welcome');
   loadSessionList();
+  loadDrawerUser(); // 侧边栏底部展示真实登录用户(未启用认证时静默回退默认占位)
   </script>
 </body>
 </html>
