@@ -459,8 +459,8 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 /* 复选框：圆形，点击区域够大 */
 .files-panel .file-check {
   flex: none;
-  width: 22px; height: 22px; border-radius: 50%;
-  border: 2px solid #c8cee0; background: var(--page);
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1px solid #c8cee0; background: var(--page);
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; box-sizing: border-box;
   margin-top: 2px;
