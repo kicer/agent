@@ -5,18 +5,21 @@ md2pdf 技能主入口：将 Markdown 转换为 PDF（支持中文和常用格�
 依赖 install.sh 预先准备好中文字体（fonts/cjk.ttf），本脚本只负责注册和转换。
 """
 import sys
+import io
 import json
 import re
+import urllib.request
 from pathlib import Path
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem, HRFlowable
+    SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem, HRFlowable, Image
 )
 
 # ---------- 字体注册 ----------
@@ -115,13 +118,16 @@ def escape_xml(text):
 
 def parse_inline(text):
     """处理行内格式:加粗、斜体、行内代码、链接。入参必须是 escape_xml 之后的文本。"""
-    # 行内代码 `code`:先占位保护,避免其中的 * [ ] 被后续规则误伤
+    # 行内代码 `code`：先占位保护，避免其中的 * [ ] 被后续规则误伤
     code_spans = []
     def _stash(m):
         code_spans.append(m.group(1))
         return '\x00%d\x00' % (len(code_spans) - 1)
     text = re.sub(r'`(.+?)`', _stash, text)
-    # 链接 [text](url) → reportlab <link>(可点击;转义后 URL 里的 & 已是 &amp;,属性内合法)
+    # 行内图片 ![alt](src)：段落里无法嵌图，降级为 alt 文本；必须在链接规则之前，
+    # 否则 [alt](src) 部分会被下面的链接规则改写成可点链接，图片变成“!+链接”残骸
+    text = re.sub(IMG_MD_RE, lambda m: m.group(1) or '[图片]', text)
+    # 链接 [text](url) → reportlab <link>（可点击；转义后 URL 里的 & 已是 &amp;，属性内合法）
     text = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<link href="\2" color="#3964FE">\1</link>', text)
     # 加粗 **text**
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
@@ -141,9 +147,57 @@ def is_ordered_list(line):
     """判断是否为有序列表行"""
     return re.match(r'^\d+\.\s+', line)
 
+# ---------- 图片 ----------
+# Markdown 图片语法：![alt](src) 或 ![alt](src "title")
+IMG_MD_RE = re.compile(r'!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)')
+
+def load_image_source(src, md_dir):
+    """加载 md 引用的图片，返回可交给 ImageReader 的对象（路径或 BytesIO），失败返回 None。
+    相对路径按 **md 文件所在目录** 解析：技能子进程的 cwd 是技能目录而非任务目录，
+    不能直接 open 相对路径；另外兼容绝对路径与 http(s) 远程图。"""
+    if re.match(r'^https?://', src):
+        try:
+            req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return io.BytesIO(resp.read())
+        except Exception as e:
+            print(f"图片下载失败：{src}（{e}）", file=sys.stderr)
+            return None
+    candidates = [Path(src)] if Path(src).is_absolute() else [md_dir / src, Path.cwd() / src]
+    for c in candidates:
+        try:
+            if c.is_file():
+                return str(c)
+        except OSError:
+            continue
+    print(f"图片未找到：{src}（在 {md_dir} 下未命中）", file=sys.stderr)
+    return None
+
+def image_flowable(src, md_dir, max_width):
+    """Markdown 图片 → platypus Image（居中，超宽时等比缩到版心宽）；失败返回 None 由调用方文字兜底"""
+    obj = load_image_source(src, md_dir)
+    if obj is None:
+        return None
+    try:
+        iw, ih = ImageReader(obj).getSize()
+    except Exception as e:
+        print(f"图片格式不支持：{src}（{e}）", file=sys.stderr)
+        return None
+    if not iw or not ih:
+        return None
+    if isinstance(obj, io.BytesIO):
+        obj.seek(0)  # getSize 读过字节，绘制前要回到开头
+    # 像素按 96dpi 换算磅值；小图不放大，大图缩到版心宽
+    w = min(iw * 72.0 / 96.0, max_width)
+    h = ih * (w / iw)
+    img = Image(obj, width=w, height=h)
+    img.hAlign = 'CENTER'
+    return img
+
 # ---------- Markdown 解析主函数 ----------
-def parse_markdown(md_text, styles):
+def parse_markdown(md_text, styles, md_dir=None, max_width=170 * mm):
     """解析 Markdown 文本，返回 platypus 故事列表"""
+    md_dir = md_dir or Path.cwd()
     story = []
     lines = md_text.split('\n')
     current_list = []          # 当前列表项
@@ -177,6 +231,19 @@ def parse_markdown(md_text, styles):
                 width="100%", thickness=0.5, color="#cccccc",
                 spaceBefore=8, spaceAfter=8
             ))
+            continue
+
+        # 独立成行的图片：![alt](src) → 嵌入 PDF；加载失败退回 alt/路径文本，不丢行
+        m_img = IMG_MD_RE.fullmatch(line)
+        if m_img:
+            flush_list()
+            alt, src = m_img.group(1), m_img.group(2)
+            img = image_flowable(src, md_dir, max_width)
+            if img is not None:
+                story.append(img)
+            else:
+                label = alt or src
+                story.append(Paragraph(render_inline('[图片缺失：' + label + ']'), styles["body"]))
             continue
 
         # 标题
@@ -234,8 +301,8 @@ def markdown_to_pdf(md_path, pdf_path):
     # 构建样式
     styles = build_styles(normal_font, bold_font)
 
-    # 解析 Markdown
-    story = parse_markdown(md_text, styles)
+    # 解析 Markdown（图片相对路径按 md 所在目录解析；版心宽 = A4 宽 - 左右边距）
+    story = parse_markdown(md_text, styles, md_dir=Path(md_path).resolve().parent, max_width=A4[0] - 40 * mm)
 
     # 创建 PDF
     doc = SimpleDocTemplate(
