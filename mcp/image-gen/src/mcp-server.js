@@ -163,19 +163,19 @@ function buildServer() {
             content: [
               {
                 type: "text",
-                text: `调用成功但未返回图片 URL：${JSON.stringify(data)}`,
+                text: `The Zhipu API call succeeded but returned no image URL. Raw response: ${JSON.stringify(data)}`,
               },
             ],
           };
         }
         const summary = urls
-          .map((u, i) => `图片 ${i + 1}: ${u}`)
+          .map((u, i) => `Image ${i + 1}: ${u}`)
           .join("\n");
         return {
           content: [
             {
               type: "text",
-              text: `模型: ${model}\n提示词: ${args.prompt}\n${summary}`,
+              text: `Model: ${model}\nPrompt: ${args.prompt}\n${summary}`,
             },
             ...urls.map((u) => ({ type: "text", text: u })),
           ],
@@ -186,8 +186,8 @@ function buildServer() {
           content: [
             {
               type: "text",
-              text: `生成图片失败: ${e.message}${
-                e.detail ? `\n详情: ${JSON.stringify(e.detail)}` : ""
+              text: `Failed to generate image: ${e.message}${
+                e.detail ? `\nDetails: ${JSON.stringify(e.detail)}` : ""
               }`,
             },
           ],
