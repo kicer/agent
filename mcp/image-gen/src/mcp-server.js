@@ -137,7 +137,7 @@ function buildServer() {
             {
               type: "text",
               text:
-                "Missing authentication token. The caller must provide a Zhipu API token via an HTTP request header (e.g. `X-Image-Gen-Token: <token>` or `Authorization: Bearer <token>`). The server is configured to read the token from the request header on every call, not from the tool arguments, so the token cannot be supplied here.",
+                "缺少鉴权 token。",
             },
           ],
         };
@@ -163,19 +163,19 @@ function buildServer() {
             content: [
               {
                 type: "text",
-                text: `The Zhipu API call succeeded but returned no image URL. Raw response: ${JSON.stringify(data)}`,
+                text: `调用成功但未返回图片 URL：${JSON.stringify(data)}`,
               },
             ],
           };
         }
         const summary = urls
-          .map((u, i) => `Image ${i + 1}: ${u}`)
+          .map((u, i) => `图片 ${i + 1}: ${u}`)
           .join("\n");
         return {
           content: [
             {
               type: "text",
-              text: `Model: ${model}\nPrompt: ${args.prompt}\n${summary}\n\nThe image is hosted on a signed Zhipu URL and will expire (typically within 24 hours, see the URL's Expires parameter). If the user needs to keep it, download or copy the image right away.`,
+              text: `模型: ${model}\n提示词: ${args.prompt}\n${summary}`,
             },
             ...urls.map((u) => ({ type: "text", text: u })),
           ],
@@ -186,8 +186,8 @@ function buildServer() {
           content: [
             {
               type: "text",
-              text: `Failed to generate image: ${e.message}${
-                e.detail ? `\nDetails: ${JSON.stringify(e.detail)}` : ""
+              text: `生成图片失败: ${e.message}${
+                e.detail ? `\n详情: ${JSON.stringify(e.detail)}` : ""
               }`,
             },
           ],
