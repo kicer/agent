@@ -13,13 +13,15 @@ from pathlib import Path
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
+from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem, HRFlowable, Image
+    SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem, HRFlowable, Image,
+    Table, TableStyle
 )
 
 # ---------- 字体注册 ----------
@@ -194,6 +196,58 @@ def image_flowable(src, md_dir, max_width):
     img.hAlign = 'CENTER'
     return img
 
+# ---------- 表格 ----------
+# 数据/表头行：| a | b |；分隔行：| --- | :---: | ---: | --- |
+TABLE_ROW_RE = re.compile(r'^\|.*\|\s*$')
+TABLE_SEP_RE = re.compile(r'^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$')
+
+def split_row(line):
+    """按未转义的竖线拆分表格行，保留 `\|` 转义出来的字面竖线"""
+    line = line.strip()
+    cells = re.split(r'(?<!\\)\|', line)
+    cells = [c.replace('\\|', '|').strip() for c in cells]
+    # 首尾的空单元格（来自行首/行尾的 |）去掉；全空则删掉
+    if cells and cells[0] == '': cells = cells[1:]
+    if cells and cells[-1] == '': cells = cells[:-1]
+    return cells
+
+def table_flowable(rows, max_width, styles):
+    """表格行 → platypus Table（首行为表头加底纹，超宽时分列撑满版心）"""
+    ncols = max(len(r) for r in rows)
+    colw = max_width / ncols
+    cell_style = ParagraphStyle(
+        name='TableCell',
+        fontName=styles['body'].fontName,
+        fontSize=8.5, leading=12,
+        leftIndent=3, rightIndent=3,
+        alignment=TA_LEFT,
+    )
+    header_style = ParagraphStyle(
+        name='TableHeader', parent=cell_style,
+        fontName=styles['h3'].fontName,  # 粗体
+        textColor=colors.white,
+    )
+    data = []
+    for ri, row in enumerate(rows):
+        row = row + [''] * (ncols - len(row))
+        data.append([
+            Paragraph(render_inline(c), header_style if ri == 0 else cell_style)
+            for c in row
+        ])
+    t = Table(data, colWidths=[colw] * ncols)
+    t.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#c9d4e4')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f4f7fb')]),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    t.hAlign = 'CENTER'
+    return t
+
 # ---------- Markdown 解析主函数 ----------
 def parse_markdown(md_text, styles, md_dir=None, max_width=170 * mm):
     """解析 Markdown 文本，返回 platypus 故事列表"""
@@ -218,8 +272,11 @@ def parse_markdown(md_text, styles, md_dir=None, max_width=170 * mm):
             current_list = []
             current_list_type = None
 
-    for raw_line in lines:
-        line = raw_line.strip()
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i].strip()
+        i += 1
         if not line:
             flush_list()
             continue
@@ -276,6 +333,15 @@ def parse_markdown(md_text, styles, md_dir=None, max_width=170 * mm):
         elif line.startswith('> '):
             flush_list()
             story.append(Paragraph(render_inline(line[2:]), styles["quote"]))
+        # 表格：当前行是表头行，且下一行是分隔行 → 收拢成整张表
+        elif TABLE_ROW_RE.match(line) and i < n and TABLE_SEP_RE.match(lines[i].strip()):
+            flush_list()
+            i += 1  # 跳过分隔行
+            rows = [split_row(line)]
+            while i < n and TABLE_ROW_RE.match(lines[i].strip()):
+                rows.append(split_row(lines[i].strip()))
+                i += 1
+            story.append(table_flowable(rows, max_width, styles))
         # 普通段落
         else:
             flush_list()
