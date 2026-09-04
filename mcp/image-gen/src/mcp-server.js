@@ -112,17 +112,17 @@ function buildServer() {
 
   server.tool(
     "generate_image",
-    "调用智谱图片生成 API，根据 prompt 生成图片，返回图片 URL。可选指定 size。模型由调用方通过 HTTP header（X-Image-Gen-Model）控制，不在工具参数中暴露。",
+    "根据 prompt 生成图片，返回图片 URL。可选指定 size。",
     {
       prompt: z
         .string()
         .min(1)
-        .describe("图片生成提示词，描述想要的画面内容"),
+        .describe("图片生成提示词，详细描述想要的画面内容"),
       size: z
         .string()
         .optional()
         .describe(
-          "图片尺寸，例如 1024x1024、1280x1280、1024x1792、1792x1024、768x1344、1344x768，遵循智谱 API 规格"
+          "图片尺寸，例如 1024x1024、1280x1280、1024x1792、1792x1024、768x1344、1344x768"
         ),
     },
     async (args, extra) => {
@@ -137,7 +137,7 @@ function buildServer() {
             {
               type: "text",
               text:
-                "缺少鉴权 token，请通过 HTTP 请求头（例如 Authorization: Bearer <token> 或 X-Image-Gen-Token: <token>）传递。",
+                "缺少鉴权 token。",
             },
           ],
         };
