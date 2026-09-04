@@ -12,6 +12,19 @@ services:
     networks:
       - my-app-network
 
+  mcp-image-gen:
+    build: ./image-gen
+    container_name: mcp-image-gen
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      - VIRTUAL_HOST=image-gen.ai.foresh.com
+      - VIRTUAL_PORT=3000
+      - CERT_NAME=default
+    networks:
+      - my-app-network
+
 networks:
   my-app-network:
     external: true
