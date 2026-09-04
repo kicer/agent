@@ -1395,6 +1395,33 @@
       updateFilesFooter();
     } catch (e) { toast('读取文件失败:' + e.message); }
   }
+  // 把渲染好的 Markdown HTML 里的相对图片路径，重写成可访问的任务文件下载地址：
+  // 预览在浏览器里以应用页面为基准解析相对 src，而图片其实在任务目录里，直接写相对路径会 404。
+  // 相对路径一律按 md 文件所在目录为基准解析到任务目录下的路径，再拼下载接口。
+  function rewriteMdImageSrcs(html, mdPath) {
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    // md 所在目录（任务根下无子目录时为 ''，否则如 'docs'）
+    const baseSegs = mdPath.includes('/') ? mdPath.split('/').slice(0, -1) : [];
+    const resolve = function (p) {
+      if (/^(https?:)?\/\//i.test(p) || p.startsWith('data:') || p.startsWith('blob:')) return null; // 已是外链/内联
+      const segs = p.startsWith('/') ? [] : baseSegs.slice(); // 以 / 开头视为任务根下
+      for (const part of p.split('/')) {
+        if (!part || part === '.') continue;
+        if (part === '..') { if (segs.length) segs.pop(); continue; }
+        segs.push(part);
+      }
+      return segs.join('/');
+    };
+    host.querySelectorAll('img').forEach(function (im) {
+      const src = im.getAttribute('src');
+      if (!src) return;
+      const rel = resolve(src);
+      if (rel === null || rel === '') return;
+      im.setAttribute('src', '/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(rel));
+    });
+    return host.innerHTML;
+  }
   // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe、图片用 <img>
   async function previewInFs(name) {
     try {
@@ -1423,10 +1450,13 @@
         // md/txt：复用双击气泡的全屏查看器
         const text = await r.text();
         let cls = 'bubble-ai', html;
-        if (/\.md$/i.test(name)) {
+        if (/\.(md|markdown)$/i.test(name)) {
           const r2 = mdHtml(text);
           html = r2.html;
-          if (r2.fmt) cls += ' md';
+          if (r2.fmt) {
+            cls += ' md';
+            html = rewriteMdImageSrcs(html, name);
+          }
         } else {
           html = esc(text);
         }
