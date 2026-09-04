@@ -376,7 +376,9 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 /* 上传总进度条(header 中间,上传中显示) */
 .files-panel-progress {
   flex: 1; min-width: 0; height: 6px; margin: 0 10px;
-  background: var(--surface); border-radius: 3px; overflow: hidden; position: relative;
+  background: var(--surface); border-radius: 3px; position: relative;
+  /* 不用 overflow:hidden:会裁掉右侧 10px 高的百分比文字(.pct);
+     填充条 .bar 自带 3px 圆角,无需轨道裁剪 */
 }
 .files-panel-progress .bar {
   height: 100%; width: 0;
