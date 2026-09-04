@@ -1367,6 +1367,11 @@
         el.innerHTML = '<div class="empty-tip">还没有文件,在对话框上传或让 AI 生成</div>';
         return;
       }
+      // 后端已按创建时间倒序,这里再排一次防旧排序缓存;时间缺失排最后
+      files.sort(function (a, b) {
+        const ca = a.ctime || a.mtime || 0, cb = b.ctime || b.mtime || 0;
+        return cb - ca;
+      });
       filesAllPaths = files.map(f => f.filename);
       el.innerHTML = files.map(f => {
         // 预览策略：md/txt/html + 图片在 fs-viewer 预览（pdf 不预）
@@ -1376,11 +1381,13 @@
           ? '<svg class="file-ico eye" viewBox="0 0 24 24" aria-label="可预览"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
           : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
         const name = esc(String(f.filename).split('/').pop() || f.filename);
+        const ftime = fmtTime(f.ctime || f.mtime);
         return '<div class="file-row' + (fsPv ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '">' +
           '<span class="file-check" role="checkbox" aria-checked="false" aria-label="选择"></span>' +
           '<div class="file-main">' +
             '<div class="file-name">' + name + '</div>' +
-            '<div class="file-meta">' + ico + '<span class="file-size">' + fmtSize(f.size) + '</span></div>' +
+            '<div class="file-meta">' + ico + '<span class="file-size">' + fmtSize(f.size) + '</span>' +
+              (ftime ? '<span class="file-time">' + ftime + '</span>' : '') + '</div>' +
           '</div>' +
         '</div>';
       }).join('');

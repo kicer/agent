@@ -36,13 +36,23 @@ function listTaskFiles(dir) {
       const relPath = rel ? rel + '/' + e.name : e.name;
       if (e.isDirectory()) rec(abs, relPath);
       else if (e.isFile()) {
-        let size = null, mtime = null;
-        try { const st = fs.statSync(abs); size = st.size; mtime = st.mtimeMs; } catch (_) {}
-        out.push({ filename: relPath, size, mtime });
+        let size = null, mtime = null, ctime = null;
+        // birthtime 在部分文件系统不可用(返回 0),回退 mtime;新生成/上传的文件两者基本一致
+        try {
+          const st = fs.statSync(abs);
+          size = st.size; mtime = st.mtimeMs;
+          ctime = (st.birthtimeMs && st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs) || null;
+        } catch (_) {}
+        out.push({ filename: relPath, size, mtime, ctime });
       }
     }
   })(dir, '');
-  out.sort(function (a, b) { return a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0; });
+  // 按创建时间倒序(最新在前)方便查找;同一时刻按文件名升序保证稳定
+  out.sort(function (a, b) {
+    const ca = a.ctime || a.mtime || 0, cb = b.ctime || b.mtime || 0;
+    if (cb !== ca) return cb - ca;
+    return a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0;
+  });
   return out;
 }
 
