@@ -373,12 +373,14 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   background: var(--active-soft); color: var(--active); cursor: pointer;
 }
 .files-panel-header .file-upload:active { background: var(--active); color: #fff; }
-/* 上传总进度条(header 中间,上传中显示) */
+/* 上传总进度条(header 中间,上传中显示):[轨道 | 百分比] 横排,
+   百分比走正常文档流,不再悬浮在 6px 高的轨道里,避免各种裁剪/像素取整导致文字显示不全 */
 .files-panel-progress {
-  flex: 1; min-width: 0; height: 6px; margin: 0 10px;
-  background: var(--surface); border-radius: 3px; position: relative;
-  /* 不用 overflow:hidden:会裁掉右侧 10px 高的百分比文字(.pct);
-     填充条 .bar 自带 3px 圆角,无需轨道裁剪 */
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0 10px;
+}
+.files-panel-progress .fp-track {
+  flex: 1; min-width: 0; height: 6px;
+  background: var(--surface); border-radius: 3px; overflow: hidden;
 }
 .files-panel-progress .bar {
   height: 100%; width: 0;
@@ -387,9 +389,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   transition: width .12s linear;
 }
 .files-panel-progress .pct {
-  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-  font-size: 10px; color: var(--gray); background: var(--page); padding: 0 4px; line-height: 1;
-  white-space: nowrap; pointer-events: none;
+  flex: none; font-size: 10px; color: var(--gray); line-height: 1; white-space: nowrap;
 }
 .files-panel-header .file-upload svg {
   width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2;
