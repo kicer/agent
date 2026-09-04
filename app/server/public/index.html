@@ -1423,14 +1423,32 @@
       else downloadFile(path);
     });
 
-    // 批量下载：逐个拉取 download-token 后跳转，复用单文件下载路径（多个文件浏览器会连续触发下载）
+    // 批量下载：逐个 fetch 同源 URL 拿到 blob 后，用 <a download> 触发下载。
+    // 不走 window.location.href，避免顶层导航被浏览器串行/去重、丢 cookie。
     async function bulkDownload() {
       if (!state.sessionId || fileSelected.size === 0) return;
       const names = Array.from(fileSelected);
       for (const name of names) {
         try {
+          // 后端返回的 download-token 里含一个带一次性 token 的直链（同源）
           const r = await req('GET', '/api/sessions/' + state.sessionId + '/files/download-token?path=' + encodeURIComponent(name));
-          if (r && r.url) window.location.href = r.url;
+          if (!r || !r.url) throw new Error('未拿到下载链接');
+          // 同源 fetch：明确带 credentials，兼容 Safari 严格 cookie 策略与反代部署
+          const resp = await fetch(r.url, { credentials: 'same-origin' });
+          if (!resp.ok) { let m = 'HTTP ' + resp.status; try { m = (await resp.json()).error || m; } catch (_) {} throw new Error(m); }
+          const blob = await resp.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          // 取文件名（剥路径）作为下载名
+          const baseName = String(name).split('/').pop() || name;
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = baseName;
+          a.rel = 'noopener';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          // 释放 blob URL；稍微延迟避免 Safari 取消下载
+          setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch (_) {} }, 4000);
         } catch (e) { toast('下载失败:' + name + ' ' + e.message); }
       }
     }
