@@ -552,7 +552,7 @@ async function runLoopInner(sessionId, run) {
 async function streamAssistant(sessionId, run, session, messages, tools) {
   run.abortController = new AbortController();
   try {
-    return await callModel(cfg, session.model_id, messages, tools, {
+    const result = await callModel(cfg, session.model_id, messages, tools, {
       signal: run.abortController.signal,
       shouldCancel: () => run.cancelled,
       onText: delta => bus.emit(sessionId, 'assistant_delta', { text: delta }),
@@ -564,6 +564,13 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       onMeta: line => log.debug('[sse] ' + sessionId + ' ' + line),
       onBadData: raw => log.warn('[sse] ' + sessionId + ' 坏帧：' + raw.slice(0, 200)),
     });
+    // 本轮上游响应总览：帧数 + 文本长度 + 工具调用 + finish + aborted。
+    // sseFrames=0 且 aborted=false 表示上游未发任何 data（疑似流异常）；其他情况可快速区分
+    // “上游发了一堆帧但 content 为空” 与 “根本没调用成功”。
+    log.info('[sse] ' + sessionId + ' 本轮汇总：帧 ' + (result && result.sseFrames || 0) +
+      '，finish=' + (result && result.finish_reason || '-') +
+      '，aborted=' + (result && result.aborted || false));
+    return result;
   } finally {
     run.abortController = null;
   }

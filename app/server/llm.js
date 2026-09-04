@@ -178,10 +178,12 @@ async function callModel(cfg, modelId, messages, tools, options) {
   let finishReason = null;
   let usage = null;
   let aborted = false;
+  let sseFrames = 0; // 收到的上游 data 帧数（仅计数成功下传到 onEvent 的）
   const toolCalls = new Map(); // index -> {id, name, arguments}
 
   try {
     await forEachSSEData(res, evt => {
+      sseFrames++;
       if (opts.shouldCancel && opts.shouldCancel()) { aborted = true; controller.abort(); return; }
       if (evt.usage) usage = evt.usage;
       const choice = evt.choices && evt.choices[0];
@@ -216,7 +218,7 @@ async function callModel(cfg, modelId, messages, tools, options) {
   }
   if (opts.shouldCancel && opts.shouldCancel()) aborted = true;
 
-  return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted };
+  return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
 module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, encodeBlocks, decodeBlocks };
