@@ -15,6 +15,7 @@ let builtinNames = new Set();
 // 发一次 JSON-RPC 请求，返回 { result, headers }（HTTP 非 2xx / error / 无法解析时抛异常）。
 // 某些 MCP 服务遵循 Streamable HTTP 规范会在 initialize 响应里返回 Mcp-Session-Id，
 // 之后所有非 initialize 请求都必须带上该 header，否则返回 400。我们把会话 id 缓存在 server.sessionId 里。
+// session 过期补偿：非 initialize 请求若 400 且错误信息含 session，清掉旧 id 并重新 initialize 后重试一次。
 async function rpc(server, method, params, timeoutMs) {
   const callId = Date.now();
   const ctrl = new AbortController();
@@ -36,7 +37,31 @@ async function rpc(server, method, params, timeoutMs) {
     // 响应头里出现 Mcp-Session-Id 就缓存到 server（多处出现都被覆盖为最后一次，重复请求同一服务后保持一致）
     const sid = res.headers.get('mcp-session-id');
     if (sid) server.sessionId = sid;
-    if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + raw.slice(0, 300));
+    if (!res.ok) {
+      // session 过期补偿：仅对非 initialize 请求，400 且错误信息含 session 时重新握手后重试一次。
+      // 不调 tools/list —— 工具表在 init() 时已经发现并固化，运行期间不需要重新发现。
+      if (method !== 'initialize' && res.status === 400 && /session/i.test(raw)) {
+        clearTimeout(timer);
+        log.warn('[mcp] ' + server.name + ' session 疑似过期，重新握手: ' + raw.slice(0, 200));
+        server.sessionId = null;
+        // 重新跑 initialize，递归走当前函数，method=initialize 不会再触发重连逻辑
+        try {
+          await rpc(server, 'initialize', {
+            protocolVersion: '2024-11-05',
+            capabilities: {},
+            clientInfo: { name: 'agent', version: '1.0.0' },
+          }, 15000);
+          // 按 MCP 规范发 notifications/initialized（无响应体，失败不阻断）
+          try { await rpc(server, 'notifications/initialized', {}, 5000); } catch (_) { /* 通知失败不阻断 */ }
+        } catch (e) {
+          // 老服务可能没有 initialize，会报 Method not found；不阻断，按既有兼容走原通道
+          if (!/Method not found/i.test(String(e && e.message || e))) throw e;
+        }
+        // 重试原请求（新一次 fetch + 新 AbortController）
+        return await rpc(server, method, params, timeoutMs);
+      }
+      throw new Error('HTTP ' + res.status + ': ' + raw.slice(0, 300));
+    }
     // 响应可能是 SSE 帧（多行 data: {...}），取 id 匹配或最后一条 JSON
     let payload = null;
     try {
