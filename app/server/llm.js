@@ -76,7 +76,10 @@ function buildMessages(session, language) {
 }
 
 // 解析 SSE 行流，对每个 data: JSON 调用 onEvent。
-async function forEachSSEData(response, onEvent) {
+// 可选回调：onMeta(line) 逐行接收非 data 字段（event:/id:/retry:/注释/未知字段），
+//           onBadData(raw) 在 data 行 JSON.parse 失败时被调用（原始字符串）。
+// 两个回调都可选，传入则启用；流式行为不变（data 仍逐帧下传到 onEvent）。
+async function forEachSSEData(response, onEvent, onMeta, onBadData) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
@@ -88,12 +91,23 @@ async function forEachSSEData(response, onEvent) {
     while ((idx = buf.indexOf('\n\n')) >= 0) {
       const block = buf.slice(0, idx);
       buf = buf.slice(idx + 2);
+      const dataPieces = [];
       for (const line of block.split('\n')) {
         const t = line.trim();
-        if (!t.startsWith('data:')) continue;
-        const data = t.slice(5).trim();
-        if (data === '[DONE]') return;
-        try { onEvent(JSON.parse(data)); } catch (_) { /* 忽略坏帧 */ }
+        if (t.startsWith('data:')) {
+          dataPieces.push(t.slice(5).trim());
+        } else if (t.length && onMeta) {
+          // SSE 注释行以 ':' 开头（如 ":keep-alive"），这里原样交给 onMeta
+          onMeta(t);
+        }
+      }
+      if (!dataPieces.length) continue;
+      const data = dataPieces.join('\n');
+      if (data === '[DONE]') return;
+      try {
+        onEvent(JSON.parse(data));
+      } catch (_) {
+        if (onBadData) onBadData(data);
       }
     }
   }

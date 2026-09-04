@@ -94,15 +94,8 @@ function saveMessage(sessionId, msg) {
     }
     log.info('[msg] ' + sessionId + ' AI 回复：文本 ' + String(msg.content || '').length + ' 字' + toolDesc);
   }
-  // debug 等级：用户/AI 消息全文打印（含 tool_calls 参数），方便调试；info 仍只给概述。
-  // 不含 tool 角色：工具结果另在 runLoopInner 记 debug，且含图消息的大段 base64 不应刷进日志。
-  if (msg.role === 'user' || msg.role === 'assistant') {
-    log.debug('[msg] ' + sessionId + ' ' + (msg.role === 'user' ? '用户消息全文' : 'AI 回复全文') +
-      (msg.name ? '（' + msg.name + '）' : '') + '：\n' + String(msg.content || '') +
-      (msg.tool_calls ? '\ntool_calls: ' + JSON.stringify(msg.tool_calls) : ''));
-  }
   return info.lastInsertRowid;
-}
+  }
 
 // 记录一次模型回合的 token 用量（上游未返回 usage 时跳过）。
 // 写入 model_usage 表,不建会话外键：删会话后累计统计仍保留。
@@ -566,6 +559,10 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       onReasoning: delta => bus.emit(sessionId, 'reasoning_delta', { text: delta }),
       // 本轮是否启用深度思考；由 postUserMessage 从消息 POST 参数写进 run
       deepThink: !!run.deepThink,
+      // 上游 SSE 调试信号：非 data 行（event:/id:/retry:/注释/未知）逐行 debug，data 坏帧 warn。
+      // meta 是时间性调试信息，事件稀少；badData 是真异常，不该静默。
+      onMeta: line => log.debug('[sse] ' + sessionId + ' ' + line),
+      onBadData: raw => log.warn('[sse] ' + sessionId + ' 坏帧：' + raw.slice(0, 200)),
     });
   } finally {
     run.abortController = null;
