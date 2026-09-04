@@ -1468,33 +1468,36 @@
       else downloadFile(path);
     });
 
-    // 批量下载：逐个 fetch 同源 URL 拿到 blob 后，用 <a download> 触发下载。
-    // 不走 window.location.href，避免顶层导航被浏览器串行/去重、丢 cookie。
+    // 批量下载：先把所有 download-token 拿完，再用服务器直链逐个触发下载。
+    // 两个历史坑：
+    //  1) 边拿 token 边 location.href：首个下载导航会打断后续 fetch（第 2 个报失败）；
+    //     → 先批量拿完 token 再触发。
+    //  2) fetch+blob 方案：手机浏览器不认 blob 文件名（变编号/.bin），
+    //     套壳 WebView 不处理 blob: 下载请求（点了没反应）；
+    //     → 回到服务器原始直链（文件名跟 Content-Disposition），与单文件下载同一条链路。
     async function bulkDownload() {
       if (!state.sessionId || fileSelected.size === 0) return;
       const names = Array.from(fileSelected);
+      // 第一阶段：全部 token 先拿到手（此时还没发生任何导航，fetch 不会被打断）
+      const items = [];
       for (const name of names) {
         try {
-          // 后端返回的 download-token 里含一个带一次性 token 的直链（同源）
           const r = await req('GET', '/api/sessions/' + state.sessionId + '/files/download-token?path=' + encodeURIComponent(name));
           if (!r || !r.url) throw new Error('未拿到下载链接');
-          // 同源 fetch：明确带 credentials，兼容 Safari 严格 cookie 策略与反代部署
-          const resp = await fetch(r.url, { credentials: 'same-origin' });
-          if (!resp.ok) { let m = 'HTTP ' + resp.status; try { m = (await resp.json()).error || m; } catch (_) {} throw new Error(m); }
-          const blob = await resp.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          // 取文件名（剥路径）作为下载名
-          const baseName = String(name).split('/').pop() || name;
-          const a = document.createElement('a');
-          a.href = blobUrl;
-          a.download = baseName;
-          a.rel = 'noopener';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          // 释放 blob URL；稍微延迟避免 Safari 取消下载
-          setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch (_) {} }, 4000);
+          items.push({ url: r.url, name: String(name).split('/').pop() || name });
         } catch (e) { toast('下载失败:' + name + ' ' + e.message); }
+      }
+      // 第二阶段：隐藏 <a> + 服务器直链逐个触发；download 属性作手机端文件名兜底，
+      // 小间隔避免移动端拦截连续多次下载
+      for (const it of items) {
+        const a = document.createElement('a');
+        a.href = it.url;
+        a.download = it.name;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { try { a.remove(); } catch (_) {} }, 1000);
+        await new Promise(res => setTimeout(res, 350));
       }
     }
     async function bulkDelete() {
