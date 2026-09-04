@@ -370,6 +370,30 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .files-panel-header .files-panel-title {
   flex: 1; min-width: 0;
 }
+.files-panel-header-ops {
+  display: flex; align-items: center; gap: 8px;
+}
+.files-panel-toggle {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface); color: var(--gray);
+  border: none; cursor: pointer; padding: 0;
+  position: relative;
+  transition: background .15s ease, color .15s ease, opacity .15s ease;
+}
+.files-panel-toggle:active:not([disabled]) { background: var(--active-soft); }
+.files-panel-toggle[disabled] { opacity: .5; cursor: not-allowed; }
+.files-panel-toggle svg {
+  position: absolute;
+  width: 18px; height: 18px;
+  fill: none; stroke: currentColor;
+  stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round;
+  display: none;
+}
+/* 三个状态：none -> +，some -> −，all -> √ */
+.files-panel-toggle[data-state="none"] .ic-plus { display: block; color: var(--active); }
+.files-panel-toggle[data-state="some"] .ic-minus { display: block; color: var(--active); }
+.files-panel-toggle[data-state="all"]  .ic-check { display: block; color: var(--active); }
 /* 上传总进度条(.files-panel-header 中间，上传中显示)：[轨道 | 百分比] 横排，
    百分比走正常文档流，不再悬浮在 6px 高的轨道里，避免各种裁剪/像素取整导致文字显示不全 */
 .files-panel-progress {

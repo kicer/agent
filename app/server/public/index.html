@@ -113,10 +113,17 @@
     <div class="files-panel" id="files-panel" aria-label="任务文件">
           <div class="files-panel-header">
             <span class="files-panel-title">任务文件</span>
-            <label class="file-upload" title="上传文件" aria-label="上传文件">
-              <input type="file" id="file-input" multiple hidden>
-              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-            </label>
+            <div class="files-panel-header-ops">
+              <button class="files-panel-toggle" id="files-toggle-all" title="全选" aria-label="全选" aria-pressed="false" disabled>
+                <svg class="ic-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                <svg class="ic-minus" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                <svg class="ic-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              </button>
+              <label class="file-upload" title="上传文件" aria-label="上传文件">
+                <input type="file" id="file-input" multiple hidden>
+                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+              </label>
+            </div>
           </div>
           <div class="files-list" id="files-list"></div>
                 <div class="files-panel-progress hidden" id="fp-progress" aria-live="polite">
@@ -1298,51 +1305,88 @@
   $('attach-btn').addEventListener('click', toggleFilesPanel);
   $('files-mask').addEventListener('click', () => setFilesPanel(false)); // 点遮罩收起
 
-  // 任务文件面板多选状态：Set 保留当前选中的文件路径
-    const fileSelected = new Set();
+  // 任务文件面板多选状态：Set 保留当前选中的文件路径；filesAllPaths 保留当前面板所有路径
+  const fileSelected = new Set();
+  let filesAllPaths = [];
 
-    function updateFilesFooter() {
-      const n = fileSelected.size;
-      const countEl = $('files-count');
-      const dlBtn = $('files-bulk-download');
-      const delBtn = $('files-bulk-delete');
-      if (countEl) countEl.textContent = n ? '已选择 ' + n + ' 个文件' : '未选择文件';
-      if (dlBtn) dlBtn.disabled = n === 0;
-      if (delBtn) delBtn.disabled = n === 0;
+  function updateFilesFooter() {
+    const n = fileSelected.size;
+    const total = filesAllPaths.length;
+    const countEl = $('files-count');
+    const dlBtn = $('files-bulk-download');
+    const delBtn = $('files-bulk-delete');
+    const togBtn = $('files-toggle-all');
+    if (countEl) countEl.textContent = n ? '已选择 ' + n + ' 个文件' : '未选择文件';
+    if (dlBtn) dlBtn.disabled = n === 0;
+    if (delBtn) delBtn.disabled = n === 0;
+    // 全选按钮：没有文件时禁用；全部选中=打勾态；部分选中=减号态；都未选=加号态
+    if (togBtn) {
+      togBtn.disabled = total === 0;
+      let state = 'none';
+      if (n === total && total > 0) state = 'all';
+      else if (n > 0) state = 'some';
+      togBtn.dataset.state = state;
+      togBtn.setAttribute('aria-pressed', n > 0 ? 'true' : 'false');
+      togBtn.title = state === 'all' ? '取消全选' : '全选';
+      togBtn.setAttribute('aria-label', state === 'all' ? '取消全选' : '全选');
     }
+  }
 
-    async function loadFiles() {
-      if (!state.sessionId) return;
-      // 重新拉取前清空旧选择，避免脏数据遗留
+  // 全选 / 取消全选：依据当前状态决定。全部选中 → 取消；否则 → 选中全部
+  function toggleSelectAll() {
+    const total = filesAllPaths.length;
+    if (total === 0) return;
+    if (fileSelected.size === total) {
       fileSelected.clear();
-      updateFilesFooter();
-      try {
-        const files = await req('GET', '/api/sessions/' + state.sessionId + '/files');
-        const el = $('files-list');
-        if (!files.length) {
-          el.innerHTML = '<div class="empty-tip">还没有文件,在对话框上传或让 AI 生成</div>';
-          return;
-        }
-        el.innerHTML = files.map(f => {
-          // 预览策略：md/txt/html + 图片在 fs-viewer 预览（pdf 不预）
-          const low = f.filename.toLowerCase();
-          const fsPv = /\.(md|txt|html?|png|jpe?g|gif|webp|svg)$/.test(low);
-          const ico = fsPv
-            ? '<svg class="file-ico eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
-            : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
-          const name = esc(String(f.filename).split('/').pop() || f.filename);
-          return '<div class="file-row' + (fsPv ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '">' +
-            '<span class="file-check" role="checkbox" aria-checked="false" aria-label="选择"></span>' +
-            '<div class="file-main">' +
-              '<div class="file-name">' + name + '</div>' +
-              '<div class="file-meta">' + ico + '<span class="file-size">' + fmtSize(f.size) + '</span></div>' +
-            '</div>' +
-          '</div>';
-        }).join('');
-        // 重新渲染后刷新底部计数与按钮状态
-        updateFilesFooter();
-      } catch (e) { toast('读取文件失败:' + e.message); }
+    } else {
+      for (const p of filesAllPaths) fileSelected.add(p);
     }
+    // 同步每行的视觉状态
+    const rows = $('files-list').querySelectorAll('.file-row');
+    rows.forEach(r => {
+      const p = r.dataset.path;
+      const sel = fileSelected.has(p);
+      r.classList.toggle('selected', sel);
+      const ck = r.querySelector('.file-check');
+      if (ck) ck.setAttribute('aria-checked', sel ? 'true' : 'false');
+    });
+    updateFilesFooter();
+  }
+
+  async function loadFiles() {
+    if (!state.sessionId) return;
+    // 重新拉取前清空旧选择，避免脏数据遗留
+    fileSelected.clear();
+    filesAllPaths = [];
+    updateFilesFooter();
+    try {
+      const files = await req('GET', '/api/sessions/' + state.sessionId + '/files');
+      const el = $('files-list');
+      if (!files.length) {
+        el.innerHTML = '<div class="empty-tip">还没有文件,在对话框上传或让 AI 生成</div>';
+        return;
+      }
+      filesAllPaths = files.map(f => f.filename);
+      el.innerHTML = files.map(f => {
+        // 预览策略：md/txt/html + 图片在 fs-viewer 预览（pdf 不预）
+        const low = f.filename.toLowerCase();
+        const fsPv = /\.(md|txt|html?|png|jpe?g|gif|webp|svg)$/.test(low);
+        const ico = fsPv
+          ? '<svg class="file-ico eye" viewBox="0 0 24 24" aria-label="可预览"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
+          : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+        const name = esc(String(f.filename).split('/').pop() || f.filename);
+        return '<div class="file-row' + (fsPv ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '">' +
+          '<span class="file-check" role="checkbox" aria-checked="false" aria-label="选择"></span>' +
+          '<div class="file-main">' +
+            '<div class="file-name">' + name + '</div>' +
+            '<div class="file-meta">' + ico + '<span class="file-size">' + fmtSize(f.size) + '</span></div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+      // 重新渲染后刷新底部计数与按钮状态
+      updateFilesFooter();
+    } catch (e) { toast('读取文件失败:' + e.message); }
+  }
   // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe、图片用 <img>
   async function previewInFs(name) {
     try {
@@ -1468,6 +1512,7 @@
     }
     $('files-bulk-download').addEventListener('click', bulkDownload);
     $('files-bulk-delete').addEventListener('click', bulkDelete);
+    $('files-toggle-all').addEventListener('click', toggleSelectAll);
   // ---------- 大图上传前压缩(同步 v1:阈值/参数由 /api/system/status 透出) ----------
   const DEFAULT_UPLOAD_CFG = { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85 };
   let uploadCfgCache = null;
