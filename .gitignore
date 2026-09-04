@@ -8,6 +8,7 @@ app/data/
 data/
 skills/deps/
 skills/*/.deps_installed
+skills/*/__pycache__/
 *.log
 .DS_Store
 app/server/version.json
