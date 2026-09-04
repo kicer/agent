@@ -152,7 +152,7 @@ curl -F "file=@/tmp/cat.png" https://video-gen.ai.foresh.com/upload
 | 名称 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | string | ❌ | 视频文本描述，最大 512 字符 |
-| `image_url` | string | ❌ | 参考图 URL（也支持 base64）。最多两张，首张为首帧、第二张为尾帧。图片 ≤ 5MB，格式 png/jpeg/jpg |
+| `image_url` | string (URL) | ❌ | 参考图 URL（**单张**，不支持数组 / 多张 / 首尾帧）。图片 ≤ 5MB，格式 png/jpeg/jpg。本地文件请走 `/upload` |
 | `size` | string | ❌ | 视频尺寸，例如 `1920x1080`、`1080x1920`、`1024x1024`、`1280x960` 等 |
 | `with_audio` | boolean | ❌ | 是否生成 AI 音效，默认 `false` |
 
@@ -163,7 +163,6 @@ curl -F "file=@/tmp/cat.png" https://video-gen.ai.foresh.com/upload
 | `X-Video-Gen-Model` / `X-Mcp-Model` / `X-Model` | string | `cogvideox-flash` | 覆盖模型 |
 | `X-Video-Gen-Quality` | string | `speed` | `speed`（速度优先）或 `quality`（质量优先） |
 | `X-Video-Gen-Fps` | int | `30` | `30` 或 `60` |
-| `X-Video-Gen-Duration` | int | `5` | `5` 或 `10` 秒 |
 | `X-Video-Gen-Watermark` | bool | `true` | 是否添加 AI 水印；关闭需先在智谱后台签署免责声明 |
 
 模型名串识别顺序（首个非空值生效）：`X-Video-Gen-Model` → `X-Mcp-Model` → `X-Model` → 默认。
@@ -360,7 +359,7 @@ package.json        # @modelcontextprotocol/sdk + express + multer
 - **Token 闭包注入**：在 Express 入口处从 header 提取 token，闭包传给 tool 回调；不依赖 SDK 内部字段
 - **AI 可见 vs AI 不可见**：
   - AI 只看到 `prompt / image_url / size / with_audio`
-  - `model / quality / fps / duration / watermark_enabled` 全部由 HTTP header 注入，避免 AI 误传或被诱导调高价档
+    - `model / quality / fps / watermark_enabled` 全部由 HTTP header 注入，避免 AI 误传或被诱导调高价档
 - **异步语义暴露给 AI**：服务端不做轮询，`generate_video` 只提交、`query_video` 只查一次。AI 自主决定节奏
 - **服务端自动 `request_id`**：每次提交服务端生成一个 UUID 作为智谱 `request_id`，便于日志关联，但不暴露给 AI
 - **上传接口与 MCP 走同一进程**：额外 `POST /upload` + `GET /uploads/*` 不走 MCP、不鉴权，靠内网隔离；`PUBLIC_BASE_URL` 环境变量控制返回 URL 的拼接 host，AI 看到的 tool description 启动时拼接进真实地址，避免 AI 自由发挥
@@ -385,8 +384,8 @@ A: AI 自己 sleep 几秒再调（建议 2~5 秒间隔）。这是设计取舍�
 **Q: 视频 URL 多久过期？**
 A: 智谱签发 URL 默认 24h 左右。需要在收到后及时转存到自己的 OSS/S3。
 
-**Q: 为什么 quality / fps / duration 不让 AI 直接传？**
-A: 这些是技术档位，与成本/单价挂钩。让 AI 自主挑 `quality=quality + fps=60 + duration=10` 会爆账号预算。改成 header 由部署方注入更可控。
+**Q: 为什么 quality / fps 不让 AI 直接传？**
+A: 这些是技术档位，与成本/单价挂钩。让 AI 自主挑 `quality=quality + fps=60` 会爆账号预算。改成 header 由部署方注入更可控。
 
 **Q: 能否限制 `size` 白名单？**
 A: 当前透传给智谱 API，不做强制校验。如需加白名单，修改 `src/mcp-server.js` 中 `generate_video` 的 `size` schema 即可。

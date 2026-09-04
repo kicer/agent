@@ -20,7 +20,6 @@ const DEFAULT_MODEL = "cogvideox-flash";
 // AI 不可见的服务端默认（可被同名 header 覆盖）
 const DEFAULT_QUALITY = "speed";       // speed | quality
 const DEFAULT_FPS = 30;               // 30 | 60
-const DEFAULT_DURATION = 5;           // 5 | 10
 const DEFAULT_WATERMARK_ENABLED = true; // 平台政策默认 true
 
 // ===== 上传文件相关 =====
@@ -197,7 +196,6 @@ async function submitVideo({
   quality,
   with_audio,
   fps,
-  duration,
   watermark_enabled,
 }) {
   // 平台要求 image_url 和 prompt 至少传一个
@@ -207,7 +205,6 @@ async function submitVideo({
     with_audio: Boolean(with_audio),
     watermark_enabled: Boolean(watermark_enabled),
     fps,
-    duration,
     // 由服务端生成唯一 request_id，便于日志关联；不暴露给 AI
     request_id: randomUUID(),
   };
@@ -270,11 +267,12 @@ Uploaded files live in container temp storage and are discarded on restart — d
           "Video text description (max 512 chars). At least one of prompt / image_url is required."
         ),
       image_url: z
-        .string()
-        .optional()
-        .describe(
-          "Reference image source for image-to-video. String or Array of up to 2 URLs for first/last frame. Image <= 5MB, .png/.jpeg/.jpg."
-        ),
+              .string()
+              .url()
+              .optional()
+              .describe(
+                "Reference image URL for image-to-video. Single URL only. Image <= 5MB, .png/.jpeg/.jpg. Use the /upload endpoint to get a URL from a local file."
+              ),
       size: z
         .string()
         .optional()
@@ -297,15 +295,14 @@ Uploaded files live in container temp storage and are discarded on restart — d
       }
 
       // AI 不可见：全部走 header
-      const model = pickModel(headers) || DEFAULT_MODEL;
-      const quality = pickHeaderString(headers, "x-video-gen-quality", DEFAULT_QUALITY);
-      const fps = pickHeaderInt(headers, "x-video-gen-fps", DEFAULT_FPS);
-      const duration = pickHeaderInt(headers, "x-video-gen-duration", DEFAULT_DURATION);
-      const watermark_enabled = pickHeaderBool(
-        headers,
-        "x-video-gen-watermark",
-        DEFAULT_WATERMARK_ENABLED
-      );
+            const model = pickModel(headers) || DEFAULT_MODEL;
+            const quality = pickHeaderString(headers, "x-video-gen-quality", DEFAULT_QUALITY);
+            const fps = pickHeaderInt(headers, "x-video-gen-fps", DEFAULT_FPS);
+            const watermark_enabled = pickHeaderBool(
+              headers,
+              "x-video-gen-watermark",
+              DEFAULT_WATERMARK_ENABLED
+            );
 
       if (!args.prompt && !args.image_url) {
         return {
@@ -321,17 +318,16 @@ Uploaded files live in container temp storage and are discarded on restart — d
 
       try {
         const data = await submitVideo({
-          token,
-          model,
-          prompt: args.prompt,
-          image_url: args.image_url,
-          size: args.size,
-          quality,
-          with_audio: args.with_audio ?? false,
-          fps,
-          duration,
-          watermark_enabled,
-        });
+                  token,
+                  model,
+                  prompt: args.prompt,
+                  image_url: args.image_url,
+                  size: args.size,
+                  quality,
+                  with_audio: args.with_audio ?? false,
+                  fps,
+                  watermark_enabled,
+                });
 
         const summary =
           `Model: ${model}\n` +
