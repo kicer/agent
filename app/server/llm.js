@@ -188,7 +188,9 @@ async function callModel(cfg, modelId, messages, tools, options) {
       if (evt.usage) usage = evt.usage;
       const choice = evt.choices && evt.choices[0];
       if (!choice) {
-        if (opts.onBadEvent) opts.onBadEvent(evt);
+        // choices=[] 但含 usage：OpenAI 兼容协议最后一帧只发 token 统计，正常情况，
+        // 不算错误帧。其它无 usage 也无 choices 的（如 event: error 帧）才走 onBadEvent。
+        if (!evt.usage && opts.onBadEvent) opts.onBadEvent(evt);
         return;
       }
       if (choice.finish_reason) finishReason = choice.finish_reason;
