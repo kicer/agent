@@ -47,6 +47,18 @@ function pickToken(req) {
   return null;
 }
 
+function pickModel(req) {
+  // 从 http header 读取默认 model（可选），未设置返回 null
+  const headers = (req && req.headers) || {};
+  const v =
+    headers["x-image-gen-model"] ||
+    headers["x-mcp-model"] ||
+    headers["x-model"];
+  if (!v) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
 async function callZhipuImagesGenerations({ token, model, prompt, size }) {
   const body = { model, prompt };
   if (size) body.size = size;
@@ -135,7 +147,9 @@ function buildServer() {
         };
       }
 
-      const model = args.model || DEFAULT_MODEL;
+      // 优先级：工具参数 model > HTTP header 中的 model > DEFAULT_MODEL
+      const headerModel = req ? pickModel(req) : null;
+      const model = args.model || headerModel || DEFAULT_MODEL;
       const size = args.size;
 
       try {
