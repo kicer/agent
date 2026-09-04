@@ -81,6 +81,14 @@ environment:
 
 未设置时 fallback 到 `http://localhost:3000`（本机调试）。
 
+可选环境变量：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PUBLIC_BASE_URL` | `http://localhost:3000` | 返回 `url` 字段里拼接的对外 base URL |
+| `UPLOAD_DIR` | `/tmp/video-gen-uploads` | 磁盘存储目录（容器内临时） |
+| `UPLOAD_TTL_HOURS` | `24` | 超过该小时数的文件会在启动时和每小时被自动删除 |
+
 ### 接口
 
 ```
@@ -98,6 +106,7 @@ file: <二进制图片文件>
 | 白名单 content-type | `image/png`、`image/jpeg`、`image/jpg` |
 | 存储位置 | 容器内 `/tmp/video-gen-uploads/`（`UPLOAD_DIR` 可覆盖） |
 | 持久化 | **不持久化**。容器重启即丢，请尽快消费 URL |
+| 过期清理 | 启动时 + 每小时一次删除 `>UPLOAD_TTL_HOURS` 的文件，默认 24h |
 | 鉴权 | 无 |
 
 ### 返回
@@ -355,6 +364,7 @@ package.json        # @modelcontextprotocol/sdk + express + multer
 - **异步语义暴露给 AI**：服务端不做轮询，`generate_video` 只提交、`query_video` 只查一次。AI 自主决定节奏
 - **服务端自动 `request_id`**：每次提交服务端生成一个 UUID 作为智谱 `request_id`，便于日志关联，但不暴露给 AI
 - **上传接口与 MCP 走同一进程**：额外 `POST /upload` + `GET /uploads/*` 不走 MCP、不鉴权，靠内网隔离；`PUBLIC_BASE_URL` 环境变量控制返回 URL 的拼接 host，AI 看到的 tool description 启动时拼接进真实地址，避免 AI 自由发挥
+- **上传过期清理**：启动时 + 每小时一次删除 `mtime > UPLOAD_TTL_HOURS` 的文件，避免磁盘被不消费的上传堆满；清理 timer 用 `unref()` 不阻塞进程退出
 
 ### 默认模型
 

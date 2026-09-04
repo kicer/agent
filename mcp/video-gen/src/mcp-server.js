@@ -42,6 +42,50 @@ const UPLOAD_ALLOWED_MIME = new Set([
   "image/jpg",
 ]);
 
+// 过期清理：UPLOAD_TTL_HOURS 小时之前的文件会被定时删除
+const UPLOAD_TTL_HOURS = (() => {
+  const n = parseInt(process.env.UPLOAD_TTL_HOURS || "24", 10);
+  return Number.isFinite(n) && n > 0 ? n : 24;
+})();
+const UPLOAD_TTL_MS = UPLOAD_TTL_HOURS * 60 * 60 * 1000;
+const UPLOAD_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 每小时一次
+
+// 清理 UPLOAD_DIR 下 mtime 早于 TTL 的文件。返回 {kept, removed, errors}
+async function cleanupUploads({ now = Date.now(), dir = UPLOAD_DIR } = {}) {
+  let entries;
+  try {
+    entries = await fs.promises.readdir(dir);
+  } catch (e) {
+    if (e && e.code === "ENOENT") return { kept: 0, removed: 0, errors: 0 };
+    console.error(`[video-gen] cleanup: readdir failed: ${e.message}`);
+    return { kept: 0, removed: 0, errors: 1 };
+  }
+
+  let kept = 0;
+  let removed = 0;
+  let errors = 0;
+  await Promise.all(
+    entries.map(async (name) => {
+      const full = path.join(dir, name);
+      try {
+        const st = await fs.promises.stat(full);
+        if (!st.isFile()) return;
+        if (now - st.mtimeMs >= UPLOAD_TTL_MS) {
+          await fs.promises.unlink(full);
+          removed++;
+        } else {
+          kept++;
+        }
+      } catch (e) {
+        if (e && e.code === "ENOENT") return;
+        errors++;
+        console.error(`[video-gen] cleanup: ${name}: ${e.message}`);
+      }
+    })
+  );
+  return { kept, removed, errors };
+}
+
 function parseArgs(argv) {
   const args = {
     http: false,
@@ -415,8 +459,29 @@ async function startHttp({ port, host }) {
   console.log(`[video-gen] PUBLIC_BASE_URL = ${publicBaseUrl}`);
 
   // ===== /upload：接收图片，返回 URL（不走 MCP）=====
-  // 磁盘存储：保证 UPLOAD_DIR 存在（容器内临时，重启即丢）
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    // 磁盘存储：保证 UPLOAD_DIR 存在（容器内临时，重启即丢）
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+    // 过期清理：启动时跑一次，之后每小时一次
+    cleanupUploads()
+      .then((r) =>
+        console.log(
+          `[video-gen] startup cleanup: kept=${r.kept} removed=${r.removed} errors=${r.errors} ttl=${UPLOAD_TTL_HOURS}h`
+        )
+      )
+      .catch((e) => console.error(`[video-gen] startup cleanup failed: ${e.message}`));
+    const cleanupTimer = setInterval(() => {
+      cleanupUploads()
+        .then((r) => {
+          if (r.removed > 0 || r.errors > 0) {
+            console.log(
+              `[video-gen] periodic cleanup: kept=${r.kept} removed=${r.removed} errors=${r.errors}`
+            );
+          }
+        })
+        .catch((e) => console.error(`[video-gen] periodic cleanup failed: ${e.message}`));
+    }, UPLOAD_CLEANUP_INTERVAL_MS);
+    cleanupTimer.unref(); // 不阻止进程退出
 
   const storage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
