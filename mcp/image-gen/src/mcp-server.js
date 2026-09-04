@@ -122,7 +122,7 @@ function buildServer() {
         .string()
         .optional()
         .describe(
-          "Image size, e.g. 1024x1024, 1280x1280, 1024x1792, 1792x1024, 768x1344, 1344x768"
+          "Image size, Preferred sizes: 1024x1024, 1280x1280, 1536x1024, 1024x1536, Each side must be a multiple of 32."
         ),
     },
     async (args, extra) => {
@@ -163,7 +163,7 @@ function buildServer() {
             content: [
               {
                 type: "text",
-                text: `The Zhipu API call succeeded but returned no image URL. Raw response: ${JSON.stringify(data)}`,
+                text: `Returned no image URL. Raw response: ${JSON.stringify(data)}`,
               },
             ],
           };
