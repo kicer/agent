@@ -480,12 +480,11 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 }
 .files-panel .file-row.selected .file-check::after { opacity: 1; }
 
-/* 底部"全选"复选框：复用 .file-check 的尺寸与对勾伪元素，但用方角、与行内圆区分开。
-   状态由 data-state 决定（不进 .file-row）；仅 .files-panel-check 选择器优先级高于 .file-check。 */
+/* 底部"全选"复选框：复用 .file-check 的尺寸与对勾伪元素（通过同时加 file-check class），
+   区别是这里用方角、与行内圆区分开。状态由 data-state 决定，不进 .file-row。 */
 .files-panel .files-panel-check {
   border-radius: 5px;            /* 覆盖行内 50%，变方角 */
   margin-top: 0;                 /* 覆盖行内 2px 偏移 */
-  transition: border-color .15s ease, background .15s ease, opacity .15s ease;
 }
 .files-panel-check[data-state="all"] {
   background: var(--active); border-color: var(--active);
