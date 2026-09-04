@@ -111,19 +111,30 @@
     <!-- ================= 任务文件面板(浮层:点输入行右侧发送旁的附件按钮展开;盖住输入区+遮罩) ================= -->
     <div id="files-mask" aria-hidden="true"></div>
     <div class="files-panel" id="files-panel" aria-label="任务文件">
-      <div class="files-panel-header">
-        <span>任务文件</span>
-        <div class="files-panel-progress hidden" id="fp-progress" aria-live="polite">
-          <div class="fp-track"><div class="bar" id="fp-progress-bar"></div></div>
-          <span class="pct" id="fp-progress-pct">0%</span>
+          <div class="files-panel-header">
+            <span class="files-panel-title">任务文件</span>
+            <label class="file-upload" title="上传文件" aria-label="上传文件">
+              <input type="file" id="file-input" multiple hidden>
+              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            </label>
+          </div>
+          <div class="files-list" id="files-list"></div>
+                <div class="files-panel-progress hidden" id="fp-progress" aria-live="polite">
+                  <div class="fp-track"><div class="bar" id="fp-progress-bar"></div></div>
+                  <span class="pct" id="fp-progress-pct">0%</span>
+                </div>
+                <div class="files-panel-footer">
+            <span class="files-panel-count" id="files-count">未选择文件</span>
+            <div class="files-panel-actions">
+              <button class="files-fab" id="files-bulk-download" title="批量下载" aria-label="批量下载" disabled>
+                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              </button>
+              <button class="files-fab del" id="files-bulk-delete" title="批量删除" aria-label="批量删除" disabled>
+                <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+              </button>
+            </div>
+          </div>
         </div>
-        <label class="file-upload" title="上传文件">
-          <input type="file" id="file-input" multiple hidden>
-          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-        </label>
-      </div>
-      <div class="files-list" id="files-list"></div>
-    </div>
 
     <!-- ================= 设置区(覆盖层;入口:侧边栏用户区) ================= -->
     <section id="settings-page" class="hidden" aria-label="设置">
@@ -1287,32 +1298,51 @@
   $('attach-btn').addEventListener('click', toggleFilesPanel);
   $('files-mask').addEventListener('click', () => setFilesPanel(false)); // 点遮罩收起
 
-  async function loadFiles() {
-    if (!state.sessionId) return;
-    try {
-      const files = await req('GET', '/api/sessions/' + state.sessionId + '/files');
-      const el = $('files-list');
-      if (!files.length) {
-        el.innerHTML = '<div class="empty-tip">还没有文件,在对话框上传或让 AI 生成</div>';
-        return;
-      }
-      el.innerHTML = files.map(f => {
-        // 预览策略：md/txt/html + 图片在 fs-viewer 预览（pdf 不预）
-        const low = f.filename.toLowerCase();
-        const fsPv = /\.(md|txt|html?|png|jpe?g|gif|webp|svg)$/.test(low);
-        const ico = fsPv
-          ? '<svg class="file-ico" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
-          : '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
-        return '<div class="file-row' + (fsPv ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '">' +
-          ico +
-          '<span class="file-name">' + esc(String(f.filename).split('/').pop() || f.filename) + '</span>' +
-          '<span class="file-size">' + fmtSize(f.size) + '</span>' +
-          '<button class="file-act" title="下载">下载</button>' +
-          '<button class="file-act del" title="删除">删除</button>' +
-        '</div>';
-      }).join('');
-    } catch (e) { toast('读取文件失败:' + e.message); }
-  }
+  // 任务文件面板多选状态：Set 保留当前选中的文件路径
+    const fileSelected = new Set();
+
+    function updateFilesFooter() {
+      const n = fileSelected.size;
+      const countEl = $('files-count');
+      const dlBtn = $('files-bulk-download');
+      const delBtn = $('files-bulk-delete');
+      if (countEl) countEl.textContent = n ? '已选择 ' + n + ' 个文件' : '未选择文件';
+      if (dlBtn) dlBtn.disabled = n === 0;
+      if (delBtn) delBtn.disabled = n === 0;
+    }
+
+    async function loadFiles() {
+      if (!state.sessionId) return;
+      // 重新拉取前清空旧选择，避免脏数据遗留
+      fileSelected.clear();
+      updateFilesFooter();
+      try {
+        const files = await req('GET', '/api/sessions/' + state.sessionId + '/files');
+        const el = $('files-list');
+        if (!files.length) {
+          el.innerHTML = '<div class="empty-tip">还没有文件,在对话框上传或让 AI 生成</div>';
+          return;
+        }
+        el.innerHTML = files.map(f => {
+          // 预览策略：md/txt/html + 图片在 fs-viewer 预览（pdf 不预）
+          const low = f.filename.toLowerCase();
+          const fsPv = /\.(md|txt|html?|png|jpe?g|gif|webp|svg)$/.test(low);
+          const ico = fsPv
+            ? '<svg class="file-ico eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
+            : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+          const name = esc(String(f.filename).split('/').pop() || f.filename);
+          return '<div class="file-row' + (fsPv ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '">' +
+            '<span class="file-check" role="checkbox" aria-checked="false" aria-label="选择"></span>' +
+            '<div class="file-main">' +
+              '<div class="file-name">' + name + '</div>' +
+              '<div class="file-meta">' + ico + '<span class="file-size">' + fmtSize(f.size) + '</span></div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+        // 重新渲染后刷新底部计数与按钮状态
+        updateFilesFooter();
+      } catch (e) { toast('读取文件失败:' + e.message); }
+    }
   // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe、图片用 <img>
   async function previewInFs(name) {
     try {
@@ -1369,15 +1399,57 @@
       loadFiles();
     } catch (e) { toast('删除失败:' + e.message); }
   }
-  $('files-list').addEventListener('click', e => {
-    const row = e.target.closest('.file-row');
-    if (!row || !state.sessionId) return;
-    const path = row.dataset.path;
-    if (!path) return;
-    if (e.target.closest('.del')) deleteFile(path);
-    else if (e.target.closest('.file-row.clickable') && !e.target.closest('.file-act')) previewInFs(path);
-    else if (e.target.closest('.file-act')) downloadFile(path);
-  });
+  // 列表事件委托：
+    //  1) 点击勾选框：仅选中状态，不触发预览/下载；
+    //  2) 一旦处于多选模式（Set 非空），整行点击仅切换选中状态，不再预览/下载；
+    //  3) 未进入多选模式时，点击文件名/图标根据 row.dataset.preview 决定预览或下载。
+    $('files-list').addEventListener('click', e => {
+      const row = e.target.closest('.file-row');
+      if (!row || !state.sessionId) return;
+      const path = row.dataset.path;
+      if (!path) return;
+      const isCheck = !!e.target.closest('.file-check');
+      // 多选模式下：任何点击（仅选框/文件名/其他）都只切换选中
+      if (isCheck || fileSelected.size > 0) {
+        if (fileSelected.has(path)) { fileSelected.delete(path); row.classList.remove('selected'); }
+        else { fileSelected.add(path); row.classList.add('selected'); }
+        const ck = row.querySelector('.file-check');
+        if (ck) ck.setAttribute('aria-checked', fileSelected.has(path) ? 'true' : 'false');
+        updateFilesFooter();
+        return;
+      }
+      // 默认模式：依据是否可预览选择预览/下载
+      if (row.dataset.preview === '1') previewInFs(path);
+      else downloadFile(path);
+    });
+
+    // 批量下载：逐个拉取 download-token 后跳转，复用单文件下载路径（多个文件浏览器会连续触发下载）
+    async function bulkDownload() {
+      if (!state.sessionId || fileSelected.size === 0) return;
+      const names = Array.from(fileSelected);
+      for (const name of names) {
+        try {
+          const r = await req('GET', '/api/sessions/' + state.sessionId + '/files/download-token?path=' + encodeURIComponent(name));
+          if (r && r.url) window.location.href = r.url;
+        } catch (e) { toast('下载失败:' + name + ' ' + e.message); }
+      }
+    }
+    async function bulkDelete() {
+      if (!state.sessionId || fileSelected.size === 0) return;
+      const names = Array.from(fileSelected);
+      if (!await confirmModal('批量删除', '确认删除选中的 ' + names.length + ' 个文件？', '删除', true)) return;
+      let ok = 0, fail = 0;
+      for (const name of names) {
+        try {
+          await req('DELETE', '/api/sessions/' + state.sessionId + '/files?path=' + encodeURIComponent(name));
+          ok++;
+        } catch (e) { fail++; toast('删除失败:' + name + ' ' + e.message); }
+      }
+      if (ok) toast('已删除 ' + ok + ' 个文件');
+      loadFiles(); // 重新拉取并重置选中
+    }
+    $('files-bulk-download').addEventListener('click', bulkDownload);
+    $('files-bulk-delete').addEventListener('click', bulkDelete);
   // ---------- 大图上传前压缩(同步 v1:阈值/参数由 /api/system/status 透出) ----------
   const DEFAULT_UPLOAD_CFG = { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85 };
   let uploadCfgCache = null;

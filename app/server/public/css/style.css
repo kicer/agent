@@ -367,16 +367,16 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   border-bottom: 1px solid var(--border);
   background: var(--page);
 }
-.files-panel-header .file-upload {
-  width: 30px; height: 30px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--active-soft); color: var(--active); cursor: pointer;
+.files-panel-header .files-panel-title {
+  flex: 1; min-width: 0;
 }
-.files-panel-header .file-upload:active { background: var(--active); color: #fff; }
-/* 上传总进度条(header 中间,上传中显示):[轨道 | 百分比] 横排,
-   百分比走正常文档流,不再悬浮在 6px 高的轨道里,避免各种裁剪/像素取整导致文字显示不全 */
+/* 上传总进度条(.files-panel-header 中间，上传中显示)：[轨道 | 百分比] 横排，
+   百分比走正常文档流，不再悬浮在 6px 高的轨道里，避免各种裁剪/像素取整导致文字显示不全 */
 .files-panel-progress {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0 10px;
+  flex: none; min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0 10px;
+  padding: 6px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--page);
 }
 .files-panel-progress .fp-track {
   flex: 1; min-width: 0; height: 6px;
@@ -391,41 +391,120 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .files-panel-progress .pct {
   flex: none; font-size: 10px; color: var(--gray); line-height: 1; white-space: nowrap;
 }
+.files-panel-header .file-upload {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--active-soft); color: var(--active); cursor: pointer;
+}
+.files-panel-header .file-upload:active { background: var(--active); color: #fff; }
 .files-panel-header .file-upload svg {
   width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round;
 }
-.files-panel .files-list { overflow-y: auto; padding: 4px 6px; }
+
+/* 文件列表区：占据中部所有可用高度 */
+.files-panel .files-list {
+  overflow-y: auto; padding: 4px 6px;
+  flex: 1 1 auto; min-height: 0;
+}
+/* 底部固定操作栏：固定在面板最下方 */
+.files-panel-footer {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--page);
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+.files-panel-count {
+  font-size: 13px; color: var(--gray);
+}
+.files-panel-actions {
+  display: flex; align-items: center; gap: 12px;
+}
+.files-fab {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: none; cursor: pointer;
+  background: var(--active-soft); color: var(--active);
+  transition: opacity .15s ease, background .15s ease, color .15s ease;
+}
+.files-fab svg {
+  width: 20px; height: 20px; fill: none; stroke: currentColor;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.files-fab:active:not([disabled]) { opacity: .75; }
+.files-fab.del {
+  background: #fdecea; color: #c0392b;
+}
+.files-fab[disabled] {
+  background: var(--surface); color: var(--gray-light);
+  cursor: not-allowed; opacity: .6;
+}
+
+/* 单个文件行：复选框 | 中间区域(名称 + 副行) */
 .files-panel .file-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px; border-radius: 8px; font-size: 13.5px; cursor: default;
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 8px; border-radius: 10px; font-size: 14px; cursor: default;
   border-bottom: 1px dashed var(--border);
 }
 .files-panel .file-row:last-child { border-bottom: none; }
 .files-panel .file-row:active { background: var(--surface); }
-.files-panel .file-row.clickable { cursor: pointer; } /* md/txt 可预览：整行可点 */
-.files-panel .file-ico {
-  width: 16px; height: 16px; flex-shrink: 0;
-  stroke: #7f8db0; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+.files-panel .file-row.clickable { cursor: pointer; } /* 默认状态：可点名称预览/下载 */
+.files-panel .file-row.selected { background: var(--active-soft); }
+
+/* 复选框：圆形，点击区域够大 */
+.files-panel .file-check {
+  flex: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid #c8cee0; background: var(--page);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; box-sizing: border-box;
+  margin-top: 2px;
+  transition: border-color .15s ease, background .15s ease;
 }
-/* 长文件名：横向滚动查看全文（隐藏滚动条，靠 touch/Shift+滚轮/方向键滑动） */
+.files-panel .file-check::after {
+  content: '';
+  display: block;
+  width: 5px; height: 9px;
+  border-right: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: rotate(45deg) translate(-1px, -2px);
+  opacity: 0;
+}
+.files-panel .file-row.selected .file-check {
+  background: var(--active); border-color: var(--active);
+}
+.files-panel .file-row.selected .file-check::after { opacity: 1; }
+
+/* 主区域：名称 + 副信息（图标 + 大小） */
+.files-panel .file-main {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 4px;
+}
+/* 文件名：最多两行 + 省略号，占据除复选框外所有横向空间 */
 .files-panel .file-name {
-  flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap;
-  font-weight: 500;
-  scrollbar-width: none; -ms-overflow-style: none;
+  font-weight: 500; color: var(--text, #223);
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden; word-break: break-all;
+  line-height: 1.35;
 }
-.files-panel .file-name::-webkit-scrollbar { display: none; }
+.files-panel .file-meta {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--gray);
+}
+.files-panel .file-ico {
+  width: 14px; height: 14px; flex-shrink: 0;
+  fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.files-panel .file-ico.eye { stroke: #5b8def; }
+.files-panel .file-ico.doc { stroke: #f2994a; }
 .files-panel .file-size {
-  flex: none; background: var(--surface); color: var(--gray);
-  font-size: 11px; padding: 2px 8px; border-radius: 9px;
+  flex: none; color: var(--gray);
+  font-size: 12px;
 }
-.files-panel .file-act {
-  flex: none; background: var(--active-soft); color: var(--active);
-  border: none; border-radius: 7px; padding: 4px 9px; font-size: 13px; cursor: pointer;
-}
-.files-panel .file-act:active { opacity: .75; }
-.files-panel .file-act.del { background: #fdecea; color: #c0392b; }
-.files-panel .file-act.del:active { opacity: .75; }
+
 .files-panel .empty-tip {
   padding: 20px 10px; text-align: center; font-size: 13px; color: var(--gray-light);
 }
