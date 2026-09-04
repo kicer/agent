@@ -111,7 +111,7 @@ function buildServer() {
   );
 
   server.tool(
-    "generate_image",
+    "image-gen",
     "Generate an image from a prompt and return the image URL. Optionally specify size.",
     {
       prompt: z

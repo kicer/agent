@@ -247,7 +247,7 @@ function buildServer({ publicBaseUrl }) {
 
   // ---------- 工具 1：generate_video ----------
   server.tool(
-    "generate_video",
+    "video-gen",
     `Submit a video generation task (text-to-video or image-to-video).
 Returns the task_id immediately; poll the result later with query_video.
 Provide prompt and/or image_url (at least one is required).
@@ -267,12 +267,12 @@ Uploaded files live in container temp storage and are discarded on restart — d
           "Video text description (max 512 chars). At least one of prompt / image_url is required."
         ),
       image_url: z
-              .string()
-              .url()
-              .optional()
-              .describe(
-                "Reference image URL for image-to-video. Single URL only. Image <= 5MB, .png/.jpeg/.jpg. Use the /upload endpoint to get a URL from a local file."
-              ),
+        .string()
+        .url()
+        .optional()
+        .describe(
+          "Reference image URL string for image-to-video. Image <= 5MB, .png/.jpeg/.jpg. Use the /upload endpoint to get a URL from a local file."
+        ),
       size: z
         .string()
         .optional()
