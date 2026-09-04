@@ -26,17 +26,18 @@ services:
       - my-app-network
 
   mcp-video-gen:
-    build: ./video-gen
-    container_name: mcp-video-gen
-    restart: unless-stopped
-    expose:
-      - "3000"
-    environment:
-      - VIRTUAL_HOST=video-gen.ai.foresh.com
-      - VIRTUAL_PORT=3000
-      - CERT_NAME=default
-    networks:
-      - my-app-network
+      build: ./video-gen
+      container_name: mcp-video-gen
+      restart: unless-stopped
+      expose:
+        - "3000"
+      environment:
+        - VIRTUAL_HOST=video-gen.ai.foresh.com
+        - VIRTUAL_PORT=3000
+        - CERT_NAME=default
+        - PUBLIC_BASE_URL=https://video-gen.ai.foresh.com
+      networks:
+        - my-app-network
 
 networks:
   my-app-network:

@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import express from "express";
+import multer from "multer";
+import path from "node:path";
+import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -19,6 +22,25 @@ const DEFAULT_QUALITY = "speed";       // speed | quality
 const DEFAULT_FPS = 30;               // 30 | 60
 const DEFAULT_DURATION = 5;           // 5 | 10
 const DEFAULT_WATERMARK_ENABLED = true; // 平台政策默认 true
+
+// ===== 上传文件相关 =====
+// 公开的 base URL：拼接进 tool description，告诉 AI 该往哪里 POST 上传
+// 优先级：环境变量 > 默认 http://localhost:<port>
+function resolvePublicBaseUrl({ port, host }) {
+  const env = (process.env.PUBLIC_BASE_URL || "").trim();
+  if (env) return env.replace(/\/+$/, "");
+  return `http://localhost:${port}`;
+}
+
+// 上传文件存储目录：容器内临时目录，服务重启即丢（你明确要求）
+const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/video-gen-uploads";
+const UPLOAD_PATH_PREFIX = "/uploads"; // 对外的 URL 路径前缀
+const UPLOAD_MAX_BYTES = 8 * 1024 * 1024; // 8MB（智谱 image_url 上限 5MB，留余量）
+const UPLOAD_ALLOWED_MIME = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+]);
 
 function parseArgs(argv) {
   const args = {
@@ -167,7 +189,7 @@ async function queryAsyncResult({ token, id }) {
   return data; // { id, request_id, model, task_status, video_result?, ... }
 }
 
-function buildServer() {
+function buildServer({ publicBaseUrl }) {
   const server = new McpServer(
     {
       name: "video-gen",
@@ -180,12 +202,22 @@ function buildServer() {
     }
   );
 
+  const uploadUrl = `${publicBaseUrl}/upload`;
+
   // ---------- 工具 1：generate_video ----------
   server.tool(
     "generate_video",
-    "Submit a video generation task (text-to-video or image-to-video) to Zhipu BigModel. " +
-      "Returns the task_id immediately; poll the result later with query_video. " +
-      "Provide prompt and/or image_url (at least one is required).",
+    `Submit a video generation task (text-to-video or image-to-video).
+Returns the task_id immediately; poll the result later with query_video.
+Provide prompt and/or image_url (at least one is required).
+
+If you need to use a LOCAL image file as image_url, upload it FIRST with this exact command (replace the path):
+
+    curl -F "file=@/path/to/your/image.png" ${uploadUrl}
+
+The response JSON has a "url" field — pass that URL directly as the image_url argument below.
+Supported formats: png, jpeg, jpg. Max 5MB per image.
+Uploaded files live in container temp storage and are discarded on restart — do not rely on long-term URLs.`,
     {
       prompt: z
         .string()
@@ -197,7 +229,7 @@ function buildServer() {
         .string()
         .optional()
         .describe(
-          "Reference image URL (or base64) for image-to-video. Supports up to 2 URLs for first/last frame. Image <= 5MB, .png/.jpeg/.jpg."
+          "Reference image source for image-to-video. String or Array of up to 2 URLs for first/last frame. Image <= 5MB, .png/.jpeg/.jpg."
         ),
       size: z
         .string()
@@ -379,6 +411,61 @@ async function startHttp({ port, host }) {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
 
+  const publicBaseUrl = resolvePublicBaseUrl({ port, host });
+  console.log(`[video-gen] PUBLIC_BASE_URL = ${publicBaseUrl}`);
+
+  // ===== /upload：接收图片，返回 URL（不走 MCP）=====
+  // 磁盘存储：保证 UPLOAD_DIR 存在（容器内临时，重启即丢）
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+  const storage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+    filename: (_req, file, cb) => {
+      const ext = (path.extname(file.originalname) || ".bin").toLowerCase();
+      cb(null, `${randomUUID()}${ext}`);
+    },
+  });
+
+  const upload = multer({
+    storage,
+    limits: { fileSize: UPLOAD_MAX_BYTES, files: 1 },
+    fileFilter: (_req, file, cb) => {
+      if (UPLOAD_ALLOWED_MIME.has(file.mimetype)) return cb(null, true);
+      cb(new Error(`Unsupported content-type: ${file.mimetype}. Allowed: ${[...UPLOAD_ALLOWED_MIME].join(", ")}`));
+    },
+  });
+
+  app.post("/upload", (req, res) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) {
+        const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+        return res.status(status).json({
+          error: err.message || "upload failed",
+        });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: "Missing form field 'file'" });
+      }
+      const url = `${publicBaseUrl}${UPLOAD_PATH_PREFIX}/${req.file.filename}`;
+      return res.json({
+        url,
+        filename: req.file.filename,
+        size: req.file.size,
+        content_type: req.file.mimetype,
+        original_name: req.file.originalname,
+      });
+    });
+  });
+
+  // 静态下载：只要文件存在于 UPLOAD_DIR 就吐出去（不鉴权、不持久化）
+  app.use(
+    UPLOAD_PATH_PREFIX,
+    express.static(UPLOAD_DIR, {
+      fallthrough: false,
+      maxAge: 0,
+    })
+  );
+
   // session -> { server, transport } 映射
   const sessions = new Map();
 
@@ -410,7 +497,7 @@ async function startHttp({ port, host }) {
     }
 
     const newId = randomUUID();
-    const server = buildServer();
+        const server = buildServer({ publicBaseUrl });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => newId,
       onsessioninitialized: (id) => {
@@ -452,7 +539,8 @@ async function startHttp({ port, host }) {
 }
 
 async function startStdio() {
-  const server = buildServer();
+  // stdio 模式下上传接口不可用，用 placeholder 避免 description 里出现奇怪的占位
+  const server = buildServer({ publicBaseUrl: "http://localhost:3000" });
   const { StdioServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/stdio.js"
   );
