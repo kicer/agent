@@ -1,0 +1,17 @@
+services:
+  mcp-web-search-free:
+    build: ./web-search-free
+    container_name: mcp-web-search-free
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      - VIRTUAL_HOST=web-search.ai.foresh.com
+      - VIRTUAL_PORT=3000
+      - CERT_NAME=default
+    networks:
+      - my-app-network
+
+networks:
+  my-app-network:
+    external: true
