@@ -547,11 +547,45 @@ async function runLoopInner(sessionId, run) {
     bus.emit(sessionId, 'assistant_message', { content: text });
   }
 }
+// 解析单条 SSE meta 行（按第一个 ':' 切 k,v 分发），构造回调供 streamAssistant 使用。
+// 状态 last_id / retry_time 跨多次调用保持（一次 streamAssistant 内），便于后续关联。
+// 分发规则（来自 SSE 调试日志规范）：
+//   id    → last_id = v         （静默）
+//   retry → retry_time = v      （静默）
+//   event → log.debug event 名  （如 'event: error'）
+//   k=''  && v='ping'           → 当作 event=ping，debug 打
+//   k=''  其他                  → 注释行（如 :keep-alive），debug 打
+//   其它                       → 未知字段，debug 打原行
+function makeSseMetaHandler(sessionId) {
+  let last_id = null;
+  let retry_time = null;
+  return function handleSseMeta(line) {
+    const t = line.trim();
+    const i = t.indexOf(':');
+    const k = i < 0 ? t : t.slice(0, i);
+    const v = i < 0 ? '' : t.slice(i + 1).trim();
+    if (k === 'id') {
+      last_id = v;
+    } else if (k === 'retry') {
+      retry_time = v;
+    } else if (k === 'event') {
+      log.debug('[sse] ' + sessionId + ' event: ' + v);
+    } else if (k === '' && v === 'ping') {
+      log.debug('[sse] ' + sessionId + ' event: ' + v);
+    } else if (k === '') {
+      log.debug('[sse] ' + sessionId + ' comment: ' + v);
+    } else {
+      log.debug('[sse] ' + sessionId + ' meta: ' + line);
+    }
+  };
+}
+
 
 // 流式接收 assistant 输出并转发 SSE。返回 callModel 结果。
 async function streamAssistant(sessionId, run, session, messages, tools) {
   run.abortController = new AbortController();
   try {
+    const handleSseMeta = makeSseMetaHandler(sessionId);
     const result = await callModel(cfg, session.model_id, messages, tools, {
       signal: run.abortController.signal,
       shouldCancel: () => run.cancelled,
@@ -559,9 +593,7 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       onReasoning: delta => bus.emit(sessionId, 'reasoning_delta', { text: delta }),
       // 本轮是否启用深度思考；由 postUserMessage 从消息 POST 参数写进 run
       deepThink: !!run.deepThink,
-      // 上游 SSE 调试信号：非 data 行（event:/id:/retry:/注释/未知）逐行 debug，data 坏帧 warn。
-      // meta 是时间性调试信息，事件稀少；badData 是真异常，不该静默。
-      onMeta: line => log.debug('[sse] ' + sessionId + ' ' + line),
+      onMeta: handleSseMeta,
       onBadData: raw => log.warn('[sse] ' + sessionId + ' 坏帧：' + raw.slice(0, 200)),
       // data 解析成功但没有 choices（如 event: error 帧）：上游发了非正常响应，
       // 之前会伪装成"0 字"沉默忽略，这里 warn 把原始 evt 打出来便于定位。
