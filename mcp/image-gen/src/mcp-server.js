@@ -112,17 +112,17 @@ function buildServer() {
 
   server.tool(
     "generate_image",
-    "根据 prompt 生成图片，返回图片 URL。可选指定 size。",
+    "Generate an image from a prompt and return the image URL. Optionally specify size.",
     {
       prompt: z
         .string()
         .min(1)
-        .describe("图片生成提示词，详细描述想要的画面内容"),
+        .describe("Image generation prompt; describe the desired scene in detail."),
       size: z
         .string()
         .optional()
         .describe(
-          "图片尺寸，例如 1024x1024、1280x1280、1024x1792、1792x1024、768x1344、1344x768"
+          "Image size, e.g. 1024x1024, 1280x1280, 1024x1792, 1792x1024, 768x1344, 1344x768"
         ),
     },
     async (args, extra) => {
@@ -137,7 +137,7 @@ function buildServer() {
             {
               type: "text",
               text:
-                "缺少鉴权 token。",
+                "Missing authentication token.",
             },
           ],
         };
