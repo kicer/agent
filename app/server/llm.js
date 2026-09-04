@@ -217,7 +217,10 @@ async function callModel(cfg, modelId, messages, tools, options) {
           if (tc.function.arguments) acc.arguments += tc.function.arguments;
         }
       }
-    });
+      },
+      opts.onMeta,
+      opts.onBadData,
+    );
   } catch (e) {
     if (e && e.name === 'AbortError') aborted = true; else throw e;
   }
