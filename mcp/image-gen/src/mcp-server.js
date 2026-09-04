@@ -25,13 +25,13 @@ function parseArgs(argv) {
   return args;
 }
 
-function pickToken(req) {
-  // 优先从 http header 中获取 token（兼容多种命名）
-  const headers = (req && req.headers) || {};
+// 从请求头里提取 token（兼容多种命名 + Bearer 前缀）
+function extractTokenFromHeaders(headers) {
+  if (!headers) return null;
   const candidates = [
+    headers["authorization"],
     headers["x-image-gen-token"],
     headers["x-mcp-token"],
-    headers["authorization"],
   ];
   for (const v of candidates) {
     if (!v) continue;
@@ -45,18 +45,6 @@ function pickToken(req) {
     }
   }
   return null;
-}
-
-function pickModel(req) {
-  // 从 http header 读取默认 model（可选），未设置返回 null
-  const headers = (req && req.headers) || {};
-  const v =
-    headers["x-image-gen-model"] ||
-    headers["x-mcp-model"] ||
-    headers["x-model"];
-  if (!v) return null;
-  const s = String(v).trim();
-  return s || null;
 }
 
 async function callZhipuImagesGenerations({ token, model, prompt, size }) {
@@ -99,17 +87,11 @@ function extractUrls(data) {
   return [];
 }
 
-function buildServer() {
+// 创建 McpServer，把 token 通过闭包注入到工具回调里
+function buildServer({ token }) {
   const server = new McpServer(
-    {
-      name: "image-gen",
-      version: "1.0.0",
-    },
-    {
-      capabilities: {
-        tools: {},
-      },
-    }
+    { name: "image-gen", version: "1.0.0" },
+    { capabilities: { tools: {} } }
   );
 
   server.tool(
@@ -131,25 +113,9 @@ function buildServer() {
           "图片尺寸，例如 1024x1024、1280x1280、1024x1792、1792x1024、768x1344、1344x768，遵循智谱 API 规格"
         ),
     },
-    async (args, extra) => {
-      const req = extra?.requestInfo?.req;
-      const token = req ? pickToken(req) : null;
-      if (!token) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text:
-                "缺少鉴权 token，请通过 HTTP 请求头（例如 Authorization: Bearer <token> 或 X-Image-Gen-Token: <token>）传递。",
-            },
-          ],
-        };
-      }
-
-      // 优先级：工具参数 model > HTTP header 中的 model > DEFAULT_MODEL
-      const headerModel = req ? pickModel(req) : null;
-      const model = args.model || headerModel || DEFAULT_MODEL;
+    async (args) => {
+      // model 优先级：工具参数 > DEFAULT_MODEL
+      const model = args.model || DEFAULT_MODEL;
       const size = args.size;
 
       try {
@@ -206,17 +172,21 @@ async function startHttp({ port, host }) {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
 
-  // session -> { server, transport } 映射
+  // session -> transport + server + token/model
   const sessions = new Map();
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", service: "image-gen", sessions: sessions.size });
   });
 
-  async function handleSessionRequest(req, res) {
+  // 主入口：先从 header 取 token（每个 HTTP 请求都取一次），
+  // 然后用这个 token 创建一个新的 server+transport；
+  // 已有 session 直接复用 transport，token 沿用 session 首次创建时的值
+  // （避免跨请求 token 不一致；MCP 客户端本来就该每次都带同一个 token）
+  const handleSessionRequest = async (req, res) => {
     const sessionId = req.headers["mcp-session-id"];
 
-    // 已有 session：复用 transport
+    // 已有 session：复用 transport，token/model 直接从 session 缓存里拿
     if (sessionId && sessions.has(sessionId)) {
       const { transport } = sessions.get(sessionId);
       await transport.handleRequest(req, res, req.body);
@@ -236,26 +206,42 @@ async function startHttp({ port, host }) {
       return;
     }
 
+    // 从本次请求 header 取 token
+    const token = extractTokenFromHeaders(req.headers);
+    if (!token) {
+      res.status(401).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32001,
+          message:
+            "缺少鉴权 token，请通过 HTTP 请求头（例如 Authorization: Bearer <token> 或 X-Image-Gen-Token: <token>）传递。",
+        },
+        id: req.body?.id ?? null,
+      });
+      return;
+    }
+
     const newId = randomUUID();
-    const server = buildServer();
+    const server = buildServer({ token });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => newId,
       onsessioninitialized: (id) => {
-        sessions.set(id, { server, transport });
+        sessions.set(id, { server, transport, token });
+        console.log(`[image-gen] session initialized: ${id}`);
       },
     });
 
     transport.onclose = () => {
       if (transport.sessionId) {
         sessions.delete(transport.sessionId);
+        console.log(`[image-gen] session closed: ${transport.sessionId}`);
       }
     };
 
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
-  }
+  };
 
-  // POST /mcp: 主入口
   app.post("/mcp", handleSessionRequest);
 
   // GET /mcp & DELETE /mcp: 用于 SSE 流 / 会话关闭
@@ -279,14 +265,14 @@ async function startHttp({ port, host }) {
 }
 
 async function startStdio() {
-  // 保留 stdio 启动方式，便于本地直接调试
-  const server = buildServer();
+  // stdio 模式下没有 HTTP header，token 暂未支持（保留入口便于本地调试）
+  const server = buildServer({ token: "" });
   const { StdioServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/stdio.js"
   );
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[image-gen] MCP stdio server started");
+  console.error("[image-gen] MCP stdio server started (no auth)");
 }
 
 const args = parseArgs(process.argv.slice(2));
