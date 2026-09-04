@@ -187,7 +187,10 @@ async function callModel(cfg, modelId, messages, tools, options) {
       if (opts.shouldCancel && opts.shouldCancel()) { aborted = true; controller.abort(); return; }
       if (evt.usage) usage = evt.usage;
       const choice = evt.choices && evt.choices[0];
-      if (!choice) return;
+      if (!choice) {
+        if (opts.onBadEvent) opts.onBadEvent(evt);
+        return;
+      }
       if (choice.finish_reason) finishReason = choice.finish_reason;
       const delta = choice.delta || {};
       if (typeof delta.content === 'string' && delta.content.length) {

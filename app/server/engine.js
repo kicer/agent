@@ -563,6 +563,9 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       // meta 是时间性调试信息，事件稀少；badData 是真异常，不该静默。
       onMeta: line => log.debug('[sse] ' + sessionId + ' ' + line),
       onBadData: raw => log.warn('[sse] ' + sessionId + ' 坏帧：' + raw.slice(0, 200)),
+      // data 解析成功但没有 choices（如 event: error 帧）：上游发了非正常响应，
+      // 之前会伪装成"0 字"沉默忽略，这里 warn 把原始 evt 打出来便于定位。
+      onBadEvent: evt => log.warn('[sse] ' + sessionId + ' 上游错误帧：' + JSON.stringify(evt).slice(0, 500)),
     });
     // 本轮上游响应总览：帧数 + 文本长度 + 工具调用 + finish + aborted。
     // sseFrames=0 且 aborted=false 表示上游未发任何 data（疑似流异常）；其他情况可快速区分
