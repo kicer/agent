@@ -1987,20 +1987,22 @@
     setTitle('账户');
     setActions('');
     setBody('<div class="set-scroll"><div class="empty-tip">加载中…</div></div>');
+    // 单个 /api/me 即可判认证开关:启用认证时中间件保证已登录,user 必有;
+    // 未启用时 createAuth 提前返回,该路由不存在 → 404。无需再拉 /api/system/status
+    let me;
     try {
-      const [st, me] = await Promise.all([
-        req('GET', '/api/system/status'),
-        req('GET', '/api/me').catch(function () { return { user: null }; }), // 未启用认证时无此路由
-      ]);
-      if (!ctx()) return;
-      if (!st.auth_enabled || !me || !me.user) {
-        setBody('<div class="set-scroll"><div class="empty-tip">未启用登录认证,无账户设置。</div></div>');
-        return;
-      }
-      setBody('<div class="set-scroll">' + userCardHtml(me.user) + '</div>');
+      me = await req('GET', '/api/me');
     } catch (e) {
-      if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">加载失败:' + esc(e.message) + '</div></div>');
+      if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">' +
+        (e.status === 404 ? '未启用登录认证,无账户设置。' : '加载失败:' + esc(e.message)) + '</div></div>');
+      return;
     }
+    if (!ctx()) return;
+    if (!me || !me.user) {
+      setBody('<div class="set-scroll"><div class="empty-tip">未启用登录认证,无账户设置。</div></div>');
+      return;
+    }
+    setBody('<div class="set-scroll">' + userCardHtml(me.user) + '</div>');
   }
   async function changePassword() {
     try {
