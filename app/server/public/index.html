@@ -113,17 +113,10 @@
     <div class="files-panel" id="files-panel" aria-label="任务文件">
           <div class="files-panel-header">
             <span class="files-panel-title">任务文件</span>
-            <div class="files-panel-header-ops">
-              <button class="files-panel-toggle" id="files-toggle-all" title="全选" aria-label="全选" aria-pressed="false" disabled>
-                <svg class="ic-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                <svg class="ic-minus" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                <svg class="ic-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-              </button>
-              <label class="file-upload" title="上传文件" aria-label="上传文件">
-                <input type="file" id="file-input" multiple hidden>
-                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-              </label>
-            </div>
+            <label class="file-upload" title="上传文件" aria-label="上传文件">
+              <input type="file" id="file-input" multiple hidden>
+              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            </label>
           </div>
           <div class="files-list" id="files-list"></div>
                 <div class="files-panel-progress hidden" id="fp-progress" aria-live="polite">
@@ -131,7 +124,10 @@
                   <span class="pct" id="fp-progress-pct">0%</span>
                 </div>
                 <div class="files-panel-footer">
-            <span class="files-panel-count" id="files-count">未选择文件</span>
+            <div class="files-panel-footer-left">
+              <span class="files-panel-check" id="files-toggle-all" role="checkbox" aria-checked="false" aria-label="全选" title="全选" tabindex="0"></span>
+              <span class="files-panel-count" id="files-count">未选择文件</span>
+            </div>
             <div class="files-panel-actions">
               <button class="files-fab" id="files-bulk-download" title="批量下载" aria-label="批量下载" disabled>
                 <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
@@ -1321,12 +1317,15 @@
     if (delBtn) delBtn.disabled = n === 0;
     // 全选按钮：没有文件时禁用；全部选中=打勾态；部分选中=减号态；都未选=加号态
     if (togBtn) {
-      togBtn.disabled = total === 0;
+      // span 没有 disabled 属性，用 aria-disabled + tabindex 控制交互能力
+      const disabled = total === 0;
+      togBtn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+      togBtn.tabIndex = disabled ? -1 : 0;
       let state = 'none';
       if (n === total && total > 0) state = 'all';
       else if (n > 0) state = 'some';
       togBtn.dataset.state = state;
-      togBtn.setAttribute('aria-pressed', n > 0 ? 'true' : 'false');
+      togBtn.setAttribute('aria-checked', n === total && total > 0 ? 'true' : (n > 0 ? 'mixed' : 'false'));
       togBtn.title = state === 'all' ? '取消全选' : '全选';
       togBtn.setAttribute('aria-label', state === 'all' ? '取消全选' : '全选');
     }
@@ -1336,6 +1335,8 @@
   function toggleSelectAll() {
     const total = filesAllPaths.length;
     if (total === 0) return;
+    const togBtn = $('files-toggle-all');
+    if (togBtn && togBtn.getAttribute('aria-disabled') === 'true') return;
     if (fileSelected.size === total) {
       fileSelected.clear();
     } else {
@@ -1512,7 +1513,11 @@
     }
     $('files-bulk-download').addEventListener('click', bulkDownload);
     $('files-bulk-delete').addEventListener('click', bulkDelete);
-    $('files-toggle-all').addEventListener('click', toggleSelectAll);
+    const togEl = $('files-toggle-all');
+    togEl.addEventListener('click', toggleSelectAll);
+    togEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelectAll(); }
+    });
   // ---------- 大图上传前压缩(同步 v1:阈值/参数由 /api/system/status 透出) ----------
   const DEFAULT_UPLOAD_CFG = { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85 };
   let uploadCfgCache = null;
