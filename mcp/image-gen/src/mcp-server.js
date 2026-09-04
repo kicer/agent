@@ -25,13 +25,12 @@ function parseArgs(argv) {
   return args;
 }
 
-// 从请求头里提取 token（兼容多种命名 + Bearer 前缀）
-function extractTokenFromHeaders(headers) {
+function pickToken(headers) {
   if (!headers) return null;
   const candidates = [
-    headers["authorization"],
     headers["x-image-gen-token"],
     headers["x-mcp-token"],
+    headers["authorization"],
   ];
   for (const v of candidates) {
     if (!v) continue;
@@ -45,6 +44,17 @@ function extractTokenFromHeaders(headers) {
     }
   }
   return null;
+}
+
+function pickModel(headers) {
+  if (!headers) return null;
+  const v =
+    headers["x-image-gen-model"] ||
+    headers["x-mcp-model"] ||
+    headers["x-model"];
+  if (!v) return null;
+  const s = String(v).trim();
+  return s || null;
 }
 
 async function callZhipuImagesGenerations({ token, model, prompt, size }) {
@@ -87,25 +97,27 @@ function extractUrls(data) {
   return [];
 }
 
-// 创建 McpServer，把 token 通过闭包注入到工具回调里
-function buildServer({ token }) {
+function buildServer() {
   const server = new McpServer(
-    { name: "image-gen", version: "1.0.0" },
-    { capabilities: { tools: {} } }
+    {
+      name: "image-gen",
+      version: "1.0.0",
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
   );
 
   server.tool(
     "generate_image",
-    "调用智谱 CogView 图片生成 API，根据 prompt 生成图片，返回图片 URL。可选指定 model 和 size。",
+    "调用智谱图片生成 API，根据 prompt 生成图片，返回图片 URL。可选指定 size。模型由调用方通过 HTTP header（X-Image-Gen-Model）控制，不在工具参数中暴露。",
     {
       prompt: z
         .string()
         .min(1)
-        .describe("图片生成提示词，描述想要生成的画面内容"),
-      model: z
-        .string()
-        .optional()
-        .describe("模型名称，可选，默认 CogView-3-Flash"),
+        .describe("图片生成提示词，描述想要的画面内容"),
       size: z
         .string()
         .optional()
@@ -113,9 +125,28 @@ function buildServer({ token }) {
           "图片尺寸，例如 1024x1024、1280x1280、1024x1792、1792x1024、768x1344、1344x768，遵循智谱 API 规格"
         ),
     },
-    async (args) => {
-      // model 优先级：工具参数 > DEFAULT_MODEL
-      const model = args.model || DEFAULT_MODEL;
+    async (args, extra) => {
+      // SDK 在 tool callback 的 extra.requestInfo.headers 里会透传当前 HTTP 请求的 headers
+      // （参见 webStandardStreamableHttp.js: buildRequestInfo 段）
+      const headers = extra?.requestInfo?.headers;
+      const token = pickToken(headers);
+      if (!token) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                "缺少鉴权 token，请通过 HTTP 请求头（例如 Authorization: Bearer <token> 或 X-Image-Gen-Token: <token>）传递。",
+            },
+          ],
+        };
+      }
+
+      // model 完全由 HTTP header 控制（X-Image-Gen-Model / X-Mcp-Model / X-Model），
+      // 不存进 session，每次从本次请求的 header 读取，未设置则用默认 CogView-3-Flash。
+      // AI 看不到 model 参数（schema 中已删除），避免其误传。
+      const model = pickModel(headers) || DEFAULT_MODEL;
       const size = args.size;
 
       try {
@@ -172,21 +203,17 @@ async function startHttp({ port, host }) {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
 
-  // session -> transport + server + token/model
+  // session -> { server, transport } 映射
   const sessions = new Map();
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", service: "image-gen", sessions: sessions.size });
   });
 
-  // 主入口：先从 header 取 token（每个 HTTP 请求都取一次），
-  // 然后用这个 token 创建一个新的 server+transport；
-  // 已有 session 直接复用 transport，token 沿用 session 首次创建时的值
-  // （避免跨请求 token 不一致；MCP 客户端本来就该每次都带同一个 token）
-  const handleSessionRequest = async (req, res) => {
+  async function handleSessionRequest(req, res) {
     const sessionId = req.headers["mcp-session-id"];
 
-    // 已有 session：复用 transport，token/model 直接从 session 缓存里拿
+    // 已有 session：复用 transport
     if (sessionId && sessions.has(sessionId)) {
       const { transport } = sessions.get(sessionId);
       await transport.handleRequest(req, res, req.body);
@@ -206,42 +233,26 @@ async function startHttp({ port, host }) {
       return;
     }
 
-    // 从本次请求 header 取 token
-    const token = extractTokenFromHeaders(req.headers);
-    if (!token) {
-      res.status(401).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32001,
-          message:
-            "缺少鉴权 token，请通过 HTTP 请求头（例如 Authorization: Bearer <token> 或 X-Image-Gen-Token: <token>）传递。",
-        },
-        id: req.body?.id ?? null,
-      });
-      return;
-    }
-
     const newId = randomUUID();
-    const server = buildServer({ token });
+    const server = buildServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => newId,
       onsessioninitialized: (id) => {
-        sessions.set(id, { server, transport, token });
-        console.log(`[image-gen] session initialized: ${id}`);
+        sessions.set(id, { server, transport });
       },
     });
 
     transport.onclose = () => {
       if (transport.sessionId) {
         sessions.delete(transport.sessionId);
-        console.log(`[image-gen] session closed: ${transport.sessionId}`);
       }
     };
 
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
-  };
+  }
 
+  // POST /mcp: 主入口
   app.post("/mcp", handleSessionRequest);
 
   // GET /mcp & DELETE /mcp: 用于 SSE 流 / 会话关闭
@@ -265,14 +276,14 @@ async function startHttp({ port, host }) {
 }
 
 async function startStdio() {
-  // stdio 模式下没有 HTTP header，token 暂未支持（保留入口便于本地调试）
-  const server = buildServer({ token: "" });
+  // 保留 stdio 启动方式，便于本地直接调试
+  const server = buildServer();
   const { StdioServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/stdio.js"
   );
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[image-gen] MCP stdio server started (no auth)");
+  console.error("[image-gen] MCP stdio server started");
 }
 
 const args = parseArgs(process.argv.slice(2));

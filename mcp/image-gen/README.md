@@ -68,16 +68,23 @@ curl http://localhost:3000/health
 | 名称 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | string | ✅ | 图片生成提示词，描述想要的画面内容 |
-| `model` | string | ❌ | 模型名称，默认 `CogView-3-Flash`。可填 `CogView-3` / `CogView-3-Flash` 等智谱支持的模型 |
 | `size` | string | ❌ | 图片尺寸，例如 `1024x1024`、`1280x1280`、`1024x1792`、`1792x1024`、`768x1344`、`1344x768`，遵循智谱 API 规格 |
 
-### Model 优先级（单链）
+### Model 控制（不在工具参数中暴露）
 
-```
-工具参数 arguments.model  →  DEFAULT_MODEL (CogView-3-Flash)
-```
+模型名由调用方在 **tools/call 这一次的 HTTP header** 中传递，**AI 看不到也填不了**，避免其误传。识别顺序（首个非空值生效）：
 
-每次 `tools/call` 都是独立决策，**想换模型就在该次调用传 `model` 参数**，不需要重连/换 session。
+| 优先级 | Header |
+|---|---|
+| 1 | `X-Image-Gen-Model` |
+| 2 | `X-Mcp-Model` |
+| 3 | `X-Model` |
+
+如果都没传，走代码内常量 `DEFAULT_MODEL = "CogView-3-Flash"`。
+
+**为什么不放进工具参数？** 调用方一般是 AI 助手（Claude / Cursor 等），它不需要也没能力选择用哪个模型；模型选择属于部署/路由策略，由请求的发起方在 HTTP header 里注入更可控。
+
+### 返回
 
 ### 返回
 
@@ -104,11 +111,11 @@ URL 由智谱签名下发，**带有效期**（通常 24h），如需长期保�
 
 | 优先级 | Header | 说明 |
 |---|---|---|
-| 1 | `Authorization: Bearer <token>` | 推荐，标准 OAuth 风格 |
-| 2 | `X-Image-Gen-Token: <token>` | 直传，避免与客户端自身的 Authorization 冲突 |
-| 3 | `X-Mcp-Token: <token>` | 通用兜底 |
+| 1 | `X-Image-Gen-Token: <token>` | 直传，避免与客户端自身的 Authorization 冲突 |
+| 2 | `X-Mcp-Token: <token>` | 通用兜底 |
+| 3 | `Authorization: Bearer <token>` | 标准 OAuth 风格（排最后是为避免误用） |
 
-**Token 不会写入服务端任何存储**，仅在 initialize 阶段绑定到内存中的 session 对象，session 结束立即释放。
+Token 仅在每次 tool call 时从 header 读取，不写入任何存储、不进 session。
 
 ### 错误响应
 
@@ -218,11 +225,14 @@ const DEFAULT_MODEL = "CogView-3-Flash";
 
 ## 常见问题
 
-**Q: 我能在工具参数里不传 `model` 吗？**
-A: 可以，不传就走默认 `CogView-3-Flash`。
+**Q: AI 不知道有哪些 model 可选，怎么办？**
+A: 这是设计意图。模型选择属于路由策略，不让 AI 决策。调用方在 HTTP header `X-Image-Gen-Model` 里注入即可。
 
 **Q: 换模型需要重连 MCP session 吗？**
-A: 不需要。`model` 是工具参数，每次 `tools/call` 都生效，不需要重建 session。
+A: 不需要。Model header 在每次 `tools/call` 都从当前请求读取，不需要重建 session。
+
+**Q: 为什么 Model 优先级不是「工具参数 > header」？**
+A: 因为我们故意不在 schema 暴露 model 参数，AI 根本不会传 model，所以「工具参数 > header」这条分支实际上不存在。
 
 **Q: Token 会不会泄露到日志？**
 A: 当前实现只在 session 内存里持有，不会写入 stdout/stderr。Container 日志只打印 session id。
