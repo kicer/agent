@@ -19,6 +19,8 @@ services:
       - CERT_NAME=default
       # 加入executor独立服务
       - EXECUTOR_URL=http://agent-executor:9000
+      # 两侧设成同一个值即启用调用鉴权（内网互访，可选）：
+      # - EXECUTOR_TOKEN=change-me
     networks:
       - my-app-network
 
@@ -33,8 +35,14 @@ services:
       - ./skills:/workspace/skills      # 技能目录：所有任务/会话共享同一份技能
     environment:
       - PORT=9000
+      # 与 agent-core 侧设成同一个值即启用调用鉴权（可选）：
+      # - EXECUTOR_TOKEN=change-me
     cap_drop:
       - SYS_ADMIN
       - DAC_OVERRIDE
     networks:
       - my-app-network
+
+networks:
+  my-app-network:
+    external: true

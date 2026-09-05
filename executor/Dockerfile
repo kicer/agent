@@ -26,3 +26,14 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     pymupdf pdfplumber pypdf reportlab \
     Pillow python-dateutil python-magic \
     loguru rich fonttools
+
+# ---- executor 服务（零依赖单文件，仅 Node 内置 http）----
+WORKDIR /app
+COPY server.js ./
+
+EXPOSE 9000
+ENV PORT=9000 \
+    EXECUTOR_ROOTS=/workspace \
+    EXECUTOR_CWD=/workspace/tasks
+
+CMD ["node", "server.js"]
