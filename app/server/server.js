@@ -99,7 +99,7 @@ mcp.init(cfg).then(async () => {
       log.info('startup', '  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
       const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url).join(', ');
       log.info('startup', '  mcp_servers=' + (mcpList || '(none)'));
-      log.info('startup', '  auth=' + (auth.enabled ? 'login (' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
+      log.info('startup', '  auth=' + (auth.enabled ? 'login: ' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
       log.info('startup', '  log_level=' + cfg.log_level);
       // prompt dump 失败不影响服务：只是核对用产物。
       try {
