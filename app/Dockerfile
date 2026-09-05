@@ -5,6 +5,7 @@ FROM node:20-slim
 # TZ=Asia/Shanghai：统一时区。
 ENV MPLBACKEND=Agg \
     PYTHONUNBUFFERED=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
     TZ=Asia/Shanghai
 
 # 常用命令行工具：Agent 的 terminal 工具经常用到

@@ -1,2 +1,2 @@
-reportlab==3.6.12
-fonttools==4.38.0
+reportlab>=3.6.12
+fonttools>=4.38.0
