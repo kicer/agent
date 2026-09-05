@@ -250,7 +250,7 @@ function buildServer({ publicBaseUrl }) {
     "video-gen",
     `Submit a video generation task (text-to-video or image-to-video).
 Returns the task_id immediately; poll the result later with query_video.
-Provide prompt and/or image_url (at least one is required).
+prompt is required. Add image_url for image-to-video.
 
 If you need to use a LOCAL image file as image_url, upload it FIRST with this exact command (replace the path):
 
@@ -262,9 +262,8 @@ Uploaded files live in container temp storage and are discarded on restart — d
     {
       prompt: z
         .string()
-        .optional()
         .describe(
-          "Video text description (max 512 chars). At least one of prompt / image_url is required."
+          "Video text description (max 512 chars). Required; when combined with image_url it serves as the motion/action description."
         ),
       image_url: z
         .string()

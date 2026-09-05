@@ -145,13 +145,13 @@ curl -F "file=@/tmp/cat.png" https://video-gen.ai.foresh.com/upload
 
 ## 工具：generate_video
 
-提交一个视频生成任务，支持**文生视频**和**图生视频**。**至少**需要传 `prompt` 或 `image_url` 其中之一；两者都传也行（image-to-video 时 prompt 会被附加为运动/动作描述）。
+提交一个视频生成任务，支持**文生视频**和**图生视频**。`prompt` 为**必填**；图生视频另传 `image_url`（两者都传也行，此时 prompt 会附加为运动/动作描述）。
 
 ### 参数（AI 可见）
 
 | 名称 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `prompt` | string | ❌ | 视频文本描述，最大 512 字符 |
+| `prompt` | string | ✅ | 视频文本描述，最大 512 字符 |
 | `image_url` | string (URL) | ❌ | 参考图 URL（**单张**，不支持数组 / 多张 / 首尾帧）。图片 ≤ 5MB，格式 png/jpeg/jpg。本地文件请走 `/upload` |
 | `size` | string | ❌ | 视频尺寸，例如 `1920x1080`、`1080x1920`、`1024x1024`、`1280x960` 等 |
 | `with_audio` | boolean | ❌ | 是否生成 AI 音效，默认 `false` |
