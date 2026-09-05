@@ -64,16 +64,19 @@ router.post('/:id/release', wrap((req, res) => {
 
 // 清空会话内容：删除全部消息记录，保留会话本身与任务目录文件（不再随下条消息重发旧历史）。
 // 状态收尾为已完成并释放模型/出队；正在执行的回合会被拒绝（需先「终止」）。
+// ?keep=summary：「压缩总结」收尾专用 —— 只保留最后一条 assistant 总结消息并打上 type='summary' 标记。
 router.delete('/:id/messages', wrap((req, res) => {
-  const r = engine.clearSessionMessages(req.params.id);
-  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 清空会话内容（文件保留）');
+  const keep = String((req.query && req.query.keep) || '').trim();
+  const r = engine.clearSessionMessages(req.params.id, { keepSummary: keep === 'summary' });
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + (keep === 'summary' ? ' 压缩清理（仅保留摘要）' : ' 清空会话内容（文件保留）'));
   res.json(r);
 }));
 
 // 上下文压缩：phase-bar「压缩」按钮触发。弹窗选模式后调本接口：
 //   mode='generate_only'       只让 AI 总结，保留全部历史
-//   mode='compress_and_clear'  让 AI 总结，AI 完成后前端自动调 DELETE 清空历史
-// 后端只负责「丢一条 type='summarize_request' 的 user 消息」并通过 SSE 把模式带回去给前端。
+//   mode='compress_and_clear'  让 AI 总结，AI 完成后前端自动调 DELETE ?keep=summary 清空历史、仅留摘要
+// 后端负责「丢一条 type='summarize_request' 的 user 消息」（响应回显 prompt 供前端直接渲染该指令气泡），
+// 并在总结回合的最终 SSE assistant_message 上带 is_summary + mode 给前端走收尾。
 // 状态非 active 时才允许（避免与正在跑的回合抢上下文）。本接口只是「丢一条总结请求进队列」，
 // 不等待 AI 完成——前端通过现有 SSE 流听 assistant_message 事件拿结果。
 router.post('/:id/summarize', wrap((req, res) => {

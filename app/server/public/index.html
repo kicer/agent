@@ -19,14 +19,33 @@
          放在 link 之后以保证同优先级下能压住 style.css 里同优先级的规则。 */
       body .msg-actions .act-del { display: none; }
       body.log-debug .msg-actions .act-del { display: flex; }
-      /* 「压缩」总结折叠面板：复用 .msg-think 的折叠交互，但 body 是常规字体（不是代码块）。
-               summary 文字「上下文总结」；默认 open。收尾后改为非 streaming。 */
-            .msg-summary { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 0 0 6px; }
-            .msg-summary > summary { list-style: none; cursor: pointer; user-select: none; padding: 6px 10px; display: flex; align-items: center; gap: 6px; color: var(--gray); font-size: 12px; }
-            .msg-summary > summary::-webkit-details-marker { display: none; }
-            .msg-summary > summary::before { content: '▸'; font-size: 10px; color: var(--gray-light); transition: transform .15s; display: inline-block; }
-            .msg-summary[open] > summary::before { transform: rotate(90deg); }
-            .msg-summary .bubble-ai { margin: 0 10px 10px; }
+      /* 「压缩」摘要卡片：与 .msg-think 同族的折叠交互，但做成更醒目的蓝色调卡片；
+         流式收尾（live）和历史重渲染（type='summary' 消息）共用同一套样式。
+         live 阶段 open=true 展开阅读；历史重渲染默认收起。 */
+      .msg-summary {
+        margin: 0 0 8px; border: 1px solid #dbe4fb; border-radius: 12px; overflow: hidden;
+        background: linear-gradient(180deg, #f7f9ff 0%, #ffffff 56%);
+        box-shadow: 0 1px 3px rgba(57, 100, 254, 0.08);
+      }
+      .msg-summary > summary {
+        list-style: none; cursor: pointer; user-select: none;
+        display: flex; align-items: center; gap: 7px;
+        padding: 9px 12px; font-size: 13px; font-weight: 600; color: var(--active);
+      }
+      .msg-summary > summary::-webkit-details-marker { display: none; }
+      .msg-summary > summary::before {
+        content: ''; flex: none; width: 0; height: 0; margin-left: 1px;
+        border-left: 5px solid var(--active); border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+        transition: transform .15s ease;
+      }
+      .msg-summary[open] > summary::before { transform: rotate(90deg); }
+      .msg-summary .sum-ic { flex: none; width: 15px; height: 15px; }
+      .msg-summary .sum-hint { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--gray); }
+      .msg-summary-body {
+        border-top: 1px dashed #dbe4fb; background: var(--page);
+        padding: 10px 13px 12px;
+      }
+      .msg-summary-body .bubble-ai { margin: 0; font-size: 14px; line-height: 1.7; }
       /* 状态栏图标按钮（压缩）：仅显示 SVG、去掉文字 padding；保持与文字按钮同高。 */
       .stop-link.icon-only { padding: 0 8px; line-height: 0; }
       .stop-link.icon-only .ic { width: 18px; height: 18px; vertical-align: middle; }
@@ -532,6 +551,31 @@
     return '<details class="msg-think"><summary>思考过程</summary><div class="msg-think-body">' + esc(text) + '</div></details>';
   }
 
+  // 「压缩」摘要卡片：流式收尾与历史重渲染共用的头部（图标 + 标题 + 右侧说明）。
+  function summaryHeaderHtml() {
+    return '<summary>' +
+      '<svg class="sum-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">' +
+        '<ellipse cx="12" cy="5" rx="8" ry="2.5"></ellipse>' +
+        '<path d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path>' +
+        '<path d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path>' +
+      '</svg>' +
+      '<span>上下文总结</span>' +
+      '<span class="sum-hint">后续对话以此为起点</span>' +
+    '</summary>';
+  }
+
+  // 历史重渲染：被标记 type='summary' 的摘要消息渲染成摘要卡片（默认收起，点开可重现）。
+  // 工具卡不挂：摘要行永远不带 tool_calls；复制/删除按钮照常提供。
+  function summaryMsgHtml(m) {
+    const r = mdHtml(m.content || '');
+    return '<div class="msg other">' +
+      '<details class="msg-summary">' + summaryHeaderHtml() +
+        '<div class="msg-summary-body"><div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div></div>' +
+      '</details>' +
+      actionsHtml(m.created_at, m.content || '', m.id) +
+    '</div>';
+  }
+
   // ---------- 工具调用卡片(样式/交互同步 index;流式与历史共用) ----------
   function toolArgsSummary(name, argsStr) {
     let s = '';
@@ -634,7 +678,8 @@
 
   function msgNode(m) {
     if (m.role === 'user') return userMsgHtml(m);
-    if (m.role === 'assistant') return aiMsgHtml(m);
+    // 被「压缩总结」标记的摘要消息：重渲染成摘要卡片，而不是普通 AI 气泡
+    if (m.role === 'assistant') return m.type === 'summary' ? summaryMsgHtml(m) : aiMsgHtml(m);
     return null; // tool 结果不单独展示
   }
 
@@ -832,6 +877,11 @@
   }
   function closeStream() {
     if (state.es) { state.es.close(); state.es = null; }
+    // SSE 一断，本地「等待压缩收尾」状态就成孤儿（再也收不到带 is_summary 的最终消息）：
+    // 复位以免压缩按钮永久 disabled / 防重入卡死。切会话、重开流都会经过这里。
+    // （后果仅是：离开期间的 compress_and_clear 不会自动清理历史，历史保持完整，重进会话后可重新发起。）
+    state.pendingSummary = false;
+    state.pendingSummaryMode = null;
   }
 
   async function openSession(id) {
@@ -1006,11 +1056,14 @@
   // ---------- 「压缩」上下文总结 ----------
     // 用户点 phase-bar「压缩」按钮 → 弹窗选后续动作：
     //   取消：不做任何事
-    //   生成摘要：发请求让 AI 总结，完成后保留全部历史（仅 UI 多一条总结参考）
-    //   压缩总结：发请求让 AI 总结，完成后自动调 DELETE 清空历史，只保留总结作为下次会话起点
-    // 后端只负责「丢一条 type='summarize_request' 的 user 消息」并通过 SSE 转发总结结果，
-    // 是否清空由前端根据用户在弹窗选择的 mode 决定。后端 summarize 路由收 body.mode；
-    // runLoopInner 在 SSE assistant_message 事件上带上 mode，让前端能拿到自己发起的模式。
+    //   仅摘要（generate_only）：发请求让 AI 总结，完成后保留全部历史（仅 UI 多一条摘要卡片参考）
+    //   压缩总结（compress_and_clear）：发请求让 AI 总结，完成后自动调 DELETE ?keep=summary
+    //     清空历史（仅保留最后一条并标成 type='summary'），前端直接移除旧消息 DOM，
+    //     不重新刷新摘要消息（压缩过程中摘要内容已经流式发给用户了）。
+    // 开始压缩后：后端响应回显 prompt，前端把它直接渲染成一条普通用户消息气泡；
+    // 压缩回合中间的 AI 回复（思考/工具调用等）全部按普通消息渲染；
+    // 只有回合收尾的那条最终答复才带 is_summary，渲染成摘要卡片。
+    // 后端 summarize 路由收 body.mode；runLoopInner 在最终 assistant_message SSE 上带 is_summary + mode。
     async function summarizeChat() {
       if (!state.sessionId) return;
       if (state.pendingSummary) return; // 已在请求中，防重入
@@ -1024,7 +1077,11 @@
       const btn = $('compress-btn');
       if (btn) btn.disabled = true;
       try {
-        await req('POST', '/api/sessions/' + state.sessionId + '/summarize', { mode });
+        const r = await req('POST', '/api/sessions/' + state.sessionId + '/summarize', { mode });
+        // 开始压缩后直接把「压缩指令」当成普通用户消息发出来（后端回显 prompt）；
+        // 后续中间的 AI 回复全部按普通消息渲染，直到带 is_summary 的最终答复才转摘要卡片。
+        if (r && r.prompt) appendUserMsg(r.prompt);
+        if (r && r.delivered === 'live') addTyping(); // 已直接送达：先挂打字占位，首个 delta 到达时自动移除
         toast(mode === 'compress_and_clear' ? '已发起压缩，完成后将自动清空历史…' : '已生成摘要中…');
       } catch (e) {
         state.pendingSummary = false;
@@ -1071,17 +1128,39 @@
         });
       }
 
-    // 「压缩总结」模式下 AI 总结落库后自动调用的清空：复用现有 DELETE 接口。
+    // 「压缩总结」模式下 AI 总结落库后自动调用的收尾：DELETE ?keep=summary 清空历史，
+      // 仅保留最后一条消息并标成 type='summary'（库里打标，供下次重渲染成摘要卡片）。
       // 与 clearChat 不同：不弹确认（用户已在压缩弹窗中表态）。
+      // 前端不重新刷新摘要消息：压缩过程中摘要内容已经流式发给用户（msg-summary-live 节点），
+      // 只需把被清掉的历史消息从 DOM 移除，保留该节点即可；列表/状态照常刷新。
       async function clearAfterSummary(id) {
         if (!id) return;
         try {
-          await req('DELETE', '/api/sessions/' + id + '/messages');
+          await req('DELETE', '/api/sessions/' + id + '/messages?keep=summary');
           toast('已压缩，仅保留总结');
-          const detail = await req('GET', '/api/sessions/' + id);
-          if (state.sessionId === id && state.view === 'chat') { renderDetail(detail); connectStream(); }
+          if (state.sessionId === id && state.view === 'chat') {
+            const box = $('chat-view');
+            const live = box.querySelector('.msg-summary-live');
+            if (live) {
+              for (const el of Array.from(box.children)) {
+                if (el !== live) el.remove();
+              }
+              scrollBottom();
+            } else {
+              // 本页没赶上流式摘要（如压缩途中重开过页面）：库里摘要已带 type='summary' 标记，
+              // 整页重渲染兼容一把（这是唯一需要刷新摘要消息的例外场景）。
+              try {
+                const detail = await req('GET', '/api/sessions/' + id);
+                if (state.sessionId === id && state.view === 'chat') renderDetail(detail);
+              } catch (_) {}
+            }
+            // 压缩回合的流式容器随历史一起作废，避免后续事件往已移除节点里写
+            state.streamWrap = null;
+            state.streamEl = null;
+            state.streamText = '';
+          }
           loadSessionList();
-        } catch (e) { toast('清空失败：' + e.message); }
+        } catch (e) { toast('压缩清理失败：' + e.message); }
         const cpBtn = $('compress-btn');
         if (cpBtn) cpBtn.disabled = state.status === 'active';
       }
@@ -1236,21 +1315,24 @@
             bubble.innerHTML = r.html;
             state.streamWrap.appendChild(bubble);
           }
-          // 「压缩」总结面板：复用 .msg-think 的折叠样式（参考思考过程），summary 文字“上下文总结”。
-                    // 默认 open=true（刚收到总结时展开，方便用户立刻读），后续随同思考面板一起折起。
-                    // 防重：同一 streamWrap 里已存在 summary 面板则不再重复插入（保护二次重入）。
-                    if (d.is_summary && state.streamWrap && !state.streamWrap.querySelector('.msg-summary')) {
-                      const det = document.createElement('details');
-                      det.className = 'msg-summary streaming';
-                      det.open = true;
-                      const sum = document.createElement('summary');
-                      sum.textContent = '上下文总结';
-                      det.appendChild(sum);
-                      // 把总结气泡收进 details 里：点击 summary 折叠后可一起隐藏默认占空间的大段总结。
-                      const oldBubble = state.streamWrap.querySelector('.bubble-ai');
-                      if (oldBubble) det.appendChild(oldBubble);
-                      state.streamWrap.appendChild(det);
-                    }
+          // 「压缩」总结回合的最终答复（后端已保证只有收尾无工具调用且紧邻 summarize_request 的那条才带 is_summary，
+          // 中间 AI 回复已按普通消息渲染）：把已流式输出的气泡装进摘要卡片（与历史重渲染同款样式），
+          // 并标记 wrap 为 msg-summary-live：compress_and_clear 清空历史时保留该节点，不再重新渲染摘要。
+          // open=true 让用户立刻读到；后续轮次不自动折起（卡片可手动点 summary 收起）。
+          // 防重：同一 streamWrap 已有卡片则不再重复插入（保护 SSE 重连重发等场景）。
+          if (d.is_summary && hasText && state.streamWrap && !state.streamWrap.querySelector('.msg-summary')) {
+            const wrap0 = state.streamWrap;
+            const det = document.createElement('details');
+            det.className = 'msg-summary';
+            det.open = true;
+            det.innerHTML = summaryHeaderHtml() + '<div class="msg-summary-body"></div>';
+            const body = det.querySelector('.msg-summary-body');
+            const bubble = wrap0.querySelector('.bubble-ai');
+            const ref = bubble ? bubble.nextSibling : null;
+            if (bubble) body.appendChild(bubble); // 把总结气泡收进卡片 body（保留原位，不打乱思考面板顺序）
+            wrap0.insertBefore(det, ref);
+            wrap0.classList.add('msg-summary-live');
+          }
           if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
           state.streaming = false;
           // 思考面板默认折叠，避免挡着后续气泡；点击展开
@@ -1258,11 +1340,7 @@
                       const t = state.streamWrap.querySelector('.msg-think');
                       if (t && t.open) t.open = false;
                     }
-                    // 上下文总结面板同步折起：避免总结泡在后续气泡中占住大面积空间；用户点开可以重现。
-                    if (state.streamWrap) {
-                      const sm = state.streamWrap.querySelector('.msg-summary');
-                      if (sm && sm.open) sm.open = false;
-                    }
+                    // 摘要卡片不再自动折起：它就是本轮的正式产出，由用户自己决定收不收起。
           state.streamWrap = null;
           state.streamReasoning = '';
           state.streamThinkEl = null;
@@ -1307,7 +1385,16 @@
       maybeAutoScroll();
     });
     es.addEventListener('done', ev => {
-      removeTyping(); // 本轮结束,占位兼终止(如模型报错无回复)
+      removeTyping(); // 本轮结束,占位亦终止(如模型报错无回复)
+      // 压缩回合异常结束的兜底（模型报错回合直接 break / 被终止 → 不会有带 is_summary 的最终消息）：
+      // 复位等待状态并还原压缩按钮，历史保持原样不动。
+      if (state.pendingSummary) {
+        state.pendingSummary = false;
+        state.pendingSummaryMode = null;
+        toast('压缩回合已结束，未收到摘要，历史未变动');
+        const cpBtn = $('compress-btn');
+        if (cpBtn) cpBtn.disabled = state.status === 'active';
+      }
       state.streaming = false;
       state.streamEl = null; // 防御性清理:回合异常结束(如终止)时不留悬空气泡到下一轮
       state.streamText = '';

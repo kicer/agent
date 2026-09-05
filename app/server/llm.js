@@ -48,6 +48,8 @@ function decodeBlocks(content) {
 // 这条 user 是让 AI 做总结用的中间产物，AI 给出总结后就会被前端清空；为防用户在被清空前又发新消息
 // 触发新一轮模型调用，这条指令会污染上下文（让 AI 误以为还要再总结），所以 buildMessages 直接跳过。
 // 同时跳过 type='archived' 的中间态归档行（保留接口给将来需要时用，目前主流程走前端物理清空）。
+// 注意：type='summary'（「压缩总结」后保留的唯一摘要锚点）不跳过：它是清空后后续轮次的上下文起点，
+// 正常以 assistant 历史行发给模型。
 function buildMessages(session, language) {
   const messages = [{ role: 'system', content: systemPromptText(language) }];
   const history = session.history;

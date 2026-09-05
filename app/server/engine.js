@@ -489,13 +489,19 @@ async function runLoopInner(sessionId, run) {
     const assistantId = saveMessage(sessionId, msgRow);
         if (isErrAck) log.info('msg', sessionId + ' 本轮 tool call 参数错误，assistant 标记 errAck（不再进入模型上下文）');
         recordModelUsage(sessionId, session.model_id, result.usage);
-        // 「压缩」按钮触发的总结请求：判别 = 本轮上一条 user 消息的 type 是 summarize_request
-            // （反向查找最靠近本轮的 user/type=summarize_request）。该标志传到前端后，前端按用户在弹窗
-            // 选的模式走后续。mode 从发起请求时记录在 run 上的 summaryMode 取（不入库）。
-            const isSummary = !!db.prepare(
-              "SELECT 1 FROM messages WHERE session_id = ? AND role = 'user' AND type = 'summarize_request' AND id < ? ORDER BY id DESC LIMIT 1"
-            ).get(sessionId, assistantId);
-            bus.emit(sessionId, 'assistant_message', {
+        // 「压缩」按钮触发的总结请求：只把压缩回合的「最终答复」（无 tool_calls 的收尾回复）标为
+        // is_summary；回合中间产生的 AI 回复（含工具调用轮）都是普通消息，前端照常渲染。
+        // 判别 = 「紧邻的上一条 user 消息是 summarize_request」，而不是「历史上出现过 summarize_request」：
+        // generate_only 会保留历史、指令行留在库里，旧写法会把之后每一轮的 assistant 都误标成总结。
+        // 该标志传到前端后，前端按用户在弹窗选的模式走后续。mode 从发起请求时记录在 run 上的 summaryMode 取（不入库）。
+        let isSummary = false;
+        if (!hasTools) {
+          const prevUser = db.prepare(
+            "SELECT type FROM messages WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1"
+          ).get(sessionId, assistantId);
+          isSummary = !!(prevUser && prevUser.type === 'summarize_request');
+        }
+        bus.emit(sessionId, 'assistant_message', {
               id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning,
               tool_calls: msgRow.tool_calls, type: msgRow.type,
               is_summary: isSummary,
@@ -894,11 +900,13 @@ function deleteSession(sessionId, deleteDir) {
 
 // 上下文压缩：phase-bar「压缩」按钮触发。把 config.yml 的 compress.prompt 作为一条 type='summarize_request'
 // 的 user 消息发出去，AI 收到后会基于历史生成总结并以 assistant 消息回复。
-// llm.js 已规则：type='summarize_request' 跳过该行——所以该指令不会反复出现在后续请求中污染上下文。
-// 由 runLoopInner 在 assistant_message emit 时根据"上一条 user 消息是 summarize_request"
-// 决定是否带 is_summary: true，并带上 mode 给前端，前端按用户选择的模式走完最后一步。
+// llm.js 规则：type='summarize_request' 跳过该行——所以该指令不会反复出现在后续请求中污染上下文。
+// 由 runLoopInner 在压缩回合的最终答复（无 tool_calls 且紧邻上一条 user 是 summarize_request）
+// emit 时带 is_summary: true，并带上 mode 给前端，前端按用户选择的模式走完最后一步
+//（compress_and_clear 时调 DELETE ?keep=summary 清空历史、仅留该摘要并标 type='summary'）。
 // 限制：与 clearSessionMessages 类似——会话执行中(active)禁止操作，避免和正在跑的回合抢上下文。
 // mode: 'generate_only' 或 'compress_and_clear'，由路由校验后传入。
+// 响应回显 prompt：前端「开始压缩后直接把压缩指令渲染成一条普通用户消息气泡」，无需再拉配置。
 function summarizeContext(sessionId, mode) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -910,7 +918,8 @@ function summarizeContext(sessionId, mode) {
   if (!prompt) throw Object.assign(new Error('配置缺少 compress.prompt，请检查 config.yml'), { status_code: 500 });
   // 复用 postUserMessage：opts.type='summarize_request' 给该消息打标，
   // opts.mode 用于 runLoopInner SSE 带 mode 返回给前端。
-  return postUserMessage(sessionId, prompt, { type: 'summarize_request', mode });
+  const r = postUserMessage(sessionId, prompt, { type: 'summarize_request', mode });
+  return Object.assign({ prompt }, r);
 }
 
 // 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件。
@@ -919,7 +928,9 @@ function summarizeContext(sessionId, mode) {
 // 清空后不自动重建会话上下文：此时通常未绑定模型，预置只会产生“尚未绑定/未知”占位。
 // 待用户选择模型（bindToSession）或再次发言并自动绑定模型（runLoop 入口）时，
 // 由 ensureSessionContext 注入当时的有效信息。
-function clearSessionMessages(sessionId) {
+// opts.keepSummary=true（「压缩总结」收尾用）：不物理清空，只保留最后一条 assistant 总结消息，
+// 并给它打 type='summary' 标记（前端重渲染成摘要卡片；buildMessages 正常携带它作为上下文起点）。
+function clearSessionMessages(sessionId, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   const run = runs.get(sessionId);
@@ -934,7 +945,16 @@ function clearSessionMessages(sessionId) {
   runs.delete(sessionId);
   dequeue(sessionId);
   releaseModel(sessionId);
-  db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+  const lastSummary = opts && opts.keepSummary ? db.prepare(
+    "SELECT id FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1"
+  ).get(sessionId) : null;
+  if (lastSummary) {
+    // 保留总结行，其余（含 summarize_request 指令、中间工具轮）全部删除
+    db.prepare('DELETE FROM messages WHERE session_id = ? AND id != ?').run(sessionId, lastSummary.id);
+    db.prepare("UPDATE messages SET type = 'summary' WHERE id = ?").run(lastSummary.id);
+  } else {
+    db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+  }
   touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null });
   bus.emit(sessionId, 'done', { status: 'completed' });
   emitStatus(sessionId);
