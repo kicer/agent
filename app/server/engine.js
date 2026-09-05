@@ -900,6 +900,30 @@ function clearSessionMessages(sessionId) {
   return { ok: true };
 }
 
+// 删除单条消息：消息行直接从库里消失，下次模型请求的历史里就没有它了（buildMessages 只看库）。
+// assistant 带 tool_calls 时连带删掉该轮的 tool 回执：只删 assistant 会留下无 tool_call 配对的
+// 孤儿 tool 行，上游会拒收整个请求。tool 回执不允许单独删：删了它其父 assistant 的
+// tool_calls 就没有回执，同样破坏协议；要删请删对应的 assistant 消息整轮。
+function deleteMessage(sessionId, messageId) {
+  const session = getSession(sessionId);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const row = db.prepare('SELECT * FROM messages WHERE id = ? AND session_id = ?').get(messageId, sessionId);
+  if (!row) throw Object.assign(new Error('消息不存在'), { status_code: 404 });
+  if (row.role === 'tool') throw Object.assign(new Error('工具回执不能单独删除，请删它对应的 AI 消息'), { status_code: 400 });
+  let removed = 0;
+  if (row.tool_calls) {
+    let calls = [];
+    try { calls = JSON.parse(row.tool_calls) || []; } catch (_) {}
+    for (const c of calls) {
+      if (!c || !c.id) continue;
+      removed += db.prepare("DELETE FROM messages WHERE session_id = ? AND role = 'tool' AND tool_call_id = ?")
+        .run(sessionId, c.id).changes;
+    }
+  }
+  db.prepare('DELETE FROM messages WHERE id = ?').run(messageId);
+  return { ok: true, id: messageId, removed: removed + 1 };
+}
+
 function setModelPool(cfg_, db_, bus_) { cfg = cfg_; db = db_; bus = bus_; }
 
 module.exports = {
@@ -917,6 +941,7 @@ module.exports = {
   renameSession,
   deleteSession,
   clearSessionMessages,
+  deleteMessage,
   getSession,
   getRun,
   taskDirOf,

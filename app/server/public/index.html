@@ -287,6 +287,7 @@
    *   POST   /api/sessions/:id/stop | /release                  状态栏「终止/断开」
    *   POST   /api/sessions/:id/bind {model_id}                  状态栏「选择模型」(已完成/已终止会话)
    *   DELETE /api/sessions/:id/messages                         状态栏「清空」(会话内删除已移除,清空由这里承担)
+   *   DELETE /api/sessions/:id/messages/:messageId              删除单条消息(assistant 轮连带其工具回执)
    *   GET    /api/models                                        状态栏「选择模型」弹窗模型列表
    *
    * 设置区(侧边栏用户区整行点击进入;页面搬自 index.html,未新增任何接口):
@@ -303,7 +304,6 @@
    * 无后端支撑、仅前端占位的概念(先不实现):
    *   · 「文秘助理 / 识图专家」模式 —— 后端无 mode 字段,当前仅影响提示文案
    *   · 「思考过程」折叠块(已思考 N 秒) —— 后端不产出 reasoning,已移除 mock
-   *   · 按条删除消息 —— 后端无消息级删除接口;消息下方的删除会话按钮已整体移除(改用状态栏「清空」)
    * 鉴权:任意请求 401 时跳转 /login(与 core.js 的 req 一致)。
    * ============================================================================
    */
@@ -462,13 +462,20 @@
     return { text: m[2] || '', files: files };
   }
 
-  function actionsHtml(ts, content) {
+  function actionsHtml(ts, content, msgId) {
     const b64 = btoa(unescape(encodeURIComponent(content)));
+    // 删除本条:仅已落库消息可删(传 m.id);流式未落库时无 id,不渲染
+    const del = msgId
+      ? '<button class="act act-del" title="删除本条" data-msg-id="' + msgId + '">' +
+        '<svg class="ic sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>' +
+        '</button>'
+      : '';
     return '<div class="msg-actions">' +
       '<span>' + fmtTime(ts) + '</span>' +
       '<button class="act act-copy" title="复制" data-b64="' + b64 + '">' +
         '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
       '</button>' +
+      del +
     '</div>';
   }
 
@@ -480,7 +487,7 @@
     // 复制内容取纯文本（不含【系统通知】附件行），与气泡里显示一致
     return '<div class="msg me">' +
       '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
-      actionsHtml(m.created_at, p.text) +
+      actionsHtml(m.created_at, p.text, m.id) +
     '</div>';
   }
 
@@ -490,7 +497,7 @@
     if (!text && !reason) return null; // 纯工具调用的应答:不渲染气泡,工具卡由 appendToolCardsFromAssistant 铺
     const think = reason ? thinkPanelHtml(m.reasoning) : '';
     const bubble = text ? (() => { const r = mdHtml(m.content); return '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>'; })() : '';
-    return '<div class="msg other">' + think + bubble + actionsHtml(m.created_at, m.content || '') + '</div>';
+    return '<div class="msg other">' + think + bubble + actionsHtml(m.created_at, m.content || '', m.id) + '</div>';
   }
   // 思考过程折叠面板:summary 固定名「思考过程」,body 展示推理全文
   function thinkPanelHtml(text) {
@@ -615,14 +622,14 @@
     updateScrollBottomBtn();
   }
 
-  function appendUserMsg(content, fileNames) {
+  function appendUserMsg(content, fileNames, msgId) {
     const attach = fileNames && fileNames.length
       ? '<div class="attach-line">📎 ' + esc(fileNames.join('、')) + '</div>' : '';
     const r = mdHtml(content);
     const wrap = document.createElement('div');
     wrap.className = 'msg me';
     wrap.innerHTML = '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
-      actionsHtml(Date.now(), content);
+      actionsHtml(Date.now(), content, msgId);
     $('chat-view').appendChild(wrap);
     scrollBottom();
   }
@@ -989,9 +996,9 @@
       if (pending.length) atts = await uploadFiles(id, pending);
       const body = { content, deepThink: !!state.deepThink };
       if (atts.length) body.attachments = atts;
-      await req('POST', '/api/sessions/' + id + '/messages', body);
+      const sent = await req('POST', '/api/sessions/' + id + '/messages', body);
 
-      appendUserMsg(content, atts.map(a => a.name));
+      appendUserMsg(content, atts.map(a => a.name), sent && sent.message_id);
       if (!state.sessionTitle && content) {
         state.sessionTitle = content.length > 24 ? content.slice(0, 24) : content;
       }
@@ -1168,6 +1175,27 @@
   }
   $('chat-view').addEventListener('click', onCopyClick);
   $('fs-viewer').addEventListener('click', onCopyClick);
+
+  // ---------- 删除本条消息(复制按钮旁) ----------
+  // 后端连带删 assistant 轮的 tool 回执;成功后重拉详情重建消息区(工具卡需随该轮一起拆)。
+  // 执行中也可删:库行没了,下一轮组装模型历史时自然不含这条。
+  $('chat-view').addEventListener('click', async e => {
+    const btn = e.target.closest('.act-del');
+    if (!btn) return;
+    const msgId = Number(btn.dataset.msgId);
+    if (!msgId || !state.sessionId) return;
+    if (!window.confirm('删除本条消息？它将不再发给 AI。')) return;
+    btn.disabled = true;
+    try {
+      await req('DELETE', '/api/sessions/' + state.sessionId + '/messages/' + msgId);
+      toast('已删除');
+      const detail = await req('GET', '/api/sessions/' + state.sessionId);
+      if (state.view === 'chat') renderDetail(detail);
+    } catch (err) {
+      toast('删除失败:' + err.message);
+      btn.disabled = false;
+    }
+  });
 
   // ---------- 全屏查看器(双击气泡/工具卡放大;图片单击放大;均同步 index) ----------
   function openFullscreen(el) {

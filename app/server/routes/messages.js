@@ -70,6 +70,15 @@ router.delete('/:id/messages', wrap((req, res) => {
   res.json(r);
 }));
 
+// 删除单条消息：assistant 的 tool_calls 轮连带删除其 tool 回执（见 engine.deleteMessage）。
+// 库中没了，后续发给模型的消息里自然也没有；执行中删除会在下一轮组装历史时生效。
+router.delete('/:id/messages/:messageId', wrap((req, res) => {
+  const r = engine.deleteMessage(req.params.id, Number(req.params.messageId));
+  log.info('[msg] ' + (req.user || '-') + ' ' + req.params.id + ' 删除消息 ' + req.params.messageId +
+    (r.removed > 1 ? '（连带 ' + (r.removed - 1) + ' 条工具回执）' : ''));
+  res.json(r);
+}));
+
 // SSE 事件流
 router.get('/:id/stream', (req, res) => {
   const session = engine.getSession(req.params.id);
