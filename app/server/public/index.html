@@ -3324,7 +3324,8 @@
     // 账户
     changePassword: changePassword,
     logout: async function () {
-      sessionStorage.removeItem('agent_creds'); // 清凭据，避免下次访问仍走 Basic auth
+      sessionStorage.removeItem('agent_creds'); // 清 Basic auth 凭据
+      localStorage.removeItem('agent_token');  // 清 autoRestore token，防止自动恢复旧用户
       try { await fetch('/api/logout', { method: 'POST' }); } catch (_) {}
       location.href = '/logout';
     },

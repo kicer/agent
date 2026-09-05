@@ -53,6 +53,7 @@
     async function autoRestore() {
       if (new URLSearchParams(location.search).has('logged_out')) {
         localStorage.removeItem(TOKEN_KEY); // 显式登出：不恢复，并清掉旧 token
+        sessionStorage.removeItem('agent_creds');
         return;
       }
       const t = localStorage.getItem(TOKEN_KEY);
@@ -61,9 +62,16 @@
       form.style.visibility = 'hidden'; // 恢复期间先藏表单，避免闪现
       try {
         const res = await fetch('/api/login_restore', { method: 'POST', headers: { Authorization: 'Bearer ' + t } });
-        if (res.ok) { location.replace('/'); return; }
+        if (res.ok) {
+          const j = await res.json().catch(() => ({}));
+          if (j && j.token) localStorage.setItem(TOKEN_KEY, j.token); // 续期 token
+          location.replace('/');
+          return;
+        }
       } catch (_) { /* 网络错误交给表单正常登录 */ }
+      // 恢复失败（401等）：清掉无效 token，显示登录表单
       localStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem('agent_creds');
       form.style.visibility = '';
     }
     async function doLogin(e) {
