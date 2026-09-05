@@ -24,24 +24,11 @@
       /* 状态栏图标按钮（压缩）：仅显示 SVG、去掉文字 padding；保持与文字按钮同高。 */
       .stop-link.icon-only { padding: 0 8px; line-height: 0; }
       .stop-link.icon-only .ic { width: 18px; height: 18px; vertical-align: middle; }
-      /* 「压缩」弹窗按钮颜色区分。
-         - ghost-btn.outline   ：中性蓝描边，表示「仅生成摘要」这一不修改历史的动作。
-         - primary-btn.warn    ：警示橙填充，表示「压缩总结」将清空历史、不可恢复。 */
-      .btn-row .ghost-btn.outline {
-        color: #3964FE;
-        border-color: #3964FE;
-        background: #fff;
-      }
-      .btn-row .ghost-btn.outline:hover { background: rgba(57,100,254,.08); }
-      .btn-row .primary-btn.warn {
-        background: #E07A1F;
-        border-color: #E07A1F;
-        color: #fff;
-      }
-      .btn-row .primary-btn.warn:hover {
-        background: #c86912;
-        border-color: #c86912;
-      }
+      /* 状态栏「压缩」图标按钮：主操作色（蓝色），与其他 stop-link 区分（终止/选择模型是灰） */
+      .stop-link.icon-only.icon-primary { color: var(--active); }
+      .stop-link.icon-only.icon-primary:hover { color: #2854d6; }
+      /* 推到 phase-bar 最右侧（独立动作，与左侧状态/选择模型区分） */
+      .phase-bar .phase-bar-right { margin-left: auto; }
     </style>
   <script>
     // 注册 Service Worker（PWA / 离线缓存）
@@ -73,7 +60,7 @@
       <span class="status-pill" id="status-pill">--</span>
       <button class="stop-link hidden" id="stop-btn" onclick="stopSession()">终止</button>
       <button class="stop-link hidden" id="model-switch-btn" onclick="openModelSwitch()">选择模型</button>
-      <button class="stop-link icon-only hidden" id="compress-btn" title="压缩上下文" aria-label="压缩上下文" onclick="summarizeChat()">
+      <button class="stop-link icon-only icon-primary phase-bar-right hidden" id="compress-btn" title="压缩上下文" aria-label="压缩上下文" onclick="summarizeChat()">
         <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M12 16l-3 3M12 16l3 3M12 16v-7"></path></svg>
       </button>
     </div>
@@ -1041,7 +1028,7 @@
     // 压缩模式选择弹窗：三按钮（取消 / 仅摘要 / 压缩总结）。
       // 返回字符串 'cancel' | 'generate_only' | 'compress_and_clear'。
       // 这里手写一个独立小弹窗以避免与 confirmModal(两按钮)耦合；复用现有 modal-overlay 样式。
-      // 颜色：取消=灰、仅摘要=中性蓝边、压缩总结=警示橙(表示「将清空历史」不可逆)。
+      // 颜色复用现有按钮语义：仅摘要 = primary-btn（蓝/确定风）；压缩总结 = ghost-btn.danger（红/删除风）。
       function compressModeModal() {
         return new Promise(resolve => {
           const wrap = document.createElement('div');
@@ -1056,8 +1043,8 @@
               '</div>' +
               '<div class="btn-row">' +
                 '<button class="ghost-btn" data-act="cancel">取消</button>' +
-                '<button class="ghost-btn outline" data-act="generate_only">仅摘要</button>' +
-                '<button class="primary-btn warn" data-act="compress_and_clear">压缩总结</button>' +
+                '<button class="primary-btn" data-act="generate_only">仅摘要</button>' +
+                '<button class="ghost-btn danger" data-act="compress_and_clear">压缩总结</button>' +
               '</div>' +
             '</div>';
           function close(v) {
