@@ -1,7 +1,7 @@
 // Agent 任务台 Service Worker
 // 策略：HTML 网络优先（保证登录态/最新版本），静态资源缓存优先（图标/CSS/JS/vendor）
 
-const CACHE_VERSION = 'agent-v1';
+const CACHE_VERSION = 'agent-v2';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
