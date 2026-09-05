@@ -461,6 +461,34 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .files-panel .file-row.clickable { cursor: pointer; } /* 默认状态：可点名称预览/下载 */
 .files-panel .file-row.selected { background: var(--active-soft); }
 
+/* 目录行：箭头 + 文件夹图标 + 名称 + 文件数；点整行切换折叠（状态由 .collapsed 控制） */
+.files-panel .file-dir-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 8px; border-radius: 10px; font-size: 14px; cursor: pointer;
+  border-bottom: 1px dashed var(--border);
+}
+.files-panel .file-dir-head:active { background: var(--surface); }
+.files-panel .file-dir-arrow {
+  width: 14px; height: 14px; flex: none;
+  fill: none; stroke: var(--gray); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
+  transform: rotate(90deg);            /* 展开时箭头朝下，收起时朝右 */
+  transition: transform .15s ease;
+}
+.files-panel .file-dir.collapsed > .file-dir-head .file-dir-arrow { transform: rotate(0deg); }
+.files-panel .file-dir-ico {
+  width: 16px; height: 16px; flex: none;
+  fill: none; stroke: #f2b544; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.files-panel .file-dir-name {
+  flex: 1; min-width: 0; font-weight: 600; color: var(--text, #223);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.files-panel .file-dir-count { flex: none; font-size: 12px; color: var(--gray); }
+.files-panel .file-dir.collapsed > .file-dir-body { display: none; }
+/* 列表末尾收起的目录不再需要分隔线（常见两级，更深嵌套容忍多一条虚线） */
+.files-panel .files-list > .file-dir:last-child.collapsed > .file-dir-head,
+.files-panel .file-dir-body > .file-dir:last-child.collapsed > .file-dir-head { border-bottom: none; }
+
 /* 复选框：圆形，点击区域够大 */
 .files-panel .file-check {
   flex: none;
