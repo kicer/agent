@@ -36,10 +36,7 @@ function composeWithAttachments(content, attachments) {
 }
 
 router.post('/:id/messages', wrap((req, res) => {
-  const content = composeWithAttachments(
-    String((req.body && req.body.content) || '').trim(),
-    req.body && req.body.attachments
-  );
+  const content = String((req.body && req.body.content) || '').trim();
   if (!content) return res.status(400).json({ error: 'content 不能为空' });
   // deepThink：是否启用模型该「深度思考」参数（thinking_params 合并进上游请求体）
   const deepThink = !!(req.body && req.body.deepThink);
