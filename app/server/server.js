@@ -97,7 +97,7 @@ mcp.init(cfg).then(async () => {
       log.info('startup', 'Agent server listening on ' + PORT);
       log.info('startup', '  workspace_root=' + cfg.workspace_root);
       log.info('startup', '  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
-      const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url).join(', ');
+      const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url + (s.enable === false ? '(禁用)' : '')).join(', ');
       log.info('startup', '  mcp_servers=' + (mcpList || '(none)'));
       log.info('startup', '  auth=' + (auth.enabled ? 'login: ' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
       log.info('startup', '  log_level=' + cfg.log_level);

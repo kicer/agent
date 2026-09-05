@@ -107,9 +107,11 @@ compress:
 
 # MCP 服务（可配多个；与内置工具分开）。启动时对每个服务调 tools/list 发现工具，
 # 追加到内置工具之后一起发给模型；调用经 tools/call 转发。headers 是任意请求头（如 Authorization）。
+# enable 选填、默认 true；设为 false 时启动不加载该服务的工具（配置保留，改回 true 重启即恢复）。
 # 服务不可用时只在启动日志告警，不影响其他服务与内置工具。
 mcp_servers:
   - name: web-search                                   # 选填，缺省取主机名首段
     url: "https://web-search.ai.foresh.com/"
+    enable: true                                       # 选填，默认 true；false 时启动不加载
     headers:
       Authorization: "Basic a2ljZXI6USF3MmUzcjQ="

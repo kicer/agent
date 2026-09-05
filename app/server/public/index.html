@@ -1047,7 +1047,8 @@
     list.innerHTML = '<div class="empty-tip">加载中…</div>';
     $('bind-model-modal').classList.remove('hidden');
     try {
-      const rows = await req('GET', '/api/models');
+      // 已删除但重启前仍在运行池里的模型不再展示,避免误绑到重启后就消失的模型
+      const rows = ((await req('GET', '/api/models')) || []).filter(m => !SET.deletedModels[m.id]);
       if (!rows.length) {
         list.innerHTML = '<div class="empty-tip">还没有配置模型。</div>';
         return;
@@ -2309,6 +2310,7 @@
     // 模型池(搬自 models.js)
     cfgPlatforms: [], cfgModels: [], runtimeById: {}, modelsPendingRestart: false,
     pendingEnable: {},              // 已写盘但重启前 effective 仍是旧值的 enable 覆盖(id → bool),防卡片回弹
+    deletedModels: {},              // 已从 config.yml 删除、重启前后端仍会返回的模型(id → true):前端隐藏防回弹
     moeIdx: -1, expandedGroups: {}, balanceByGroup: {}, balanceRequested: {}, balanceTypes: [],
   };
   let setTok = 0;                     // 异步渲染防竞态令牌
@@ -2403,11 +2405,15 @@
   }
   function showSettings() {
     SET.stack = ['home']; SET.snaps = {}; setUnderHide();
+    // 桌面端:打开设置时收起侧边栏让设置页占满窗口,关闭时恢复之前的展开态
+    if (drawerMQ.matches) { drawerWasOpenBeforeSet = document.body.classList.contains('drawer-open'); openDrawer(false); }
     $('settings-page').classList.remove('hidden'); renderSetPage();
   }
+  let drawerWasOpenBeforeSet = false;
   function closeSettings() {
     SET.stack = []; SET.snaps = {}; setUnderHide();
     $('settings-page').classList.add('hidden');
+    if (drawerMQ.matches && drawerWasOpenBeforeSet) { openDrawer(true); drawerWasOpenBeforeSet = false; }
   }
   // 当前页静态快照(顶栏+正文):右滑返回时垫底,呈现原生导航栈的视差感。
   // 快照里的 id 全部剥除,防止重复 id 干扰 $('…') 查找;仅作动画背景,滑完由 renderSetPage 重渲染真页。
@@ -3174,6 +3180,10 @@
       for (const m of rt || []) SET.runtimeById[m.id] = m;
       SET.cfgPlatforms = (cg.effective && cg.effective.platforms) || [];
       SET.cfgModels = (cg.effective && cg.effective.models) || [];
+      // 已删除但重启前仍被后端返回的模型:过滤隐藏;后端不再返回时(重启后)自动清掉标记
+      const liveIds = new Set(SET.cfgModels.map(m => m.id));
+      for (const id of Object.keys(SET.deletedModels)) if (!liveIds.has(id)) delete SET.deletedModels[id];
+      SET.cfgModels = SET.cfgModels.filter(m => !SET.deletedModels[m.id]);
       // 重启前 effective 仍是旧配置:叠加已写盘的启停结果,保证卡片显示与已保存配置一致
       for (const m of SET.cfgModels) if (m.id in SET.pendingEnable) m.enable = SET.pendingEnable[m.id];
       SET.balanceTypes = cg.balance_types || [];
@@ -3317,6 +3327,7 @@
     }
     try {
       await req('PATCH', '/api/config', body);
+      if (add) delete SET.deletedModels[id]; // 重启前重新添加同 id 模型:清掉待隐藏的删除标记,防误屏蔽
       closeModelEditor();
       afterWrite();
     } catch (e) { toast('保存失败:' + e.message); }
@@ -3331,6 +3342,7 @@
     try {
       // delete 到 platforms[pi].keys[ki].models[mi];YAML 数组删项会自动收紧,不影响其他行注释。
       await req('PATCH', '/api/config', { path: ['platforms', m.platform_index, 'keys', m.key_index, 'models', m.model_index], op: 'delete' });
+      SET.deletedModels[m.id] = true; // 重启前后端仍会返回该模型,本地标记隐藏
       afterWrite();
     } catch (e) { toast('删除失败:' + e.message); }
   }

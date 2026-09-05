@@ -1,6 +1,6 @@
 // 极简 MCP 客户端（Streamable HTTP：JSON-RPC over HTTP，无状态，响应可能是 SSE 帧包裹的 JSON）。
-// MCP 服务在 config.yml 的 mcp_servers 中配置（可多个）：{name?, url, headers?}。
-// 启动时 init() 对每个服务调 tools/list 发现工具，转成 OpenAI function 格式，
+// MCP 服务在 config.yml 的 mcp_servers 中配置（可多个）：{name?, url, headers?, enable?}。
+// 启动时 init() 对每个服务调 tools/list 发现工具（enable: false 的服务跳过加载），转成 OpenAI function 格式，
 // 追加在内置工具（definitions.json）之后一起随 system prompt 发给模型；
 // 工具调用经 tools/call 转发给对应服务。
 // 与内置工具严格分离：本模块不碰内置定义；MCP 工具默认沿用原始名，
@@ -97,6 +97,11 @@ async function init(cfg) {
 
   const servers = (cfg && cfg.mcp_servers) || [];
   for (const s of servers) {
+    // enable: false 时启动不加载该服务（不建工具表；配置保留，改回 true 重启后恢复）
+    if (s.enable === false) {
+      log.info('mcp', s.name + ': enable=false，跳过工具加载');
+      continue;
+    }
     // 清理上次会话 id（重启后服务端会拒绝旧 id；不清理会一直 400）
     s.sessionId = null;
     try {

@@ -37,7 +37,7 @@ const DEFAULTS = {
   // 登录认证：{ users: [{user, password}], secret?, ttl_ms? }，密码明文存配置（自用场景）。
   // users 为空则不启用认证（可交给前置 nginx-proxy，但手机浏览器原生下载不带 Basic 头，不推荐）。
   auth: null,
-  // MCP 服务列表：每项 {name?, url, headers?}；启动时发现其工具并追加到内置工具之后。
+  // MCP 服务列表：每项 {name?, url, headers?, enable?（默认 true，false 时启动不加载）}；启动时发现其工具并追加到内置工具之后。
   // 注意与内置工具（definitions.json）严格分离：这里只配外部 MCP 服务。
   mcp_servers: [],
 };
@@ -195,13 +195,16 @@ function parseAndValidate(rawText, configPath) {
     log.info('config', '检测到旧配置 web_search.*，已自动转为一条 mcp_servers；建议更新 config.yml 为 mcp_servers 格式');
   }
 
-  // MCP 服务规范化：url 必填；name 缺省取主机名首段；headers 为普通键值对象（如 Authorization）
+  // MCP 服务规范化：url 必填；name 缺省取主机名首段；headers 为普通键值对象（如 Authorization）；
+  // enable 缺省 true，显式 false 时启动不加载该服务的工具（见 mcp.init）。
   if (!Array.isArray(cfg.mcp_servers)) cfg.mcp_servers = [];
   for (const s of cfg.mcp_servers) {
     if (!s || !s.url) throw new Error('mcp_servers 每项必须有 url（MCP 服务的 JSON-RPC 端点）');
     if (!s.name) {
       try { s.name = String(new URL(s.url).hostname.split('.')[0]); } catch (_) { s.name = 'mcp'; }
     }
+    // 容错 YAML 里写成字符串 "false" / "off" 的情况，统一归一为布尔
+    s.enable = !(s.enable === false || s.enable === 'false' || s.enable === 'off' || s.enable === 0);
     const headers = {};
     for (const [k, v] of Object.entries(s.headers || {})) headers[k] = String(v);
     s.headers = headers;
