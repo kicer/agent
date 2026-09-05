@@ -1,6 +1,7 @@
 // Agent 任务台 Service Worker
-// 策略：HTML 与静态资源均网络优先（保证改动/登录态即时生效），失败回退缓存（离线兜底）。
-// CACHE_VERSION 仅作缓存命名空间，改动静态资源后无需再手动升级它。
+// 策略：HTML 与代码资源(CSS/JS 等)网络优先（保证改动/登录态即时生效），失败回退缓存（离线兜底）；
+//       图片与 JSON(manifest/图标，内容稳定)缓存优先，命中本地缓存直接返回，省流量、弱网加载快。
+// CACHE_VERSION 仅作缓存命名空间：改 CSS/JS 无需手动升级；改图片/JSON 才需要升它刷新旧缓存。
 
 const CACHE_VERSION = 'agent-v2';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -72,7 +73,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 静态资源：网络优先（改完即生效），失败回退缓存（离线/断网可用）
+  // 图片与 JSON（manifest/图标等，内容稳定）：缓存优先，命中即直接返回省流量；
+  // 未命中走网络并写入缓存。这类资源改动后需升 CACHE_VERSION 刷新旧缓存。
+  if (/\.(png|jpe?g|gif|webp|svg|ico|avif|bmp)$/i.test(url.pathname) || /\.json$/i.test(url.pathname)) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((resp) => {
+          if (resp && resp.status === 200 && resp.type === 'basic') {
+            const copy = resp.clone();
+            caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+          }
+          return resp;
+        });
+      })
+    );
+    return;
+  }
+
+  // 其余静态资源：网络优先（改完即生效），失败回退缓存（离线/断网可用）
   event.respondWith(
     fetch(request).then((resp) => {
       if (resp && resp.status === 200 && resp.type === 'basic') {
