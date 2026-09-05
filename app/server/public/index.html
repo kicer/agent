@@ -46,6 +46,13 @@
         padding: 10px 13px 12px;
       }
       .msg-summary-body .bubble-ai { margin: 0; font-size: 14px; line-height: 1.7; }
+      /* 「仅摘要」后摘要之前的旧历史：UI 保留但变淡，尾部附存档说明（不再发给 AI） */
+      .msg-archived { opacity: .55; }
+      .archived-note {
+        display: flex; align-items: center; gap: 8px;
+        margin: 10px 0 12px; font-size: 11px; color: var(--gray);
+      }
+      .archived-note::before, .archived-note::after { content: ''; flex: 1; height: 1px; background: var(--border); }
       /* 状态栏图标按钮（压缩）：仅显示 SVG、去掉文字 padding；保持与文字按钮同高。 */
       .stop-link.icon-only { padding: 0 8px; line-height: 0; }
       .stop-link.icon-only .ic { width: 18px; height: 18px; vertical-align: middle; }
@@ -695,12 +702,29 @@
     updatePhaseBar({ model_id: s && s.model_id, queue_pos: detail.queue_pos });
     const box = $('chat-view');
     box.innerHTML = '';
+    // 存档段（type='archived'，「仅摘要」时摘要之前的旧历史）：连成一截淡色容器，
+    // 段尾插一条「已存档、不再发给 AI」说明，紧接摘要卡片，一眼能看出上下文从哪里算起。
+    let arcWrap = null;
+    const closeArc = () => {
+      if (!arcWrap) return;
+      arcWrap.insertAdjacentHTML('beforeend',
+        '<div class="archived-note">以上消息已存档，不再发送给 AI；后续对话从摘要开始</div>');
+      arcWrap = null;
+    };
     for (const m of detail.messages || []) {
+      let target = box;
+      if (m.type === 'archived') {
+        if (!arcWrap) { arcWrap = document.createElement('div'); arcWrap.className = 'msg-archived'; box.appendChild(arcWrap); }
+        target = arcWrap;
+      } else {
+        closeArc();
+      }
       const node = msgNode(m);
-      if (node) box.insertAdjacentHTML('beforeend', node);
-      if (m.role === 'assistant') appendToolCardsFromAssistant(m, box);
+      if (node) target.insertAdjacentHTML('beforeend', node);
+      if (m.role === 'assistant') appendToolCardsFromAssistant(m, target);
       else if (m.role === 'tool' && m.tool_call_id) fillToolResult(m.tool_call_id, m.content, !!m.is_error, undefined, m.id);
     }
+    closeArc();
     if (!(detail.messages || []).length) {
       box.innerHTML = '<div class="drawer-empty">描述你的需求，AI 会和你讨论并直接干活。</div>';
     }
@@ -1056,10 +1080,10 @@
   // ---------- 「压缩」上下文总结 ----------
     // 用户点 phase-bar「压缩」按钮 → 弹窗选后续动作：
     //   取消：不做任何事
-    //   仅摘要（generate_only）：发请求让 AI 总结，完成后保留全部历史（仅 UI 多一条摘要卡片参考）
-    //   压缩总结（compress_and_clear）：发请求让 AI 总结，完成后自动调 DELETE ?keep=summary
-    //     清空历史（仅保留最后一条并标成 type='summary'），前端直接移除旧消息 DOM，
-    //     不重新刷新摘要消息（压缩过程中摘要内容已经流式发给用户了）。
+    //   仅摘要（generate_only）：AI 总结落库后，后端把摘要标 type='summary'、之前的消息标 type='archived'
+    //     （UI 保留全部展示，但旧消息不再发给模型）；前端把摘要前旧消息就地淡出存档。
+    //   压缩总结（compress_and_clear）：同上，另由前端自动调 DELETE ?keep=summary 物理清空，
+    //     聊天里只留摘要卡片（不可恢复）。
     // 开始压缩后：后端响应回显 prompt，前端把它直接渲染成一条普通用户消息气泡；
     // 压缩回合中间的 AI 回复（思考/工具调用等）全部按普通消息渲染；
     // 只有回合收尾的那条最终答复才带 is_summary，渲染成摘要卡片。
@@ -1103,9 +1127,9 @@
             '<div class="modal">' +
               '<h3 id="compress-modal-title">压缩上下文</h3>' +
               '<div class="modal-body" style="font-size:14px;line-height:1.55;color:#555;padding:4px 0 12px;">' +
-                'AI 将基于本段会话生成结构化总结。完成后：' +
-                '<br>· 「仅摘要」= 仅在聊天里多一条总结参考，<b>保留全部历史</b>（后续对话仍带历史）。' +
-                '<br>· 「压缩总结」= 自动<b>清空历史消息</b>，仅以这条总结作为后续对话起点（省 token，不可恢复）。' +
+                'AI 将基于当前上下文生成结构化总结；完成后摘要之前的旧消息都会<b>存档</b>，不再发送给 AI，后续对话从摘要开始。' +
+                '<br>· 「仅摘要」= 聊天里<b>保留全部历史展示</b>（旧消息变淡标注已存档），并多一张摘要卡片。' +
+                '<br>· 「压缩总结」= 额外<b>清空聊天界面</b>，只留这条摘要（不可恢复）。' +
               '</div>' +
               '<div class="btn-row">' +
                 '<button class="ghost-btn" data-act="cancel">取消</button>' +
@@ -1128,6 +1152,24 @@
         });
       }
 
+    // 「仅摘要」实时收尾：后端已把摘要之前的消息行标成 type='archived'，这里把 DOM 里
+      // 摘要卡片（.msg-summary-live，多轮压缩取最后一张）之前的所有兄弟节点收进淡色存档容器，
+      // 尾部附一条「已存档」说明，与 renderDetail 重渲染样式一致。
+      function archiveDomBeforeSummary() {
+        const box = $('chat-view');
+        const cards = box.querySelectorAll('.msg-summary-live');
+        const card = cards.length ? cards[cards.length - 1] : null;
+        if (!card) return;
+        const arc = document.createElement('div');
+        arc.className = 'msg-archived';
+        let el = box.firstChild;
+        while (el && el !== card) { const next = el.nextSibling; arc.appendChild(el); el = next; }
+        if (!arc.childNodes.length) return; // 首次就压缩：摘要前没有旧消息，不插空说明
+        arc.insertAdjacentHTML('beforeend',
+          '<div class="archived-note">以上消息已存档，不再发送给 AI；后续对话从摘要开始</div>');
+        box.insertBefore(arc, card);
+      }
+
     // 「压缩总结」模式下 AI 总结落库后自动调用的收尾：DELETE ?keep=summary 清空历史，
       // 仅保留最后一条消息并标成 type='summary'（库里打标，供下次重渲染成摘要卡片）。
       // 与 clearChat 不同：不弹确认（用户已在压缩弹窗中表态）。
@@ -1140,7 +1182,8 @@
           toast('已压缩，仅保留总结');
           if (state.sessionId === id && state.view === 'chat') {
             const box = $('chat-view');
-            const live = box.querySelector('.msg-summary-live');
+            const cards = box.querySelectorAll('.msg-summary-live');
+            const live = cards.length ? cards[cards.length - 1] : null;
             if (live) {
               for (const el of Array.from(box.children)) {
                 if (el !== live) el.remove();
@@ -1347,7 +1390,11 @@
           maybeAutoScroll();
           updateScrollBottomBtn();
           // 「压缩」总结完成后：根据用户在弹窗选择的 mode 走最后一步。
-                // 仅在客户端主动点了压缩（pendingSummary）时才走后续逻辑；避免历史重加载/跨设备重连时误触发。
+                // 两种模式下后端都已把摘要标成 type='summary' 并把之前的旧消息标成 type='archived'
+                //（不再发给模型），区别只在 UI：
+                //   generate_only —— 聊天保留全部展示，把摘要之前的旧消息就地淡出存档；
+                //   compress_and_clear —— 另调 DELETE ?keep=summary 物理清空，界面只留摘要。
+                // 仅在客户端主动点了压缩（pendingSummary）时才走收尾；避免历史重加载/跨设备重连误触发。
                 // 仅有内容的总结才走后续流；空的/错误的总结只复位按钮状态。
                 if (d.is_summary && state.pendingSummary && hasText) {
                   const mode = state.pendingSummaryMode;
@@ -1357,8 +1404,9 @@
                     // 自动调 DELETE 清空历史，仅保留这条总结作为后续起点。
                     clearAfterSummary(state.sessionId);
                   } else if (mode === 'generate_only') {
-                    // 仅 toast 提示，不动历史。
-                    toast('已生成摘要，历史消息保留');
+                    // 历史保留展示，但摘要之前的旧消息已存档：同步淡出 + 尾部说明，和重进入后的样式一致。
+                    archiveDomBeforeSummary();
+                    toast('已生成摘要：旧历史已存档，后续对话从摘要开始');
                     const cpBtn = $('compress-btn');
                     if (cpBtn) cpBtn.disabled = state.status === 'active';
                   }

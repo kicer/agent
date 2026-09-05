@@ -40,18 +40,18 @@ function decodeBlocks(content) {
 // 省 token：image_url 块仅在其位于最后一条 assistant 消息之后（模型尚未对它回复）时保留；
 // 之前的视为已消费，发请求时替换为文字标记。DB 始终存全量：UI 历史照常渲染图片，
 // 模型如需重看可再次 read_file（新消息在尾部，会重新携带图片）。
+// 压缩摘要相关行（见 engine.runLoopInner / summarizeContext）：
+// - type='summary'（assistant，收尾答复）：不跳过。它是压缩后后续轮次的上下文起点，
+//   正常以 assistant 历史行发给模型；「仅摘要」与「压缩总结」两种模式都会打此标。
+// - type='archived'（压缩时摘要之前的全部旧行，含旧摘要/指令/工具轮）：不发模型。
+//   这是「仅摘要」的核心语义：UI 照常保留展示，但后续对话从摘要开始，旧历史不再烧 token；
+//   「压缩总结」则另由前端 DELETE keep=summary 把存档行物理删除。
+// - type='summarize_request'（压缩指令）：只在触发的那一压缩回合内发给模型（见下方判定），
+//   回合完成后不再携带，防旧指令让 AI 误以为还要再总结。
 // errAck 行（AI tool call 参数错误，见 engine.checkToolArgs）：整条不发给模型，
 // 关联 tool 回执按 id 一并跳过（否则会留下无 tool_call 配对的孤儿 tool 消息，上游拒收）；
 // 改以一条 user 错误提示替代，让模型看到原因后重新生成工具调用 ——
 // 坏样本留在上下文里只会被模型继续模仿，反复报同一个错。
-// summarize_request 行（顶栏「压缩」按钮触发的总结指令，role=user, type='summarize_request'）：
-// 它是压缩回合要执行的正式指令，必须发给模型；但只在「触发的那一回合还活着」时携带：
-// 其后还没有无 tool_calls 的 assistant 收尾回复 = 回合进行中（含工具循环的中间迭代，
-// 指令需持续在上下文里，否则 AI 中途忘掉自己该总结什么）；已有收尾回复（摘要已产出）则跳过，
-// 防历史保留（generate_only）或清空前用户又发新消息时，旧指令污染后续轮次（让 AI 误以为还要再总结）。
-// 同时跳过 type='archived' 的中间态归档行（保留接口给将来需要时用，目前主流程走前端物理清空）。
-// 注意：type='summary'（「压缩总结」后保留的唯一摘要锚点）不跳过：它是清空后后续轮次的上下文起点，
-// 正常以 assistant 历史行发给模型。
 function buildMessages(session, language) {
   const messages = [{ role: 'system', content: systemPromptText(language) }];
   const history = session.history;
@@ -60,8 +60,8 @@ function buildMessages(session, language) {
   for (const row of history) if (row.role === 'tool' && row.tool_call_id) toolRowById.set(row.tool_call_id, row);
   let lastAssistant = -1;
   for (let i = history.length - 1; i >= 0; i--) {
-    // errAck 不发模型，不算「模型已回复」：它之前的图不算被消费，下次仍携带
-    if (history[i].role === 'assistant' && history[i].type !== 'errAck') { lastAssistant = i; break; }
+    // errAck / archived 不发模型，不算「模型已回复」：它们之前的图不算被消费，下次仍携带
+    if (history[i].role === 'assistant' && history[i].type !== 'errAck' && history[i].type !== 'archived') { lastAssistant = i; break; }
   }
   const dropToolCallIds = new Set();
   // summarize_request 「已答复」判定的前置信息：最后一次「回合收尾回复」（无 tool_calls 的 assistant）的位置。

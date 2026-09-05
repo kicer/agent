@@ -73,8 +73,9 @@ router.delete('/:id/messages', wrap((req, res) => {
 }));
 
 // 上下文压缩：phase-bar「压缩」按钮触发。弹窗选模式后调本接口：
-//   mode='generate_only'       只让 AI 总结，保留全部历史
-//   mode='compress_and_clear'  让 AI 总结，AI 完成后前端自动调 DELETE ?keep=summary 清空历史、仅留摘要
+//   mode='generate_only'       AI 总结；摘要之前的历史存档（type='archived'，UI 保留展示、不再发给模型）
+//   mode='compress_and_clear'  AI 总结；前端完成后另调 DELETE ?keep=summary 把存档行物理清空，界面只留摘要
+// 摘要行本身两种模式都会标成 type='summary'（见 engine.runLoopInner），作为后续轮次的上下文起点。
 // 后端负责「丢一条 type='summarize_request' 的 user 消息」（响应回显 prompt 供前端直接渲染该指令气泡），
 // 并在总结回合的最终 SSE assistant_message 上带 is_summary + mode 给前端走收尾。
 // 状态非 active 时才允许（避免与正在跑的回合抢上下文）。本接口只是「丢一条总结请求进队列」，

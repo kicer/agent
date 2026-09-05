@@ -507,8 +507,25 @@ async function runLoopInner(sessionId, run) {
               is_summary: isSummary,
               mode: isSummary ? (run.summaryMode || null) : null,
             });
-            // 总结走完后清除 run 上的 summaryMode，避免影响后续轮。
-            if (isSummary) run.summaryMode = null;
+            if (isSummary) {
+              // 摘要落地：不管哪种模式，这条收尾答复都在库里标成 type='summary'
+              //（前端重渲染成摘要卡片；也是模型上下文的起点），并把之前的消息存档：
+              //   type='archived' 行 UI 照常展示，但 buildMessages 不再发给模型——
+              //   后续对话从这条摘要开始，旧历史不再烧 token。
+              // 两种模式的差别只在收尾：compress_and_clear 时前端另调 DELETE ?keep=summary
+              //   把存档行物理删除（仅留摘要）；generate_only 则保留展示。
+              // session_context 行不存档：它是环境信息，始终随新回合发送（loadHistoryForModel 置顶）。
+              // 旧摘要行（多轮压缩）一并存档：被新摘要覆盖替代，不再进上下文。
+              run.summaryMode = null;
+              if ((msgRow.content || '').trim()) {
+                db.prepare("UPDATE messages SET type = 'summary' WHERE id = ?").run(assistantId);
+                const n = db.prepare(
+                  "UPDATE messages SET type = 'archived' WHERE session_id = ? AND id < ?" +
+                  " AND (type IS NULL OR type != 'archived') AND (name IS NULL OR name != 'session_context')"
+                ).run(sessionId, assistantId).changes;
+                log.info('msg', sessionId + ' 压缩摘要 ' + assistantId + ' 落库，存档之前 ' + n + ' 条消息（不再发给模型）');
+              }
+            }
 
     if (!hasTools) {
       // 回合结束；但若期间用户又发了新消息（live 投递），继续下一轮而不是收尾
@@ -906,6 +923,8 @@ function deleteSession(sessionId, deleteDir) {
 // 由 runLoopInner 在压缩回合的最终答复（无 tool_calls 且紧邻上一条 user 是 summarize_request）
 // emit 时带 is_summary: true，并带上 mode 给前端，前端按用户选择的模式走完最后一步
 //（compress_and_clear 时调 DELETE ?keep=summary 清空历史、仅留该摘要并标 type='summary'）。
+// 两种模式收尾都一样先落库：摘要行标 type='summary'，它之前的全部消息标 type='archived'
+//（UI 保留展示、不再发给模型，后续对话从摘要开始）；区别只在 compress_and_clear 额外物理删除。
 // 限制：与 clearSessionMessages 类似——会话执行中(active)禁止操作，避免和正在跑的回合抢上下文。
 // mode: 'generate_only' 或 'compress_and_clear'，由路由校验后传入。
 // 响应回显 prompt：前端「开始压缩后直接把压缩指令渲染成一条普通用户消息气泡」，无需再拉配置。
