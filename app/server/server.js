@@ -61,6 +61,26 @@ app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
 const PORT = process.env.PORT || cfg.port;
 
+// 启动成功后把模型实际收到的各部分 dump 到文件方便人工核对（workspace_root 即 data 卷，
+// 宿主机对应 <repo>/data/system-prompt.txt，已被 gitignore）。包含三部分：
+//  1) system 消息：模板 + 可用技能段落 + 语言指令（进程内恒定，仅技能增删时变）；
+//  2) tools 数组：内置 definitions.json + 启动时发现的 MCP 工具，与每次请求的 tools 字段一致；
+//  3) 会话上下文：每会话首条 user 消息（随日期/任务目录/绑定模型/vision 动态生成），
+//     启动时无真实会话，用占位会话 id + 首个启用模型渲染一份示例。
+function dumpPromptBundle() {
+  const file = path.resolve(cfg.workspace_root, 'system-prompt.txt');
+  const tools = engine.TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
+  const sampleModel = (cfg.models || []).find(m => m.enable !== false);
+  const sessionCtx = engine.sessionContextContent({ id: '<session_id>', model_id: sampleModel && sampleModel.id });
+  const parts = [
+    '# ===== 1. System Prompt（system 消息，进程内恒定）=====\n\n' + llm.systemPromptText((cfg.agent || {}).language),
+    '\n\n# ===== 2. Tools（' + tools.length + ' 个：内置 + MCP，随每次请求的 tools 字段发送）=====\n\n' + JSON.stringify(tools, null, 2),
+    '\n\n# ===== 3. Session Context（每会话首条 user 消息，按日期/任务目录/绑定模型动态生成；此处为示例）=====\n\n' + sessionCtx,
+  ];
+  fs.writeFileSync(file, parts.join(''), 'utf8');
+  log.info('startup', '  prompt_dump=' + file + ' (tools=' + tools.length + ')');
+}
+
 // 启动时先发现各 MCP 服务的工具（单个服务失败只警告，不阻止启动），
 // 并对技能列表做快照（注入 system prompt，见 llm.setSkillListText），完成后开始监听。
 mcp.init(cfg).then(async () => {
@@ -81,14 +101,11 @@ mcp.init(cfg).then(async () => {
       log.info('startup', '  mcp_servers=' + (mcpList || '(none)'));
       log.info('startup', '  auth=' + (auth.enabled ? 'login (' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
       log.info('startup', '  log_level=' + cfg.log_level);
-      // 启动成功后把当前完整 system prompt（模板 + 技能列表 + 语言指令）原样 dump 一份，方便人工核对；
-      // 容器内即 workspace_root 下的点文件（与 .agent.db 同位置），宿主机对应 <repo>/data/。
-      const promptDump = path.resolve(cfg.workspace_root, '.system-prompt.txt');
+      // prompt dump 失败不影响服务：只是核对用产物。
       try {
-        fs.writeFileSync(promptDump, llm.systemPromptText((cfg.agent || {}).language));
-        log.info('startup', '  system_prompt_dump=' + promptDump);
+        dumpPromptBundle();
       } catch (e) {
-        log.warn('startup', 'system prompt dump 失败：' + e.message);
+        log.warn('startup', 'prompt dump 失败：' + e.message);
       }
     });
 });

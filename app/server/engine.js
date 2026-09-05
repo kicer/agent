@@ -1061,6 +1061,7 @@ module.exports = {
   saveMessage,
   queuePosition,
   modelDisplayName,
+  sessionContextContent,
   recordModelUsage,
   modelUsageStats,
   dispatchQueued,
