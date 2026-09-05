@@ -8,6 +8,7 @@
   --gray-light: #c2c7d0;
   --surface: #f2f3f7;                     /* 浅色面(输入框/胶囊控件/用户气泡) */
   --page: #ffffff;
+  --drawer-bg: rgb(249, 250, 251);        /* 侧边栏底色(与页面白底区分;分组表头吸顶同色) */
   --border: #ececf1;
   --radius-lg: 24px;
 }
@@ -570,7 +571,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 #drawer {
   position: fixed; top: 0; bottom: 0; left: 0; z-index: 50;
   width: min(78vw, 320px);
-  background: var(--page);
+  background: var(--drawer-bg);
   display: flex; flex-direction: column;
   transform: translateX(-102%); transition: transform .25s ease;
   box-shadow: 4px 0 24px rgba(0, 0, 0, .08);
@@ -580,7 +581,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .drawer-search { flex: none; padding: 14px 14px 10px; }
 .search-box {
   display: flex; align-items: center; gap: 8px;
-  background: var(--surface); border-radius: 12px; padding: 9px 12px;
+  background: var(--page); border-radius: 12px; padding: 9px 12px;
   color: var(--gray);
 }
 .search-box input { flex: 1; min-width: 0; font-size: 14px; background: none; }
@@ -594,7 +595,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   margin-top: 8px;
   padding: 8px 10px 4px;
   font-size: 11px; color: var(--gray);
-  background: var(--page);
+  background: var(--drawer-bg);
 }
 .conv-item {
   display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
