@@ -162,7 +162,7 @@ router.put('/', wrap((req, res) => {
   let next;
   try { next = loadConfigFromText(restored, cfg.config_path); } catch (e) { return badRequest(res, e); }
   writeConfigText(cfg, restored);
-  log.info('[config] ' + (req.user || '-') + ' 整文件保存配置，变更段：' + (diffTop(cfg, next).join(',') || '无'));
+  log.info('config', (req.user || '-') + ' 整文件保存配置，变更段：' + (diffTop(cfg, next).join(',') || '无'));
   res.json({ ok: true, changed: diffTop(cfg, next), restart_required: true });
 }));
 
@@ -186,7 +186,7 @@ router.patch('/', wrap((req, res) => {
   let next;
   try { next = loadConfigFromText(nextText, cfg.config_path); } catch (e) { return badRequest(res, e); }
   writeConfigText(cfg, nextText);
-  log.info('[config] ' + (req.user || '-') + ' 修改配置项 ' + pathArr.join('.') + (body.op === 'delete' ? '（删除）' : '') + '，变更段：' + (diffTop(cfg, next).join(',') || '无'));
+  log.info('config', (req.user || '-') + ' 修改配置项 ' + pathArr.join('.') + (body.op === 'delete' ? '（删除）' : '') + '，变更段：' + (diffTop(cfg, next).join(',') || '无'));
   res.json({ ok: true, changed: diffTop(cfg, next), restart_required: true });
 }));
 

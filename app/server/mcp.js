@@ -42,7 +42,7 @@ async function rpc(server, method, params, timeoutMs) {
       // 不调 tools/list —— 工具表在 init() 时已经发现并固化，运行期间不需要重新发现。
       if (method !== 'initialize' && res.status === 400 && /session/i.test(raw)) {
         clearTimeout(timer);
-        log.warn('[mcp] ' + server.name + ' session 疑似过期，重新握手: ' + raw.slice(0, 200));
+        log.warn('mcp', server.name + ' session 疑似过期，重新握手: ' + raw.slice(0, 200));
         server.sessionId = null;
         // 重新跑 initialize，递归走当前函数，method=initialize 不会再触发重连逻辑
         try {
@@ -130,9 +130,9 @@ async function init(cfg) {
           },
         });
       }
-      log.info('[mcp] ' + s.name + ': 发现 ' + tools.length + ' 个工具' + (s.sessionId ? ' (session)' : ''));
+      log.info('mcp', s.name + ': 发现 ' + tools.length + ' 个工具' + (s.sessionId ? ' (session)' : ''));
     } catch (err) {
-      log.warn('[mcp] ' + s.name + ' 工具发现失败（本轮运行该服务不可用）: ' + (err && err.message || err));
+      log.warn('mcp', s.name + ' 工具发现失败（本轮运行该服务不可用）: ' + (err && err.message || err));
     }
   }
 }

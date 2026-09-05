@@ -64,7 +64,7 @@ router.post('/', wrap((req, res) => {
   // 创建者取认证中间件的 req.user(不信客户端传参);未启用认证时为空串
   const user = String(req.user || '').trim().slice(0, 64);
   const session = engine.createSession(title, modelId, assistantType, user);
-  log.info('[task] ' + (req.user || '-') + ' 新建任务 ' + session.id + '「' + (session.title || '未命名') + '」model=' + (modelId || '自动') + ' type=' + (session.assistant_type || 'secretary'));
+  log.info('task', (req.user || '-') + ' 新建任务 ' + session.id + '「' + (session.title || '未命名') + '」model=' + (modelId || '自动') + ' type=' + (session.assistant_type || 'secretary'));
   res.json(session);
 }));
 
@@ -147,7 +147,7 @@ router.patch('/:id', wrap((req, res) => {
 
 router.delete('/:id', wrap((req, res) => {
   const delDir = req.query.delete_dir === 'true' || req.query.delete_dir === '';
-  log.info('[task] ' + (req.user || '-') + ' 删除任务 ' + req.params.id + (delDir ? '（含任务目录）' : ''));
+  log.info('task', (req.user || '-') + ' 删除任务 ' + req.params.id + (delDir ? '（含任务目录）' : ''));
   res.json(engine.deleteSession(req.params.id, delDir));
 }));
 

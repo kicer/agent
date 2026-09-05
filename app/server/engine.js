@@ -92,7 +92,7 @@ function saveMessage(sessionId, msg) {
       }
       toolDesc = '，工具调用：' + [...counts].map(([name, n]) => (n > 1 ? name + '×' + n : name)).join('、');
     }
-    log.info('[msg] ' + sessionId + ' AI 回复：文本 ' + String(msg.content || '').length + ' 字' + toolDesc);
+    log.info('msg', sessionId + ' AI 回复：文本 ' + String(msg.content || '').length + ' 字' + toolDesc);
   }
   return info.lastInsertRowid;
   }
@@ -240,7 +240,7 @@ function bindToSession(sessionId, modelId) {
   emitStatus(sessionId);
   // 手动选好模型后立即注入/刷新会话上下文（换绑时更新为当前模型，避免陈旧信息）
   ensureSessionContext(sessionId);
-  log.info('[model] ' + sessionId + ' 手动绑定模型 ' + model.id);
+  log.info('model', sessionId + ' 手动绑定模型 ' + model.id);
   if (pending) runLoop(sessionId);
   return { ok: true, model_id: model.id };
 }
@@ -386,7 +386,7 @@ async function runLoop(sessionId) {
   try {
     await runLoopInner(sessionId, run);
   } catch (err) {
-    log.error('[engine] runLoop ' + sessionId + ' 异常:', err && err.stack || err);
+    log.error('engine', 'runLoop ' + sessionId + ' 异常:', err && err.stack || err);
     bus.emit(sessionId, 'error', { message: String(err && err.message || err) });
   } finally {
     run.looping = false;
@@ -458,7 +458,7 @@ async function runLoopInner(sessionId, run) {
       for (const tc of result.tool_calls) {
         const fixed = unwrapToolArgs(tools, tc.name, tc.arguments);
         if (fixed) {
-          log.info('[tool] ' + sessionId + ' ' + tc.name + ' 参数包裹外层已自动解包');
+          log.debug('tool', sessionId + ' ' + tc.name + ' 参数包裹外层已自动解包');
           tc.arguments = JSON.stringify(fixed);
         }
       }
@@ -487,7 +487,7 @@ async function runLoopInner(sessionId, run) {
       })) : null,
     };
     const assistantId = saveMessage(sessionId, msgRow);
-    if (isErrAck) log.info('[msg] ' + sessionId + ' 本轮 tool call 参数错误，assistant 标记 errAck（不再进入模型上下文）');
+    if (isErrAck) log.info('msg', sessionId + ' 本轮 tool call 参数错误，assistant 标记 errAck（不再进入模型上下文）');
     recordModelUsage(sessionId, session.model_id, result.usage);
     bus.emit(sessionId, 'assistant_message', { id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning, tool_calls: msgRow.tool_calls, type: msgRow.type });
 
@@ -502,7 +502,7 @@ async function runLoopInner(sessionId, run) {
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
       const id = tc.id;
-      log.debug('[tool] ' + sessionId + ' 调用 ' + tc.function.name + ' 参数: ' + String(tc.function.arguments || ''));
+      log.debug('tool', sessionId + ' 调用 ' + tc.function.name + ' 参数: ' + String(tc.function.arguments || ''));
       bus.emit(sessionId, 'tool_call', { id, name: tc.function.name, arguments: tc.function.arguments });
       let output;
       let isError = false;
@@ -533,7 +533,7 @@ async function runLoopInner(sessionId, run) {
         outText = String(output == null ? '' : output);
       }
       if (run.cancelled && !isError) outText = (outText ? outText + '\n' : '') + '（用户已终止任务）';
-      log.debug('[tool] ' + sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText);
+      log.debug('tool', sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText);
       const toolContent = imageDataUrl
         ? encodeBlocks([
             { type: 'text', text: outText },
@@ -577,14 +577,14 @@ function makeSseMetaHandler(sessionId) {
     } else if (k === 'retry') {
       retry_time = v;
     } else if (k === 'event') {
-      log.debug('[sse] ' + sessionId + ' event: ' + v);
-    } else if (k === '' && v === 'ping') {
-      log.debug('[sse] ' + sessionId + ' event: ' + v);
-    } else if (k === '') {
-      log.debug('[sse] ' + sessionId + ' comment: ' + v);
-    } else {
-      log.debug('[sse] ' + sessionId + ' meta: ' + line);
-    }
+          log.debug('sse', sessionId + ' event: ' + v);
+        } else if (k === '' && v === 'ping') {
+          log.debug('sse', sessionId + ' event: ' + v);
+        } else if (k === '') {
+          log.debug('sse', sessionId + ' comment: ' + v);
+        } else {
+          log.debug('sse', sessionId + ' meta: ' + line);
+        }
   };
 }
 
@@ -602,17 +602,17 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       // 本轮是否启用深度思考；由 postUserMessage 从消息 POST 参数写进 run
       deepThink: !!run.deepThink,
       onMeta: handleSseMeta,
-      onBadData: raw => log.warn('[sse] ' + sessionId + ' 坏帧：' + raw.slice(0, 200)),
+      onBadData: raw => log.warn('sse', sessionId + ' 坏帧：' + raw.slice(0, 200)),
       // data 解析成功但没有 choices（如 event: error 帧）：上游发了非正常响应，
       // 之前会伪装成"0 字"沉默忽略，这里 warn 把原始 evt 打出来便于定位。
-      onBadEvent: evt => log.warn('[sse] ' + sessionId + ' 上游错误帧：' + JSON.stringify(evt).slice(0, 500)),
+      onBadEvent: evt => log.warn('sse', sessionId + ' 上游错误帧：' + JSON.stringify(evt).slice(0, 500)),
     });
     // 本轮上游响应总览：帧数 + 文本长度 + 工具调用 + finish + aborted。
     // sseFrames=0 且 aborted=false 表示上游未发任何 data（疑似流异常）；其他情况可快速区分
     // “上游发了一堆帧但 content 为空” 与 “根本没调用成功”。
-    log.info('[sse] ' + sessionId + ' 本轮汇总：帧 ' + (result && result.sseFrames || 0) +
-      '，finish=' + (result && result.finish_reason || '-') +
-      '，aborted=' + (result && result.aborted || false));
+    log.info('sse', sessionId + ' 本轮汇总：帧 ' + (result && result.sseFrames || 0) +
+          '，finish=' + (result && result.finish_reason || '-') +
+          '，aborted=' + (result && result.aborted || false));
     return result;
   } finally {
     run.abortController = null;
@@ -853,7 +853,7 @@ function renameSession(sessionId, title) {
   if (!t) throw Object.assign(new Error('名称不能为空'), { status_code: 400 });
   if (t.length > 100) throw Object.assign(new Error('名称不能超过 100 字'), { status_code: 400 });
   touch(sessionId, { title: t });
-  log.info('[task] ' + sessionId + ' 重命名为「' + t + '」');
+  log.info('task', sessionId + ' 重命名为「' + t + '」');
   return { ok: true, title: t };
 }
 

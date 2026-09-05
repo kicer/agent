@@ -53,7 +53,7 @@ function extractDescription(content) {
 async function listSkills(ctx) {
   const root = skillsRoot(ctx);
   if (!fs.existsSync(root)) {
-    log.warn('[skills] 技能根目录不存在：' + root);
+    log.warn('skills', '技能根目录不存在：' + root);
     return [];
   }
   const out = [];
@@ -142,7 +142,7 @@ async function ensureDeps(ctx, dir, skillName) {
   const need = 'req:' + hashFile(reqPath) + '|install:' + hashFile(installPath);
   const markerPath = path.join(dir, '.deps_installed');
   if (fs.existsSync(markerPath) && fs.readFileSync(markerPath, 'utf8') === need) {
-    log.debug('[skills] ' + skillName + ' 依赖已安装（命中缓存）');
+    log.debug('skills', skillName + ' 依赖已安装（命中缓存）');
     return;
   }
 
@@ -150,11 +150,11 @@ async function ensureDeps(ctx, dir, skillName) {
     if (hasReq) {
       const target = depsRoot(ctx);
       fs.mkdirSync(target, { recursive: true });
-      log.debug('[skills] ' + skillName + '：pip install --target ' + target);
+      log.debug('skills', skillName + '：pip install --target ' + target);
       await execSyncCapture('python3', ['-m', 'pip', 'install', '--target', target, '-r', reqPath], dir);
     }
     if (hasInstall) {
-      log.debug('[skills] ' + skillName + '：执行 install.sh');
+      log.debug('skills', skillName + '：执行 install.sh');
       await execSyncCapture('bash', ['install.sh'], dir);
     }
   } catch (e) {
@@ -162,7 +162,7 @@ async function ensureDeps(ctx, dir, skillName) {
     throw new DependencyInstallError('依赖安装失败：' + e.message, -1);
   }
   fs.writeFileSync(markerPath, need, 'utf8');
-  log.debug('[skills] ' + skillName + '：依赖安装完成');
+  log.debug('skills', skillName + '：依赖安装完成');
 }
 
 // ---------- 参数路径预处理 ----------
@@ -283,7 +283,7 @@ async function runSkill(ctx, skillName, inputArgs) {
   }
 
   const timeoutMs = (ctx.cfg && ctx.cfg.skills && ctx.cfg.skills.timeout_ms) || 120000;
-  log.info('[skills] 执行 ' + skillName + '：' + entry + ' ' + cmdArgs.join(' '));
+  log.info('skills', '执行 ' + skillName + '：' + entry + ' ' + cmdArgs.join(' '));
   return runEntry(ctx, entry, cmdArgs, dir, timeoutMs);
 }
 

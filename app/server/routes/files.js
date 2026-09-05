@@ -66,8 +66,8 @@ router.post('/:id/files', upload.array('files', 10), function (req, res) {
     }
     // 不再自动通知 AI:附件随用户下一条消息统一告知(见 routes/messages.js 的 attachments)
     if (uploaded.length) {
-      log.info('[file] ' + (req.user || '-') + ' ' + req.params.id + ' 上传 ' + uploaded.length + ' 个文件：' +
-        uploaded.map(f => f.filename + '(' + f.size + 'B)').join('、'));
+      log.info('file', (req.user || '-') + ' ' + req.params.id + ' 上传 ' + uploaded.length + ' 个文件：' +
+              uploaded.map(f => f.filename + '(' + f.size + 'B)').join('、'));
     }
     res.json({ uploaded });
   } catch (err) {
@@ -191,7 +191,7 @@ router.delete('/:id/files', function (req, res) {
     fs.rmSync(abs, { recursive: true, force: true });
     engine.getDb().prepare('DELETE FROM files WHERE session_id = ? AND filename = ?')
       .run(req.params.id, rel);
-    log.info('[file] ' + (req.user || '-') + ' ' + req.params.id + ' 删除文件 ' + rel);
+    log.info('file', (req.user || '-') + ' ' + req.params.id + ' 删除文件 ' + rel);
     res.json({ ok: true });
   } catch (err) {
     res.status(404).json({ error: '文件不存在' });

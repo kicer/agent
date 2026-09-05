@@ -122,7 +122,7 @@ function parseAndValidate(rawText, configPath) {
   // 每项继承所属平台的 url/type 与 key 的 api_key/concurrency，并携带位置下标（前端 PATCH 定位用）。
   if ((!Array.isArray(raw.platforms) || !raw.platforms.length) && Array.isArray(raw.models) && raw.models.length) {
     raw = Object.assign({}, raw, { platforms: migrateLegacyModels(raw.models) });
-    log.info('[config] 检测到旧配置 models[] 扁平格式，已自动迁移为 platforms 层级；建议改写 config.yml 为 platforms 格式');
+    log.info('config', '检测到旧配置 models[] 扁平格式，已自动迁移为 platforms 层级；建议改写 config.yml 为 platforms 格式');
   }
   if (!Array.isArray(raw.platforms) || !raw.platforms.length) {
     throw new Error('配置缺少 platforms：至少需要一个平台 {name, url, keys:[{api_key, models:[{id}]}]}')
@@ -181,7 +181,7 @@ function parseAndValidate(rawText, configPath) {
       url: ws.url,
       headers: ws.authorization ? { Authorization: ws.authorization } : {},
     }];
-    log.info('[config] 检测到旧配置 web_search.*，已自动转为一条 mcp_servers；建议更新 config.yml 为 mcp_servers 格式');
+    log.info('config', '检测到旧配置 web_search.*，已自动转为一条 mcp_servers；建议更新 config.yml 为 mcp_servers 格式');
   }
 
   // MCP 服务规范化：url 必填；name 缺省取主机名首段；headers 为普通键值对象（如 Authorization）

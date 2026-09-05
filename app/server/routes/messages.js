@@ -44,8 +44,8 @@ router.post('/:id/messages', wrap((req, res) => {
   // deepThink：是否启用模型该「深度思考」参数（thinking_params 合并进上游请求体）
   const deepThink = !!(req.body && req.body.deepThink);
   const r = engine.postUserMessage(req.params.id, content, { deepThink });
-  log.info('[msg] ' + (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
-    content.slice(0, 60).replace(/\s+/g, ' '));
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
+      content.slice(0, 60).replace(/\s+/g, ' '));
   res.json(r);
 }));
 
@@ -66,7 +66,7 @@ router.post('/:id/release', wrap((req, res) => {
 // 状态收尾为已完成并释放模型/出队；正在执行的回合会被拒绝（需先「终止」）。
 router.delete('/:id/messages', wrap((req, res) => {
   const r = engine.clearSessionMessages(req.params.id);
-  log.info('[msg] ' + (req.user || '-') + ' ' + req.params.id + ' 清空会话内容（文件保留）');
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 清空会话内容（文件保留）');
   res.json(r);
 }));
 
@@ -75,8 +75,8 @@ router.delete('/:id/messages', wrap((req, res) => {
 // 库中没了，后续发给模型的消息里自然也没有；执行中删除会在下一轮组装历史时生效。
 router.delete('/:id/messages/:messageId', wrap((req, res) => {
   const r = engine.deleteMessage(req.params.id, Number(req.params.messageId));
-  log.info('[msg] ' + (req.user || '-') + ' ' + req.params.id + ' 删除消息 ' + req.params.messageId +
-    (r.removed > 1 ? '（连带 ' + (r.removed - 1) + ' 条工具回执）' : ''));
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 删除消息 ' + req.params.messageId +
+      (r.removed > 1 ? '（连带 ' + (r.removed - 1) + ' 条工具回执）' : ''));
   res.json(r);
 }));
 
