@@ -2124,13 +2124,17 @@
   });
 
   // ---------- 抽屉 ----------
+  // 桌面端(≥960px):侧边栏常驻左侧列(由 body.drawer-open 驱动会话区偏移),不用遮罩;
+  // 移动端(<960px):仍为浮层抽屉 + 遮罩。
+  const drawerMQ = window.matchMedia('(min-width: 960px)');
   function openDrawer(open) {
     // 清掉手势拖动遗留的内联位移/透明度,改由 CSS transition 负责开合动画
     const drawer = $('drawer'), scrim = $('scrim');
     drawer.style.transform = ''; drawer.style.transition = '';
     scrim.style.opacity = '';
     drawer.classList.toggle('open', open);
-    scrim.classList.toggle('show', open);
+    scrim.classList.toggle('show', open && !drawerMQ.matches);
+    document.body.classList.toggle('drawer-open', open);
   }
   $('menu-btn').addEventListener('click', () => {
     const open = !$('drawer').classList.contains('open');
@@ -2151,7 +2155,7 @@
     const item = e.target.closest('.conv-item');
     if (!item) return;
     openSession(item.dataset.id);
-    openDrawer(false);
+    if (!drawerMQ.matches) openDrawer(false); // 桌面端侧栏常驻,选完会话不收起来
   });
 
   // ---------- 移动端右滑会话行露出删除按钮(iOS 风格) ----------
@@ -2278,7 +2282,7 @@
 
   // 抽屉底部用户区:整行点击 → 设置主页(逻辑见文末「设置区」一节)
   $('drawer-user').addEventListener('click', () => {
-    openDrawer(false);
+    if (!drawerMQ.matches) openDrawer(false); // 桌面端设置页覆盖在会话区上,侧栏保持展开
     showSettings();
   });
 
@@ -3375,6 +3379,8 @@
   bindChatScroll(); // 聊天区滚动跟随/右下角回底按钮(只绑一次)
   selectMode('secretary'); // 默认选中【文秘助理】
   setView('welcome');
+  openDrawer(drawerMQ.matches); // 桌面端:侧边栏默认展开;跨断点缩放窗口时同步切换开合态
+  drawerMQ.addEventListener('change', e => openDrawer(e.matches));
   // 页面加载时校验 cookie 身份：防止 localStorage 旧 token 通过 autoRestore 恢复错误用户
   // 仅用 cookie 认证（不带 Basic auth），检测服务端实际认定的用户身份
   (async () => {

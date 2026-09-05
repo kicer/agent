@@ -1019,3 +1019,30 @@ label.icon-btn { cursor: pointer; }
 .modal .modal-text { font-size: 14px; color: #556; margin-bottom: 12px; white-space: pre-wrap; }
 .modal .del-dir { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink); margin-bottom: 14px; cursor: pointer; }
 .modal .del-dir input { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--active); }
+
+/* ================= 桌面端布局(≥960px) =================
+   历史侧边栏常驻左侧(由 body.drawer-open 控制展开/折叠,不用遮罩);
+   对话区占满右侧剩余宽度,内容限宽并水平居中。移动端(<960px)不受影响。 */
+@media (min-width: 960px) {
+  :root { --sidebar-w: 280px; }
+
+  /* 会话区占满侧栏右侧;折叠时占满整个窗口 */
+  #app { max-width: none; margin-left: var(--sidebar-w); transition: margin-left .25s ease; }
+  body:not(.drawer-open) #app { margin-left: 0; }
+
+  /* 侧边栏:常驻左列,轻边框与页面区隔 */
+  #drawer { width: var(--sidebar-w); box-shadow: none; border-right: 1px solid var(--border); }
+  /* 桌面端开合不走遮罩 */
+  #scrim { display: none !important; }
+
+  /* 对话内容限宽居中 */
+  #chat-view { padding: 16px 32px 8px; }
+  #chat-view > * { width: 100%; max-width: 860px; margin-left: auto; margin-right: auto; }
+
+  /* 输入区与会话列同宽、居中 */
+  footer { padding-left: 32px; padding-right: 32px; }
+  footer > * { max-width: 860px; margin-left: auto; margin-right: auto; }
+
+  /* toast 相对会话区(而非整个视口)居中 */
+  body.drawer-open #toast { left: calc(50% + var(--sidebar-w) / 2); }
+}
