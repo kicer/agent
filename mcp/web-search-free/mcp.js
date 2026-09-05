@@ -21,7 +21,7 @@ const TOOLS = [
       properties: {
         query: { type: 'string', description: 'Search query text' },
         provider: { type: 'string', enum: ['parallel', 'exa'], description: "Backend provider: 'parallel' (default) or 'exa' (fallback)" },
-        numResults: { type: 'number', description: 'Maximum number of results to return (default 8)' },
+        numResults: { type: 'integer', minimum: 1, default: 8, description: 'Maximum number of results to return (default 8)' },
       },
       required: ['query'],
     },
