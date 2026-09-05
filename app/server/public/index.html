@@ -19,8 +19,14 @@
          放在 link 之后以保证同优先级下能压住 style.css 里同优先级的规则。 */
       body .msg-actions .act-del { display: none; }
       body.log-debug .msg-actions .act-del { display: flex; }
-      /* 「压缩」总结气泡上的小标。点不出任何效果，纯状态。 */
-      .summary-tag { font-size: 11px; color: #6c757d; padding: 2px 0 6px 4px; letter-spacing: .5px; }
+      /* 「压缩」总结折叠面板：复用 .msg-think 的折叠交互，但 body 是常规字体（不是代码块）。
+               summary 文字「上下文总结」；默认 open。收尾后改为非 streaming。 */
+            .msg-summary { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 0 0 6px; }
+            .msg-summary > summary { list-style: none; cursor: pointer; user-select: none; padding: 6px 10px; display: flex; align-items: center; gap: 6px; color: var(--gray); font-size: 12px; }
+            .msg-summary > summary::-webkit-details-marker { display: none; }
+            .msg-summary > summary::before { content: '▸'; font-size: 10px; color: var(--gray-light); transition: transform .15s; display: inline-block; }
+            .msg-summary[open] > summary::before { transform: rotate(90deg); }
+            .msg-summary .bubble-ai { margin: 0 10px 10px; }
       /* 状态栏图标按钮（压缩）：仅显示 SVG、去掉文字 padding；保持与文字按钮同高。 */
       .stop-link.icon-only { padding: 0 8px; line-height: 0; }
       .stop-link.icon-only .ic { width: 18px; height: 18px; vertical-align: middle; }
@@ -61,7 +67,7 @@
       <button class="stop-link hidden" id="stop-btn" onclick="stopSession()">终止</button>
       <button class="stop-link hidden" id="model-switch-btn" onclick="openModelSwitch()">选择模型</button>
       <button class="stop-link icon-only icon-primary phase-bar-right hidden" id="compress-btn" title="压缩上下文" aria-label="压缩上下文" onclick="summarizeChat()">
-        <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M12 16l-3 3M12 16l3 3M12 16v-7"></path></svg>
+        <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path></svg>
       </button>
     </div>
 
@@ -430,6 +436,7 @@
         streaming: false,
         pendingSummary: false,      // 是否在等待「压缩」总结 AI 回复（避免重复弹窗；同时用于按钮 disabled 防重入）
         pendingSummaryMode: null,   // pendingSummary 期间记录用户选的模式：'generate_only' 或 'compress_and_clear'
+        lastAssistantMsgId: null,   // 最近处理过的 SSE assistant_message id：重复 id 直接丢，防重渲染（补「2 遍」问题）
       };
 
   // ---------- 视图切换 ----------
@@ -828,16 +835,18 @@
   }
 
   async function openSession(id) {
-    closeStream();
-    removeTyping();
-    setFilesPanel(false); // 会话切换,收起文件面板防旧列表残留
-    state.sessionId = id;
-    state.status = '';
-    // 先从抽屉列表缓存取会话类型，让顶部 icon 立即正确；详情回来后由 renderDetail 纠正
-    const cached = (state.sessions || []).find(x => x.id === id);
-    state.sessionType = (cached && cached.assistant_type) || 'secretary';
-    state.streamEl = null;
-    state.streamText = '';
+      closeStream();
+      removeTyping();
+      setFilesPanel(false); // 会话切换,收起文件面板防旧列表残留
+      state.sessionId = id;
+      state.status = '';
+      // 先从抽屉列表缓存取会话类型，让顶部 icon 立即正确；详情回来后由 renderDetail 纠正
+      const cached = (state.sessions || []).find(x => x.id === id);
+      state.sessionType = (cached && cached.assistant_type) || 'secretary';
+      state.streamEl = null;
+      state.streamText = '';
+      state.streamWrap = null;
+      state.lastAssistantMsgId = null;
     state.toolCards = {};
     state.streaming = false;
     state.attachments = [];
@@ -1196,8 +1205,11 @@
       updateScrollBottomBtn();
     });
     es.addEventListener('assistant_message', ev => {
-          const d = JSON.parse(ev.data);
-          removeTyping();
+              const d = JSON.parse(ev.data);
+              // 防重：同 id 的 assistant_message 只处理一次（防御 EventSource 自动重连、服务端重发等情况）
+              if (d.id && state.lastAssistantMsgId === d.id) return;
+              if (d.id) state.lastAssistantMsgId = d.id;
+              removeTyping();
           const hasText = !!(d.content && d.content.trim());
           const r = hasText ? mdHtml(d.content) : null;
           // 思考面板：本轮结束时锁定为后端返回的完整文本（不清空 streamReasoning 以防与历史回填不一致）
@@ -1224,26 +1236,33 @@
             bubble.innerHTML = r.html;
             state.streamWrap.appendChild(bubble);
           }
-          // 「压缩」总结标签：后端 SSE 事件 is_summary=true 表示本轮回复是压缩总结，
-          // 在 AI 气泡顶部加个“📋 上下文总结”小标，让 UI 能一眼区分。
-          if (d.is_summary && state.streamWrap) {
-            const tag = document.createElement('div');
-            tag.className = 'summary-tag';
-            tag.textContent = '📋 上下文总结';
-            // 插到气泡顶部、但在思考面板之后（避免被思考面板遮住）
-            const bubble = state.streamWrap.querySelector('.bubble-ai');
-            const think = state.streamWrap.querySelector('.msg-think');
-            if (bubble) state.streamWrap.insertBefore(tag, bubble);
-            else if (think) think.insertAdjacentElement('afterend', tag);
-            else state.streamWrap.appendChild(tag);
-          }
+          // 「压缩」总结面板：复用 .msg-think 的折叠样式（参考思考过程），summary 文字“上下文总结”。
+                    // 默认 open=true（刚收到总结时展开，方便用户立刻读），后续随同思考面板一起折起。
+                    // 防重：同一 streamWrap 里已存在 summary 面板则不再重复插入（保护二次重入）。
+                    if (d.is_summary && state.streamWrap && !state.streamWrap.querySelector('.msg-summary')) {
+                      const det = document.createElement('details');
+                      det.className = 'msg-summary streaming';
+                      det.open = true;
+                      const sum = document.createElement('summary');
+                      sum.textContent = '上下文总结';
+                      det.appendChild(sum);
+                      // 把总结气泡收进 details 里：点击 summary 折叠后可一起隐藏默认占空间的大段总结。
+                      const oldBubble = state.streamWrap.querySelector('.bubble-ai');
+                      if (oldBubble) det.appendChild(oldBubble);
+                      state.streamWrap.appendChild(det);
+                    }
           if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
           state.streaming = false;
           // 思考面板默认折叠，避免挡着后续气泡；点击展开
-          if (state.streamWrap) {
-            const t = state.streamWrap.querySelector('.msg-think');
-            if (t && t.open) t.open = false;
-          }
+                    if (state.streamWrap) {
+                      const t = state.streamWrap.querySelector('.msg-think');
+                      if (t && t.open) t.open = false;
+                    }
+                    // 上下文总结面板同步折起：避免总结泡在后续气泡中占住大面积空间；用户点开可以重现。
+                    if (state.streamWrap) {
+                      const sm = state.streamWrap.querySelector('.msg-summary');
+                      if (sm && sm.open) sm.open = false;
+                    }
           state.streamWrap = null;
           state.streamReasoning = '';
           state.streamThinkEl = null;
