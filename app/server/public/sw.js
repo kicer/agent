@@ -7,16 +7,10 @@ const CACHE_VERSION = 'agent-v2';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
+// PRECACHE_URLS: 仅预缓存图片与 JSON——这些是缓存优先的资源，安装时直接落盘秒开，离线也能用。
+// HTML/CSS/JS 不预缓存：网络优先策略每次在线都会写入 RUNTIME_CACHE，
+// STATIC_CACHE 的旧版反而会在 caches.match() 离线回退时遮蔽更新。
 const PRECACHE_URLS = [
-  '/',
-  '/login.html',
-  '/css/style.css',
-  '/js/core.js',
-  '/js/models.js',
-  '/js/settings.js',
-  '/js/skills.js',
-  '/js/tasks.js',
-  '/vendor/marked.min.js',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
