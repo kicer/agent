@@ -6,6 +6,7 @@ app/config.yml
 /config.yml
 app/data/
 data/
+tasks/
 skills/deps/
 skills/*/.deps_installed
 skills/*/__pycache__/
