@@ -37,7 +37,10 @@ platforms:
             display_name: "No Auth Model"
 
 workspace_root: "./data/tasks"
-# db_path: "/data/.agent.db"
+# 数据根目录：db（默认 .agent.db）与启动 prompt dump（prompt.txt）放这里；相对路径按启动目录展开。
+# 容器部署建议指到挂载卷内（如 /workspace/data），否则重建容器会丢数据。
+data_root: "./data"
+# db_path: "/some/where/.agent.db"   # 显式配置优先；缺省为 data_root/.agent.db
 
 # 日志等级（改后重启生效）：debug < info < warn < error < none，只输出 ≥ 该等级的日志；none=全部静默。
 # info（默认）=关键动作概述；debug 另加用户/AI 消息全文、工具调用参数/结果等排查细节。

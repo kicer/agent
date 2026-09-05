@@ -111,6 +111,7 @@ function svcCard(st) {
   html += kvPlain('端口', st.port);
   html += kvPlain('配置文件', st.config_path);
   html += kvPlain('工作区', st.workspace_root);
+  html += kvPlain('数据目录', st.data_root);
   html += kvPlain('技能目录', st.skills_root);
   if (pendingKeys.size) html += kvPlain('待生效改动', Array.from(pendingKeys).join(', '));
   html += '<button class="primary-btn" id="restart-btn" style="width:100%;margin-top:8px" onclick="cfgUI.restart()">重启服务</button>' +

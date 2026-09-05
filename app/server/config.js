@@ -6,8 +6,10 @@ const log = require('./log');
 
 const DEFAULTS = {
   port: 8080,
+  // 数据根目录：db、prompt dump 等运行时产物默认放这里（容器内挂 ./data → /workspace/data）。
+  data_root: './data',
   workspace_root: './data/tasks',
-  db_path: '', // 默认为 workspace_root/.agent.db
+  db_path: '', // 默认为 data_root/.agent.db
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
   agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2, language: '中文' },
   // 大图上传预处理：图片文件超过 threshold_kb 时，浏览器端询问用户后用 canvas 压缩
@@ -156,7 +158,8 @@ function parseAndValidate(rawText, configPath) {
   }
 
   cfg.workspace_root = path.resolve(cfg.workspace_root);
-  if (!cfg.db_path) cfg.db_path = path.join(cfg.workspace_root, '.agent.db');
+  cfg.data_root = path.resolve(cfg.data_root);
+  if (!cfg.db_path) cfg.db_path = path.join(cfg.data_root, '.agent.db');
 
   // 日志等级:只认 debug/info/warn/error/none(off 是 none 别名),非法值按 info(不影响启动)
   cfg.log_level = String(cfg.log_level || 'info').trim().toLowerCase();

@@ -40,6 +40,7 @@ router.get('/status', wrap((req, res) => {
     uptime_ms: Date.now() - STARTED_AT,
     config_path: cfg.config_path || '',
     workspace_root: cfg.workspace_root,
+    data_root: cfg.data_root,
     skills_root: cfg.skills_root,
     db_path: cfg.db_path,
     port: cfg.port,
