@@ -14,14 +14,18 @@ function buildSystemPrompt() {
 
 // 部署级回复语言指令：拼在 system prompt 末尾（尾部对弱模型约束力最强）。
 // 同一进程内恒定，不破坏前缀缓存；改配置需重启生效。
+// system prompt 每次请求都随 messages 发出，拼接结果按语言缓存，不重复分配大字符串。
+let _promptTextCache = null; // { lang, text }
 function systemPromptText(language) {
   const t = String(language || '').trim();
-  if (!t) return SYSTEM_PROMPT_TEMPLATE;
-  return SYSTEM_PROMPT_TEMPLATE +
+  if (_promptTextCache && _promptTextCache.lang === t) return _promptTextCache.text;
+  const text = !t ? SYSTEM_PROMPT_TEMPLATE : SYSTEM_PROMPT_TEMPLATE +
     '\n\n## Reply Language\n' +
     '- ALWAYS respond to the user in ' + t + '. Tool descriptions, tool outputs and errors are usually in English — ' +
     'never let them switch your reply language. Tool names, parameters, code, file paths and shell commands stay as-is; ' +
     'every sentence addressed to the user MUST be in ' + t + '.';
+  _promptTextCache = { lang: t, text };
+  return text;
 }
 
 // 多模态内容块存取：messages.content 列为 TEXT，含图片的 tool 消息
@@ -34,6 +38,21 @@ function decodeBlocks(content) {
     const parsed = JSON.parse(content);
     return Array.isArray(parsed.__blocks__) ? parsed.__blocks__ : null;
   } catch (_) { return null; }
+}
+
+// 含图行的解析缓存：哨兵 JSON 带 base64 大字段，工具循环里每个请求都整段 JSON.parse，
+// 已消费的图片解析完还只留文字块，纯重复劳动。按行 id 把解析结果挂在 session 上：
+// 单进程内存模型，行内容入库后不再变更，同一行只解析一次。
+// 缓存的是原始块数组而非「消费后投影」——消费与否仍按 lastAssistant 实时判定，
+// 删除后续 assistant 让图片回到「未消费」（需重新携带 base64）时也自然正确。
+function cachedDecodeBlocks(session, row) {
+  if (typeof row.content !== 'string' || !row.content.startsWith('{"__blocks__":')) return null;
+  let cache = session.blocksCache;
+  if (!cache) cache = session.blocksCache = new Map();
+  if (cache.has(row.id)) return cache.get(row.id);
+  const blocks = decodeBlocks(row.content);
+  if (blocks) cache.set(row.id, blocks);
+  return blocks;
 }
 
 // 将 DB 消息行转为 OpenAI messages 数组（不含 system，由调用方拼接）。
@@ -55,6 +74,11 @@ function decodeBlocks(content) {
 function buildMessages(session, language) {
   const messages = [{ role: 'system', content: systemPromptText(language) }];
   const history = session.history;
+  // 行被删除后清理残留的图片解析缓存条目（只增不清会缓慢泄漏；条数不会超过现存行数）
+  if (session.blocksCache && session.blocksCache.size > history.length) {
+    const ids = new Set(history.map(r => r.id));
+    for (const k of Array.from(session.blocksCache.keys())) if (!ids.has(k)) session.blocksCache.delete(k);
+  }
   // tool 回执按 tool_call_id 索引：给 errAck 行拼错误提示时取执行时挡下的原因
   const toolRowById = new Map();
   for (const row of history) if (row.role === 'tool' && row.tool_call_id) toolRowById.set(row.tool_call_id, row);
@@ -109,8 +133,8 @@ function buildMessages(session, language) {
     }
     // errAck 轮的 tool 回执：随该轮一起丢弃，避免无主 tool 消息
     if (row.role === 'tool' && dropToolCallIds.has(row.tool_call_id)) return;
-    // tool/user 行：含图哨兵 JSON 还原为内容块；已消费的图剥掉 base64，只留文字描述 + 标记
-    const blocks = decodeBlocks(row.content);
+    // tool/user 行：含图哨兵 JSON 还原为内容块（解析结果按行 id 缓存）；已消费的图剥掉 base64，只留文字描述 + 标记
+    const blocks = cachedDecodeBlocks(session, row);
     let content = row.content || '';
     if (blocks) {
       if (i < lastAssistant) {
