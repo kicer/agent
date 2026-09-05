@@ -9,7 +9,9 @@ const { initDb } = require('./db');
 const { createBus } = require('./sse');
 const { createAuth } = require('./auth');
 const engine = require('./engine');
+const llm = require('./llm');
 const mcp = require('./mcp');
+const skills = require('./tools/skills');
 const log = require('./log');
 
 const cfg = loadConfig(process.env.AGENT_CONFIG);
@@ -59,8 +61,18 @@ app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
 const PORT = process.env.PORT || cfg.port;
 
-// 启动时先发现各 MCP 服务的工具（单个服务失败只警告，不阻止启动），发现完成后再开始监听。
-mcp.init(cfg).then(() => {
+// 启动时先发现各 MCP 服务的工具（单个服务失败只警告，不阻止启动），
+// 并对技能列表做快照（注入 system prompt，见 llm.setSkillListText），完成后开始监听。
+mcp.init(cfg).then(async () => {
+  // 技能列表快照：模型直接感知已有技能，免先 list_skills 探索；
+  // 此处失败不阻塞启动，list_skills 仍可做实时兑底。
+  try {
+    const list = await skills.listSkills({ cfg });
+    llm.setSkillListText(skills.formatSkillListForPrompt(list));
+    log.info('startup', '  skills=' + (list.length ? list.map(s => s.name).join(', ') : '(none)'));
+  } catch (e) {
+    log.warn('startup', '技能列表生成失败：' + e.message);
+  }
   server.listen(PORT, () => {
       log.info('startup', 'Agent server listening on ' + PORT);
       log.info('startup', '  workspace_root=' + cfg.workspace_root);

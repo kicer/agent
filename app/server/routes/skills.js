@@ -9,7 +9,8 @@ const path = require('path');
 const multer = require('multer');
 const YAML = require('yaml');
 const engine = require('../engine');
-const { extractDescription } = require('../tools/skills');
+const llm = require('../llm');
+const { extractDescription, listSkills, formatSkillListForPrompt } = require('../tools/skills');
 const { sanitizeName } = require('./files');
 
 const router = express.Router();
@@ -73,7 +74,17 @@ function absInSkill(dir, rel) {
   return abs;
 }
 
-// 递归文件列表(与任务文件同形状:filename/size/mtime;隐藏文件如 .deps_installed 不展示)
+// 技能发生任何变更（创建/重命名/删除/文件增删改都经过本模块）后，
+// 重建 system prompt 的 “可用技能” 段落（llm.setSkillListText）：
+// 模型立即感知新技能或改名，无需重启。fire-and-forget：扫描失败不影响 API 响应，
+// list_skills 仍是实时兑底。
+function refreshSkillPrompt() {
+  listSkills({ cfg: engine.getConfig() })
+    .then(list => llm.setSkillListText(formatSkillListForPrompt(list)))
+    .catch(() => {});
+}
+
+// 递归文件列表（与任务文件同形状：filename/size/mtime；隐藏文件如 .deps_installed 不展示）
 function listSkillFiles(dir) {
   const out = [];
   (function rec(d, rel) {
@@ -150,6 +161,7 @@ router.post('/', wrap(async (req, res) => {
   ].join('\n');
   await fsp.mkdir(dir, { recursive: true });
   await fsp.writeFile(path.join(dir, 'SKILL.md'), tpl, 'utf8');
+  refreshSkillPrompt();
   res.json({ ok: true, name });
 }));
 
@@ -170,14 +182,16 @@ router.post('/:name/rename', wrap(async (req, res) => {
   const to = path.join(path.dirname(from), newName);
   if (fs.existsSync(to)) throw httpError(409, '目标名称已存在: ' + newName);
   await fsp.rename(from, to);
+  refreshSkillPrompt();
   res.json({ ok: true, name: newName });
 }));
 
 // 删除整个技能(递归,不可恢复;页面需二次确认)
 router.delete('/:name', wrap(async (req, res) => {
   const dir = skillDirOf(req.params.name);
-  if (!fs.existsSync(dir)) throw httpError(404, '技能不存在: ' + req.params.name);
+  if (!fs.existsSync(dir)) throw httpError(404, '技能不存在：' + req.params.name);
   await fsp.rm(dir, { recursive: true, force: true });
+  refreshSkillPrompt();
   res.json({ ok: true });
 }));
 
@@ -208,6 +222,7 @@ router.put('/:name/file', wrap(async (req, res) => {
   const abs = absInSkill(dir, rel);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
   await fsp.writeFile(abs, content, 'utf8');
+  refreshSkillPrompt(); // 编辑 SKILL.md 会连带改描述
   res.json({ ok: true, path: rel });
 }));
 
@@ -216,8 +231,9 @@ router.delete('/:name/file', wrap(async (req, res) => {
   const dir = skillDirOf(req.params.name);
   const rel = safeRel(req.query.path);
   const abs = absInSkill(dir, rel);
-  if (!fs.existsSync(abs)) throw httpError(404, '文件不存在: ' + rel);
+  if (!fs.existsSync(abs)) throw httpError(404, '文件不存在：' + rel);
   await fsp.rm(abs, { recursive: true, force: true });
+  refreshSkillPrompt(); // 删掉 SKILL.md 会使技能从列表消失
   res.json({ ok: true });
 }));
 
@@ -249,6 +265,7 @@ router.post('/:name/upload', function (req, res) {
   upload.single('file')(req, res, function (err) {
     if (err) return sendErr(res, err);
     if (!req.file) return res.status(400).json({ error: '未收到文件(表单字段名:file)' });
+    refreshSkillPrompt();
     res.json({ ok: true, path: req.file.filename, size: req.file.size });
   });
 });

@@ -16,11 +16,22 @@ function buildSystemPrompt() {
 // 同一进程内恒定，不破坏前缀缓存；改配置需重启生效。
 // system prompt 每次请求都随 messages 发出，拼接结果按语言缓存，不重复分配大字符串。
 let _promptTextCache = null; // { lang, text }
+
+// “可用技能”段落（skills.formatSkillListForPrompt）：启动时快照（server.js）与技能变更后
+// （routes/skills.js）经 setSkillListText 更新，拼在模板之后、语言指令之前。
+// 与语言指令同一约定：仅技能增删/描述变化时更新，否则进程内恒定，不破坏前缀缓存。
+let SKILL_LIST_TEXT = '';
+function setSkillListText(text) {
+  SKILL_LIST_TEXT = text || '';
+  _promptTextCache = null; // 列表变化后拼接结果需重建
+}
+
 function systemPromptText(language) {
   const t = String(language || '').trim();
   if (_promptTextCache && _promptTextCache.lang === t) return _promptTextCache.text;
-  const text = !t ? SYSTEM_PROMPT_TEMPLATE : SYSTEM_PROMPT_TEMPLATE +
-    '\n\n## Reply Language\n' +
+  let text = SYSTEM_PROMPT_TEMPLATE;
+  if (SKILL_LIST_TEXT) text += '\n\n' + SKILL_LIST_TEXT;
+  if (t) text += '\n\n## Reply Language\n' +
     '- ALWAYS respond to the user in ' + t + '. Tool descriptions, tool outputs and errors are usually in English — ' +
     'never let them switch your reply language. Tool names, parameters, code, file paths and shell commands stay as-is; ' +
     'every sentence addressed to the user MUST be in ' + t + '.';
@@ -307,4 +318,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, encodeBlocks, decodeBlocks };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks };
