@@ -35,6 +35,7 @@ function initDb(dbPath) {
       tool_calls TEXT,
       tool_call_id TEXT,
       name TEXT,
+      is_error INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
@@ -44,6 +45,8 @@ function initDb(dbPath) {
   // 升级老库：type 标记特殊消息行。目前唯一取值 'errAck'——AI 的 tool call 参数错误
   // （JSON 非法/缺必填）整条标记；仍入库供 UI 展示，但 buildMessages 发请求时跳过（见 llm.js）
   try { db.exec('ALTER TABLE messages ADD COLUMN type TEXT'); } catch (_) { /* 已存在 */ }
+  // 升级老库：tool 回执执行失败标记。此前只走 SSE 不落库，重进会话后 UI 丢失红色错误样式
+  try { db.exec('ALTER TABLE messages ADD COLUMN is_error INTEGER NOT NULL DEFAULT 0'); } catch (_) { /* 已存在 */ }
   db.exec(`
 
     CREATE TABLE IF NOT EXISTS files (

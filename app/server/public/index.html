@@ -13,6 +13,13 @@
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* 每条消息的「删除本条」X：仅在 config.yml 的 log_level: debug 时才显示
+       （debug 之外的等级一律隐藏；切换需重启服务生效，与其他配置一致）。
+       放在 link 之后以保证同优先级下能压住 style.css 里 .msg-actions .act { display:flex }。 */
+    body .msg-actions .act-del { display: none; }
+    body.log-debug .msg-actions .act-del { display: flex; }
+  </style>
   <script>
     // 注册 Service Worker（PWA / 离线缓存）
     if ('serviceWorker' in navigator) {
@@ -626,7 +633,7 @@
       const node = msgNode(m);
       if (node) box.insertAdjacentHTML('beforeend', node);
       if (m.role === 'assistant') appendToolCardsFromAssistant(m, box);
-      else if (m.role === 'tool' && m.tool_call_id) fillToolResult(m.tool_call_id, m.content, false, undefined, m.id);
+      else if (m.role === 'tool' && m.tool_call_id) fillToolResult(m.tool_call_id, m.content, !!m.is_error, undefined, m.id);
     }
     if (!(detail.messages || []).length) {
       box.innerHTML = '<div class="drawer-empty">描述你的需求，AI 会和你讨论并直接干活。</div>';
@@ -2987,12 +2994,22 @@
     mToggleEnable: toggleModelEnable,
   };
 
+  // 启动时拉一次 config,根据 log_level 决定是否给 body 加 log-debug 类;
+  // 配项改后需重启服务,这里只在首屏拉一次即可(失败静默,默认隐藏删除 X)
+  async function applyDebugDeleteFlag() {
+    try {
+      const cg = await req('GET', '/api/config');
+      document.body.classList.toggle('log-debug', (cg && cg.effective && cg.effective.log_level) === 'debug');
+    } catch (_) { /* 未登录/失败时保持默认隐藏 */ }
+  }
+
   // ---------- 初始化 ----------
   bindChatScroll(); // 聊天区滚动跟随/右下角回底按钮(只绑一次)
   selectMode('secretary'); // 默认选中【文秘助理】
   setView('welcome');
   loadSessionList();
   loadDrawerUser(); // 侧边栏底部展示真实登录用户(未启用认证时静默回退默认占位)
+  applyDebugDeleteFlag(); // 仅 log_level: debug 才在每条消息后显示删除 X
   </script>
 </body>
 </html>
