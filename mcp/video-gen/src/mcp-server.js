@@ -245,7 +245,7 @@ function buildServer({ publicBaseUrl }) {
 
   const uploadUrl = `${publicBaseUrl}/upload`;
 
-  // ---------- 工具 1：generate_video ----------
+  // ---------- 工具 1：video-gen ----------
   server.tool(
     "video-gen",
     `Submit a video generation task (text-to-video or image-to-video).
@@ -364,7 +364,7 @@ Uploaded files live in container temp storage and are discarded on restart — d
       task_id: z
         .string()
         .min(1)
-        .describe("The task id returned by generate_video."),
+        .describe("The task id returned by video-gen."),
     },
     async (args, extra) => {
       const headers = extra?.requestInfo?.headers;
