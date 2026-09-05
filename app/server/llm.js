@@ -45,8 +45,10 @@ function decodeBlocks(content) {
 // 改以一条 user 错误提示替代，让模型看到原因后重新生成工具调用 ——
 // 坏样本留在上下文里只会被模型继续模仿，反复报同一个错。
 // summarize_request 行（顶栏「压缩」按钮触发的总结指令，role=user, type='summarize_request'）：
-// 这条 user 是让 AI 做总结用的中间产物，AI 给出总结后就会被前端清空；为防用户在被清空前又发新消息
-// 触发新一轮模型调用，这条指令会污染上下文（让 AI 误以为还要再总结），所以 buildMessages 直接跳过。
+// 它是压缩回合要执行的正式指令，必须发给模型；但只在「触发的那一回合还活着」时携带：
+// 其后还没有无 tool_calls 的 assistant 收尾回复 = 回合进行中（含工具循环的中间迭代，
+// 指令需持续在上下文里，否则 AI 中途忘掉自己该总结什么）；已有收尾回复（摘要已产出）则跳过，
+// 防历史保留（generate_only）或清空前用户又发新消息时，旧指令污染后续轮次（让 AI 误以为还要再总结）。
 // 同时跳过 type='archived' 的中间态归档行（保留接口给将来需要时用，目前主流程走前端物理清空）。
 // 注意：type='summary'（「压缩总结」后保留的唯一摘要锚点）不跳过：它是清空后后续轮次的上下文起点，
 // 正常以 assistant 历史行发给模型。
@@ -62,9 +64,23 @@ function buildMessages(session, language) {
     if (history[i].role === 'assistant' && history[i].type !== 'errAck') { lastAssistant = i; break; }
   }
   const dropToolCallIds = new Set();
+  // summarize_request 「已答复」判定的前置信息：最后一次「回合收尾回复」（无 tool_calls 的 assistant）的位置。
+  // 指令行在其之后 = 还在等 AI 响应这条指令（当前压缩回合），应发给模型；在其之前 = 旧指令，跳过防污染。
+  // errAck 带 tool_calls 不在此列；历史里残留的旧指令（如 generate_only）后面必然跟着摘要收尾行，自然被跳过。
+  let lastClosingAssistant = -1;
   history.forEach((row, i) => {
-      // summarize_request / archived：UI 可见，但不再进入模型上下文（避免污染 / 节省 token）
-      if (row.type === 'summarize_request' || row.type === 'archived') return;
+    if (row.role === 'assistant' && !row.tool_calls) lastClosingAssistant = i;
+  });
+  history.forEach((row, i) => {
+      // archived：UI 可见，但不进入模型上下文（节省 token）
+      if (row.type === 'archived') return;
+      // summarize_request：仅在触发的那一压缩回合内发给模型（见函数头注释）
+      if (row.type === 'summarize_request') {
+        if (i > lastClosingAssistant && (row.content || '').trim()) {
+          messages.push({ role: 'user', content: row.content });
+        }
+        return;
+      }
       if (row.role === 'assistant') {
       if (row.type === 'errAck') {
         let calls = [];

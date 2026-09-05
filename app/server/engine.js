@@ -798,7 +798,8 @@ function postUserMessage(sessionId, content, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   // opts.type: 落库时给该 user 消息带上 type 标记。
-    // 用于「压缩」按钮触发时给总结指令打 type='summarize_request'，使 llm.buildMessages 跳过、
+    // 用于「压缩」按钮触发时给总结指令打 type='summarize_request'：该指令只在压缩回合内发给模型
+    //（回合完成后 llm.buildMessages 不再携带，防旧指令污染后续轮次），
     // 并让 runLoopInner 识别到后给对应的 assistant_message SSE 加 is_summary: true 标志。
     const messageId = saveMessage(sessionId, { role: 'user', content, type: (opts && opts.type) || null });
     if (!session.title) {
@@ -900,7 +901,8 @@ function deleteSession(sessionId, deleteDir) {
 
 // 上下文压缩：phase-bar「压缩」按钮触发。把 config.yml 的 compress.prompt 作为一条 type='summarize_request'
 // 的 user 消息发出去，AI 收到后会基于历史生成总结并以 assistant 消息回复。
-// llm.js 规则：type='summarize_request' 跳过该行——所以该指令不会反复出现在后续请求中污染上下文。
+// llm.js 规则：type='summarize_request' 的指令只在压缩回合进行中发给模型（回合完成后跳过），
+// 既保证 AI 拿得到总结指令，又不会在后续请求里反复污染上下文。
 // 由 runLoopInner 在压缩回合的最终答复（无 tool_calls 且紧邻上一条 user 是 summarize_request）
 // emit 时带 is_summary: true，并带上 mode 给前端，前端按用户选择的模式走完最后一步
 //（compress_and_clear 时调 DELETE ?keep=summary 清空历史、仅留该摘要并标 type='summary'）。
