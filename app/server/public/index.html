@@ -3363,8 +3363,25 @@
   bindChatScroll(); // 聊天区滚动跟随/右下角回底按钮(只绑一次)
   selectMode('secretary'); // 默认选中【文秘助理】
   setView('welcome');
-  loadSessionList();
-  loadDrawerUser(); // 侧边栏底部展示真实登录用户(未启用认证时静默回退默认占位)
+  // 页面加载时校验 cookie 身份：防止 localStorage 旧 token 通过 autoRestore 恢复错误用户
+  // 仅用 cookie 认证（不带 Basic auth），检测服务端实际认定的用户身份
+  (async () => {
+    try {
+      const res = await fetch('/api/me', { credentials: 'include', headers: { Authorization: '' } });
+      if (res.ok) {
+        const j = await res.json();
+        if (!j.user) {
+          // cookie 无效或用户已从配置中移除 → 彻底清理所有前端凭据并跳登录
+          localStorage.removeItem('agent_token');
+          sessionStorage.removeItem('agent_creds');
+          location.href = '/logout';
+          return;
+        }
+      }
+    } catch (_) { /* 网络错误放过，让后续请求正常走 */ }
+    loadSessionList();
+    loadDrawerUser(); // 侧边栏底部展示真实登录用户(未启用认证时静默回退默认占位)
+  })();
   </script>
 </body>
 </html>
