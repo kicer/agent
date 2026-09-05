@@ -123,7 +123,7 @@
     <footer>
       <div class="attach-chips hidden" id="attach-chips"></div>
       <div class="input-shell">
-        <textarea id="msg-input" placeholder="传送信息" rows="2" enterkeyhint="send"></textarea>
+        <textarea id="msg-input" placeholder="传送信息" rows="2" enterkeyhint="enter"></textarea>
         <div class="input-actions">
           <div class="ia-side ia-left">
             <button class="think-toggle" id="deep-think-btn" title="深度思考">
@@ -1611,7 +1611,19 @@
   function autosize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }
   ta.addEventListener('input', autosize);
   ta.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key !== 'Enter' || e.isComposing) return; // 中文输入法候选中的回车不拦截
+    // 桌面端:Ctrl/⌘/Shift+Enter 在光标处换行;普通 Enter 发送
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      e.preventDefault();
+      if (!document.execCommand('insertText', false, '\n')) {
+        const i = ta.selectionStart;
+        ta.setRangeText('\n', i, ta.selectionEnd, 'end');
+      }
+      autosize();
+    } else {
+      e.preventDefault();
+      send();
+    }
   });
   $('send-btn').addEventListener('click', () => send()); // 发送按钮与 Enter 行为一致
 
