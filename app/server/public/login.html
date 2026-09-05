@@ -87,7 +87,12 @@
           throw new Error(msg);
         }
         const j = await res.json().catch(() => ({}));
-        if (j && j.token) localStorage.setItem(TOKEN_KEY, j.token);
+        if (j && j.token) {
+          localStorage.setItem(TOKEN_KEY, j.token);
+          // 持久化凭据供 req() 使用 Basic auth，避免 cookie 残留导致切换用户后认证错乱
+          const creds = btoa(encodeURIComponent((document.getElementById('login-user').value || '') + ':' + (document.getElementById('login-pass').value || '')));
+          sessionStorage.setItem('agent_creds', creds);
+        }
         location.replace('/'); // 替换而非压栈：历史里不留 /login 条目，登录后侧滑不会退回登录页
       } catch (e2) {
         errEl.textContent = e2.message || '登录失败';

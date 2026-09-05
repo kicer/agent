@@ -404,6 +404,9 @@
   // ---------- API(与 core.js 的 req 保持一致) ----------
   async function req(method, url, body, isForm) {
     const opt = { method, headers: {} };
+    // 从 sessionStorage 取登录凭据，自动加 Basic auth 头，确保 cookie 残留时认证也不出错
+    const creds = sessionStorage.getItem('agent_creds');
+    if (creds) opt.headers['Authorization'] = 'Basic ' + creds;
     if (body && !isForm) {
       opt.headers['Content-Type'] = 'application/json';
       opt.body = JSON.stringify(body);
@@ -3320,7 +3323,11 @@
   window.sUI = {
     // 账户
     changePassword: changePassword,
-    logout: function () { location.href = '/logout'; },
+    logout: async function () {
+      sessionStorage.removeItem('agent_creds'); // 清凭据，避免下次访问仍走 Basic auth
+      try { await fetch('/api/logout', { method: 'POST' }); } catch (_) {}
+      location.href = '/logout';
+    },
     // 服务
     saveForm: saveForm,
     restart: restart,
