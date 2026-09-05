@@ -40,21 +40,51 @@ function decodeBlocks(content) {
 // 省 token：image_url 块仅在其位于最后一条 assistant 消息之后（模型尚未对它回复）时保留；
 // 之前的视为已消费，发请求时替换为文字标记。DB 始终存全量：UI 历史照常渲染图片，
 // 模型如需重看可再次 read_file（新消息在尾部，会重新携带图片）。
+// errAck 行（AI tool call 参数错误，见 engine.checkToolArgs）：整条不发给模型，
+// 关联 tool 回执按 id 一并跳过（否则会留下无 tool_call 配对的孤儿 tool 消息，上游拒收）；
+// 改以一条 user 错误提示替代，让模型看到原因后重新生成工具调用 ——
+// 坏样本留在上下文里只会被模型继续模仿，反复报同一个错。
 function buildMessages(session, language) {
   const messages = [{ role: 'system', content: systemPromptText(language) }];
   const history = session.history;
+  // tool 回执按 tool_call_id 索引：给 errAck 行拼错误提示时取执行时挡下的原因
+  const toolRowById = new Map();
+  for (const row of history) if (row.role === 'tool' && row.tool_call_id) toolRowById.set(row.tool_call_id, row);
   let lastAssistant = -1;
   for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i].role === 'assistant') { lastAssistant = i; break; }
+    // errAck 不发模型，不算「模型已回复」：它之前的图不算被消费，下次仍携带
+    if (history[i].role === 'assistant' && history[i].type !== 'errAck') { lastAssistant = i; break; }
   }
+  const dropToolCallIds = new Set();
   history.forEach((row, i) => {
     if (row.role === 'assistant') {
+      if (row.type === 'errAck') {
+        let calls = [];
+        try { calls = JSON.parse(row.tool_calls || '[]') || []; } catch (_) {}
+        const errs = [];
+        for (const c of calls) {
+          if (!c || !c.id) continue;
+          dropToolCallIds.add(c.id);
+          const tr = toolRowById.get(c.id);
+          const txt = tr && typeof tr.content === 'string' ? tr.content : '';
+          if (txt.startsWith('Error:')) errs.push(txt);
+        }
+        messages.push({
+          role: 'user',
+          content: '[系统] 你上一轮的 tool call 参数有误，未执行并已从对话历史中移除。错误详情：\n' +
+            (errs.join('\n') || 'Error: ToolCall Invalid Params') +
+            '\n请严格按工具参数定义重新生成正确的调用。',
+        });
+        return;
+      }
       const m = { role: 'assistant', content: row.content || '' };
       if (row.tool_calls) m.tool_calls = JSON.parse(row.tool_calls);
       if (!m.content) delete m.content;
       messages.push(m);
       return;
     }
+    // errAck 轮的 tool 回执：随该轮一起丢弃，避免无主 tool 消息
+    if (row.role === 'tool' && dropToolCallIds.has(row.tool_call_id)) return;
     // tool/user 行：含图哨兵 JSON 还原为内容块；已消费的图剥掉 base64，只留文字描述 + 标记
     const blocks = decodeBlocks(row.content);
     let content = row.content || '';

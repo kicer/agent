@@ -75,10 +75,10 @@ function loadHistory(sessionId) {
 
 function saveMessage(sessionId, msg) {
   const info = db.prepare(
-    'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, created_at) VALUES (?,?,?,?,?,?,?,?)'
+    'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, type, created_at) VALUES (?,?,?,?,?,?,?,?,?)'
   ).run(sessionId, msg.role, msg.content || null, msg.reasoning || null,
     msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
-    msg.tool_call_id || null, msg.name || null, now());
+    msg.tool_call_id || null, msg.name || null, msg.type || null, now());
   // 关键动作日志：AI 每轮回复落库（含纯工具调用轮）
   if (msg.role === 'assistant') {
     const calls = msg.tool_calls || [];
@@ -466,18 +466,30 @@ async function runLoopInner(sessionId, run) {
 
     // 保存 assistant 消息
     const hasTools = result.tool_calls && result.tool_calls.length > 0;
+    // 参数校验预扫描：任一 tool call 结构性错误（JSON 非法/缺必填）→ 整条标 errAck。
+    // 该行仍入库（UI 可见可排查），但 buildMessages 发请求时连同关联 tool 回执整轮跳过，
+    // 改以一条 user 错误提示替代，防止模型模仿自己的坏样本反复出错死循环。
+    let isErrAck = false;
+    if (hasTools) {
+      for (const tc of result.tool_calls) {
+        if (checkToolArgs(tools, tc.name, tc.arguments).error) { isErrAck = true; break; }
+      }
+    }
     const msgRow = {
       role: 'assistant',
+      type: isErrAck ? 'errAck' : null,
       content: result.content || '',
       reasoning: result.reasoning || null,
       tool_calls: hasTools ? result.tool_calls.map(tc => ({
-        id: tc.id, type: 'function',
+        // 缺 id 时补全，保证与 tool 回执落库用的 id 一致（buildMessages 按 id 配对丢弃）
+        id: tc.id || ('call_' + Math.random().toString(36).slice(2, 10)), type: 'function',
         function: { name: tc.name, arguments: tc.arguments },
       })) : null,
     };
     const assistantId = saveMessage(sessionId, msgRow);
+    if (isErrAck) log.info('[msg] ' + sessionId + ' 本轮 tool call 参数错误，assistant 标记 errAck（不再进入模型上下文）');
     recordModelUsage(sessionId, session.model_id, result.usage);
-    bus.emit(sessionId, 'assistant_message', { id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning, tool_calls: msgRow.tool_calls });
+    bus.emit(sessionId, 'assistant_message', { id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning, tool_calls: msgRow.tool_calls, type: msgRow.type });
 
     if (!hasTools) {
       // 回合结束；但若期间用户又发了新消息（live 投递），继续下一轮而不是收尾
@@ -489,26 +501,21 @@ async function runLoopInner(sessionId, run) {
     const vision = modelVision(session);
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
-      const id = tc.id || ('call_' + Math.random().toString(36).slice(2, 10));
+      const id = tc.id;
       log.debug('[tool] ' + sessionId + ' 调用 ' + tc.function.name + ' 参数: ' + String(tc.function.arguments || ''));
       bus.emit(sessionId, 'tool_call', { id, name: tc.function.name, arguments: tc.function.arguments });
       let output;
       let isError = false;
-      const args = safeParse(tc.function.arguments) || {};
-      // 必填参数校验：解包后仍缺参就直接挡下，绝不把 undefined 交给 shell 执行
-      const def = tools.find(t => t && t.function && t.function.name === tc.function.name);
-      const required = def && def.function.parameters && def.function.parameters.required;
-      const missing = required && required.length
-        ? required.filter(k => args[k] === undefined || args[k] === '') : [];
-      if (missing.length) {
+      // 参数校验：解包后仍非法（JSON 不合法/缺必填）就直接挡下，绝不把 undefined 交给 shell 执行
+      const chk = checkToolArgs(tools, tc.function.name, tc.function.arguments);
+      if (chk.error) {
         // 把正确形状告诉模型，替它纠正包装习惯
-        output = 'Error: 缺少必填参数：' + missing.join('、')
-          + '。参数需直接按工具 schema 在顶层传递，例如 {"' + missing[0] + '": "..."}，不要再包 arguments/function 外层。';
+        output = chk.error;
         isError = true;
       } else {
         try {
           output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db, vision },
-            tc.function.name, args);
+            tc.function.name, chk.args);
         } catch (err) {
           output = 'Error: ' + (err && err.message || String(err));
           isError = true;
@@ -618,8 +625,25 @@ function hasUserSince(sessionId, sinceId) {
   return r.c > 0;
 }
 
-function safeParse(s) {
-  try { return JSON.parse(s || '{}'); } catch (_) { return {}; }
+// 校验工具调用参数，返回 { args, error }。error 非空 = 结构性错误（JSON 非法/缺必填）：
+// 执行挡下，且整条 assistant 标 errAck，发请求时整轮移出模型上下文（见 llm.buildMessages），
+// 防止模型模仿自己的坏样本反复出错死循环。args 为空串视为空对象（无参工具正常执行）。
+function checkToolArgs(tools, name, raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  let args;
+  if (!s) args = {};
+  else {
+    try { args = JSON.parse(s); }
+    catch (_) {
+      return { args: null, error: 'Error: ToolCall Args Invalid：arguments 不是合法 JSON，请重新生成该调用。原文：' + s.slice(0, 300) };
+    }
+  }
+  const def = (tools || []).find(t => t && t.function && t.function.name === name);
+  const required = def && def.function.parameters && def.function.parameters.required;
+  const missing = required && required.length
+    ? required.filter(k => args[k] === undefined || args[k] === '') : [];
+  if (missing.length) return { args: null, error: 'Error: ToolCall Missing Params：' + missing.join('、') };
+  return { args, error: null };
 }
 
 function toolSchemaOf(tools, name) {

@@ -41,6 +41,9 @@ function initDb(dbPath) {
   `);
   // 升级老库：早期表不带 reasoning 列，补上（重入安全；不在上面 db.exec 模板串里，免得被当作 SQL 解析）
   try { db.exec('ALTER TABLE messages ADD COLUMN reasoning TEXT'); } catch (_) { /* 已存在 */ }
+  // 升级老库：type 标记特殊消息行。目前唯一取值 'errAck'——AI 的 tool call 参数错误
+  // （JSON 非法/缺必填）整条标记；仍入库供 UI 展示，但 buildMessages 发请求时跳过（见 llm.js）
+  try { db.exec('ALTER TABLE messages ADD COLUMN type TEXT'); } catch (_) { /* 已存在 */ }
   db.exec(`
 
     CREATE TABLE IF NOT EXISTS files (
