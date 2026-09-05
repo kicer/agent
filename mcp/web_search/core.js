@@ -13,7 +13,7 @@ export const PARALLEL_MCP_URL = 'https://search.parallel.ai/mcp';
 /** Exa 免费 MCP 端点（匿名可用；EXA_API_KEY 可提升限额）。 */
 export const EXA_MCP_URL = 'https://mcp.exa.ai/mcp';
 
-const USER_AGENT = 'web-search-free/1.0.0';
+const USER_AGENT = 'web_search/1.0.0';
 /** 单次上游搜索请求的超时，避免远端挂起拖死 MCP 请求。 */
 const REQUEST_TIMEOUT_MS = Number(process.env.SEARCH_TIMEOUT_MS ?? 30_000);
 

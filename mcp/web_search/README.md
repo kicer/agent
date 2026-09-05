@@ -1,4 +1,4 @@
-# web-search-free
+# web_search
 
 免费网页搜索 MCP server 的本地重构版（上游开源实现：[@sheep233_/dsh-web-search-free](https://github.com/sheep-programmer/dsh-web-search-free)，MIT）。
 
@@ -35,8 +35,8 @@ MCP 端点：
 
 ## Docker
 
-`docker-compose.yml` 中的 `mcp-web-search-free` 服务直接构建本目录，Dockerfile 已改为拷贝源码启动（不再有 `npm install -g`）。
+`docker-compose.yml` 中的 `mcp_web_search` 服务直接构建本目录，Dockerfile 已改为拷贝源码启动（不再有 `npm install -g`）。
 
 ```bash
-docker compose build mcp-web-search-free && docker compose up -d mcp-web-search-free
+docker compose build mcp_web_search && docker compose up -d mcp_web_search
 ```

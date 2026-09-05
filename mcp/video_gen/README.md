@@ -19,18 +19,18 @@
 
 ```bash
 cd /root/workspace/tools/mcp
-docker compose up -d --build mcp-video-gen
+docker compose up -d --build mcp_video_gen
 ```
 
-服务容器名 `mcp-video-gen`，通过反代暴露为 `https://video-gen.ai.foresh.com/mcp`。
+服务容器名 `mcp_video_gen`，通过反代暴露为 `https://video-gen.ai.foresh.com/mcp`。
 
 直接连容器调试：
 
 ```bash
-docker exec -it mcp-video-gen sh
+docker exec -it mcp_video_gen sh
 # 或本机
 curl http://localhost:3000/health
-# {"status":"ok","service":"video-gen","sessions":0}
+# {"status":"ok","service":"video_gen","sessions":0}
 ```
 
 ### MCP 客户端配置
@@ -42,7 +42,7 @@ curl http://localhost:3000/health
 // Cursor:       ~/.cursor/mcp.json
 {
   "mcpServers": {
-    "video-gen": {
+    "video_gen": {
       "url": "https://video-gen.ai.foresh.com/mcp",
       "headers": {
         "Authorization": "Bearer <your-zhipu-api-key>"
@@ -60,14 +60,14 @@ curl http://localhost:3000/health
 
 | 工具 | 作用 | 同步/异步 |
 |---|---|---|
-| `generate_video` | 提交一个视频生成任务，立刻返回 `task_id` | 同步（仅提交） |
+| `video_gen` | 提交一个视频生成任务，立刻返回 `task_id` | 同步（仅提交） |
 | `query_video` | 用 `task_id` 拉一次当前结果 | 同步（单次查询，不轮询） |
 
 ---
 
 ## 上传图片：POST /upload
 
-供 AI 临时上传本地图片、拿到 URL 后喂给 `generate_video.image_url`。**不走 MCP、不走鉴权**，仅依赖内网隔离（`my-app-network`）+ 反代层控制访问。
+供 AI 临时上传本地图片、拿到 URL 后喂给 `video_gen.image_url`。**不走 MCP、不走鉴权**，仅依赖内网隔离（`my-app-network`）+ 反代层控制访问。
 
 ### 配置
 
@@ -86,7 +86,7 @@ environment:
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `PUBLIC_BASE_URL` | `http://localhost:3000` | 返回 `url` 字段里拼接的对外 base URL |
-| `UPLOAD_DIR` | `/tmp/video-gen-uploads` | 磁盘存储目录（容器内临时） |
+| `UPLOAD_DIR` | `/tmp/video_gen_uploads` | 磁盘存储目录（容器内临时） |
 | `UPLOAD_TTL_HOURS` | `24` | 超过该小时数的文件会在启动时和每小时被自动删除 |
 
 ### 接口
@@ -104,7 +104,7 @@ file: <二进制图片文件>
 |---|---|
 | 最大体积 | 8MB（智谱 `image_url` 上限5MB，留余量） |
 | 白名单 content-type | `image/png`、`image/jpeg`、`image/jpg` |
-| 存储位置 | 容器内 `/tmp/video-gen-uploads/`（`UPLOAD_DIR` 可覆盖） |
+| 存储位置 | 容器内 `/tmp/video_gen_uploads/`（`UPLOAD_DIR` 可覆盖） |
 | 持久化 | **不持久化**。容器重启即丢，请尽快消费 URL |
 | 过期清理 | 启动时 + 每小时一次删除 `>UPLOAD_TTL_HOURS` 的文件，默认 24h |
 | 鉴权 | 无 |
@@ -121,11 +121,11 @@ file: <二进制图片文件>
 }
 ```
 
-返回的 `url` 可直接作为 `generate_video.image_url` 使用。
+返回的 `url` 可直接作为 `video_gen.image_url` 使用。
 
 ### 反代路由
 
-反代需要额外暴露两条路由到 `mcp-video-gen:3000`：
+反代需要额外暴露两条路由到 `mcp_video_gen:3000`：
 
 - `POST /upload` → `/upload`
 - `GET  /uploads/*` → `/uploads/*`
@@ -137,13 +137,13 @@ curl -F "file=@/tmp/cat.png" https://video-gen.ai.foresh.com/upload
 # {"url":"https://video-gen.ai.foresh.com/uploads/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.png", ...}
 
 # 然后把 url 喂给 MCP：
-# tool: generate_video
+# tool: video_gen
 # args: { image_url: "https://video-gen.ai.foresh.com/uploads/xxx.png", prompt: "..." }
 ```
 
 ---
 
-## 工具：generate_video
+## 工具：video_gen
 
 提交一个视频生成任务，支持**文生视频**和**图生视频**。`prompt` 为**必填**；图生视频另传 `image_url`（两者都传也行，此时 prompt 会附加为运动/动作描述）。
 
@@ -191,7 +191,7 @@ curl -F "file=@/tmp/cat.png" https://video-gen.ai.foresh.com/upload
 
 | 名称 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `task_id` | string | ✅ | `generate_video` 返回的 `id` |
+| `task_id` | string | ✅ | `video_gen` 返回的 `id` |
 
 ### 返回
 
@@ -235,7 +235,7 @@ Token 仅在每次 tool call 时从 header 读取，不写入任何存储、不�
 
 ```
 1. 如果手头是【本地文件】：先调 POST {PUBLIC_BASE_URL}/upload 拿到 url，再进第 2 步
-2. 调用 generate_video({ prompt, image_url?, size?, with_audio? })
+2. 调用 video_gen({ prompt, image_url?, size?, with_audio? })
 3. 拿到 task_id → 等待若干秒（建议 2~5 秒）
 4. 调用 query_video({ task_id })
    - 若 PROCESSING → 等一会再调
@@ -243,7 +243,7 @@ Token 仅在每次 tool call 时从 header 读取，不写入任何存储、不�
    - 若 FAIL → 展示错误信息，结束
 ```
 
-> `generate_video` 的 tool description 里已经嵌入了完整 curl 上传命令，AI 一看就知道怎么传本地图片。
+> `video_gen` 的 tool description 里已经嵌入了完整 curl 上传命令，AI 一看就知道怎么传本地图片。
 
 ---
 
@@ -300,7 +300,7 @@ curl -s -X POST http://localhost:3000/mcp \
     "id": 3,
     "method": "tools/call",
     "params": {
-      "name": "generate_video",
+      "name": "video_gen",
       "arguments": {
         "prompt": "A cat is playing with a ball.",
         "size": "1920x1080",
@@ -344,7 +344,7 @@ curl -o cat.png https://video-gen.ai.foresh.com/uploads/xxx.png
 ## 架构与文件
 
 ```
-video-gen/
+video_gen/
 ├── Dockerfile          # node:22-slim，安装依赖后启动 MCP HTTP server
 ├── .dockerignore       # 排除 node_modules
 package.json        # @modelcontextprotocol/sdk + express + multer
@@ -360,7 +360,7 @@ package.json        # @modelcontextprotocol/sdk + express + multer
 - **AI 可见 vs AI 不可见**：
   - AI 只看到 `prompt / image_url / size / with_audio`
     - `model / quality / fps / watermark_enabled` 全部由 HTTP header 注入，避免 AI 误传或被诱导调高价档
-- **异步语义暴露给 AI**：服务端不做轮询，`generate_video` 只提交、`query_video` 只查一次。AI 自主决定节奏
+- **异步语义暴露给 AI**：服务端不做轮询，`video_gen` 只提交、`query_video` 只查一次。AI 自主决定节奏
 - **服务端自动 `request_id`**：每次提交服务端生成一个 UUID 作为智谱 `request_id`，便于日志关联，但不暴露给 AI
 - **上传接口与 MCP 走同一进程**：额外 `POST /upload` + `GET /uploads/*` 不走 MCP、不鉴权，靠内网隔离；`PUBLIC_BASE_URL` 环境变量控制返回 URL 的拼接 host，AI 看到的 tool description 启动时拼接进真实地址，避免 AI 自由发挥
 - **上传过期清理**：启动时 + 每小时一次删除 `mtime > UPLOAD_TTL_HOURS` 的文件，避免磁盘被不消费的上传堆满；清理 timer 用 `unref()` 不阻塞进程退出
@@ -372,7 +372,7 @@ package.json        # @modelcontextprotocol/sdk + express + multer
 const DEFAULT_MODEL = "cogvideox-flash";
 ```
 
-修改后 `docker compose up -d --build mcp-video-gen` 即可生效。
+修改后 `docker compose up -d --build mcp_video_gen` 即可生效。
 
 ---
 
@@ -388,7 +388,7 @@ A: 智谱签发 URL 默认 24h 左右。需要在收到后及时转存到自己�
 A: 这些是技术档位，与成本/单价挂钩。让 AI 自主挑 `quality=quality + fps=60` 会爆账号预算。改成 header 由部署方注入更可控。
 
 **Q: 能否限制 `size` 白名单？**
-A: 当前透传给智谱 API，不做强制校验。如需加白名单，修改 `src/mcp-server.js` 中 `generate_video` 的 `size` schema 即可。
+A: 当前透传给智谱 API，不做强制校验。如需加白名单，修改 `src/mcp-server.js` 中 `video_gen` 的 `size` schema 即可。
 
 **Q: 报错 `Missing valid Mcp-Session-Id`？**
 A: 漏发了 `Mcp-Session-Id` header，或调 `tools/call` 前没先 `initialize`。
@@ -400,7 +400,7 @@ A: 可以。`/async-result/{id}` 是幂等的读接口，并发无副作用。
 A: 不需要。Model header 在每次 `tools/call` 都从当前请求读取。
 
 **Q: 上传的图片多久过期？**
-A: 容器重启即丢（本服务不持久化）。请在上传后立刻把返回的 `url` 喂给 `generate_video.image_url`。URL 本身只有可访问性，不受单独 TTL 限制；但容器一旦重启，该文件物理消失，URL 变 404。
+A: 容器重启即丢（本服务不持久化）。请在上传后立刻把返回的 `url` 喂给 `video_gen.image_url`。URL 本身只有可访问性，不受单独 TTL 限制；但容器一旦重启，该文件物理消失，URL 变 404。
 
 **Q: `PUBLIC_BASE_URL` 不设会怎样？**
 A: fallback 到 `http://localhost:3000`，AI 拿到的 curl 是 `http://localhost:3000/upload`。外网访问不到。本机调试无所谓，生产请显式设置。

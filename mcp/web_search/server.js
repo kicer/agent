@@ -6,7 +6,7 @@
  *
  * ## 双传输
  * - **stdio**（默认）：`node server.js`
- *   - `claude mcp add web-search -- node <路径>/server.js`
+ *   - `claude mcp add web_search -- node <路径>/server.js`
  * - **HTTP/SSE**（监听端口）：`node server.js --http --port 3000 --host 0.0.0.0`
  *   - 兼容 Streamable HTTP（`POST /`）与老式 SSE（`GET /sse` + `POST /messages`）
  *   - `GET /` 或 `GET /health` 返回服务信息，可做健康检查
@@ -108,7 +108,7 @@ function runHttp(host, port) {
   });
 
   server.listen(port, host, () => {
-    process.stdout.write(`[web-search-mcp] HTTP/SSE listening on http://${host}:${port} (MCP: POST /, GET /sse + POST /messages)\n`);
+    process.stdout.write(`[web_search] HTTP/SSE listening on http://${host}:${port} (MCP: POST /, GET /sse + POST /messages)\n`);
   });
 }
 

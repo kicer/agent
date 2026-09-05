@@ -100,7 +100,7 @@ function extractUrls(data) {
 function buildServer() {
   const server = new McpServer(
     {
-      name: "image-gen",
+      name: "image_gen",
       version: "1.0.0",
     },
     {
@@ -111,7 +111,7 @@ function buildServer() {
   );
 
   server.tool(
-    "image-gen",
+    "image_gen",
     "Generate an image from a prompt and return the image URL. Optionally specify size.",
     {
       prompt: z
@@ -207,7 +207,7 @@ async function startHttp({ port, host }) {
   const sessions = new Map();
 
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", service: "image-gen", sessions: sessions.size });
+    res.json({ status: "ok", service: "image_gen", sessions: sessions.size });
   });
 
   async function handleSessionRequest(req, res) {
@@ -270,7 +270,7 @@ async function startHttp({ port, host }) {
 
   app.listen(port, host, () => {
     console.log(
-      `[image-gen] MCP HTTP server listening on http://${host}:${port}/mcp`
+      `[image_gen] MCP HTTP server listening on http://${host}:${port}/mcp`
     );
   });
 }
@@ -283,18 +283,18 @@ async function startStdio() {
   );
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[image-gen] MCP stdio server started");
+  console.error("[image_gen] MCP stdio server started");
 }
 
 const args = parseArgs(process.argv.slice(2));
 if (args.http) {
   startHttp({ port: args.port, host: args.host }).catch((e) => {
-    console.error("[image-gen] failed to start http server:", e);
+    console.error("[image_gen] failed to start http server:", e);
     process.exit(1);
   });
 } else {
   startStdio().catch((e) => {
-    console.error("[image-gen] failed to start stdio server:", e);
+    console.error("[image_gen] failed to start stdio server:", e);
     process.exit(1);
   });
 }

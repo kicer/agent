@@ -18,18 +18,18 @@
 
 ```bash
 cd /root/workspace/tools/mcp
-docker compose up -d --build mcp-image-gen
+docker compose up -d --build mcp_image_gen
 ```
 
-服务容器名 `mcp-image-gen`，通过反代暴露为 `https://image-gen.ai.foresh.com/mcp`。
+服务容器名 `mcp_image_gen`，通过反代暴露为 `https://image-gen.ai.foresh.com/mcp`。
 
 直接连容器调试：
 
 ```bash
-docker exec -it mcp-image-gen sh
+docker exec -it mcp_image_gen sh
 # 或本机
 curl http://localhost:3000/health
-# {"status":"ok","service":"image-gen","sessions":0}
+# {"status":"ok","service":"image_gen","sessions":0}
 ```
 
 ### MCP 客户端配置
@@ -41,7 +41,7 @@ curl http://localhost:3000/health
 // Cursor:       ~/.cursor/mcp.json
 {
   "mcpServers": {
-    "image-gen": {
+    "image_gen": {
       "url": "https://image-gen.ai.foresh.com/mcp",
       "headers": {
         "Authorization": "Bearer <your-zhipu-api-key>"
@@ -59,7 +59,7 @@ curl http://localhost:3000/health
 
 ---
 
-## 工具：generate_image
+## 工具：image_gen
 
 调用智谱图片生成接口，返回图片 URL。
 
@@ -169,7 +169,7 @@ curl -s -X POST http://localhost:3000/mcp \
   -H "Mcp-Session-Id: $SESSION" \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
 
-# 4. 调 generate_image
+# 4. 调 image_gen
 curl -s -X POST http://localhost:3000/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -180,7 +180,7 @@ curl -s -X POST http://localhost:3000/mcp \
     "id": 3,
     "method": "tools/call",
     "params": {
-      "name": "generate_image",
+      "name": "image_gen",
       "arguments": {
         "prompt": "一只可爱的小猫咪，坐在阳光明媚的窗台上，背景是蓝天白云",
         "size": "1280x1280"
@@ -196,7 +196,7 @@ curl -s -X POST http://localhost:3000/mcp \
 ## 架构与文件
 
 ```
-image-gen/
+image_gen/
 ├── Dockerfile          # node:22-slim，安装依赖后启动 MCP HTTP server
 ├── .dockerignore       # 排除 node_modules
 ├── package.json        # @modelcontextprotocol/sdk + express + zod
@@ -219,7 +219,7 @@ image-gen/
 const DEFAULT_MODEL = "CogView-3-Flash";
 ```
 
-修改后 `docker compose up -d --build mcp-image-gen` 即可生效。
+修改后 `docker compose up -d --build mcp_image_gen` 即可生效。
 
 ---
 
@@ -244,4 +244,4 @@ A: 漏发了 `Mcp-Session-Id` header，或调 `tools/call` 前没先 `initialize
 A: 智谱签发 URL 默认 24h 左右，详见响应里的 `Expires` 参数。需要长期使用请自行转存到 OSS/S3。
 
 **Q: 能否限制 `size` 白名单？**
-A: 当前透传给智谱 API，不做强制校验。如需加白名单，修改 `src/mcp-server.js` 中 `generate_image` 的 `size` schema 即可。
+A: 当前透传给智谱 API，不做强制校验。如需加白名单，修改 `src/mcp-server.js` 中 `image_gen` 的 `size` schema 即可。

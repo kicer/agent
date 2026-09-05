@@ -7,7 +7,7 @@
  */
 import { parallelSearch, exaSearch } from './core.js';
 
-export const SERVER_NAME = 'dsh-web-search-free';
+export const SERVER_NAME = 'web_search';
 export const VERSION = '1.0.0';
 const DEFAULT_PROTOCOL = '2025-03-26';
 

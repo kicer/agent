@@ -32,7 +32,7 @@ function resolvePublicBaseUrl({ port, host }) {
 }
 
 // 上传文件存储目录：容器内临时目录，服务重启即丢（你明确要求）
-const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/video-gen-uploads";
+const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/video_gen_uploads";
 const UPLOAD_PATH_PREFIX = "/uploads"; // 对外的 URL 路径前缀
 const UPLOAD_MAX_BYTES = 8 * 1024 * 1024; // 8MB（智谱 image_url 上限 5MB，留余量）
 const UPLOAD_ALLOWED_MIME = new Set([
@@ -56,7 +56,7 @@ async function cleanupUploads({ now = Date.now(), dir = UPLOAD_DIR } = {}) {
     entries = await fs.promises.readdir(dir);
   } catch (e) {
     if (e && e.code === "ENOENT") return { kept: 0, removed: 0, errors: 0 };
-    console.error(`[video-gen] cleanup: readdir failed: ${e.message}`);
+    console.error(`[video_gen] cleanup: readdir failed: ${e.message}`);
     return { kept: 0, removed: 0, errors: 1 };
   }
 
@@ -78,7 +78,7 @@ async function cleanupUploads({ now = Date.now(), dir = UPLOAD_DIR } = {}) {
       } catch (e) {
         if (e && e.code === "ENOENT") return;
         errors++;
-        console.error(`[video-gen] cleanup: ${name}: ${e.message}`);
+        console.error(`[video_gen] cleanup: ${name}: ${e.message}`);
       }
     })
   );
@@ -233,7 +233,7 @@ async function queryAsyncResult({ token, id }) {
 function buildServer({ publicBaseUrl }) {
   const server = new McpServer(
     {
-      name: "video-gen",
+      name: "video_gen",
       version: "1.0.0",
     },
     {
@@ -245,9 +245,9 @@ function buildServer({ publicBaseUrl }) {
 
   const uploadUrl = `${publicBaseUrl}/upload`;
 
-  // ---------- 工具 1：video-gen ----------
+  // ---------- 工具 1：video_gen ----------
   server.tool(
-    "video-gen",
+    "video_gen",
     `Submit a video generation task (text-to-video or image-to-video).
 Returns the task_id immediately; poll the result later with query_video.
 prompt is required. Add image_url for image-to-video.
@@ -364,7 +364,7 @@ Uploaded files live in container temp storage and are discarded on restart — d
       task_id: z
         .string()
         .min(1)
-        .describe("The task id returned by video-gen."),
+        .describe("The task id returned by video_gen."),
     },
     async (args, extra) => {
       const headers = extra?.requestInfo?.headers;
@@ -451,7 +451,7 @@ async function startHttp({ port, host }) {
   app.use(express.json({ limit: "2mb" }));
 
   const publicBaseUrl = resolvePublicBaseUrl({ port, host });
-  console.log(`[video-gen] PUBLIC_BASE_URL = ${publicBaseUrl}`);
+  console.log(`[video_gen] PUBLIC_BASE_URL = ${publicBaseUrl}`);
 
   // ===== /upload：接收图片，返回 URL（不走 MCP）=====
     // 磁盘存储：保证 UPLOAD_DIR 存在（容器内临时，重启即丢）
@@ -461,20 +461,20 @@ async function startHttp({ port, host }) {
     cleanupUploads()
       .then((r) =>
         console.log(
-          `[video-gen] startup cleanup: kept=${r.kept} removed=${r.removed} errors=${r.errors} ttl=${UPLOAD_TTL_HOURS}h`
+          `[video_gen] startup cleanup: kept=${r.kept} removed=${r.removed} errors=${r.errors} ttl=${UPLOAD_TTL_HOURS}h`
         )
       )
-      .catch((e) => console.error(`[video-gen] startup cleanup failed: ${e.message}`));
+      .catch((e) => console.error(`[video_gen] startup cleanup failed: ${e.message}`));
     const cleanupTimer = setInterval(() => {
       cleanupUploads()
         .then((r) => {
           if (r.removed > 0 || r.errors > 0) {
             console.log(
-              `[video-gen] periodic cleanup: kept=${r.kept} removed=${r.removed} errors=${r.errors}`
+              `[video_gen] periodic cleanup: kept=${r.kept} removed=${r.removed} errors=${r.errors}`
             );
           }
         })
-        .catch((e) => console.error(`[video-gen] periodic cleanup failed: ${e.message}`));
+        .catch((e) => console.error(`[video_gen] periodic cleanup failed: ${e.message}`));
     }, UPLOAD_CLEANUP_INTERVAL_MS);
     cleanupTimer.unref(); // 不阻止进程退出
 
@@ -530,7 +530,7 @@ async function startHttp({ port, host }) {
   const sessions = new Map();
 
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", service: "video-gen", sessions: sessions.size });
+    res.json({ status: "ok", service: "video_gen", sessions: sessions.size });
   });
 
   async function handleSessionRequest(req, res) {
@@ -593,7 +593,7 @@ async function startHttp({ port, host }) {
 
   app.listen(port, host, () => {
     console.log(
-      `[video-gen] MCP HTTP server listening on http://${host}:${port}/mcp`
+      `[video_gen] MCP HTTP server listening on http://${host}:${port}/mcp`
     );
   });
 }
@@ -606,18 +606,18 @@ async function startStdio() {
   );
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[video-gen] MCP stdio server started");
+  console.error("[video_gen] MCP stdio server started");
 }
 
 const args = parseArgs(process.argv.slice(2));
 if (args.http) {
   startHttp({ port: args.port, host: args.host }).catch((e) => {
-    console.error("[video-gen] failed to start http server:", e);
+    console.error("[video_gen] failed to start http server:", e);
     process.exit(1);
   });
 } else {
   startStdio().catch((e) => {
-    console.error("[video-gen] failed to start stdio server:", e);
+    console.error("[video_gen] failed to start stdio server:", e);
     process.exit(1);
   });
 }

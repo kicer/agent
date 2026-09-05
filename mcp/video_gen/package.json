@@ -1,5 +1,5 @@
 {
-  "name": "mcp-video-gen",
+  "name": "mcp_video_gen",
   "version": "1.0.0",
   "description": "MCP server for video generation via Zhipu BigModel cogvideox-flash (text-to-video / image-to-video, async)",
   "type": "module",

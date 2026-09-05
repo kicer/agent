@@ -1,5 +1,5 @@
 {
-  "name": "mcp-image-gen",
+  "name": "mcp_image_gen",
   "version": "1.0.0",
   "description": "MCP server for image generation via Zhipu BigModel CogView-3-Flash",
   "type": "module",

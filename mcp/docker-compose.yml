@@ -1,7 +1,7 @@
 services:
-  mcp-web-search-free:
-    build: ./web-search-free
-    container_name: mcp-web-search-free
+  mcp_web_search:
+    build: ./web_search
+    container_name: mcp_web_search
     restart: unless-stopped
     expose:
       - "3000"
@@ -12,9 +12,9 @@ services:
     networks:
       - my-app-network
 
-  mcp-image-gen:
-    build: ./image-gen
-    container_name: mcp-image-gen
+  mcp_image_gen:
+    build: ./image_gen
+    container_name: mcp_image_gen
     restart: unless-stopped
     expose:
       - "3000"
@@ -25,9 +25,9 @@ services:
     networks:
       - my-app-network
 
-  mcp-video-gen:
-      build: ./video-gen
-      container_name: mcp-video-gen
+  mcp_video_gen:
+      build: ./video_gen
+      container_name: mcp_video_gen
       restart: unless-stopped
       expose:
         - "3000"
