@@ -540,11 +540,12 @@ async function runLoopInner(sessionId, run) {
             { type: 'image_url', image_url: { url: imageDataUrl } },
           ])
         : outText;
+      // 先落库再广播：回执带上消息行 id（msg_id），前端工具卡据此挂「删除本条」按钮
+      const toolMsgId = saveMessage(sessionId, { role: 'tool', tool_call_id: id, name: tc.function.name, content: toolContent });
       bus.emit(sessionId, 'tool_result', {
         tool_call_id: id, name: tc.function.name, content: outText.slice(0, 20000),
-        is_error: isError, image_url: imageDataUrl || undefined,
+        is_error: isError, image_url: imageDataUrl || undefined, msg_id: toolMsgId,
       });
-      saveMessage(sessionId, { role: 'tool', tool_call_id: id, name: tc.function.name, content: toolContent });
     }
     iter++;
   }
@@ -900,16 +901,16 @@ function clearSessionMessages(sessionId) {
   return { ok: true };
 }
 
-// 删除单条消息：消息行直接从库里消失，下次模型请求的历史里就没有它了（buildMessages 只看库）。
+// 删除单条消息（含工具/任务消息）：消息行直接从库里消失，下次模型请求的历史里就没有它了（buildMessages 只看库）。
 // assistant 带 tool_calls 时连带删掉该轮的 tool 回执：只删 assistant 会留下无 tool_call 配对的
-// 孤儿 tool 行，上游会拒收整个请求。tool 回执不允许单独删：删了它其父 assistant 的
-// tool_calls 就没有回执，同样破坏协议；要删请删对应的 assistant 消息整轮。
+// 孤儿 tool 行，上游会拒收整个请求。单删 tool 回执则反向配对：把它在父 assistant 的
+// tool_calls 里同步摘除（见 deleteToolMessage），保证「调用↔回执」始终成对。
 function deleteMessage(sessionId, messageId) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   const row = db.prepare('SELECT * FROM messages WHERE id = ? AND session_id = ?').get(messageId, sessionId);
   if (!row) throw Object.assign(new Error('消息不存在'), { status_code: 404 });
-  if (row.role === 'tool') throw Object.assign(new Error('工具回执不能单独删除，请删它对应的 AI 消息'), { status_code: 400 });
+  if (row.role === 'tool') return deleteToolMessage(sessionId, row);
   let removed = 0;
   if (row.tool_calls) {
     let calls = [];
@@ -922,6 +923,34 @@ function deleteMessage(sessionId, messageId) {
   }
   db.prepare('DELETE FROM messages WHERE id = ?').run(messageId);
   return { ok: true, id: messageId, removed: removed + 1 };
+}
+
+// 删工具回执（任务执行卡片）：同步把对应 tool_call 从父 assistant 的 tool_calls 里摘掉，
+// 避免留下「有调用无结果」被严格上游拒收。父回合若是纯工具调用轮（无文本）且已无
+// 其余调用，则整行一起删（空气泡没有意义）；有文本则保留为普通文本回复。
+// tool_call_id 全局唯一，LIKE 只是初筛，命中后按 JSON 精确确认。
+function deleteToolMessage(sessionId, row) {
+  db.prepare('DELETE FROM messages WHERE id = ?').run(row.id);
+  let removed = 1;
+  const parents = db.prepare(
+    "SELECT id, content, tool_calls FROM messages WHERE session_id = ? AND role = 'assistant' AND tool_calls LIKE ? ORDER BY id DESC"
+  ).all(sessionId, '%' + row.tool_call_id + '%');
+  for (const p of parents) {
+    let calls = [];
+    try { calls = JSON.parse(p.tool_calls) || []; } catch (_) { continue; }
+    const left = calls.filter(c => c && c.id !== row.tool_call_id);
+    if (left.length === calls.length) continue; // LIKE 误中，不是这条
+    if (!left.length && !(p.content || '').trim()) {
+      db.prepare('DELETE FROM messages WHERE id = ?').run(p.id);
+      removed++;
+    } else if (!left.length) {
+      db.prepare('UPDATE messages SET tool_calls = NULL WHERE id = ?').run(p.id);
+    } else {
+      db.prepare('UPDATE messages SET tool_calls = ? WHERE id = ?').run(JSON.stringify(left), p.id);
+    }
+    break; // id 唯一，命中即止
+  }
+  return { ok: true, id: row.id, removed };
 }
 
 function setModelPool(cfg_, db_, bus_) { cfg = cfg_; db = db_; bus = bus_; }

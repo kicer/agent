@@ -257,7 +257,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .msg-actions .act.copied { color: var(--active); }
 /* 删除本条:悬停变红点明破坏性;禁用态(请求中)半透且不响应 */
 .msg-actions .act-del:hover { color: #c0392b; }
-.msg-actions .act-del[disabled] { opacity: .4; pointer-events: none; }
+.act-del[disabled] { opacity: .4; pointer-events: none; }
+/* 工具卡时间行的删除按钮:同样红示警 */
+.tool-card .tool-time .act-del:hover { color: #c0392b; }
 
 /* ================= 底部输入区 ================= */
 footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--page); }

@@ -287,7 +287,7 @@
    *   POST   /api/sessions/:id/stop | /release                  状态栏「终止/断开」
    *   POST   /api/sessions/:id/bind {model_id}                  状态栏「选择模型」(已完成/已终止会话)
    *   DELETE /api/sessions/:id/messages                         状态栏「清空」(会话内删除已移除,清空由这里承担)
-   *   DELETE /api/sessions/:id/messages/:messageId              删除单条消息(assistant 轮连带其工具回执)
+   *   DELETE /api/sessions/:id/messages/:messageId              删除单条消息/工具卡(删 assistant 连带工具回执;单删工具卡同步摘除父调用)
    *   GET    /api/models                                        状态栏「选择模型」弹窗模型列表
    *
    * 设置区(侧边栏用户区整行点击进入;页面搬自 index.html,未新增任何接口):
@@ -526,6 +526,13 @@
     return '<button class="act act-copy" title="复制工具输出" data-b64="' + b64 + '">' +
       '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>';
   }
+  // 工具卡「删除本条」：删的是 tool 消息行；后端会把它在父 assistant 里的调用同步摘除。
+  // msgId = tool 消息的库行 id（历史渲染传 m.id；实时由 tool_result 事件的 msg_id 携带）
+  function toolDelBtnHtml(msgId) {
+    if (!msgId) return '';
+    return '<button class="act act-del" title="删除本条" data-msg-id="' + msgId + '">' +
+      '<svg class="ic sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>';
+  }
   function renderToolCard(id, name, argsStr, createdAt) {
     const div = document.createElement('div');
     div.className = 'tool-card';
@@ -554,7 +561,7 @@
     }
     return { text: content, imageUrl: null };
   }
-  function fillToolResult(id, content, isError, liveImageUrl) {
+  function fillToolResult(id, content, isError, liveImageUrl, msgId) {
     const card = document.getElementById('tool-' + id);
     if (!card) return;
     if (isError) card.classList.add('error');
@@ -563,10 +570,16 @@
     const pre = card.querySelector('.tool-result');
     if (!pre) return;
     pre.textContent = parsed.text || '(空)';
-    // 结果就绪后在卡片时间行补复制按钮(复制工具输出)
+    // 结果就绪后在卡片时间行补复制/删除按钮(删除走统一的 .act-del 委托)
     const timeRow = card.querySelector('.tool-time');
-    if (timeRow && !timeRow.querySelector('.act-copy')) {
-      timeRow.insertAdjacentHTML('beforeend', toolCopyBtnHtml(parsed.text || ''));
+    if (timeRow) {
+      if (msgId) card.dataset.msgId = msgId; // 记住 tool 消息行 id,多次回填不丢
+      if (!timeRow.querySelector('.act-copy')) {
+        timeRow.insertAdjacentHTML('beforeend', toolCopyBtnHtml(parsed.text || ''));
+      }
+      if (!timeRow.querySelector('.act-del')) {
+        timeRow.insertAdjacentHTML('beforeend', toolDelBtnHtml(card.dataset.msgId));
+      }
     }
     const img = liveImageUrl || parsed.imageUrl;
     if (img && !card.querySelector('.tool-img')) {
@@ -613,7 +626,7 @@
       const node = msgNode(m);
       if (node) box.insertAdjacentHTML('beforeend', node);
       if (m.role === 'assistant') appendToolCardsFromAssistant(m, box);
-      else if (m.role === 'tool' && m.tool_call_id) fillToolResult(m.tool_call_id, m.content, false);
+      else if (m.role === 'tool' && m.tool_call_id) fillToolResult(m.tool_call_id, m.content, false, undefined, m.id);
     }
     if (!(detail.messages || []).length) {
       box.innerHTML = '<div class="drawer-empty">描述你的需求，AI 会和你讨论并直接干活。</div>';
@@ -1136,7 +1149,7 @@
     });
     es.addEventListener('tool_result', ev => {
       const d = JSON.parse(ev.data);
-      fillToolResult(d.tool_call_id, d.content, d.is_error, d.image_url);
+      fillToolResult(d.tool_call_id, d.content, d.is_error, d.image_url, d.msg_id);
       maybeAutoScroll();
     });
     es.addEventListener('done', ev => {
