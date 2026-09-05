@@ -79,7 +79,16 @@ mcp.init(cfg).then(async () => {
       log.info('startup', '  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
       const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url).join(', ');
       log.info('startup', '  mcp_servers=' + (mcpList || '(none)'));
-      log.info('startup', '  auth=' + (auth.enabled ? 'login (' + cfg.auth.users.map(u => u.user).join(', ') + ')' : '(disabled)'));
+      log.info('startup', '  auth=' + (auth.enabled ? 'login (' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
       log.info('startup', '  log_level=' + cfg.log_level);
+      // 启动成功后把当前完整 system prompt（模板 + 技能列表 + 语言指令）原样 dump 一份，方便人工核对；
+      // 容器内即 workspace_root 下的点文件（与 .agent.db 同位置），宿主机对应 <repo>/data/。
+      const promptDump = path.resolve(cfg.workspace_root, '.system-prompt.txt');
+      try {
+        fs.writeFileSync(promptDump, llm.systemPromptText((cfg.agent || {}).language));
+        log.info('startup', '  system_prompt_dump=' + promptDump);
+      } catch (e) {
+        log.warn('startup', 'system prompt dump 失败：' + e.message);
+      }
     });
 });
