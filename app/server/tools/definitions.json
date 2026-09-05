@@ -3,23 +3,20 @@
     "type": "function",
     "function": {
       "name": "copy_path",
-      "description": "Copies a file or directory in the project, and returns confirmation that the copy succeeded.\nDirectory contents will be copied recursively.\n\nThis tool should be used when it's desirable to create a copy of a file or directory without modifying the original.\nIt's much more efficient than doing this by separately reading and then writing the file or directory's contents, so this tool should be preferred over that approach whenever copying is the goal.",
+      "description": "Copies a file or directory to a new location, preserving the original. Directories are copied recursively.\n\nUse this tool when you need to duplicate a file or directory without modifying the original. It is more efficient than reading and writing contents manually. Returns confirmation on success.",
       "parameters": {
-        "required": [
-          "source_path",
-          "destination_path"
-        ],
+        "type": "object",
+        "required": ["source_path", "destination_path"],
         "properties": {
           "source_path": {
-            "description": "The source path of the file or directory to copy.\nIf a directory is specified, its contents will be copied recursively.\n\n<example>\nIf the project has the following files:\n\n- directory1/a/something.txt\n- directory2/a/things.txt\n- directory3/a/other.txt\n\nYou can copy the first file by providing a source_path of \"directory1/a/something.txt\"\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Path of the file or directory to copy, relative to the session working directory. Absolute paths are also accepted."
           },
           "destination_path": {
-            "description": "The destination path where the file or directory should be copied to.\n\n<example>\nTo copy \"directory1/a/something.txt\" to \"directory2/b/copy.txt\", provide a destination_path of \"directory2/b/copy.txt\"\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Destination path where the copy should be placed, relative to the session working directory. Absolute paths are also accepted."
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -27,18 +24,16 @@
     "type": "function",
     "function": {
       "name": "create_directory",
-      "description": "Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.\n\nThis tool creates a directory and all necessary parent directories. It should be used whenever you need to create new directories within the project.",
+      "description": "Creates a new directory (and any missing parent directories) at the specified path. Returns confirmation on success.",
       "parameters": {
-        "required": [
-          "path"
-        ],
+        "type": "object",
+        "required": ["path"],
         "properties": {
           "path": {
-            "description": "The path of the new directory.\n\n<example>\nIf the project has the following structure:\n\n- directory1/\n- directory2/\n\nYou can create a new directory by providing a path of \"directory1/new_directory\"\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Path of the directory to create, relative to the session working directory. Absolute paths are also accepted."
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -46,18 +41,16 @@
     "type": "function",
     "function": {
       "name": "delete_path",
-      "description": "Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.",
+      "description": "Deletes a file or directory (recursively) at the specified path. Returns confirmation on success.",
       "parameters": {
-        "required": [
-          "path"
-        ],
+        "type": "object",
+        "required": ["path"],
         "properties": {
           "path": {
-            "description": "The path of the file or directory to delete.\n\n<example>\nIf the project has the following files:\n\n- directory1/a/something.txt\n- directory2/a/things.txt\n- directory3/a/other.txt\n\nYou can delete the first file by providing a path of \"directory1/a/something.txt\"\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Path of the file or directory to delete, relative to the session working directory. Absolute paths are also accepted."
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -67,39 +60,32 @@
       "name": "edit_file",
       "description": "This is a tool for applying edits to an existing file.\n\nBefore using this tool, use the `read_file` tool to understand the file's contents and context.\nTo create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.\n\n`read_file` prefixes each line of its output with a line number right-aligned in a\n6-character field followed by a single tab, then the line's actual content. When you\nderive `old_text` or `new_text` from that output, strip this prefix and keep only what\ncomes after the tab, preserving the original indentation (tabs and spaces) exactly.\nNever include any part of the line number prefix in `old_text` or `new_text`.",
       "parameters": {
-        "required": [
-          "path",
-          "edits"
-        ],
+        "type": "object",
+        "required": ["path", "edits"],
         "properties": {
           "path": {
-            "description": "The full path of the file to edit in the project.\n\nWARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories,\n\nThe following examples assume we have two root directories in the project:\n- /a/b/backend\n- /c/d/frontend\n\n<example>\n`backend/src/main.rs`\n\nNotice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!\n</example>\n\n<example>\n`frontend/db.js`\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Path of the file to edit, relative to the session working directory. Absolute paths are also accepted."
           },
           "edits": {
-            "description": "List of edit operations to apply sequentially.\nEach edit finds `old_text` in the file and replaces it with `new_text`.",
             "type": "array",
+            "description": "List of edit operations to apply sequentially.",
             "items": {
-              "description": "A single edit operation that replaces old text with new text\nProperly escape all text fields as valid JSON strings.\nRemember to escape special characters like newlines (`\\n`) and quotes (`\"`) in JSON strings.",
               "type": "object",
+              "required": ["old_text", "new_text"],
               "properties": {
                 "old_text": {
-                  "description": "The exact text to find in the file. This will be matched using fuzzy matching\nto handle minor differences in whitespace or formatting.\n\nBe minimal with replacements:\n- For unique lines, include only those lines\n- For non-unique lines, include enough context to identify them",
-                  "type": "string"
+                  "type": "string",
+                  "description": "The exact text to find in the file. Use enough context to make it unique."
                 },
                 "new_text": {
-                  "description": "The text to replace it with",
-                  "type": "string"
+                  "type": "string",
+                  "description": "The replacement text."
                 }
-              },
-              "required": [
-                "old_text",
-                "new_text"
-              ]
+              }
             }
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -107,18 +93,16 @@
     "type": "function",
     "function": {
       "name": "fetch",
-      "description": "Fetches a URL and returns the content as Markdown.",
+      "description": "Fetches a URL and returns the content as Markdown. The request may be subject to timeout and response size limits.",
       "parameters": {
-        "required": [
-          "url"
-        ],
+        "type": "object",
+        "required": ["url"],
         "properties": {
           "url": {
-            "description": "The URL to fetch.",
-            "type": "string"
+            "type": "string",
+            "description": "The URL to fetch."
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -126,24 +110,22 @@
     "type": "function",
     "function": {
       "name": "find_path",
-      "description": "Find file paths that match a given pattern.\n\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths sorted alphabetically\n- Prefer the `grep` tool to this tool when searching for symbols unless you have specific information about paths.\n- Use this tool when you need to find files by name patterns\n- Results are paginated with 50 matches per page. Use the optional 'offset' parameter to request subsequent pages.",
+      "description": "Finds file paths matching a glob pattern.\n\n- Supports patterns like \"**/*.js\" or \"src/**/*.ts\".\n- Returns matching paths sorted alphabetically.\n- Use `grep` instead when searching for file contents.\n- Results are paginated (50 per page); use `offset` to get more.",
       "parameters": {
-        "required": [
-          "glob"
-        ],
+        "type": "object",
+        "required": ["glob"],
         "properties": {
           "glob": {
-            "description": "The glob to match against every path in the project.\n\n<example>\nIf the project has the following root directories:\n\n- directory1/a/something.txt\n- directory2/a/things.txt\n- directory3/a/other.txt\n\nYou can get back the first two paths by providing a glob of \"*thing*.txt\"\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Glob pattern to match against file paths, relative to the session working directory."
           },
           "offset": {
-            "description": "Optional starting position for paginated results (0-based).\nWhen not provided, starts from the beginning.",
             "type": "integer",
+            "description": "Optional starting position for paginated results (0-based). Defaults to 0.",
             "default": 0,
             "minimum": 0
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -151,34 +133,32 @@
     "type": "function",
     "function": {
       "name": "grep",
-      "description": "Searches the contents of files in the project with a regular expression\n\n- Prefer this tool to path search when searching for symbols in the project, because you won't need to guess what path it's in.\n- Supports full regex syntax (eg. \"log.*Error\", \"function\\\\s+\\\\w+\", etc.)\n- Pass an `include_pattern` if you know how to narrow your search on the files system\n- Never use this tool to search for paths. Only search file contents with this tool.\n- Use this tool when you need to find files containing specific patterns\n- Results are paginated with 20 matches per page. Use the optional 'offset' parameter to request subsequent pages.\n- DO NOT use HTML entities solely to escape characters in the tool parameters.",
+      "description": "Searches file contents using a regular expression.\n\n- Prefer this tool when looking for symbols or text inside files, rather than guessing paths.\n- Supports full regex syntax.\n- Use `include_pattern` to limit which files are searched.\n- Results are paginated (20 per page); use `offset` for more.\n- Do not use HTML entities to escape characters.",
       "parameters": {
-        "required": [
-          "regex"
-        ],
+        "type": "object",
+        "required": ["regex"],
         "properties": {
           "regex": {
-            "description": "A regex pattern to search for in the entire project. Note that the regex will be parsed by the Rust `regex` crate.\n\nDo NOT specify a path here! This will only be matched against the code **content**.",
-            "type": "string"
+            "type": "string",
+            "description": "Regular expression pattern to search for. Matches against file contents only."
           },
           "include_pattern": {
-            "description": "A glob pattern for the paths of files to include in the search.\nSupports standard glob patterns like \"**/*.rs\" or \"frontend/src/**/*.ts\".\nIf omitted, all files in the project will be searched.\n\nThe glob pattern is matched against the full path including the project root directory.\n\n<example>\nIf the project has the following root directories:\n\n- /a/b/backend\n- /c/d/frontend\n\nUse \"backend/**/*.rs\" to search only Rust files in the backend root directory.\nUse \"frontend/src/**/*.ts\" to search TypeScript files only in the frontend root directory (sub-directory \"src\").\nUse \"**/*.rs\" to search Rust files across all root directories.\n</example>",
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Optional glob pattern to filter which files are searched (e.g., \"**/*.py\"). If omitted, all files are searched."
           },
           "offset": {
-            "description": "Optional starting position for paginated results (0-based).\nWhen not provided, starts from the beginning.",
             "type": "integer",
+            "description": "Optional starting position for paginated results (0-based). Defaults to 0.",
             "default": 0,
             "minimum": 0
           },
           "case_sensitive": {
-            "description": "Whether the regex is case-sensitive. Defaults to false (case-insensitive).",
             "type": "boolean",
+            "description": "Whether the search is case-sensitive. Defaults to false (case-insensitive).",
             "default": false
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -186,18 +166,16 @@
     "type": "function",
     "function": {
       "name": "list_directory",
-      "description": "Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.",
+      "description": "Lists files and directories in a given path.\n\nUse this to see the contents of a directory. For searching by name or content, prefer `find_path` or `grep`.",
       "parameters": {
-        "required": [
-          "path"
-        ],
+        "type": "object",
+        "required": ["path"],
         "properties": {
           "path": {
-            "description": "The fully-qualified path of the directory to list in the project.\n\nThis path should never be absolute, and the first component of the path should always be a root directory in a project,\n\n<example>\nIf the project has the following root directories:\n\n- directory1\n- directory2\n\nYou can list the contents of `directory1` by using the path `directory1`.\n</example>\n\n<example>\nIf the project has the following root directories:\n\n- foo\n- bar\n\nIf you wanna list contents in the directory `foo/baz`, you should use the path `foo/baz`.\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Path of the directory to list, relative to the session working directory. Absolute paths are also accepted."
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -205,23 +183,20 @@
     "type": "function",
     "function": {
       "name": "move_path",
-      "description": "Moves or rename a file or directory in the project, and returns confirmation that the move succeeded.\n\nIf the source and destination directories are the same, but the filename is different, this performs a rename. Otherwise, it performs a move.\n\nThis tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.",
+      "description": "Moves or renames a file or directory, and returns confirmation that the move succeeded. If source and destination are in the same directory but with different names, this acts as a rename.",
       "parameters": {
-        "required": [
-          "source_path",
-          "destination_path"
-        ],
+        "type": "object",
+        "required": ["source_path", "destination_path"],
         "properties": {
           "source_path": {
-            "description": "The source path of the file or directory to move/rename.\n\n<example>\nIf the project has the following files:\n\n- directory1/a/something.txt\n- directory2/a/things.txt\n- directory3/a/other.txt\n\nYou can move the first file by providing a source_path of \"directory1/a/something.txt\"\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Path of the file or directory to move or rename, relative to the session working directory. Absolute paths are also accepted."
           },
           "destination_path": {
-            "description": "The destination path where the file or directory should be moved/renamed to.\nIf the paths are the same except for the filename, then this will be a rename.\n\n<example>\nTo move \"directory1/a/something.txt\" to \"directory2/b/renamed.txt\",\nprovide a destination_path of \"directory2/b/renamed.txt\"\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Destination path after the move/rename, relative to the session working directory. Absolute paths are also accepted."
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -229,32 +204,30 @@
     "type": "function",
     "function": {
       "name": "read_file",
-      "description": "Reads the content of the given file in the project.\n\n- Never attempt to read a path that hasn't been previously mentioned.\n- For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.\n  This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.\n  Do NOT retry reading the same file without line numbers if you receive an outline.\n- This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.\n  Image files are returned as visual content that you can analyze directly.",
+      "description": "Reads the content of a file.\n\n- For large text files, this tool may return an outline with symbol names and line numbers instead of the full content. This outline IS a successful response; use the line numbers to read specific sections with `start_line` and `end_line`.\n- Do NOT retry reading the same file without line numbers if you receive an outline.\n- Supports reading image files (PNG, JPEG, WebP, GIF, BMP, TIFF) and returns them as visual content you can analyze directly.\n- When reading text files, each line in the returned content is prefixed with a right-aligned line number field and a tab. When extracting text for use in `edit_file`, remove this prefix and keep only the content after the tab, preserving original indentation.",
       "parameters": {
-        "required": [
-          "path"
-        ],
+        "type": "object",
+        "required": ["path"],
         "properties": {
           "path": {
-            "description": "The relative path of the file to read.\n\nThis path should never be absolute, and the first component of the path should always be a root directory in a project,\n\n<example>\nIf the project has the following root directories:\n\n- /a/b/directory1\n- /c/d/directory2\n\nIf you want to access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.\nIf you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Path of the file to read, relative to the session working directory. Absolute paths are also accepted."
           },
           "start_line": {
-            "description": "Optional line number to start reading on (1-based index)",
             "type": "integer",
             "nullable": true,
-            "minimum": 0,
-            "default": null
+            "description": "Optional line number to start reading from (1-based).",
+            "default": null,
+            "minimum": 0
           },
           "end_line": {
-            "description": "Optional line number to end reading on (1-based index, inclusive)",
             "type": "integer",
             "nullable": true,
-            "minimum": 0,
-            "default": null
+            "description": "Optional line number to end reading at (1-based, inclusive).",
+            "default": null,
+            "minimum": 0
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -262,43 +235,41 @@
     "type": "function",
     "function": {
       "name": "terminal",
-      "description": "Executes a shell one-liner and returns the combined output.\n\nThis tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.\n\nThe output results will be shown to the user already, only list it again if necessary, avoid being redundant.\n\nIf provided, use the `cd` parameter to navigate to one of the root directories of the project; NEVER do it as part of the `command` itself, otherwise it will error. When `cd` is omitted, the command runs in the session's current working directory.\n\nDo not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.\n\nDo not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.\n\nDo not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.\n\nFor potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.\n\nRemember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.\n\nThe terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:\n\n- Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).\n- Prefer Git flags that avoid optional metadata writes when possible, such as `git --no-optional-locks status` instead of `git status`.\n- Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).\n- For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.",
+      "description": "Executes a shell one-liner and returns combined stdout/stderr output.\n\n- Run commands relative to the session working directory. Use the `cd` parameter to specify a different directory if needed.\n- Do not use shell substitutions or interpolations (e.g., `$VAR`, `${VAR}`, `$(...)`, backticks). Resolve values yourself first.\n- Do not pipe output to `head` or `tail`; use the `head_lines` and `tail_lines` parameters to limit what is returned while keeping full output visible to the user.\n- Avoid commands that run indefinitely (servers, watchers). For long-running commands, set `timeout_ms`.\n- Each invocation starts a new shell; do not rely on state from previous calls.\n- If a command may open a pager or editor, disable it using environment variables (e.g., `GIT_PAGER=cat`, `EDITOR=true`).",
       "parameters": {
-        "required": [
-          "command"
-        ],
+        "type": "object",
+        "required": ["command"],
         "properties": {
           "command": {
-            "description": "The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.\n\nREMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.",
-            "type": "string"
+            "type": "string",
+            "description": "The shell one-liner to execute. Do not include shell substitutions; use literal values."
           },
           "cd": {
-            "description": "Optional working directory for the command. If provided, this must be one of the root directories of the project. When omitted, the command runs in the session's current working directory.",
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Optional working directory for the command. If omitted, runs in the session working directory. Accepts relative or absolute path."
           },
           "timeout_ms": {
-            "description": "Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.",
             "type": "integer",
             "nullable": true,
+            "description": "Optional maximum runtime in milliseconds. If exceeded, the process is killed.",
             "minimum": 0
           },
           "head_lines": {
-            "description": "Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.",
             "type": "integer",
             "nullable": true,
+            "description": "Return only the first N lines of output to the model. The user still sees full live output.",
             "minimum": 0,
             "default": null
           },
           "tail_lines": {
-            "description": "Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.",
             "type": "integer",
             "nullable": true,
+            "description": "Return only the last N lines of output to the model. The user still sees full live output.",
             "minimum": 0,
             "default": null
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -306,23 +277,20 @@
     "type": "function",
     "function": {
       "name": "write_file",
-      "description": "This is a tool for creating a new file or overwriting an existing file with completely new contents.\n\nTo make granular edits to an existing file, prefer the `edit_file` tool instead.\n\nBefore using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location",
+      "description": "Creates a new file or overwrites an existing file with the given content.\n\nUse `edit_file` for targeted changes to existing files. Before creating a new file, verify the parent directory exists with `list_directory`.",
       "parameters": {
-        "required": [
-          "path",
-          "content"
-        ],
+        "type": "object",
+        "required": ["path", "content"],
         "properties": {
           "path": {
-            "description": "The full path of the file to create or overwrite in the project.\n\nWARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories,\n\nThe following examples assume we have two root directories in the project:\n- /a/b/backend\n- /c/d/frontend\n\n<example>\n`backend/src/main.rs`\n\nNotice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!\n</example>\n\n<example>\n`frontend/db.js`\n</example>",
-            "type": "string"
+            "type": "string",
+            "description": "Path of the file to create or overwrite, relative to the session working directory. Absolute paths are also accepted."
           },
           "content": {
-            "description": "The entire content for the file.",
-            "type": "string"
+            "type": "string",
+            "description": "The entire content to write to the file."
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -330,11 +298,11 @@
     "type": "function",
     "function": {
       "name": "list_skills",
-      "description": "列出技能根目录下的所有可用技能，返回每个技能的名称与简要描述。\n\n技能是自包含的目录（含 SKILL.md 描述与 run.py/run.sh 可执行入口），用于复用已有能力。先调用本工具了解有哪些技能，再决定是否用 get_skill_info 查看详情或用 run_skill 执行。\n\n- 无需参数。\n- 若技能目录不存在，返回空列表。",
+      "description": "Lists all available skills from the skill root directory, returning each skill's name and brief description.\n\nSkills are self-contained directories with a SKILL.md description and an executable entry point (run.py or run.sh). Call this tool first to see what skills exist, then use get_skill_info for details or run_skill to execute.",
       "parameters": {
+        "type": "object",
         "required": [],
-        "properties": {},
-        "type": "object"
+        "properties": {}
       }
     }
   },
@@ -342,18 +310,16 @@
     "type": "function",
     "function": {
       "name": "get_skill_info",
-      "description": "查看指定技能的完整说明（返回该技能目录下 SKILL.md 的全文），便于了解其用途、参数（input_schema）与调用方式。",
+      "description": "Returns the full content of the SKILL.md file for a given skill, including its purpose, parameters (input_schema), and usage instructions.",
       "parameters": {
-        "required": [
-          "skill_name"
-        ],
+        "type": "object",
+        "required": ["skill_name"],
         "properties": {
           "skill_name": {
-            "description": "技能名称（即技能根目录下的子目录名）",
-            "type": "string"
+            "type": "string",
+            "description": "Name of the skill (subdirectory name under the skill root directory)."
           }
-        },
-        "type": "object"
+        }
       }
     }
   },
@@ -361,23 +327,20 @@
     "type": "function",
     "function": {
       "name": "run_skill",
-      "description": "执行指定技能，传入所需参数，自动检查与安装依赖，返回技能运行的标准输出或错误信息。\n技能入口脚本约定接收一个 JSON 字符串作为唯一命令行参数，其中包含全部输入参数键值对。\n- 执行前会根据 SKILL.md 的 input_schema.required 校验必填参数。\n- 默认超时 120 秒。\n- 参数中的相对路径会按会话工作目录自动解析并转为绝对路径，直接传相对路径即可。",
+      "description": "Executes a specified skill with the provided input arguments. The skill's entry script receives a JSON string as the only command-line argument.\n\n- Required parameters are validated against the skill's input_schema.\n- Default timeout is 120 seconds.\n- Relative paths in arguments are resolved against the session working directory; you may pass relative or absolute paths.",
       "parameters": {
-        "required": [
-          "skill_name",
-          "input_args"
-        ],
+        "type": "object",
+        "required": ["skill_name", "input_args"],
         "properties": {
           "skill_name": {
-            "description": "技能名称（技能根目录下的子目录名）",
-            "type": "string"
+            "type": "string",
+            "description": "Name of the skill to execute."
           },
           "input_args": {
-            "description": "技能所需的输入参数字典（对象），键值对形式。例如 {\"input\": \"file.md\", \"output\": \"out.pdf\"}。具体字段以 get_skill_info 查看的 SKILL.md 为准。路径参数建议传相对会话工作目录的路径，也可传绝对路径。",
-            "type": "object"
+            "type": "object",
+            "description": "Dictionary of input arguments for the skill. Keys and values should match the skill's input_schema. Example: {\"input\": \"file.md\", \"output\": \"out.pdf\"}."
           }
-        },
-        "type": "object"
+        }
       }
     }
   }

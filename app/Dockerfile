@@ -25,7 +25,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     openpyxl python-docx python-pptx xlrd \
     pymupdf pdfplumber pypdf reportlab \
     Pillow python-dateutil python-magic \
-    loguru rich
+    loguru rich fonttools
 
 WORKDIR /app
 
