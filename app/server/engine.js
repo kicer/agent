@@ -487,9 +487,22 @@ async function runLoopInner(sessionId, run) {
       })) : null,
     };
     const assistantId = saveMessage(sessionId, msgRow);
-    if (isErrAck) log.info('msg', sessionId + ' 本轮 tool call 参数错误，assistant 标记 errAck（不再进入模型上下文）');
-    recordModelUsage(sessionId, session.model_id, result.usage);
-    bus.emit(sessionId, 'assistant_message', { id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning, tool_calls: msgRow.tool_calls, type: msgRow.type });
+        if (isErrAck) log.info('msg', sessionId + ' 本轮 tool call 参数错误，assistant 标记 errAck（不再进入模型上下文）');
+        recordModelUsage(sessionId, session.model_id, result.usage);
+        // 「压缩」按钮触发的总结请求：判别 = 本轮上一条 user 消息的 type 是 summarize_request
+            // （反向查找最靠近本轮的 user/type=summarize_request）。该标志传到前端后，前端按用户在弹窗
+            // 选的模式走后续。mode 从发起请求时记录在 run 上的 summaryMode 取（不入库）。
+            const isSummary = !!db.prepare(
+              "SELECT 1 FROM messages WHERE session_id = ? AND role = 'user' AND type = 'summarize_request' AND id < ? ORDER BY id DESC LIMIT 1"
+            ).get(sessionId, assistantId);
+            bus.emit(sessionId, 'assistant_message', {
+              id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning,
+              tool_calls: msgRow.tool_calls, type: msgRow.type,
+              is_summary: isSummary,
+              mode: isSummary ? (run.summaryMode || null) : null,
+            });
+            // 总结走完后清除 run 上的 summaryMode，避免影响后续轮。
+            if (isSummary) run.summaryMode = null;
 
     if (!hasTools) {
       // 回合结束；但若期间用户又发了新消息（live 投递），继续下一轮而不是收尾
@@ -778,13 +791,20 @@ function createSession(title, preferModelId, assistantType, user) {
 function postUserMessage(sessionId, content, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
-  const messageId = saveMessage(sessionId, { role: 'user', content });
-  if (!session.title) {
-    touch(sessionId, { title: content.slice(0, 24) });
-  }
-  // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
-  const run = getRun(sessionId, true);
-  run.deepThink = !!(opts && opts.deepThink);
+  // opts.type: 落库时给该 user 消息带上 type 标记。
+    // 用于「压缩」按钮触发时给总结指令打 type='summarize_request'，使 llm.buildMessages 跳过、
+    // 并让 runLoopInner 识别到后给对应的 assistant_message SSE 加 is_summary: true 标志。
+    const messageId = saveMessage(sessionId, { role: 'user', content, type: (opts && opts.type) || null });
+    if (!session.title) {
+      touch(sessionId, { title: content.slice(0, 24) });
+    }
+    // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
+    const run = getRun(sessionId, true);
+    run.deepThink = !!(opts && opts.deepThink);
+    // opts.mode 仅用于「压缩」总结：runLoopInner 在 emit assistant_message 时带上 mode，
+    // 让前端在收到 AI 总结时知道该走 generate_only 还是 compress_and_clear 后续流程。
+    // mode 不入库 messages.type（它是 session 级别上下文，不属于某条消息的属性）。
+    run.summaryMode = (opts && opts.type === 'summarize_request') ? (opts.mode || null) : (run.summaryMode || null);
   if (session.status === 'active' && run.looping) {
     // 正在跑：下一轮迭代会从 DB 重新加载历史，自动带上这条消息
     return { message_id: messageId, delivered: 'live' };
@@ -870,6 +890,27 @@ function deleteSession(sessionId, deleteDir) {
   }
   bus.closeAll(sessionId);
   return { ok: true };
+}
+
+// 上下文压缩：phase-bar「压缩」按钮触发。把 config.yml 的 compress.prompt 作为一条 type='summarize_request'
+// 的 user 消息发出去，AI 收到后会基于历史生成总结并以 assistant 消息回复。
+// llm.js 已规则：type='summarize_request' 跳过该行——所以该指令不会反复出现在后续请求中污染上下文。
+// 由 runLoopInner 在 assistant_message emit 时根据"上一条 user 消息是 summarize_request"
+// 决定是否带 is_summary: true，并带上 mode 给前端，前端按用户选择的模式走完最后一步。
+// 限制：与 clearSessionMessages 类似——会话执行中(active)禁止操作，避免和正在跑的回合抢上下文。
+// mode: 'generate_only' 或 'compress_and_clear'，由路由校验后传入。
+function summarizeContext(sessionId, mode) {
+  const session = getSession(sessionId);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const run = runs.get(sessionId);
+  if (run && run.looping) {
+    throw Object.assign(new Error('任务正在执行，请先「终止」再压缩'), { status_code: 409 });
+  }
+  const prompt = cfg && cfg.compress && cfg.compress.prompt;
+  if (!prompt) throw Object.assign(new Error('配置缺少 compress.prompt，请检查 config.yml'), { status_code: 500 });
+  // 复用 postUserMessage：opts.type='summarize_request' 给该消息打标，
+  // opts.mode 用于 runLoopInner SSE 带 mode 返回给前端。
+  return postUserMessage(sessionId, prompt, { type: 'summarize_request', mode });
 }
 
 // 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件。
@@ -970,6 +1011,7 @@ module.exports = {
   renameSession,
   deleteSession,
   clearSessionMessages,
+  summarizeContext,
   deleteMessage,
   getSession,
   getRun,

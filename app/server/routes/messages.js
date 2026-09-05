@@ -70,6 +70,21 @@ router.delete('/:id/messages', wrap((req, res) => {
   res.json(r);
 }));
 
+// 上下文压缩：phase-bar「压缩」按钮触发。弹窗选模式后调本接口：
+//   mode='generate_only'       只让 AI 总结，保留全部历史
+//   mode='compress_and_clear'  让 AI 总结，AI 完成后前端自动调 DELETE 清空历史
+// 后端只负责「丢一条 type='summarize_request' 的 user 消息」并通过 SSE 把模式带回去给前端。
+// 状态非 active 时才允许（避免与正在跑的回合抢上下文）。本接口只是「丢一条总结请求进队列」，
+// 不等待 AI 完成——前端通过现有 SSE 流听 assistant_message 事件拿结果。
+router.post('/:id/summarize', wrap((req, res) => {
+  const mode = String((req.body && req.body.mode) || '').trim();
+  const valid = mode === 'generate_only' || mode === 'compress_and_clear';
+  if (!valid) return res.status(400).json({ error: 'mode 必须是 generate_only 或 compress_and_clear' });
+  const r = engine.summarizeContext(req.params.id, mode);
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 上下文压缩（mode=' + mode + ', ' + (r.delivered || '?') + '）');
+  res.json(r);
+}));
+
 // 删除单条消息（含工具/任务消息）：删 assistant 轮连带其 tool 回执；单删 tool 回执会把该调用
 // 从父 assistant 的 tool_calls 里同步摘除（见 engine.deleteMessage），保证调用↔回执成对。
 // 库中没了，后续发给模型的消息里自然也没有；执行中删除会在下一轮组装历史时生效。

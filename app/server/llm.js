@@ -44,6 +44,10 @@ function decodeBlocks(content) {
 // 关联 tool 回执按 id 一并跳过（否则会留下无 tool_call 配对的孤儿 tool 消息，上游拒收）；
 // 改以一条 user 错误提示替代，让模型看到原因后重新生成工具调用 ——
 // 坏样本留在上下文里只会被模型继续模仿，反复报同一个错。
+// summarize_request 行（顶栏「压缩」按钮触发的总结指令，role=user, type='summarize_request'）：
+// 这条 user 是让 AI 做总结用的中间产物，AI 给出总结后就会被前端清空；为防用户在被清空前又发新消息
+// 触发新一轮模型调用，这条指令会污染上下文（让 AI 误以为还要再总结），所以 buildMessages 直接跳过。
+// 同时跳过 type='archived' 的中间态归档行（保留接口给将来需要时用，目前主流程走前端物理清空）。
 function buildMessages(session, language) {
   const messages = [{ role: 'system', content: systemPromptText(language) }];
   const history = session.history;
@@ -57,7 +61,9 @@ function buildMessages(session, language) {
   }
   const dropToolCallIds = new Set();
   history.forEach((row, i) => {
-    if (row.role === 'assistant') {
+      // summarize_request / archived：UI 可见，但不再进入模型上下文（避免污染 / 节省 token）
+      if (row.type === 'summarize_request' || row.type === 'archived') return;
+      if (row.role === 'assistant') {
       if (row.type === 'errAck') {
         let calls = [];
         try { calls = JSON.parse(row.tool_calls || '[]') || []; } catch (_) {}

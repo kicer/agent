@@ -13,15 +13,36 @@
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/css/style.css">
-  <style>
-    /* 调试专用 UI：仅在 config.yml 的 log_level: debug 时才显示
-       （debug 之外的等级一律隐藏；切换需重启服务生效，与其他配置一致）。
-       放在 link 之后以保证同优先级下能压住 style.css 里同优先级的规则。 */
-    body .msg-actions .act-del { display: none; }
-    body.log-debug .msg-actions .act-del { display: flex; }
-    /* 状态栏「清空」：非 debug 始终隐藏(特异度压过 .hidden !important: 1,1,1 > 0,1,0) */
-    body:not(.log-debug) #clear-msg-btn { display: none !important; }
-  </style>
+    <style>
+      /* 调试专用 UI：仅在 config.yml 的 log_level: debug 时才显示
+         （debug 之外的等级一律隐藏；切换需重启服务生效，与其他配置一致）。
+         放在 link 之后以保证同优先级下能压住 style.css 里同优先级的规则。 */
+      body .msg-actions .act-del { display: none; }
+      body.log-debug .msg-actions .act-del { display: flex; }
+      /* 「压缩」总结气泡上的小标。点不出任何效果，纯状态。 */
+      .summary-tag { font-size: 11px; color: #6c757d; padding: 2px 0 6px 4px; letter-spacing: .5px; }
+      /* 状态栏图标按钮（压缩）：仅显示 SVG、去掉文字 padding；保持与文字按钮同高。 */
+      .stop-link.icon-only { padding: 0 8px; line-height: 0; }
+      .stop-link.icon-only .ic { width: 18px; height: 18px; vertical-align: middle; }
+      /* 「压缩」弹窗按钮颜色区分。
+         - ghost-btn.outline   ：中性蓝描边，表示「仅生成摘要」这一不修改历史的动作。
+         - primary-btn.warn    ：警示橙填充，表示「压缩总结」将清空历史、不可恢复。 */
+      .btn-row .ghost-btn.outline {
+        color: #3964FE;
+        border-color: #3964FE;
+        background: #fff;
+      }
+      .btn-row .ghost-btn.outline:hover { background: rgba(57,100,254,.08); }
+      .btn-row .primary-btn.warn {
+        background: #E07A1F;
+        border-color: #E07A1F;
+        color: #fff;
+      }
+      .btn-row .primary-btn.warn:hover {
+        background: #c86912;
+        border-color: #c86912;
+      }
+    </style>
   <script>
     // 注册 Service Worker（PWA / 离线缓存）
     if ('serviceWorker' in navigator) {
@@ -43,16 +64,18 @@
       </button>
       <div class="header-center" id="header-center"><!-- 未对话状态为空白,JS 注入对话信息 --></div>
       <button class="icon-btn hidden" id="new-chat-btn" title="新建对话" aria-label="新建对话">
-        <svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-      </button>
-    </header>
+              <svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+          </header>
 
     <!-- ================= 会话状态栏(搬自 index 的 phase-bar;仅在对话中显示) ================= -->
     <div id="phase-bar" class="phase-bar hidden">
       <span class="status-pill" id="status-pill">--</span>
       <button class="stop-link hidden" id="stop-btn" onclick="stopSession()">终止</button>
-      <button class="stop-link muted hidden" id="model-switch-btn" onclick="openModelSwitch()">选择模型</button>
-      <button class="stop-link hidden" id="clear-msg-btn" onclick="clearChat()">清空</button>
+      <button class="stop-link hidden" id="model-switch-btn" onclick="openModelSwitch()">选择模型</button>
+      <button class="stop-link icon-only hidden" id="compress-btn" title="压缩上下文" aria-label="压缩上下文" onclick="summarizeChat()">
+        <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M12 16l-3 3M12 16l3 3M12 16v-7"></path></svg>
+      </button>
     </div>
 
     <main>
@@ -416,20 +439,22 @@
     streamReasoning: '',        // 当前流式累积思考文本
     streamThinkEl: null,        // 当前流式思考面板的 body 节点（未出现思考时为 null）
     toolCards: {},              // tool_call_id -> 工具卡片元素(同步 index 工具卡样式)
-    typingEl: null,             // 「思考中」占位
-    streaming: false,
-  };
+        typingEl: null,             // 「思考中」占位
+        streaming: false,
+        pendingSummary: false,      // 是否在等待「压缩」总结 AI 回复（避免重复弹窗；同时用于按钮 disabled 防重入）
+        pendingSummaryMode: null,   // pendingSummary 期间记录用户选的模式：'generate_only' 或 'compress_and_clear'
+      };
 
   // ---------- 视图切换 ----------
   function setView(view) {
-    state.view = view;
-    $('welcome-view').classList.toggle('hidden', view !== 'welcome');
-    $('chat-view').classList.toggle('hidden', view !== 'chat');
-    $('new-chat-btn').classList.toggle('hidden', view !== 'chat'); // 新建按钮仅对话状态显示
-    renderHeader();
-    updatePhaseBar(); // 状态栏仅对话视图显示
-    updateScrollBottomBtn();
-  }
+      state.view = view;
+      $('welcome-view').classList.toggle('hidden', view !== 'welcome');
+      $('chat-view').classList.toggle('hidden', view !== 'chat');
+      $('new-chat-btn').classList.toggle('hidden', view !== 'chat'); // 新建按钮仅对话状态显示
+      renderHeader();
+      updatePhaseBar(); // 状态栏仅对话视图显示
+      updateScrollBottomBtn();
+    }
 
   function renderHeader() {
     const c = $('header-center');
@@ -923,12 +948,18 @@
     btn.textContent = state.status === 'held' ? '断开' : '终止';
     btn.classList.toggle('muted', state.status === 'held');
     // 已完成/已终止时提供「选择模型」,手动指定空闲模型后继续对话
-    const msBtn = $('model-switch-btn');
-    if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && (state.status === 'completed' || state.status === 'cancelled')));
-    // 执行中(active)不提供「清空」——运行回合内删除历史会破坏上下文;其余状态(含排队中)可清空
-    const clrBtn = $('clear-msg-btn');
-    if (clrBtn) clrBtn.classList.toggle('hidden', !(state.sessionId && state.status && state.status !== 'active'));
-  }
+        const msBtn = $('model-switch-btn');
+        if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && (state.status === 'completed' || state.status === 'cancelled')));
+        // 状态栏「压缩」按钮：active 时不允许（避免与正在跑的回合抢上下文）;
+        // 其余状态可点。未发起总结时可点；发起后按钮 disabled 防双击。
+        const cpBtn = $('compress-btn');
+        if (cpBtn) {
+          const allowShow = !!(state.sessionId && state.status && state.status !== 'active');
+          cpBtn.classList.toggle('hidden', !allowShow);
+          // 只有不在请求中时才允许 active 决定 disabled；避免总结流程中被打断时再次被 allowed
+          if (!state.pendingSummary) cpBtn.disabled = state.status === 'active';
+        }
+      }
   async function stopSession() {
     if (!state.sessionId) return;
     const held = state.status === 'held';
@@ -976,22 +1007,94 @@
       loadSessionList();
     } catch (_) {}
   }
-  async function clearChat() {
-    if (!state.sessionId) return;
-    const id = state.sessionId;
-    const ok = await confirmModal('清空会话内容',
-      '将删除本会话的全部聊天记录,AI 后续对话不再携带这段历史(从零开始,更省 token)。任务文件全部保留,不受影响。此操作不可恢复。',
-      '清空', true);
-    if (!ok) return;
-    try {
-      await req('DELETE', '/api/sessions/' + id + '/messages');
-      toast('会话内容已清空,文件已保留');
-      // 服务端已将会话收尾为 completed 并清空消息(不再预置会话上下文):重新拉取详情即为干净起点
-      const detail = await req('GET', '/api/sessions/' + id);
-      if (state.sessionId === id) { renderDetail(detail); connectStream(); }
-      loadSessionList();
-    } catch (e) { toast('清空失败:' + e.message); }
-  }
+  // ---------- 「压缩」上下文总结 ----------
+    // 用户点 phase-bar「压缩」按钮 → 弹窗选后续动作：
+    //   取消：不做任何事
+    //   生成摘要：发请求让 AI 总结，完成后保留全部历史（仅 UI 多一条总结参考）
+    //   压缩总结：发请求让 AI 总结，完成后自动调 DELETE 清空历史，只保留总结作为下次会话起点
+    // 后端只负责「丢一条 type='summarize_request' 的 user 消息」并通过 SSE 转发总结结果，
+    // 是否清空由前端根据用户在弹窗选择的 mode 决定。后端 summarize 路由收 body.mode；
+    // runLoopInner 在 SSE assistant_message 事件上带上 mode，让前端能拿到自己发起的模式。
+    async function summarizeChat() {
+      if (!state.sessionId) return;
+      if (state.pendingSummary) return; // 已在请求中，防重入
+      if (state.status === 'active') { toast('AI 还在输出，请稍候再压缩'); return; }
+      // 弹出三按钮选择器。走复用 confirmModal + 专选项的路线会丢掉「第三按钮」。
+      // 这里用一个内部 helper 返回 'cancel' | 'generate_only' | 'compress_and_clear'。
+      const mode = await compressModeModal();
+      if (!mode || mode === 'cancel') return;
+      state.pendingSummary = true;
+      state.pendingSummaryMode = mode;
+      const btn = $('compress-btn');
+      if (btn) btn.disabled = true;
+      try {
+        await req('POST', '/api/sessions/' + state.sessionId + '/summarize', { mode });
+        toast(mode === 'compress_and_clear' ? '已发起压缩，完成后将自动清空历史…' : '已生成摘要中…');
+      } catch (e) {
+        state.pendingSummary = false;
+        state.pendingSummaryMode = null;
+        if (btn) btn.disabled = false;
+        toast('压缩失败：' + e.message);
+      }
+    }
+
+    // 压缩模式选择弹窗：三按钮（取消 / 仅摘要 / 压缩总结）。
+      // 返回字符串 'cancel' | 'generate_only' | 'compress_and_clear'。
+      // 这里手写一个独立小弹窗以避免与 confirmModal(两按钮)耦合；复用现有 modal-overlay 样式。
+      // 颜色：取消=灰、仅摘要=中性蓝边、压缩总结=警示橙(表示「将清空历史」不可逆)。
+      function compressModeModal() {
+        return new Promise(resolve => {
+          const wrap = document.createElement('div');
+          wrap.className = 'modal-overlay';
+          wrap.innerHTML =
+            '<div class="modal">' +
+              '<h3 id="compress-modal-title">压缩上下文</h3>' +
+              '<div class="modal-body" style="font-size:14px;line-height:1.55;color:#555;padding:4px 0 12px;">' +
+                'AI 将基于本段会话生成结构化总结。完成后：' +
+                '<br>· 「仅摘要」= 仅在聊天里多一条总结参考，<b>保留全部历史</b>（后续对话仍带历史）。' +
+                '<br>· 「压缩总结」= 自动<b>清空历史消息</b>，仅以这条总结作为后续对话起点（省 token，不可恢复）。' +
+              '</div>' +
+              '<div class="btn-row">' +
+                '<button class="ghost-btn" data-act="cancel">取消</button>' +
+                '<button class="ghost-btn outline" data-act="generate_only">仅摘要</button>' +
+                '<button class="primary-btn warn" data-act="compress_and_clear">压缩总结</button>' +
+              '</div>' +
+            '</div>';
+          function close(v) {
+            wrap.remove();
+            document.removeEventListener('keydown', onKey);
+            resolve(v);
+          }
+          function onKey(e) { if (e.key === 'Escape') close('cancel'); }
+          wrap.addEventListener('click', e => { if (e.target === wrap) close('cancel'); });
+          wrap.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => close(b.dataset.act)));
+          document.addEventListener('keydown', onKey);
+          document.body.appendChild(wrap);
+          // 默认聚焦「取消」避免误触发
+          wrap.querySelector('[data-act="cancel"]').focus();
+        });
+      }
+
+    // 「压缩总结」模式下 AI 总结落库后自动调用的清空：复用现有 DELETE 接口。
+      // 与 clearChat 不同：不弹确认（用户已在压缩弹窗中表态）。
+      async function clearAfterSummary(id) {
+        if (!id) return;
+        try {
+          await req('DELETE', '/api/sessions/' + id + '/messages');
+          toast('已压缩，仅保留总结');
+          const detail = await req('GET', '/api/sessions/' + id);
+          if (state.sessionId === id && state.view === 'chat') { renderDetail(detail); connectStream(); }
+          loadSessionList();
+        } catch (e) { toast('清空失败：' + e.message); }
+        const cpBtn = $('compress-btn');
+        if (cpBtn) cpBtn.disabled = state.status === 'active';
+      }
+
+      async function clearChat() {
+          // 清空按钮已从 phase-bar 移除。仅在「压缩总结」模式下由 clearAfterSummary 自动调用 DELETE。
+          // 保留函数壳子避免被工具/手动调用打断；不再绑定 UI 入口。
+          return;
+        }
 
   // ---------- 发送 ----------
   async function uploadFiles(sessionId, files) {
@@ -1106,47 +1209,83 @@
       updateScrollBottomBtn();
     });
     es.addEventListener('assistant_message', ev => {
-      const d = JSON.parse(ev.data);
-      removeTyping();
-      const hasText = !!(d.content && d.content.trim());
-      const r = hasText ? mdHtml(d.content) : null;
-      // 思考面板：本轮结束时锁定为后端返回的完整文本（不清空 streamReasoning 以防与历史回填不一致）
-      if (d.reasoning && d.reasoning.trim()) {
-        if (!state.streamWrap) ensureStreamWrap();
-        ensureStreamThinkPanel();
-        state.streamThinkEl.textContent = d.reasoning;
-      }
-      if (state.streamEl) {
-        if (r) {
-          state.streamEl.className = 'bubble-ai' + (r.fmt ? ' md' : ''); // 增量期间是纯文本,收尾统一换 md 排版
-          state.streamEl.innerHTML = r.html;
-        } else {
-          // 无文本时去掉气泡（纯工具调用/纯思考也要保留思考面板）
-          state.streamEl.remove();
-        }
-        state.streamEl = null;
-        state.streamText = '';
-      } else if (r) {
-        // 没起过气泡但收到文本：现在才创建（思考先行、文本后到的罕见场景）
-        if (!state.streamWrap) ensureStreamWrap();
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble-ai' + (r.fmt ? ' md' : '');
-        bubble.innerHTML = r.html;
-        state.streamWrap.appendChild(bubble);
-      }
-      if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
-      state.streaming = false;
-      // 思考面板默认折叠，避免挡着后续气泡；点击展开
-      if (state.streamWrap) {
-        const t = state.streamWrap.querySelector('.msg-think');
-        if (t && t.open) t.open = false;
-      }
-      state.streamWrap = null;
-      state.streamReasoning = '';
-      state.streamThinkEl = null;
-      maybeAutoScroll();
-      updateScrollBottomBtn();
-    });
+          const d = JSON.parse(ev.data);
+          removeTyping();
+          const hasText = !!(d.content && d.content.trim());
+          const r = hasText ? mdHtml(d.content) : null;
+          // 思考面板：本轮结束时锁定为后端返回的完整文本（不清空 streamReasoning 以防与历史回填不一致）
+          if (d.reasoning && d.reasoning.trim()) {
+            if (!state.streamWrap) ensureStreamWrap();
+            ensureStreamThinkPanel();
+            state.streamThinkEl.textContent = d.reasoning;
+          }
+          if (state.streamEl) {
+            if (r) {
+              state.streamEl.className = 'bubble-ai' + (r.fmt ? ' md' : ''); // 增量期间是纯文本,收尾统一换 md 排版
+              state.streamEl.innerHTML = r.html;
+            } else {
+              // 无文本时去掉气泡（纯工具调用/纯思考也要保留思考面板）
+              state.streamEl.remove();
+            }
+            state.streamEl = null;
+            state.streamText = '';
+          } else if (r) {
+            // 没起过气泡但收到文本：现在才创建（思考先行、文本后到的罕见场景）
+            if (!state.streamWrap) ensureStreamWrap();
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble-ai' + (r.fmt ? ' md' : '');
+            bubble.innerHTML = r.html;
+            state.streamWrap.appendChild(bubble);
+          }
+          // 「压缩」总结标签：后端 SSE 事件 is_summary=true 表示本轮回复是压缩总结，
+          // 在 AI 气泡顶部加个“📋 上下文总结”小标，让 UI 能一眼区分。
+          if (d.is_summary && state.streamWrap) {
+            const tag = document.createElement('div');
+            tag.className = 'summary-tag';
+            tag.textContent = '📋 上下文总结';
+            // 插到气泡顶部、但在思考面板之后（避免被思考面板遮住）
+            const bubble = state.streamWrap.querySelector('.bubble-ai');
+            const think = state.streamWrap.querySelector('.msg-think');
+            if (bubble) state.streamWrap.insertBefore(tag, bubble);
+            else if (think) think.insertAdjacentElement('afterend', tag);
+            else state.streamWrap.appendChild(tag);
+          }
+          if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
+          state.streaming = false;
+          // 思考面板默认折叠，避免挡着后续气泡；点击展开
+          if (state.streamWrap) {
+            const t = state.streamWrap.querySelector('.msg-think');
+            if (t && t.open) t.open = false;
+          }
+          state.streamWrap = null;
+          state.streamReasoning = '';
+          state.streamThinkEl = null;
+          maybeAutoScroll();
+          updateScrollBottomBtn();
+          // 「压缩」总结完成后：根据用户在弹窗选择的 mode 走最后一步。
+                // 仅在客户端主动点了压缩（pendingSummary）时才走后续逻辑；避免历史重加载/跨设备重连时误触发。
+                // 仅有内容的总结才走后续流；空的/错误的总结只复位按钮状态。
+                if (d.is_summary && state.pendingSummary && hasText) {
+                  const mode = state.pendingSummaryMode;
+                  state.pendingSummary = false;
+                  state.pendingSummaryMode = null;
+                  if (mode === 'compress_and_clear') {
+                    // 自动调 DELETE 清空历史，仅保留这条总结作为后续起点。
+                    clearAfterSummary(state.sessionId);
+                  } else if (mode === 'generate_only') {
+                    // 仅 toast 提示，不动历史。
+                    toast('已生成摘要，历史消息保留');
+                    const cpBtn = $('compress-btn');
+                    if (cpBtn) cpBtn.disabled = state.status === 'active';
+                  }
+                } else if (d.is_summary && state.pendingSummary && !hasText) {
+                  // AI 总结为空/出错，复位状态。用于按钮状态还原。
+                  state.pendingSummary = false;
+                  state.pendingSummaryMode = null;
+                  const cpBtn = $('compress-btn');
+                  if (cpBtn) cpBtn.disabled = state.status === 'active';
+                }
+        });
     es.addEventListener('tool_call', ev => {
       const d = JSON.parse(ev.data);
       removeTyping(); // 工具卡出现也算即时反馈
@@ -1913,7 +2052,7 @@
   });
 
   // ---------- 顶栏 ----------
-  $('new-chat-btn').addEventListener('click', newChat);
+      $('new-chat-btn').addEventListener('click', newChat);
 
   // ============================================================================
   // 设置区(侧边栏用户区点击进入;页面搬自 index.html,接口全部复用既有 /api)
