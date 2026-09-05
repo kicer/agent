@@ -71,7 +71,7 @@ function buildMessages(session, language) {
         }
         messages.push({
           role: 'user',
-          content: '[系统] 你上一轮的 tool call 参数有误，未执行并已从对话历史中移除。错误详情：\n' +
+          content: '[系统] 你上一轮的 tool call 参数有误，未正确执行并已从对话历史中移除。错误详情：\n' +
             (errs.join('\n') || 'Error: ToolCall Invalid Params') +
             '\n请严格按工具参数定义重新生成正确的调用。',
         });

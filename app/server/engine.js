@@ -75,10 +75,10 @@ function loadHistory(sessionId) {
 
 function saveMessage(sessionId, msg) {
   const info = db.prepare(
-    'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, type, created_at) VALUES (?,?,?,?,?,?,?,?,?)'
+    'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)'
   ).run(sessionId, msg.role, msg.content || null, msg.reasoning || null,
     msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
-    msg.tool_call_id || null, msg.name || null, msg.type || null, now());
+    msg.tool_call_id || null, msg.name || null, msg.type || null, msg.is_error ? 1 : 0, now());
   // 关键动作日志：AI 每轮回复落库（含纯工具调用轮）
   if (msg.role === 'assistant') {
     const calls = msg.tool_calls || [];
@@ -541,7 +541,7 @@ async function runLoopInner(sessionId, run) {
           ])
         : outText;
       // 先落库再广播：回执带上消息行 id（msg_id），前端工具卡据此挂「删除本条」按钮
-      const toolMsgId = saveMessage(sessionId, { role: 'tool', tool_call_id: id, name: tc.function.name, content: toolContent });
+      const toolMsgId = saveMessage(sessionId, { role: 'tool', tool_call_id: id, name: tc.function.name, content: toolContent, is_error: isError });
       bus.emit(sessionId, 'tool_result', {
         tool_call_id: id, name: tc.function.name, content: outText.slice(0, 20000),
         is_error: isError, image_url: imageDataUrl || undefined, msg_id: toolMsgId,
@@ -636,14 +636,14 @@ function checkToolArgs(tools, name, raw) {
   else {
     try { args = JSON.parse(s); }
     catch (_) {
-      return { args: null, error: 'Error: ToolCall Args Invalid：arguments 不是合法 JSON，请重新生成该调用。原文：' + s.slice(0, 300) };
+        return { args: null, error: 'Error: Invalid tool call arguments (not valid JSON).' };
     }
   }
   const def = (tools || []).find(t => t && t.function && t.function.name === name);
   const required = def && def.function.parameters && def.function.parameters.required;
   const missing = required && required.length
     ? required.filter(k => args[k] === undefined || args[k] === '') : [];
-  if (missing.length) return { args: null, error: 'Error: ToolCall Missing Params：' + missing.join('、') };
+  if (missing.length) return { args: null, error: 'Error: ToolCall Missing Params: ' + missing.join('、') };
   return { args, error: null };
 }
 
