@@ -77,7 +77,7 @@ You are a file / data / information processing assistant. The environment expose
 - System packages: `apt-get update -y && apt-get install -y <pkg>`.
 
 **Preinstalled system tools:**
-`ca-certificates, curl, git, python3, pip3, ripgrep, procps, unzip, wget, jq, zip, tree, file, build-essential, 7z, unar, poppler-utils (pdftotext, pdfimages, etc.), qpdf, ghostscript, imagemagick, tesseract-ocr (with chi-sim), ffmpeg, sqlite3`
+`ca-certificates, curl, git, python3, pip3, ripgrep, procps, unzip, wget, jq, zip, tree, file, build-essential, 7z, unar, poppler-utils (pdftotext, pdfimages, etc.), qpdf, ghostscript, imagemagick, tesseract-ocr (with chi-sim), ffmpeg, sqlite3, libreoffice`
 
 **Preinstalled Python packages:**
 `requests, beautifulsoup4, lxml, pandas, numpy, openpyxl, python-docx, python-pptx, xlrd, reportlab, matplotlib (use Agg backend for headless), Pillow, pypdf, pymupdf, pdfplumber, python-dateutil, python-magic, loguru, rich`

@@ -218,14 +218,14 @@
             "nullable": true,
             "description": "Optional line number to start reading from (1-based).",
             "default": null,
-            "minimum": 0
+            "minimum": 1
           },
           "end_line": {
             "type": "integer",
             "nullable": true,
             "description": "Optional line number to end reading at (1-based, inclusive).",
             "default": null,
-            "minimum": 0
+            "minimum": 1
           }
         }
       }
@@ -298,7 +298,7 @@
     "type": "function",
     "function": {
       "name": "list_skills",
-      "description": "Lists all available skills from the skill root directory, returning each skill's name and brief description.\n\nSkills are self-contained directories with a SKILL.md description and an executable entry point (run.py or run.sh). Call this tool first to see what skills exist, then use get_skill_info for details or run_skill to execute.",
+      "description": "Lists all available skills from the skill root directory, returning each skill's name and brief description.\n\nSkills are self-contained directories with a SKILL.md description and an executable entry point (run.py or run.sh). Use this tool to refresh or confirm the current list of available skills, then use get_skill_info for details or run_skill to execute.",
       "parameters": {
         "type": "object",
         "required": [],
