@@ -14,11 +14,6 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/css/style.css">
     <style>
-      /* 调试专用 UI：仅在 config.yml 的 log_level: debug 时才显示
-         （debug 之外的等级一律隐藏；切换需重启服务生效，与其他配置一致）。
-         放在 link 之后以保证同优先级下能压住 style.css 里同优先级的规则。 */
-      body .msg-actions .act-del { display: none; }
-      body.log-debug .msg-actions .act-del { display: flex; }
       /* 「压缩」摘要卡片：与 .msg-think 同族的折叠交互，但做成更醒目的蓝色调卡片；
          流式收尾（live）和历史重渲染（type='summary' 消息）共用同一套样式。
          live 阶段 open=true 展开阅读；历史重渲染默认收起。 */
@@ -3356,22 +3351,12 @@
     mToggleEnable: toggleModelEnable,
   };
 
-  // 启动时拉一次 config,根据 log_level 决定是否给 body 加 log-debug 类;
-  // 配项改后需重启服务,这里只在首屏拉一次即可(失败静默,默认隐藏调试 UI)
-  async function applyLogLevelFlag() {
-    try {
-      const cg = await req('GET', '/api/config');
-      document.body.classList.toggle('log-debug', (cg && cg.effective && cg.effective.log_level) === 'debug');
-    } catch (_) { /* 未登录/失败时保持默认隐藏 */ }
-  }
-
   // ---------- 初始化 ----------
   bindChatScroll(); // 聊天区滚动跟随/右下角回底按钮(只绑一次)
   selectMode('secretary'); // 默认选中【文秘助理】
   setView('welcome');
   loadSessionList();
   loadDrawerUser(); // 侧边栏底部展示真实登录用户(未启用认证时静默回退默认占位)
-  applyLogLevelFlag(); // log_level: debug 才显示调试专用 UI(每条消息删除 X / 状态栏「清空」)
   </script>
 </body>
 </html>
