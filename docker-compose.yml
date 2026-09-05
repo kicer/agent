@@ -20,9 +20,10 @@ services:
       # 加入executor独立服务
       - EXECUTOR_URL=http://agent-executor:9000
       # 两侧设成同一个值即启用调用鉴权（内网互访，可选）：
-      # - EXECUTOR_TOKEN=change-me
+      - EXECUTOR_TOKEN=whoami
     networks:
       - my-app-network
+      - agent-internal
 
   agent-executor:
     build: ./executor
@@ -36,13 +37,15 @@ services:
     environment:
       - PORT=9000
       # 与 agent-core 侧设成同一个值即启用调用鉴权（可选）：
-      # - EXECUTOR_TOKEN=change-me
+      - EXECUTOR_TOKEN=whoami
     cap_drop:
       - SYS_ADMIN
       - DAC_OVERRIDE
     networks:
-      - my-app-network
+      - agent-internal
 
 networks:
   my-app-network:
     external: true
+  agent-internal:
+    driver: bridge
