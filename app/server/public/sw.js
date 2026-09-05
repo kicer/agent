@@ -1,5 +1,6 @@
 // Agent 任务台 Service Worker
-// 策略：HTML 网络优先（保证登录态/最新版本），静态资源缓存优先（图标/CSS/JS/vendor）
+// 策略：HTML 与静态资源均网络优先（保证改动/登录态即时生效），失败回退缓存（离线兜底）。
+// CACHE_VERSION 仅作缓存命名空间，改动静态资源后无需再手动升级它。
 
 const CACHE_VERSION = 'agent-v2';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -71,18 +72,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 静态资源：缓存优先
+  // 静态资源：网络优先（改完即生效），失败回退缓存（离线/断网可用）
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((resp) => {
-        if (resp && resp.status === 200 && resp.type === 'basic') {
-          const copy = resp.clone();
-          caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
-        }
-        return resp;
-      }).catch(() => cached);
-    })
+    fetch(request).then((resp) => {
+      if (resp && resp.status === 200 && resp.type === 'basic') {
+        const copy = resp.clone();
+        caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+      }
+      return resp;
+    }).catch(() => caches.match(request))
   );
 });
 
