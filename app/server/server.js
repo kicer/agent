@@ -43,11 +43,30 @@ app.use('/api/config', require('./routes/config'));
 app.use('/api/platforms', require('./routes/platforms'));
 app.use('/api/system', require('./routes/system'));
 
-// 模型池状态(前端可展示空闲/占用)+ 每模型 token 用量(今日/累计,输入/输出分开)
+// 模型池状态(前端可展示空闲/占用)+ 每模型 token 用量(今日/累计,输入/输出分开)。
+// 从生效配置补齐平台维度字段(platform/mid/vision/type + 平台 key 数 key_count):
+// model_pool 表只有 id/display_name/占用态,会话页「选择模型」弹窗需要按平台分组展示。
+// 配置里新增但重启前未进池的模型不在此返回(池才是运行时真相)。
 app.get('/api/models', (req, res) => {
   const rows = db.prepare('SELECT id, display_name, is_busy, current_session_id FROM model_pool ORDER BY id').all();
   const stats = engine.modelUsageStats();
+  // 配置视图:模型唯一键 → 平台/原始 id/vision;平台名 → key 数(cfg.models 含 key 副本,不能直接拿来用)
+  const cfgNow = engine.getConfig();
+  const infoById = {};
+  const keyCountByPlat = {};
+  for (const p of cfgNow.platforms || []) {
+    keyCountByPlat[p.name] = (p.keys || []).length;
+    for (const m of p.models || []) {
+      infoById[p.name + '/' + m.id] = { platform: p.name, mid: m.id, vision: !!m.vision, type: p.type };
+    }
+  }
   for (const r of rows) {
+    const info = infoById[r.id] || {};
+    r.platform = info.platform || '';
+    r.mid = info.mid || '';
+    r.vision = info.vision || false;
+    r.type = info.type || '';
+    r.key_count = keyCountByPlat[r.platform] || 0;
     const s = stats[r.id] || {};
     r.today_prompt = s.today_prompt || 0;
     r.today_completion = s.today_completion || 0;

@@ -258,7 +258,7 @@ async function main() {
     try { await api('PUT', '/api/config', { text: 'models: [unclosed' }); } catch (e) { bad400 = /400/.test(e.message); }
     ok(bad400, 'PUT 非法配置被 400 拒绝');
     ok(fs.readFileSync(cfgPath, 'utf8') === rawBeforeBadPut, '非法写入未动文件');
-    const mpatch = await api('PATCH', '/api/config', { path: 'platforms.0.keys.0.models.0.display_name', value: '改名模型' });
+    const mpatch = await api('PATCH', '/api/config', { path: 'platforms.0.models.0.display_name', value: '改名模型' });
     const mtext = (await api('GET', '/api/config')).text;
     ok(mpatch.ok && mtext.includes('改名模型'), 'PATCH 支持 platforms 嵌套数组下标');
     const restored = await api('PUT', '/api/config', { text: origText });

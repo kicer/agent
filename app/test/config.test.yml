@@ -4,22 +4,22 @@ platforms:
   - name: mock-a
     url: "http://127.0.0.1:9999/v1"
     type: openai
+    models:
+      - id: ds1
+        display_name: "Mock Model 1"
+        vision: true
     keys:
       - api_key: ""
-        models:
-          - id: ds1
-            display_name: "Mock Model 1"
-            vision: true
   - name: mock-b
     url: "http://127.0.0.1:9999/v1"
     type: custom
+    models:
+      - id: ds2
+        display_name: "Mock Model 2"
+        vision: true
     keys:
       - api_key: ""
         concurrency: 1
-        models:
-          - id: ds2
-            display_name: "Mock Model 2"
-            vision: true
 
 workspace_root: "./test/tmp/tasks"
 # 隔离数据目录：db/启动 prompt dump 落 tmp（随每次运行的 rm -rf 一同清掉），
