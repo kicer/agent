@@ -239,7 +239,6 @@
         <h3 id="mpe-title">编辑平台</h3>
         <input type="text" id="mpe-name" placeholder="平台名(留空取 url 主机名首段)">
         <input type="text" id="mpe-url" placeholder="平台上游地址(OpenAI 兼容 /v1)">
-        <input type="text" id="mpe-type" placeholder="type(留空同平台名;余额查询已接入:deepseek/bigmodel)">
         <div class="mpe-sec-head"><span>API Keys(同平台多 Key 共用下方模型)</span><button class="ghost-btn sm" onclick="sUI.mAddKey()">＋ Key</button></div>
         <div id="mpe-keys"></div>
         <div class="mpe-sec-head"><span>模型</span><button class="ghost-btn sm" onclick="sUI.mAddModel()">＋ 模型</button></div>
@@ -3328,15 +3327,13 @@
     const p = add ? {} : (SET.cfgPlatforms[pi] || {});
     pfEdit = {
       idx: add ? -1 : Number(pi),
-      keys: add ? [] : (p.keys || []).map((k, ki) => ({ ref: ki, api_key: k.api_key || '', concurrency: k.concurrency || 1 })),
-      models: add ? [] : platformModels(pi).map(m => ({ ref: m.model_index, id: m.mid || m.id, display_name: m.display_name || '', vision: !!m.vision, enable: m.enable !== false })),
+      keys: add ? [] : (p.keys || []).map((k, ki) => ({ ref: ki, api_key: k.api_key || '' })),
+      models: add ? [] : platformModels(pi).map(m => ({ ref: m.model_index, id: m.mid || m.id, vision: !!m.vision, enable: m.enable !== false })),
     };
     $('mpe-title').textContent = add ? '新增平台' : '编辑平台';
     $('mpe-name').value = add ? '' : (p.name || '');
     $('mpe-url').value = add ? '' : (p.url || '');
-    // 运行态 type = 规范化后的值(缺省已填 name);与 name 相同时置空,表示“跟随平台名”
-    $('mpe-type').value = add ? '' : ((p.type && p.type !== p.name) ? p.type : '');
-    if (add) { pfEdit.keys.push({ ref: null, api_key: '', concurrency: 1 }); pfEdit.models.push({ ref: null, id: '', display_name: '', vision: false, enable: true }); }
+    if (add) { pfEdit.keys.push({ ref: null, api_key: '' }); pfEdit.models.push({ ref: null, id: '', vision: false, enable: true }); }
     $('mpe-restart').checked = true; // 默认勾选「保存后立即重启」
     $('mpe-del-btn').classList.toggle('hidden', add);
     renderPfRows();
@@ -3347,18 +3344,23 @@
     return '<div class="mpe-row">' +
       '<input class="mpe-grow" type="text" placeholder="api_key(留空则不带鉴权头)" value="' + esc(r.api_key) + '"' +
         (isNew ? ' oninput="sUI.mKeyApi(' + i + ',this.value)"' : ' disabled title="已有 Key 不显明文;换 Key 请删行后新增"') + '>' +
-      '<input class="mpe-con" type="number" min="1" step="1" value="' + esc(String(r.concurrency || 1)) + '" title="并发数 concurrency(预留)" oninput="sUI.mKeyCon(' + i + ',this.value)">' +
       '<button class="mpe-del" title="删除此 Key" onclick="sUI.mDelKey(' + i + ')">×</button>' +
     '</div>';
   }
+  // 模型子卡片两行:上行只配 id(已有行不可改),下行勾 vision/enable。
+  // display_name/concurrency/type 不进弹窗:保存时只改 vision/enable 细粒度 path,不碰文件里其余字段。
   function pfModelsRowHtml(r, i) {
     const isNew = r.ref == null;
-    return '<div class="mpe-row">' +
-      '<input class="mpe-mid" type="text" placeholder="id(上游模型名)" value="' + esc(r.id) + '"' +
-        (isNew ? ' oninput="sUI.mModId(' + i + ',this.value)"' : ' disabled title="不可修改"') + '>' +
-      '<input class="mpe-grow" type="text" placeholder="显示名(留空同 id)" value="' + esc(r.display_name) + '" oninput="sUI.mModName(' + i + ',this.value)">' +
-      '<label class="mpe-vis" title="vision:支持图片输入"><input type="checkbox"' + (r.vision ? ' checked' : '') + ' onchange="sUI.mModVision(' + i + ',this.checked)">V</label>' +
-      '<button class="mpe-del" title="删除此模型" onclick="sUI.mDelModel(' + i + ')">×</button>' +
+    return '<div class="mpe-mcard">' +
+      '<div class="mpe-row">' +
+        '<input class="mpe-grow" type="text" placeholder="id(上游模型名)" value="' + esc(r.id) + '"' +
+          (isNew ? ' oninput="sUI.mModId(' + i + ',this.value)"' : ' disabled title="不可修改"') + '>' +
+        '<button class="mpe-del" title="删除此模型" onclick="sUI.mDelModel(' + i + ')">×</button>' +
+      '</div>' +
+      '<div class="mpe-cks">' +
+        '<label class="mpe-ck"><input type="checkbox"' + (r.vision ? ' checked' : '') + ' onchange="sUI.mModVision(' + i + ',this.checked)">vision(图片输入)</label>' +
+        '<label class="mpe-ck"><input type="checkbox"' + (r.enable !== false ? ' checked' : '') + ' onchange="sUI.mModEnable(' + i + ',this.checked)">enable(启用)</label>' +
+      '</div>' +
     '</div>';
   }
   // 行下标变化后需重渲染(事件处理器里捕获了旧 i),故增删后重建两段行列表。
@@ -3367,8 +3369,8 @@
     $('mpe-keys').innerHTML = pfEdit.keys.map(pfKeysRowHtml).join('') || '<div class="model-group-empty">至少保留一个 Key</div>';
     $('mpe-models').innerHTML = pfEdit.models.map(pfModelsRowHtml).join('') || '<div class="model-group-empty">至少保留一个模型</div>';
   }
-  function addPfKey() { if (!pfEdit) return; pfEdit.keys.push({ ref: null, api_key: '', concurrency: 1 }); renderPfRows(); }
-  function addPfModel() { if (!pfEdit) return; pfEdit.models.push({ ref: null, id: '', display_name: '', vision: false, enable: true }); renderPfRows(); }
+  function addPfKey() { if (!pfEdit) return; pfEdit.keys.push({ ref: null, api_key: '' }); renderPfRows(); }
+  function addPfModel() { if (!pfEdit) return; pfEdit.models.push({ ref: null, id: '', vision: false, enable: true }); renderPfRows(); }
   function delPfKey(i) {
     if (!pfEdit) return;
     if (pfEdit.keys.length <= 1) return toast('至少保留一个 Key');
@@ -3389,46 +3391,30 @@
     const edits = [];
     const name = $('mpe-name').value.trim();
     const url = $('mpe-url').value.trim().replace(/\/+$/, '');
-    let type = $('mpe-type').value.trim();
-    // type 置空 = 「跟随平台名」:原配置显式配过 type 且与 name 不同的,写回新 name(规范化后等价缺省)
-    const effName = name || p.name;
-    if (!type && p.type && p.type !== p.name) type = effName;
     if (name && name !== p.name) edits.push({ path: ['platforms', pfEdit.idx, 'name'], value: name });
     if (url && url !== p.url) edits.push({ path: ['platforms', pfEdit.idx, 'url'], value: url });
-    if (type && type !== p.type) edits.push({ path: ['platforms', pfEdit.idx, 'type'], value: type });
-    // Key:concurrency 可原地改;已有 api_key 不写回(脱敏值会污染真 Key),换 Key 走删行+新增行
+    // Key:弹窗只配 api_key(concurrency/type 不进弹窗);已有 api_key 不写回(脱敏值会污染真 Key),换 Key 走删行+新增行
     pfEdit.keys.forEach(r => {
-      if (r.ref != null) {
-        const oc = (p.keys[r.ref] || {}).concurrency || 1;
-        const nc = Math.max(1, parseInt(r.concurrency, 10) || 1);
-        if (nc !== oc) edits.push({ path: ['platforms', pfEdit.idx, 'keys', r.ref, 'concurrency'], value: nc });
-      } else {
-        edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'keys'], value: {
-          api_key: String(r.api_key || '').trim(), concurrency: Math.max(1, parseInt(r.concurrency, 10) || 1),
-        } });
-      }
+      if (r.ref == null) edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'keys'], value: { api_key: String(r.api_key || '').trim() } });
     });
     const delKeys = [];
     for (let ki = 0; ki < (p.keys || []).length; ki++) {
       if (!pfEdit.keys.some(r => r.ref === ki)) delKeys.push(ki);
     }
     delKeys.sort((a, b) => b - a).forEach(ki => edits.push({ op: 'delete', path: ['platforms', pfEdit.idx, 'keys', ki] }));
-    // 模型:整体覆盖改(保留 enable)/新增 append/删行;id 不可改故无新增行冲突
+    // 模型:已有行只按细粒度 path 改 vision/enable(不整体覆盖,保住文件里的 display_name/extra_params 等);
+    // 新增行 append 最小对象(缺省项不写:display_name 后端同 id,enable 缺省启用)
     pfEdit.models.forEach(r => {
       if (r.ref != null) {
         const om = (p.models || [])[r.ref] || {};
-        const nd = String(r.display_name || '').trim() || r.id;
-        const ne = r.enable !== false;
-        if ((om.display_name || '') !== nd || !!om.vision !== !!r.vision || (om.enable !== false) !== ne) {
-          edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref], value: {
-            id: om.id || r.id, display_name: nd, vision: !!r.vision, enable: ne,
-          } });
-        }
+        if (!!om.vision !== !!r.vision) edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref, 'vision'], value: !!r.vision });
+        if ((om.enable !== false) !== (r.enable !== false)) edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref, 'enable'], value: r.enable !== false });
       } else {
         const id = String(r.id || '').trim();
-        edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'models'], value: {
-          id, display_name: String(r.display_name || '').trim() || id, vision: !!r.vision,
-        } });
+        const nv = { id };
+        if (r.vision) nv.vision = true;
+        if (r.enable === false) nv.enable = false;
+        edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'models'], value: nv });
       }
     });
     const delMods = (p.models || []).map((_, i) => i).filter(i => !pfEdit.models.some(r => r.ref === i)).sort((a, b) => b - a);
@@ -3438,10 +3424,8 @@
   async function saveModelEditor() {
     if (!pfEdit) return;
     const add = pfEdit.idx < 0;
-    // 采集当前输入框值到工作态(避免用户只改最后一个框未触发 oninput 的边界)
     const name = $('mpe-name').value.trim();
     const url = $('mpe-url').value.trim().replace(/\/+$/, '');
-    const type = $('mpe-type').value.trim();
     if (!url) return toast('请填写平台上游地址');
     if (!pfEdit.models.length) return toast('至少保留一个模型');
     if (!pfEdit.keys.length) return toast('至少保留一个 Key');
@@ -3455,11 +3439,17 @@
     let edits;
     try {
       if (add) {
-        // 新增平台:一次 append 整个对象(name/url/type 留空由服务端规范化: name 取主机段、type 取 name)
+        // 新增平台:一次 append 整个对象(name 留空由服务端取主机段;type/concurrency/display_name 均不落配置,走各自缺省)
         edits = [{ op: 'append', path: ['platforms'], value: {
-          name, url, type,
-          keys: pfEdit.keys.map(r => ({ api_key: String(r.api_key || '').trim(), concurrency: Math.max(1, parseInt(r.concurrency, 10) || 1) })),
-          models: pfEdit.models.map(r => ({ id: String(r.id).trim(), display_name: String(r.display_name || '').trim() || String(r.id).trim(), vision: !!r.vision })),
+          name, url,
+          keys: pfEdit.keys.map(r => ({ api_key: String(r.api_key || '').trim() })),
+          models: pfEdit.models.map(r => {
+            const id = String(r.id).trim();
+            const nv = { id };
+            if (r.vision) nv.vision = true;
+            if (r.enable === false) nv.enable = false;
+            return nv;
+          }),
         } }];
       } else {
         // 改名不影响 pi(数组位置);其余按原 ref 定位,见 buildPfEdits
@@ -3531,10 +3521,9 @@
     mAddModel: addPfModel,
     mDelModel: delPfModel,
     mKeyApi: function (i, v) { setPfKey(i, 'api_key', v); },
-    mKeyCon: function (i, v) { setPfKey(i, 'concurrency', v); },
     mModId: function (i, v) { setPfModel(i, 'id', v); },
-    mModName: function (i, v) { setPfModel(i, 'display_name', v); },
     mModVision: function (i, v) { setPfModel(i, 'vision', v); },
+    mModEnable: function (i, v) { setPfModel(i, 'enable', v); },
     mDelPlat: delPlatformFromModal,
     toggleGroup: toggleModelGroup,
     refreshBalance: refreshBalance,
