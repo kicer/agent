@@ -46,8 +46,9 @@ function maskKey(k) {
 
 // 逐行掩码配置原文里的 api_key 值(设置页原文编辑器展示用)。
 // 行格式如 `    api_key: sk-xxx` / `    api_key: "sk-xxx"` / `    - api_key: sk-xxx`(platforms.keys 列表项写法)。
+// 值用 (.*) 而非 (.+?)：允许空串（`api_key: ""`），否则引号可选组回退会把 `""` 误捕成值 `"` 而被掩码成 `***"`。
 // 记录每行是否掩码,便于 restore 时按顺序还原未改动项。
-const API_KEY_LINE = /^(\s*(?:-\s+)?api_key:\s*)(["']?)(.+?)\2\s*$/;
+const API_KEY_LINE = /^(\s*(?:-\s+)?api_key:\s*)(["']?)(.*)\2\s*$/;
 function maskApiKeys(text) {
   if (!text) return text;
   return text.split('\n').map(function (line) {
@@ -79,7 +80,7 @@ function restoreApiKeys(submitted, orig) {
 
 // password 脱敏(思路同 api_key):auth.users 密码在原文编辑器里统一显示 ******。
 // 行格式如 `      password: "xxx"` / `      password: xxx`(auth.users 列表项写法)。
-const PASSWORD_LINE = /^(\s*(?:-\s+)?password:\s*)(["']?)(.+?)\2\s*$/;
+const PASSWORD_LINE = /^(\s*(?:-\s+)?password:\s*)(["']?)(.*)\2\s*$/;
 const PASSWORD_MASK = '******';
 function maskPassword(p) { return p ? PASSWORD_MASK : ''; }
 function maskPasswords(text) {

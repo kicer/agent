@@ -37,12 +37,16 @@ function composeWithAttachments(content, attachments) {
 
 router.post('/:id/messages', wrap((req, res) => {
   const content = String((req.body && req.body.content) || '').trim();
-  if (!content) return res.status(400).json({ error: 'content 不能为空' });
+  // 附件告知：正文前拼【系统通知】行（见 composeWithAttachments 注释）；纯附件消息（无正文）也合法。
+  const attachments = Array.isArray(req.body && req.body.attachments) && (req.body.attachments || []).length
+    ? req.body.attachments : null;
+  const full = composeWithAttachments(content, attachments);
+  if (!full) return res.status(400).json({ error: 'content 与 attachments 不能同时为空' });
   // deepThink：是否启用模型该「深度思考」参数（thinking_params 合并进上游请求体）
   const deepThink = !!(req.body && req.body.deepThink);
-  const r = engine.postUserMessage(req.params.id, content, { deepThink });
+  const r = engine.postUserMessage(req.params.id, full, { deepThink });
   log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
-      content.slice(0, 60).replace(/\s+/g, ' '));
+      full.slice(0, 60).replace(/\s+/g, ' '));
   res.json(r);
 }));
 

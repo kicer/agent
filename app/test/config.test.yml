@@ -22,6 +22,9 @@ platforms:
             vision: true
 
 workspace_root: "./test/tmp/tasks"
+# 隔离数据目录：db/启动 prompt dump 落 tmp（随每次运行的 rm -rf 一同清掉），
+# 不配则用默认 ./data，残留会话会污染下次测试的模型池调度。
+data_root: "./test/tmp/data"
 
 port: 8099
 

@@ -84,25 +84,25 @@ async function main() {
     console.log('\n[1] 普通对话');
     let s = await api('POST', '/api/sessions', { title: '冒烟-对话' });
     ok(s && s.id && s.status, '创建会话 ' + (s && s.id));
-    let d = await waitSession(s.id, x => x.session.status === 'active', 5000, '绑定模型');
-    ok(d.session.model_id === 'ds1', '绑定第一个空闲模型 ds1', d.session.model_id);
+    let d = await waitSession(s.id, x => x.session.status === 'held' && !!x.session.model_id, 5000, '新建自动绑定(held 预留)');
+    ok(d.session.model_id === 'mock-a/ds1', '绑定第一个空闲模型 mock-a/ds1', d.session.model_id);
     await api('POST', '/api/sessions/' + s.id + '/messages', { content: '你好呀' });
     d = await waitSession(s.id, x => x.session.status === 'held', 8000, 'AI 回复完成（held）');
     const asst = d.messages.filter(m => m.role === 'assistant');
     ok(asst.length === 1 && asst[0].content.includes('你好呀'), 'AI 文本回复流式落库', asst.map(m => m.content).join('|'));
-    ok(d.session.model_id === 'ds1', '回复完成后模型不释放（held 保持租约）', d.session.model_id);
+    ok(d.session.model_id === 'mock-a/ds1', '回复完成后模型不释放（held 保持租约）', d.session.model_id);
     // held 期间追问：直接复用已绑模型，不重新排队
     const r2 = await api('POST', '/api/sessions/' + s.id + '/messages', { content: '再来一条' });
     ok(r2 && r2.delivered === 'live', 'held 期间追问直接送达（不排队）', r2 && r2.delivered);
     d = await waitSession(s.id, x => x.session.status === 'held' && x.messages.filter(m => m.role === 'assistant').length >= 2, 8000, '第二次回复');
-    ok(d.session.model_id === 'ds1', '追问复用同一模型', d.session.model_id);
+    ok(d.session.model_id === 'mock-a/ds1', '追问复用同一模型', d.session.model_id);
     // held 租约到期自动释放（测试配置 idle_release_ms=1500）
     d = await waitSession(s.id, x => x.session.status === 'completed' && x.session.model_id === null, 6000, 'held 租约到期自动释放');
 
     // ---- 2. 工具调用 write_file ----
     console.log('\n[2] 工具调用');
     s = await api('POST', '/api/sessions', { title: '冒烟-工具' });
-    await waitSession(s.id, x => x.session.status === 'active', 5000, '绑定');
+    await waitSession(s.id, x => x.session.status === 'held' && !!x.session.model_id, 5000, '绑定(held)');
     await api('POST', '/api/sessions/' + s.id + '/start');
     await api('POST', '/api/sessions/' + s.id + '/messages', { content: '请写文件' });
     d = await waitSession(s.id, x => x.session.status === 'held' && x.messages.some(m => m.role === 'tool'), 15000, '工具回合完成（held）');
@@ -123,7 +123,7 @@ async function main() {
     const sharp = require('sharp');
     const pngBuf = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 200, g: 30, b: 30 } } }).png().toBuffer();
     const si = await api('POST', '/api/sessions', { title: '冒烟-读图' });
-    await waitSession(si.id, x => x.session.status === 'active', 5000, '绑定');
+    await waitSession(si.id, x => x.session.status === 'held' && !!x.session.model_id, 5000, '绑定(held)');
     const fdImg = new FormData();
     fdImg.append('files', new Blob([pngBuf], { type: 'image/png' }), 'pic.png');
     const upImg = await fetch(BASE + '/api/sessions/' + si.id + '/files', { method: 'POST', body: fdImg });
@@ -141,7 +141,7 @@ async function main() {
     // ---- 2.8 释放后新消息优先回绑上次模型（last_model_id）----
     console.log('\n[2.8] 优先回绑');
     const sp = await api('POST', '/api/sessions', { title: '冒烟-回绑' });
-    let dp = await waitSession(sp.id, x => x.session.status === 'active', 5000, '绑定');
+    let dp = await waitSession(sp.id, x => x.session.status === 'held' && !!x.session.model_id, 5000, '绑定(held)');
     const m1 = dp.session.model_id;
     await api('POST', '/api/sessions/' + sp.id + '/messages', { content: '回绑测试' });
     dp = await waitSession(sp.id, x => x.session.status === 'held', 8000, '回复完成 held');
@@ -163,7 +163,7 @@ async function main() {
     // ---- 4. 终止机制 ----
     console.log('\n[4] 终止');
     s = await api('POST', '/api/sessions', { title: '冒烟-终止' });
-    await waitSession(s.id, x => x.session.status === 'active', 5000, '绑定');
+    await waitSession(s.id, x => x.session.status === 'held' && !!x.session.model_id, 5000, '绑定(held)');
     await api('POST', '/api/sessions/' + s.id + '/messages', { content: '慢一点说' });
     await sleep(600);
     await api('POST', '/api/sessions/' + s.id + '/stop');
@@ -183,14 +183,15 @@ async function main() {
     const a = await api('POST', '/api/sessions', { title: 'A' });
     const b = await api('POST', '/api/sessions', { title: 'B' });
     const c = await api('POST', '/api/sessions', { title: 'C' });
-    const da = await waitSession(a.id, x => x.session.status === 'active', 5000, 'A active');
-    const db = await waitSession(b.id, x => x.session.status === 'active', 5000, 'B active');
+    const da = await waitSession(a.id, x => x.session.status === 'held' && !!x.session.model_id, 5000, 'A 绑定(held)');
+    const db = await waitSession(b.id, x => x.session.status === 'held' && !!x.session.model_id, 5000, 'B 绑定(held)');
     const dc = await api('GET', '/api/sessions/' + c.id);
     ok(da.session.model_id && db.session.model_id && da.session.model_id !== db.session.model_id,
       '两个会话分到不同模型', da.session.model_id + ' vs ' + db.session.model_id);
     ok(dc.session.status === 'queued' && dc.queue_pos === 1, '第三个会话排队 position 1');
     await api('POST', '/api/sessions/' + a.id + '/stop');
-    await waitSession(c.id, x => x.session.status === 'active', 6000, 'C 顶替');
+    // C 从未发言 → 顶替后同样绑成 held 预留（非 active）
+    await waitSession(c.id, x => x.session.status === 'held' && !!x.session.model_id, 6000, 'C 顶替');
     const dc2 = await api('GET', '/api/sessions/' + c.id);
     ok(dc2.session.model_id != null, '释放后队列会话自动绑定', String(dc2.session.model_id));
 
@@ -253,9 +254,10 @@ async function main() {
     ok(/temperature:\s*0\.5/.test(afterPatch.text), 'PATCH 写盘生效');
     ok(afterPatch.text.includes('冒烟测试用短租约'), 'PATCH 保留文件注释');
     let bad400 = false;
+    const rawBeforeBadPut = fs.readFileSync(cfgPath, 'utf8');
     try { await api('PUT', '/api/config', { text: 'models: [unclosed' }); } catch (e) { bad400 = /400/.test(e.message); }
     ok(bad400, 'PUT 非法配置被 400 拒绝');
-    ok(fs.readFileSync(cfgPath, 'utf8') === afterPatch.text, '非法写入未动文件');
+    ok(fs.readFileSync(cfgPath, 'utf8') === rawBeforeBadPut, '非法写入未动文件');
     const mpatch = await api('PATCH', '/api/config', { path: 'platforms.0.keys.0.models.0.display_name', value: '改名模型' });
     const mtext = (await api('GET', '/api/config')).text;
     ok(mpatch.ok && mtext.includes('改名模型'), 'PATCH 支持 platforms 嵌套数组下标');
@@ -339,7 +341,7 @@ async function main() {
     const st = await api('GET', '/api/system/status');
     ok(st.ok && st.started_at && st.port === 8099, 'GET /api/system/status');
     s = await api('POST', '/api/sessions', { title: '冒烟-重启保护' });
-    await waitSession(s.id, x => x.session.status === 'active', 5000, '绑定');
+    await waitSession(s.id, x => x.session.status === 'held' && !!x.session.model_id, 5000, '绑定(held)');
     await api('POST', '/api/sessions/' + s.id + '/messages', { content: '慢一点说' });
     await sleep(400); // 进入慢速流式输出,looping=true
     let guarded = false;
@@ -352,11 +354,12 @@ async function main() {
 
     console.log('\n========================');
     console.log('通过 ' + pass + ' / 失败 ' + fail);
-    process.exit(fail === 0 ? 0 : 2);
+    // 不用 process.exit()：会跳过 finally 的子进程清理，残留 mock/server 占住 9999/8099 干扰下次运行。
+    process.exitCode = fail === 0 ? 0 : 2;
   } catch (e) {
     console.log('\n测试异常: ' + (e && e.stack || e));
     console.log('server 日志尾部:\n' + serverLog.slice(-2000));
-    process.exit(2);
+    process.exitCode = 2;
   } finally {
     server.kill('SIGKILL');
     mock.kill('SIGKILL');
