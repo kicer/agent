@@ -943,10 +943,17 @@ label.icon-btn { cursor: pointer; }
 .mbal-refresh.spin svg { animation: mbal-spin 0.8s linear infinite; }
 @keyframes mbal-spin { to { transform: rotate(360deg); } }
 .model-group-empty { font-size: 12px; color: var(--gray-light); padding: 12px 4px 2px; text-align: center; }
-.model-card { background: #fafbfd; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin: 10px 0 0; }
+.model-group-badge { font-size: 11px; color: var(--gray); background: var(--surface); border-radius: 9px; padding: 1px 7px; flex-shrink: 0; }
+/* 每 Key 一行余额:左脱敏 key、右余额+刷新 */
+.mbal-row { display: flex; align-items: center; gap: 8px; padding: 8px 4px 0; font-size: 12.5px; color: #556; }
+.mbal-row:first-child { padding-top: 10px; }
+.mbal-key { font-size: 11.5px; color: var(--gray); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mbal-val { margin-left: auto; flex-shrink: 0; }
+.model-card { background: #fafbfd; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin: 10px 0 0; cursor: pointer; }
 .model-card:last-child { margin-bottom: 2px; }
-.model-card-head { display: flex; align-items: center; gap: 8px; }
-.model-card-name { font-weight: 600; font-size: 15px; flex-shrink: 0; cursor: pointer; }
+.model-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* 名字过长时省略号收尾(原 flex-shrink:0 会把长模型名撑出卡片) */
+.model-card-name { font-weight: 600; font-size: 15px; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .model-card-name:active { opacity: 0.55; }
 .model-card-meta { font-size: 12px; color: var(--gray); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-card-state { font-size: 11px; padding: 2px 8px; border-radius: 9px; flex-shrink: 0; }
@@ -964,6 +971,20 @@ label.icon-btn { cursor: pointer; }
 .model-en-sw .sw-track::after { content: ''; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s; }
 .model-en-sw input:checked + .sw-track { background: var(--active); }
 .model-en-sw input:checked + .sw-track::after { transform: translateX(14px); }
+
+/* ---------- 平台编辑/新增弹窗(模型池共用) ---------- */
+.modal.modal-wide { max-width: 480px; }
+.mpe-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 0 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.mpe-sec-head .ghost-btn.sm { flex: none; padding: 4px 12px; font-size: 12.5px; border-radius: 8px; }
+.mpe-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.mpe-row input { margin-bottom: 0; padding: 8px 10px; font-size: 13px; }
+.mpe-grow { flex: 1; min-width: 0; }
+.mpe-con { width: 56px; flex: none; }
+.mpe-mid { width: 104px; flex: none; }
+.mpe-vis { flex: none; display: flex; align-items: center; gap: 3px; font-size: 12px; color: var(--gray); margin: 0; width: auto; }
+.mpe-vis input { width: 15px; height: 15px; padding: 0; margin: 0; accent-color: var(--active); cursor: pointer; }
+.mpe-del { flex: none; border: none; background: none; margin: 0; padding: 2px 7px; cursor: pointer; color: var(--gray-light); font-size: 18px; line-height: 1.2; }
+.mpe-del:active { color: #c0392b; }
 
 /* ---------- 编辑器页(config.yml 原文 / 技能文件) ---------- */
 .set-editor {

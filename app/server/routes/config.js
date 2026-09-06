@@ -129,12 +129,19 @@ function maskEffective(cfg) {
 
 // 配置原文 + 路径 + 当前生效配置(设置页表单显示当前值;注释原样保留)
 // GET 返回的原文与生效配置均对 api_key / password 脱敏;PUT/validate 时按顺序还原。
+// effective 优先按文件内容重新解析返回(而非运行态):页面无热重载,重启前运行态是旧配置,
+// 而后续按下标定位的 PATCH 改的是文件——两者错位会让平台编辑弹窗二次保存时删错/改错行。
+// 文件解析失败(手改坏等极端情况)退回运行态配置。
 router.get('/', wrap((req, res) => {
   const cfg = cfgOf();
   const text = readConfigText(cfg);
   const shown = text === null ? '' : maskPasswords(maskApiKeys(text));
+  let eff = maskEffective(cfg);
+  if (text !== null) {
+    try { eff = maskEffective(loadConfigFromText(text, cfg.config_path)); } catch (_) { /* 保持运行态兑底 */ }
+  }
   // balance_types:已接入余额查询的平台类型,前端据此决定是否展示余额行
-  res.json({ config_path: cfg.config_path || '', exists: text !== null, text: shown, effective: maskEffective(cfg), balance_types: balance.types() });
+  res.json({ config_path: cfg.config_path || '', exists: text !== null, text: shown, effective: eff, balance_types: balance.types() });
 }));
 
 // 干跑校验(编辑器保存前预检):body { text }
@@ -167,27 +174,39 @@ router.put('/', wrap((req, res) => {
   res.json({ ok: true, changed: diffTop(cfg, next), restart_required: true });
 }));
 
-// 单项修改:body { path: "agent.temperature" | ["platforms",0,"keys",0,"models",1], value, op?: "delete"|"append" }
+// 单项修改:body { path: "agent.temperature" | ["platforms",0,"models",1], value, op?: "delete"|"append" }
+// 或批量修改:body { edits: [{ path, value, op? }, ...] } —— 同一次读文/写回/校验/落盘,原子生效
+// (平台编辑弹窗一次要改 name/url/type + 多个模型 + 增删 Key,逐条 PATCH 会留半写状态)。
 // 用 YAML Document 写回,保留文件注释与排版;数组可整体替换,可按数字下标改/删元素,
 // 也可 append 向数组追加一项(新增平台/Key/模型;前端只持有脱敏 key,绝不能整体替换含 key 的数组)。
+function normEdit(e) {
+  if (!e) throw new Error('配置项编辑不能为空');
+  let pathArr;
+  if (Array.isArray(e.path)) pathArr = e.path;
+  else if (typeof e.path === 'string' && e.path.trim()) pathArr = e.path.split('.').map(s => s.trim()).filter(Boolean);
+  else throw new Error('配置项 path 必填,如 agent.temperature 或 ["platforms",0,"models",1]');
+  if (!pathArr.length) throw new Error('配置项 path 为空');
+  return { path: pathArr, value: e.value, delete: e.op === 'delete', append: e.op === 'append' };
+}
 router.patch('/', wrap((req, res) => {
   const cfg = cfgOf();
   const text = readConfigText(cfg);
   if (text === null) return sendErr(res, Object.assign(new Error('配置文件不存在:' + (cfg.config_path || '(未知路径)')), { status_code: 409 }));
   const body = req.body || {};
-  let pathArr;
-  if (Array.isArray(body.path)) pathArr = body.path;
-  else if (typeof body.path === 'string' && body.path.trim()) pathArr = body.path.split('.').map(s => s.trim()).filter(Boolean);
-  else return badRequest(res, new Error('body.path 必填,如 agent.temperature 或 ["models",0,"display_name"]'));
-  if (!pathArr.length) return badRequest(res, new Error('body.path 为空'));
+  let edits;
+  try {
+    if (Array.isArray(body.edits) && body.edits.length) edits = body.edits.map(normEdit);
+    else if (body.path != null) edits = [normEdit(body)];
+    else return badRequest(res, new Error('body.path 或 body.edits 必填'));
+  } catch (e) { return badRequest(res, e); }
   let nextText;
   try {
-    nextText = applyEditsToText(text, [{ path: pathArr, value: body.value, delete: body.op === 'delete', append: body.op === 'append' }]);
+    nextText = applyEditsToText(text, edits);
   } catch (e) { return badRequest(res, e); }
   let next;
   try { next = loadConfigFromText(nextText, cfg.config_path); } catch (e) { return badRequest(res, e); }
   writeConfigText(cfg, nextText);
-  log.info('config', (req.user || '-') + ' 修改配置项 ' + pathArr.join('.') + (body.op === 'delete' ? '（删除）' : '') + '，变更段：' + (diffTop(cfg, next).join(',') || '无'));
+  log.info('config', (req.user || '-') + ' 修改配置项 ' + edits.map(e => e.path.join('.') + (e.delete ? '（删除）' : e.append ? '（追加）' : '')).join('；') + '，变更段：' + (diffTop(cfg, next).join(',') || '无'));
   res.json({ ok: true, changed: diffTop(cfg, next), restart_required: true });
 }));
 

@@ -230,34 +230,24 @@
       </div>
     </div>
 
-    <!-- 模型编辑/新增弹窗(搬自 index) -->
+    <!-- 平台编辑/新增弹窗(模型池共用:点卡片内任一模型=编辑整个平台;右上+模型=新增整个平台) -->
     <div id="model-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)sUI.mClose()">
-      <div class="modal">
+      <div class="modal modal-wide">
         <button class="modal-close-btn" onclick="sUI.mClose()">
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
-        <h3 id="moe-title">编辑模型</h3>
-        <select id="moe-target"></select>
-        <div id="moe-newkey-wrap" class="hidden">
-          <select id="moe-nk-plat"></select>
-          <input type="text" id="moe-nk-key" placeholder="api_key(留空则不带鉴权头)">
-          <input type="number" id="moe-nk-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)">
-        </div>
-        <div id="moe-newplat-wrap" class="hidden">
-          <input type="text" id="moe-np-name" placeholder="平台名称(留空取域名主机段)">
-          <input type="text" id="moe-np-url" placeholder="平台上游地址(OpenAI 兼容 /v1)">
-          <input type="text" id="moe-np-type" value="" placeholder="类型(任意自定义;余额查询已接入:deepseek)">
-          <input type="text" id="moe-np-key" placeholder="api_key(留空则不带鉴权头)">
-          <input type="number" id="moe-np-con" min="1" step="1" value="1" placeholder="并发数 concurrency(默认 1)">
-        </div>
-        <input type="text" id="moe-name" placeholder="显示名(留空同 id)">
-        <input type="text" id="moe-id" placeholder="id(上游模型名,全局唯一)">
-        <label class="del-dir"><input type="checkbox" id="moe-vision">支持图片输入(vision)</label>
+        <h3 id="mpe-title">编辑平台</h3>
+        <input type="text" id="mpe-name" placeholder="平台名(留空取 url 主机名首段)">
+        <input type="text" id="mpe-url" placeholder="平台上游地址(OpenAI 兼容 /v1)">
+        <input type="text" id="mpe-type" placeholder="type(留空同平台名;余额查询已接入:deepseek/bigmodel)">
+        <div class="mpe-sec-head"><span>API Keys(同平台多 Key 共用下方模型)</span><button class="ghost-btn sm" onclick="sUI.mAddKey()">＋ Key</button></div>
+        <div id="mpe-keys"></div>
+        <div class="mpe-sec-head"><span>模型</span><button class="ghost-btn sm" onclick="sUI.mAddModel()">＋ 模型</button></div>
+        <div id="mpe-models"></div>
         <div class="btn-row">
-          <button class="ghost-btn danger hidden" id="moe-del-btn" onclick="sUI.mDel()">删除</button>
           <button class="primary-btn" onclick="sUI.mSave()">保存</button>
         </div>
-        <div class="cfg-note">写入 config.yml,到「服务」页重启服务后生效。id 不可在此修改(历史会话按 id 绑定),如需改动请编辑配置文件原文。</div>
+        <div class="cfg-note">写入 config.yml,到「服务」页重启后生效。已有 Key 仅显示脱敏值,换 Key 请删行后重加;模型 id 不可改(历史会话按 id 绑定)。改平台名等于重建其下所有模型。</div>
       </div>
     </div>
 
@@ -2385,7 +2375,7 @@
     cfgPlatforms: [], cfgModels: [], runtimeById: {}, modelsPendingRestart: false,
     pendingEnable: {},              // 已写盘但重启前 effective 仍是旧值的 enable 覆盖(id → bool),防卡片回弹
     deletedModels: {},              // 已从 config.yml 删除、重启前后端仍会返回的模型(id → true):前端隐藏防回弹
-    moeIdx: -1, expandedGroups: {}, balanceByGroup: {}, balanceRequested: {}, balanceTypes: [],
+    expandedGroups: {}, balanceByGroup: {}, balanceRequested: {}, balanceTypes: [], // 平台编辑弹窗工作态见 pfEdit(模块级变量)
   };
   let setTok = 0;                     // 异步渲染防竞态令牌
 
@@ -3163,6 +3153,7 @@
     fetchBalance(pi + '-' + ki, pi, ki, true);
   }
   const BAL_REFRESH_SVG = '<svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
+  // 平台卡折叠/展开(gk = 'p'+pi)。首次展开:给该平台每个 Key 行自动查一次余额(每页会话一次;手动刷新不受限)。
   function toggleModelGroup(gk) {
     const on = !SET.expandedGroups[gk];
     SET.expandedGroups[gk] = on;
@@ -3171,10 +3162,15 @@
     el.classList.toggle('open', on);
     const body = el.querySelector('.model-group-body');
     if (body) body.classList.toggle('hidden', !on);
-    // 首次展开自动查一次余额(余额由平台名+key 决定);标记随每次进入本页重置
-    if (on && !SET.balanceRequested[gk] && $('mbal-' + gk)) {
-      const parts = gk.split('-');
-      fetchBalance(gk, Number(parts[0]), Number(parts[1]), false);
+    if (on) {
+      const pi = Number(gk.slice(1));
+      const p = SET.cfgPlatforms[pi] || {};
+      if (SET.balanceTypes.indexOf(String(p.type || '')) >= 0) {
+        (p.keys || []).forEach((k, ki) => {
+          const bk = pi + '-' + ki;
+          if (!SET.balanceRequested[bk] && $('mbal-' + bk)) fetchBalance(bk, pi, ki, false);
+        });
+      }
     }
   }
   // 启停切换:写 platforms[pi].models[mi].enable(缺省启用),重启后生效。
@@ -3195,8 +3191,8 @@
       loadModelCards(); // 失败时重拉,回滚开关显示
     }
   }
-  // 单个模型的子卡片;余额是 Key 级概念,统一在分组头显示
-  function modelCardHtml(m) {
+  // 单个模型卡;点击整卡弹所属平台的编辑弹窗(enable 开关点击不冒泡)。余额是 Key 级概念,在卡体顶部按 Key 分行。
+  function modelCardHtml(m, pi) {
     const run = SET.runtimeById[m.id];
     const disabled = m.enable === false;
     // 运行池里没有 = 配置新增但还没重启生效;禁用后若仍在池里(未重启)也提示待重启
@@ -3207,13 +3203,13 @@
       : run
         ? '<span class="model-card-state ' + (run.is_busy ? 'busy' : 'idle') + '">' + (run.is_busy ? '占用中' : '空闲') + '</span>'
         : '<span class="model-card-state pending">待重启</span>';
-    return '<div class="model-card' + (disabled ? ' off' : '') + '">' +
+    return '<div class="model-card' + (disabled ? ' off' : '') + '" title="点击编辑平台" onclick="sUI.mEdit(' + pi + ')">' +
       '<div class="model-card-head">' +
-        '<span class="model-card-name" title="点击编辑" onclick="sUI.mEdit(\'' + encodeURIComponent(m.id) + '\')">' + esc(m.display_name || m.mid || m.id) + '</span>' +
+        '<span class="model-card-name">' + esc(m.display_name || m.mid || m.id) + '</span>' +
         '<span class="model-card-meta">' + esc(m.mid || m.id) +
           (run && run.is_busy && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</span>' +
         stateHtml +
-        '<label class="model-en-sw" title="' + (disabled ? '已禁用,点击启用' : '启用中,点击禁用') + '">' +
+        '<label class="model-en-sw" title="' + (disabled ? '已禁用,点击启用' : '启用中,点击禁用') + '" onclick="event.stopPropagation()">' +
           '<input type="checkbox"' + (disabled ? '' : ' checked') + ' onchange="sUI.mToggleEnable(\'' + encodeURIComponent(m.id) + '\')">' +
           '<span class="sw-track"></span>' +
         '</label>' +
@@ -3222,28 +3218,38 @@
       '<div class="cfg-kv"><label>累计 token</label><b title="输入 / 输出">' + (run ? fmtTok(run.total_prompt) + ' / ' + fmtTok(run.total_completion) : '--') + '</b></div>' +
     '</div>';
   }
-  function modelGroupHtml(pi, ki) {
+  // 平台卡:头部 = 平台名 + N keys 徒章 + 启用/总数模型数;体内 = 每 Key 一行余额(仅已接入类型)+ 该平台模型列表。
+  // models 从打平 cfgModels 取首份 key 副本(已含 deletedModels/pendingEnable 过滤)。
+  function modelGroupHtml(pi) {
     const p = SET.cfgPlatforms[pi] || {};
-    const k = (p.keys || [])[ki] || {};
-    const gk = pi + '-' + ki;
-    const models = SET.cfgModels.filter(m => m.platform_index === pi && m.key_index === ki);
+    const keys = p.keys || [];
+    const models = [];
+    const seen = new Set();
+    for (const m of SET.cfgModels) {
+      if (m.platform_index === pi && !seen.has(m.id)) { seen.add(m.id); models.push(m); }
+    }
+    const gk = 'p' + pi;
     const open = !!SET.expandedGroups[gk];
     // 仅已接入余额查询的类型显示余额行(未接入的显示出来也只会是报错,不如不显示)
     const hasBal = SET.balanceTypes.indexOf(String(p.type || '')) >= 0;
+    const balHtml = hasBal ? keys.map((k, ki) => {
+      const bk = pi + '-' + ki;
+      return '<div class="mbal-row">' +
+        '<span class="mbal-key">' + esc(k.api_key ? maskKey(k.api_key) : '无 key') + '</span>' +
+        '<span class="mbal-val" id="mbal-' + bk + '" title="' + esc(balTitle(bk)) + '">' + balText(bk) + '</span>' +
+        '<button class="mbal-refresh" id="mbrg-' + bk + '" title="重新查询余额" onclick="event.stopPropagation();sUI.refreshBalance(event,' + pi + ',' + ki + ')">' + BAL_REFRESH_SVG + '</button>' +
+      '</div>';
+    }).join('') : '';
     return '<div class="model-group' + (open ? ' open' : '') + '" id="mgrp-' + gk + '">' +
       '<div class="model-group-head" onclick="sUI.toggleGroup(\'' + gk + '\')">' +
         '<svg class="model-group-caret" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>' +
         '<span class="model-group-name">' + esc(p.name || ('平台' + pi)) + '</span>' +
-        '<span class="model-group-key">' + esc(k.api_key ? maskKey(k.api_key) : '无 key') + '</span>' +
-        '<span class="model-group-meta">' + models.filter(m => m.enable !== false).length + ' / ' + models.length + '</span>' +
+        '<span class="model-group-badge">' + keys.length + ' keys</span>' +
+        '<span class="model-group-meta">' + models.filter(m => m.enable !== false).length + ' / ' + models.length + ' 模型</span>' +
       '</div>' +
       '<div class="model-group-body' + (open ? '' : ' hidden') + '">' +
-        (hasBal ?
-          '<div class="model-group-bal">' +
-            '<span id="mbal-' + gk + '" title="' + esc(balTitle(gk)) + '">' + balText(gk) + '</span>' +
-            '<button class="mbal-refresh" id="mbrg-' + gk + '" title="重新查询余额" onclick="sUI.refreshBalance(event,' + pi + ',' + ki + ')">' + BAL_REFRESH_SVG + '</button>' +
-          '</div>' : '') +
-        (models.length ? models.map(modelCardHtml).join('') : '<div class="model-group-empty">该 Key 下暂无模型</div>') +
+        balHtml +
+        (models.length ? models.map(m => modelCardHtml(m, pi)).join('') : '<div class="model-group-empty">该平台暂无模型</div>') +
       '</div>' +
     '</div>';
   }
@@ -3267,17 +3273,15 @@
       SET.balanceTypes = cg.balance_types || [];
       const box = $('model-cards');
       if (!SET.cfgModels.length) {
-        box.innerHTML = '<div class="empty-tip">尚未配置模型,点右上角 + 添加。</div>';
+        box.innerHTML = '<div class="empty-tip">尚未配置模型,点右上角 + 添加平台。</div>';
         return;
       }
       let html = '';
-      SET.cfgPlatforms.forEach((p, pi) => (p.keys || []).forEach((k, ki) => {
-        html += modelGroupHtml(pi, ki);
-      }));
+      SET.cfgPlatforms.forEach((p, pi) => { html += modelGroupHtml(pi); });
       box.innerHTML = html +
         (SET.modelsPendingRestart
           ? '<div class="empty-tip">已写入 config.yml,到「服务」页重启服务后生效。</div>'
-          : '<div class="empty-tip">token 格式为「输入 / 输出」;余额在分组首次展开时自动查询,点刷新图标可重查;改动写入 config.yml,重启服务后生效。</div>');
+          : '<div class="empty-tip">token 格式为「输入 / 输出」;展开平台卡时按 Key 自动查余额,点刷新图标可重查;点任一模型卡编辑整个平台。改动写入 config.yml,重启服务后生效。</div>');
     } catch (e) {
       const box = $('model-cards');
       if (box && (!ctx || ctx())) box.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
@@ -3304,138 +3308,164 @@
     toast('已写入 config.yml,到「服务」页重启后生效');
     loadModelCards();
   }
-  // Key 标签:「平台名 · sk-***1234」;下拉里用它标识可挂模型的目标 Key。
-  function keyLabel(pi, ki) {
-    const p = SET.cfgPlatforms[pi] || {};
-    const k = (p.keys || [])[ki] || {};
-    return (p.name || ('平台' + pi)) + ' · ' + (k.api_key ? maskKey(k.api_key) : '无 key');
+  // ---------- 平台编辑/新增弹窗(共用一套 UI 与渲染) ----------
+  // SET.pfEdit 工作态:keys/models 行数组;ref=null 为弹窗新增行,ref=原配置下标(仅保存时算 diff 用)。
+  // 保存 = 一次批量 PATCH(body.edits),服务端同一次读文/校验/写盘,原子生效。
+  let pfEdit = null;
+  // 当前平台名下的去重模型列表(打平 cfgModels 取首份 key 副本,已含 deletedModels/pendingEnable 过滤)
+  function platformModels(pi) {
+    const models = []; const seen = new Set();
+    for (const m of SET.cfgModels) if (m.platform_index === pi && !seen.has(m.id)) { seen.add(m.id); models.push(m); }
+    return models;
   }
-  function targetOptions() {
-    let html = '';
-    SET.cfgPlatforms.forEach((p, pi) => {
-      html += '<option value="plat:' + pi + '">' +
-        esc(p.name || ('平台' + pi)) + '(' + ((p.models || []).length) + ' 模型)</option>';
-    });
-    html += '<option value="newkey">＋ 在已有平台下新增 Key</option>';
-    html += '<option value="newplat">＋ 新增平台</option>';
-    return html;
-  }
-  // 切换「新增 Key / 新增平台」时显隐对应字段。
-  function onTargetChange() {
-    const t = $('moe-target').value || '';
-    $('moe-newkey-wrap').classList.toggle('hidden', t !== 'newkey');
-    $('moe-newplat-wrap').classList.toggle('hidden', t !== 'newplat');
-  }
-  function fillNewKeyPlatforms() {
-    $('moe-nk-plat').innerHTML = SET.cfgPlatforms.map((p, i) =>
-      '<option value="' + i + '">' + esc(p.name || ('平台' + i)) + '</option>').join('');
-  }
-  function openModelEditor(rawId) {
-    const add = rawId == null;
-    SET.moeIdx = add ? -1 : idxOf(decodeURIComponent(rawId));
-    if (!add && SET.moeIdx < 0) return toast('模型不存在');
-    const m = add ? null : SET.cfgModels[SET.moeIdx];
-    $('moe-title').textContent = add ? '添加模型' : '编辑模型';
-    const idIn = $('moe-id');
-    idIn.value = m ? (m.mid || m.id) : '';
-    idIn.disabled = !add; // 编辑时禁改 id(历史会话按「平台名/模型id」绑定,改 id 等于换模型)
-    $('moe-name').value = m ? (m.display_name || '') : '';
-    $('moe-vision').checked = m ? !!m.vision : false;
-    const tgt = $('moe-target');
-    if (add) {
-      tgt.disabled = false;
-      tgt.innerHTML = targetOptions();
-      fillNewKeyPlatforms();
-    } else {
-      // 编辑时锁定目标为本模型所属平台(模型与 key 解耦,移动模型 = 改 platforms[pi],已不支持)
-      const p = SET.cfgPlatforms[m.platform_index] || {};
-      tgt.innerHTML = '<option value="plat:' + m.platform_index + '">' + esc(p.name || ('平台' + m.platform_index)) + '</option>';
-      tgt.disabled = true;
-    }
-    tgt.onchange = onTargetChange;
-    onTargetChange(); // add 模式默认 plat:0 → 两组附加字段都隐藏
-    $('moe-del-btn').classList.toggle('hidden', add);
+  function openModelEditor(pi) {
+    const add = pi == null;
+    const p = add ? {} : (SET.cfgPlatforms[pi] || {});
+    pfEdit = {
+      idx: add ? -1 : Number(pi),
+      keys: add ? [] : (p.keys || []).map((k, ki) => ({ ref: ki, api_key: k.api_key || '', concurrency: k.concurrency || 1 })),
+      models: add ? [] : platformModels(pi).map(m => ({ ref: m.model_index, id: m.mid || m.id, display_name: m.display_name || '', vision: !!m.vision, enable: m.enable !== false })),
+    };
+    $('mpe-title').textContent = add ? '新增平台' : '编辑平台';
+    $('mpe-name').value = add ? '' : (p.name || '');
+    $('mpe-url').value = add ? '' : (p.url || '');
+    // 运行态 type = 规范化后的值(缺省已填 name);与 name 相同时置空,表示“跟随平台名”
+    $('mpe-type').value = add ? '' : ((p.type && p.type !== p.name) ? p.type : '');
+    if (add) { pfEdit.keys.push({ ref: null, api_key: '', concurrency: 1 }); pfEdit.models.push({ ref: null, id: '', display_name: '', vision: false, enable: true }); }
+    renderPfRows();
     $('model-edit-modal').classList.remove('hidden');
   }
+  function pfKeysRowHtml(r, i) {
+    const isNew = r.ref == null;
+    return '<div class="mpe-row">' +
+      '<input class="mpe-grow" type="text" placeholder="api_key(留空则不带鉴权头)" value="' + esc(r.api_key) + '"' +
+        (isNew ? ' oninput="sUI.mKeyApi(' + i + ',this.value)"' : ' disabled title="已有 Key 不显明文;换 Key 请删行后新增"') + '>' +
+      '<input class="mpe-con" type="number" min="1" step="1" value="' + esc(String(r.concurrency || 1)) + '" title="并发数 concurrency(预留)" oninput="sUI.mKeyCon(' + i + ',this.value)">' +
+      '<button class="mpe-del" title="删除此 Key" onclick="sUI.mDelKey(' + i + ')">×</button>' +
+    '</div>';
+  }
+  function pfModelsRowHtml(r, i) {
+    const isNew = r.ref == null;
+    return '<div class="mpe-row">' +
+      '<input class="mpe-mid" type="text" placeholder="id(上游模型名)" value="' + esc(r.id) + '"' +
+        (isNew ? ' oninput="sUI.mModId(' + i + ',this.value)"' : ' disabled title="历史会话按 id 绑定,不可改"') + '>' +
+      '<input class="mpe-grow" type="text" placeholder="显示名(留空同 id)" value="' + esc(r.display_name) + '" oninput="sUI.mModName(' + i + ',this.value)">' +
+      '<label class="mpe-vis" title="vision:支持图片输入"><input type="checkbox"' + (r.vision ? ' checked' : '') + ' onchange="sUI.mModVision(' + i + ',this.checked)">V</label>' +
+      '<button class="mpe-del" title="删除此模型" onclick="sUI.mDelModel(' + i + ')">×</button>' +
+    '</div>';
+  }
+  // 行下标变化后需重渲染(事件处理器里捕获了旧 i),故增删后重建两段行列表。
+  function renderPfRows() {
+    if (!pfEdit) return;
+    $('mpe-keys').innerHTML = pfEdit.keys.map(pfKeysRowHtml).join('') || '<div class="model-group-empty">至少保留一个 Key</div>';
+    $('mpe-models').innerHTML = pfEdit.models.map(pfModelsRowHtml).join('') || '<div class="model-group-empty">至少保留一个模型</div>';
+  }
+  function addPfKey() { if (!pfEdit) return; pfEdit.keys.push({ ref: null, api_key: '', concurrency: 1 }); renderPfRows(); }
+  function addPfModel() { if (!pfEdit) return; pfEdit.models.push({ ref: null, id: '', display_name: '', vision: false, enable: true }); renderPfRows(); }
+  function delPfKey(i) {
+    if (!pfEdit) return;
+    if (pfEdit.keys.length <= 1) return toast('至少保留一个 Key');
+    pfEdit.keys.splice(i, 1); renderPfRows();
+  }
+  function delPfModel(i) {
+    if (!pfEdit) return;
+    if (pfEdit.models.length <= 1) return toast('至少保留一个模型');
+    pfEdit.models.splice(i, 1); renderPfRows();
+  }
+  function setPfKey(i, f, v) { if (pfEdit && pfEdit.keys[i]) pfEdit.keys[i][f] = v; }
+  function setPfModel(i, f, v) { if (pfEdit && pfEdit.models[i]) pfEdit.models[i][f] = v; }
   function closeModelEditor() { $('model-edit-modal').classList.add('hidden'); }
-  async function saveModelEditor() {
-    const id = $('moe-id').value.trim();
-    if (!id) return toast('请填写 id');
-    // 模型项本身只含 id/display_name/vision/enable;url/type 在平台层,api_key/concurrency 在 Key 层,这里不动。
-    // 编辑是整体覆盖写,须携带当前 enable,否则编辑一次会把禁用态洗回启用。
-    const model = {
-      id,
-      display_name: $('moe-name').value.trim() || id,
-      vision: $('moe-vision').checked,
-      enable: SET.moeIdx < 0 ? true : SET.cfgModels[SET.moeIdx].enable !== false,
-    };
-    const add = SET.moeIdx < 0;
-    let body;
-    if (!add) {
-      // 编辑:改到 platforms[pi].models[mi](与 key 解耦,所有 key 共享同一份 models)
-      const m = SET.cfgModels[SET.moeIdx];
-      body = { path: ['platforms', m.platform_index, 'models', m.model_index], value: model };
-    } else {
-      const t = $('moe-target').value;
-      // id 唯一性只看同平台(内部键 = 平台名/模型id);不同平台可同名。
-      let platIdx = -1;
-      if (t === 'newkey') platIdx = parseInt($('moe-nk-plat').value, 10);
-      else if (t.indexOf('plat:') === 0) platIdx = Number(t.split(':')[1]);
-      if (platIdx >= 0) {
-        const p = SET.cfgPlatforms[platIdx] || {};
-        if (SET.cfgModels.some(x => x.platform === p.name && x.mid === id)) {
-          return toast('平台「' + (p.name || '') + '」下已有模型 id:' + id);
-        }
-      }
-      if (t === 'newplat') {
-        const url = $('moe-np-url').value.trim().replace(/\/+$/, '');
-        if (!url) return toast('请填写平台上游地址');
-        // append 一整个新平台:含一份 models 和一个 key;key 明文只在此时输入一次。
-        body = { op: 'append', path: ['platforms'], value: {
-          name: $('moe-np-name').value.trim(),
-          url,
-          type: $('moe-np-type').value.trim(),
-          models: [model],
-          keys: [{ api_key: $('moe-np-key').value.trim(), concurrency: parseInt($('moe-np-con').value, 10) || 1 }],
-        } };
-      } else if (t === 'newkey') {
-        if (!(platIdx >= 0)) return toast('请选择平台');
-        // append 一个新 Key 到已有平台(models 与 key 解耦,只追加 key,不重复 model)
-        body = { op: 'append', path: ['platforms', platIdx, 'keys'], value: {
-          api_key: $('moe-nk-key').value.trim(), concurrency: parseInt($('moe-nk-con').value, 10) || 1 } };
-        await req('PATCH', '/api/config', body);
-        await req('PATCH', '/api/config', { op: 'append', path: ['platforms', platIdx, 'models'], value: model });
-        if (add) delete SET.deletedModels[id];
-        closeModelEditor();
-        afterWrite();
-        return;
+  // 根据工作态算批量编辑:原地改(值变更项) → 删行(降序) → 新增行(append)。
+  // YAML 数组删项后下标收紧,同批内删/改/增按原 ref 定位,服务端依次应用。
+  function buildPfEdits() {
+    const p = SET.cfgPlatforms[pfEdit.idx];
+    const edits = [];
+    const name = $('mpe-name').value.trim();
+    const url = $('mpe-url').value.trim().replace(/\/+$/, '');
+    let type = $('mpe-type').value.trim();
+    // type 置空 = 「跟随平台名」:原配置显式配过 type 且与 name 不同的,写回新 name(规范化后等价缺省)
+    const effName = name || p.name;
+    if (!type && p.type && p.type !== p.name) type = effName;
+    if (name && name !== p.name) edits.push({ path: ['platforms', pfEdit.idx, 'name'], value: name });
+    if (url && url !== p.url) edits.push({ path: ['platforms', pfEdit.idx, 'url'], value: url });
+    if (type && type !== p.type) edits.push({ path: ['platforms', pfEdit.idx, 'type'], value: type });
+    // Key:concurrency 可原地改;已有 api_key 不写回(脱敏值会污染真 Key),换 Key 走删行+新增行
+    pfEdit.keys.forEach(r => {
+      if (r.ref != null) {
+        const oc = (p.keys[r.ref] || {}).concurrency || 1;
+        const nc = Math.max(1, parseInt(r.concurrency, 10) || 1);
+        if (nc !== oc) edits.push({ path: ['platforms', pfEdit.idx, 'keys', r.ref, 'concurrency'], value: nc });
       } else {
-        // plat:pi → append 模型到 platforms[pi].models
-        body = { op: 'append', path: ['platforms', platIdx, 'models'], value: model };
+        edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'keys'], value: {
+          api_key: String(r.api_key || '').trim(), concurrency: Math.max(1, parseInt(r.concurrency, 10) || 1),
+        } });
       }
+    });
+    const delKeys = [];
+    for (let ki = 0; ki < (p.keys || []).length; ki++) {
+      if (!pfEdit.keys.some(r => r.ref === ki)) delKeys.push(ki);
     }
+    delKeys.sort((a, b) => b - a).forEach(ki => edits.push({ op: 'delete', path: ['platforms', pfEdit.idx, 'keys', ki] }));
+    // 模型:整体覆盖改(保留 enable)/新增 append/删行;id 不可改故无新增行冲突
+    pfEdit.models.forEach(r => {
+      if (r.ref != null) {
+        const om = (p.models || [])[r.ref] || {};
+        const nd = String(r.display_name || '').trim() || r.id;
+        const ne = r.enable !== false;
+        if ((om.display_name || '') !== nd || !!om.vision !== !!r.vision || (om.enable !== false) !== ne) {
+          edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref], value: {
+            id: om.id || r.id, display_name: nd, vision: !!r.vision, enable: ne,
+          } });
+        }
+      } else {
+        const id = String(r.id || '').trim();
+        edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'models'], value: {
+          id, display_name: String(r.display_name || '').trim() || id, vision: !!r.vision,
+        } });
+      }
+    });
+    const delMods = (p.models || []).map((_, i) => i).filter(i => !pfEdit.models.some(r => r.ref === i)).sort((a, b) => b - a);
+    delMods.forEach(mi => { SET.deletedModels[p.name + '/' + p.models[mi].id] = true; edits.push({ op: 'delete', path: ['platforms', pfEdit.idx, 'models', mi] }); });
+    return edits;
+  }
+  async function saveModelEditor() {
+    if (!pfEdit) return;
+    const add = pfEdit.idx < 0;
+    // 采集当前输入框值到工作态(避免用户只改最后一个框未触发 oninput 的边界)
+    const name = $('mpe-name').value.trim();
+    const url = $('mpe-url').value.trim().replace(/\/+$/, '');
+    const type = $('mpe-type').value.trim();
+    if (!url) return toast('请填写平台上游地址');
+    if (!pfEdit.models.length) return toast('至少保留一个模型');
+    if (!pfEdit.keys.length) return toast('至少保留一个 Key');
+    const idSet = new Set();
+    for (const r of pfEdit.models) {
+      const id = String(r.id || '').trim();
+      if (!id) return toast('模型 id 不能为空');
+      if (idSet.has(id)) return toast('模型 id 重复:' + id);
+      idSet.add(id);
+    }
+    let edits;
     try {
-      await req('PATCH', '/api/config', body);
-      if (add) delete SET.deletedModels[id]; // 重启前重新添加同 id 模型:清掉待隐藏的删除标记,防误屏蔽
+      if (add) {
+        // 新增平台:一次 append 整个对象(name/url/type 留空由服务端规范化: name 取主机段、type 取 name)
+        edits = [{ op: 'append', path: ['platforms'], value: {
+          name, url, type,
+          keys: pfEdit.keys.map(r => ({ api_key: String(r.api_key || '').trim(), concurrency: Math.max(1, parseInt(r.concurrency, 10) || 1) })),
+          models: pfEdit.models.map(r => ({ id: String(r.id).trim(), display_name: String(r.display_name || '').trim() || String(r.id).trim(), vision: !!r.vision })),
+        } }];
+      } else {
+        // 改名不影响 pi(数组位置);其余按原 ref 定位,见 buildPfEdits
+        edits = buildPfEdits();
+        if (!edits.length) { closeModelEditor(); return toast('没有变更'); }
+      }
+      await req('PATCH', '/api/config', { edits });
+      // 重加同名模型(重启前被标记隐藏的):清掉删除标记防误屏蔽
+      const pname = name || (SET.cfgPlatforms[pfEdit.idx] || {}).name || '';
+      if (!add) for (const r of pfEdit.models) if (r.ref == null) delete SET.deletedModels[pname + '/' + String(r.id || '').trim()];
       closeModelEditor();
       afterWrite();
     } catch (e) { toast('保存失败:' + e.message); }
-  }
-  async function delModelFromModal() {
-    if (SET.moeIdx < 0) return;
-    const m = SET.cfgModels[SET.moeIdx];
-    closeModelEditor();
-    // 删之前确认至少还剩一个模型(id 集合 > 0)
-    const otherIds = new Set(SET.cfgModels.filter(x => x.id !== m.id).map(x => x.id));
-    if (otherIds.size < 1) return toast('至少要保留一个模型');
-    const ok = await confirmModal('删除模型', '删除模型「' + (m.display_name || m.id) + '」?将从 platforms 中移除该模型项（该平台下所有 key 都不再可用此模型）。', '删除', true);
-    if (!ok) return;
-    try {
-      // delete 到 platforms[pi].models[mi](与 key 解耦);YAML 数组删项会自动收紧,不影响其他行注释。
-      await req('PATCH', '/api/config', { path: ['platforms', m.platform_index, 'models', m.model_index], op: 'delete' });
-      SET.deletedModels[m.id] = true; // 重启前后端仍会返回该模型,本地标记隐藏
-      afterWrite();
-    } catch (e) { toast('删除失败:' + e.message); }
   }
 
   // ---------- 设置区对外接口(动态卡片里的 onclick 均指向这里) ----------
@@ -3467,12 +3497,20 @@
     newFile: newSkillFile,
     deleteFile: deleteSkillFile,
     onUpload: uploadSkillFile,
-    // 模型
+    // 模型池(平台编辑/新增共用弹窗;mEdit 参数为平台下标 pi)
     openAdd: function () { openModelEditor(null); },
-    mEdit: openModelEditor,
+    mEdit: function (pi) { openModelEditor(pi); },
     mClose: closeModelEditor,
     mSave: saveModelEditor,
-    mDel: delModelFromModal,
+    mAddKey: addPfKey,
+    mDelKey: delPfKey,
+    mAddModel: addPfModel,
+    mDelModel: delPfModel,
+    mKeyApi: function (i, v) { setPfKey(i, 'api_key', v); },
+    mKeyCon: function (i, v) { setPfKey(i, 'concurrency', v); },
+    mModId: function (i, v) { setPfModel(i, 'id', v); },
+    mModName: function (i, v) { setPfModel(i, 'display_name', v); },
+    mModVision: function (i, v) { setPfModel(i, 'vision', v); },
     toggleGroup: toggleModelGroup,
     refreshBalance: refreshBalance,
     mToggleEnable: toggleModelEnable,
