@@ -944,6 +944,9 @@ label.icon-btn { cursor: pointer; }
 @keyframes mbal-spin { to { transform: rotate(360deg); } }
 .model-group-empty { font-size: 12px; color: var(--gray-light); padding: 12px 4px 2px; text-align: center; }
 .model-group-badge { font-size: 11px; color: var(--gray); background: var(--surface); border-radius: 9px; padding: 1px 7px; flex-shrink: 0; }
+/* 待重启横幅:模型池列表顶部常驻(配置已落盘但未生效时展示) */
+.restart-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #fff8e6; border: 1px solid #f2dfae; border-radius: 12px; padding: 10px 14px; margin-bottom: 10px; font-size: 13px; color: #7a5b00; }
+.restart-bar .primary-btn { flex: none; padding: 7px 16px; font-size: 13px; }
 /* 每 Key 一行余额:左脱敏 key、右余额+刷新 */
 .mbal-row { display: flex; align-items: center; gap: 8px; padding: 8px 4px 0; font-size: 12.5px; color: #556; }
 .mbal-row:first-child { padding-top: 10px; }
@@ -976,7 +979,10 @@ label.icon-btn { cursor: pointer; }
    注:选择器均带 .modal 前缀提权——.modal input{width:100%}(0,1,1) 会盖过
    单类(0,1,0)与同权但位置靠前的规则,导致行内输入框撑出卡片。 */
 .modal.modal-wide { max-width: 480px; }
-.modal .mpe-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 0 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
+/* 三段分区:平台字段 / Keys / 模型,用虚线分隔 + 留白,避免挤在一起 */
+.modal .mpe-sec { margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.modal .mpe-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.modal .mpe-foot { margin-top: 18px; }
 .modal .mpe-sec-head .ghost-btn.sm { flex: none; padding: 4px 12px; font-size: 12.5px; border-radius: 8px; }
 .modal .mpe-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .modal .mpe-row input { width: auto; margin-bottom: 0; padding: 8px 10px; font-size: 13px; }

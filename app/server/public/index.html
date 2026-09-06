@@ -239,16 +239,19 @@
         <h3 id="mpe-title">编辑平台</h3>
         <input type="text" id="mpe-name" placeholder="平台名(留空取 url 主机名首段)">
         <input type="text" id="mpe-url" placeholder="平台上游地址(OpenAI 兼容 /v1)">
-        <div class="mpe-sec-head"><span>API Keys(同平台多 Key 共用下方模型)</span><button class="ghost-btn sm" onclick="sUI.mAddKey()">＋ Key</button></div>
-        <div id="mpe-keys"></div>
-        <div class="mpe-sec-head"><span>模型</span><button class="ghost-btn sm" onclick="sUI.mAddModel()">＋ 模型</button></div>
-        <div id="mpe-models"></div>
-        <label class="del-dir"><input type="checkbox" id="mpe-restart" checked> 保存后立即重启服务</label>
-        <div class="btn-row">
+        <div class="mpe-sec">
+          <div class="mpe-sec-head"><span>API Keys(同平台多 Key 共用下方模型)</span><button class="ghost-btn sm" onclick="sUI.mAddKey()">＋ Key</button></div>
+          <div id="mpe-keys"></div>
+        </div>
+        <div class="mpe-sec">
+          <div class="mpe-sec-head"><span>模型</span><button class="ghost-btn sm" onclick="sUI.mAddModel()">＋ 模型</button></div>
+          <div id="mpe-models"></div>
+        </div>
+        <div class="btn-row mpe-foot">
           <button class="ghost-btn danger hidden" id="mpe-del-btn" onclick="sUI.mDelPlat()">删除平台</button>
           <button class="primary-btn" onclick="sUI.mSave()">保存</button>
         </div>
-        <div class="cfg-note">仅写入 config.yml,不影响其他数据。已有 Key 只显示脱敏值,换 Key 请删行后重加。</div>
+        <div class="cfg-note">仅写入 config.yml。Key 留空=保持原值,输入新值即替换;保存后点页面上的「重启服务」按钮生效。</div>
       </div>
     </div>
 
@@ -2827,7 +2830,7 @@
     }
     renderSetPage();
   }
-  // 重启服务(搬自 settings.js restart):确认弹窗 + 执行。可复用部分拆为 restartNow(平台弹窗勾选「保存后立即重启」直用)。
+  // 重启服务(搬自 settings.js restart):确认弹窗 + 执行。可复用部分拆为 restartNow(模型池「重启服务」横幅按钮直用)。
   async function restart() {
     if (!await confirmModal('重启服务', '重启服务使新配置生效?正在执行的 AI 会话会被打断。', '重启')) return;
     await restartNow();
@@ -3268,9 +3271,11 @@
       for (const m of rt || []) SET.runtimeById[m.id] = m;
       SET.cfgPlatforms = (cg.effective && cg.effective.platforms) || [];
       SET.cfgModels = (cg.effective && cg.effective.models) || [];
-      // 已删除但重启前仍被后端返回的模型:过滤隐藏;后端不再返回时(重启后)自动清掉标记
+      // 已删除/已改名旧 id 的标记清理:配置(live)与运行池都已无此 id 才清——重启前池里残留时须保留标记,
+      // 否则会话页选择弹窗(读 /api/models 运行池)会重新列出已不可用的模型。
       const liveIds = new Set(SET.cfgModels.map(m => m.id));
-      for (const id of Object.keys(SET.deletedModels)) if (!liveIds.has(id)) delete SET.deletedModels[id];
+      const poolIds = new Set((rt || []).map(m => m.id));
+      for (const id of Object.keys(SET.deletedModels)) if (!liveIds.has(id) && !poolIds.has(id)) delete SET.deletedModels[id];
       SET.cfgModels = SET.cfgModels.filter(m => !SET.deletedModels[m.id]);
       // 重启前 effective 仍是旧配置:叠加已写盘的启停结果,保证卡片显示与已保存配置一致
       for (const m of SET.cfgModels) if (m.id in SET.pendingEnable) m.enable = SET.pendingEnable[m.id];
@@ -3282,10 +3287,11 @@
       }
       let html = '';
       SET.cfgPlatforms.forEach((p, pi) => { html += modelGroupHtml(pi); });
-      box.innerHTML = html +
-        (SET.modelsPendingRestart
-          ? '<div class="empty-tip">已写入 config.yml,到「服务」页重启服务后生效。</div>'
-          : '<div class="empty-tip">token 格式为「输入 / 输出」;展开平台卡时按 Key 自动查余额,点刷新图标可重查;点任一模型卡编辑整个平台。改动写入 config.yml,重启服务后生效。</div>');
+      // 有待重启的变更:列表顶部常驻「重启服务」横幅(增/改/删模型、启停开关、平台弹窗保存均经 afterWrite 置位)
+      box.innerHTML = (SET.modelsPendingRestart
+          ? '<div class="restart-bar"><span>配置改动已写入 config.yml,重启后生效</span><button class="primary-btn" onclick="sUI.restartNow()">重启服务</button></div>'
+          : '') + html +
+        '<div class="empty-tip">token 格式为「输入 / 输出」;展开平台卡时按 Key 自动查余额,点刷新图标可重查;点任一模型卡编辑整个平台。</div>';
     } catch (e) {
       const box = $('model-cards');
       if (box && (!ctx || ctx())) box.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
@@ -3327,34 +3333,34 @@
     const p = add ? {} : (SET.cfgPlatforms[pi] || {});
     pfEdit = {
       idx: add ? -1 : Number(pi),
-      keys: add ? [] : (p.keys || []).map((k, ki) => ({ ref: ki, api_key: k.api_key || '' })),
+      // 已有 Key:输入框置空(留空=保持原值),masked 存脱敏值仅做 placeholder 提示;绝不把脱敏值回写文件
+      keys: add ? [] : (p.keys || []).map((k, ki) => ({ ref: ki, api_key: '', masked: k.api_key || '' })),
       models: add ? [] : platformModels(pi).map(m => ({ ref: m.model_index, id: m.mid || m.id, vision: !!m.vision, enable: m.enable !== false })),
     };
     $('mpe-title').textContent = add ? '新增平台' : '编辑平台';
     $('mpe-name').value = add ? '' : (p.name || '');
     $('mpe-url').value = add ? '' : (p.url || '');
     if (add) { pfEdit.keys.push({ ref: null, api_key: '' }); pfEdit.models.push({ ref: null, id: '', vision: false, enable: true }); }
-    $('mpe-restart').checked = true; // 默认勾选「保存后立即重启」
     $('mpe-del-btn').classList.toggle('hidden', add);
     renderPfRows();
     $('model-edit-modal').classList.remove('hidden');
   }
+  // Key 行:全部可编辑。已有 Key 输入框置空 + placeholder 提示当前脱敏值,输入新值=替换,留空=保持。
   function pfKeysRowHtml(r, i) {
-    const isNew = r.ref == null;
+    const ph = r.ref == null
+      ? 'api_key(留空则不带鉴权头)'
+      : '当前: ' + (r.masked ? maskKey(r.masked) : '无 key') + '(留空保持不变,输入即替换)';
     return '<div class="mpe-row">' +
-      '<input class="mpe-grow" type="text" placeholder="api_key(留空则不带鉴权头)" value="' + esc(r.api_key) + '"' +
-        (isNew ? ' oninput="sUI.mKeyApi(' + i + ',this.value)"' : ' disabled title="已有 Key 不显明文;换 Key 请删行后新增"') + '>' +
+      '<input class="mpe-grow" type="text" placeholder="' + esc(ph) + '" value="' + esc(r.api_key) + '" oninput="sUI.mKeyApi(' + i + ',this.value)">' +
       '<button class="mpe-del" title="删除此 Key" onclick="sUI.mDelKey(' + i + ')">×</button>' +
     '</div>';
   }
-  // 模型子卡片两行:上行只配 id(已有行不可改),下行勾 vision/enable。
-  // display_name/concurrency/type 不进弹窗:保存时只改 vision/enable 细粒度 path,不碰文件里其余字段。
+  // 模型子卡片两行:上行配 id,下行勾 vision/enable。id 可改(仅改 config.yml,重启生效)。
+  // display_name/concurrency/type 不进弹窗:保存只按细粒度 path 改,不碰文件里其余字段。
   function pfModelsRowHtml(r, i) {
-    const isNew = r.ref == null;
     return '<div class="mpe-mcard">' +
       '<div class="mpe-row">' +
-        '<input class="mpe-grow" type="text" placeholder="id(上游模型名)" value="' + esc(r.id) + '"' +
-          (isNew ? ' oninput="sUI.mModId(' + i + ',this.value)"' : ' disabled title="不可修改"') + '>' +
+        '<input class="mpe-grow" type="text" placeholder="id(上游模型名)" value="' + esc(r.id) + '" oninput="sUI.mModId(' + i + ',this.value)">' +
         '<button class="mpe-del" title="删除此模型" onclick="sUI.mDelModel(' + i + ')">×</button>' +
       '</div>' +
       '<div class="mpe-cks">' +
@@ -3393,9 +3399,14 @@
     const url = $('mpe-url').value.trim().replace(/\/+$/, '');
     if (name && name !== p.name) edits.push({ path: ['platforms', pfEdit.idx, 'name'], value: name });
     if (url && url !== p.url) edits.push({ path: ['platforms', pfEdit.idx, 'url'], value: url });
-    // Key:弹窗只配 api_key(concurrency/type 不进弹窗);已有 api_key 不写回(脱敏值会污染真 Key),换 Key 走删行+新增行
+    // Key:已有行输入非空=替换 api_key(留空保持原值,避免把脱敏占位写回文件);新增行直接 append
     pfEdit.keys.forEach(r => {
-      if (r.ref == null) edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'keys'], value: { api_key: String(r.api_key || '').trim() } });
+      if (r.ref == null) {
+        edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'keys'], value: { api_key: String(r.api_key || '').trim() } });
+      } else {
+        const nv = String(r.api_key || '').trim();
+        if (nv) edits.push({ path: ['platforms', pfEdit.idx, 'keys', r.ref, 'api_key'], value: nv });
+      }
     });
     const delKeys = [];
     for (let ki = 0; ki < (p.keys || []).length; ki++) {
@@ -3407,6 +3418,12 @@
     pfEdit.models.forEach(r => {
       if (r.ref != null) {
         const om = (p.models || [])[r.ref] || {};
+        const nid = String(r.id || '').trim();
+        if (nid && om.id && nid !== om.id) {
+          edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref, 'id'], value: nid });
+          SET.deletedModels[p.name + '/' + om.id] = true; // 重启前运行池里旧 id 不再可绑,标记隐藏
+          delete SET.deletedModels[p.name + '/' + nid];   // 改成曾被删的 id:清掉旧标记防误屏蔽
+        }
         if (!!om.vision !== !!r.vision) edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref, 'vision'], value: !!r.vision });
         if ((om.enable !== false) !== (r.enable !== false)) edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref, 'enable'], value: r.enable !== false });
       } else {
@@ -3461,9 +3478,7 @@
       const pname = name || (SET.cfgPlatforms[pfEdit.idx] || {}).name || '';
       if (!add) for (const r of pfEdit.models) if (r.ref == null) delete SET.deletedModels[pname + '/' + String(r.id || '').trim()];
       closeModelEditor();
-      afterWrite();
-      // 勾选「保存后立即重启」:配置已落盘,直接走重启流程(含 409 强打确认 + 健库轮询自刷新)
-      if ($('mpe-restart') && $('mpe-restart').checked) await restartNow();
+      afterWrite(); // 列表顶部出现「重启服务」横幅按钮
     } catch (e) { toast('保存失败:' + e.message); }
   }
   // 删除整个平台:仅改 config.yml(一次 delete platforms[pi]),重启前列表已无它(effective 实时解析文件)
@@ -3525,6 +3540,7 @@
     mModVision: function (i, v) { setPfModel(i, 'vision', v); },
     mModEnable: function (i, v) { setPfModel(i, 'enable', v); },
     mDelPlat: delPlatformFromModal,
+    restartNow: restartNow,
     toggleGroup: toggleModelGroup,
     refreshBalance: refreshBalance,
     mToggleEnable: toggleModelEnable,
