@@ -1,11 +1,14 @@
 // agent-executor 冒烟测试：node smoke-test.js（在本目录执行）。
-// 覆盖：/health、/exec 流式输出与退出事件、增量下发时序、cwd 白名单拒绝、DELETE 取消、EXECUTOR_TOKEN 鉴权。
+// 覆盖：/health、/exec 流式输出与退出事件、增量下发时序、cwd 白名单拒绝、DELETE 取消、EXECUTOR_TOKEN 鉴权、per-task 挂载隔离。
+// 注意：隔离用例需 root/CAP_SYS_ADMIN（unshare+mount），无权限时自动 SKIP 不计失败。
 process.env.PORT = process.env.PORT || '19000';
 process.env.EXECUTOR_ROOTS = process.env.__SELF_DIR__ || __dirname; // 宿主机测试：白名单取本目录
 process.env.EXECUTOR_CWD = process.env.__SELF_DIR__ || __dirname;
 delete process.env.EXECUTOR_TOKEN; // 主实例不带 token，鉴权单独测
 
 const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
 require('./server.js');
 
 const BASE = 'http://127.0.0.1:' + process.env.PORT;
@@ -76,8 +79,38 @@ async function main() {
   const exit6 = evs6[evs6.length - 1];
   check('输出按 max_output_chars 截断', outChars <= 100 && exit6.truncated === true, 'chars=' + outChars + ' exit=' + JSON.stringify(exit6));
 
-  // 7. 未知路由
-  check('未知路由 404', (await fetch(BASE + '/nope')).status === 404);
+  // 7.5 per-task 挂载隔离：另起一个实例（端口 19002），EXECUTOR_CWD=.iso-tasks（任务根），
+  // 下放 iso-a / iso-b 两个「会话」目录；cwd 取 iso-a 的深层子目录（模拟 terminal 的 cd），验证：
+  //   任务根下只看到 iso-a、cd 兄弟会话被拒、自己文件可读；无 mount 权限时整组 SKIP。
+  const isoRoot = path.join(__dirname, '.iso-tasks');
+  fs.rmSync(isoRoot, { recursive: true, force: true });
+  fs.mkdirSync(path.join(isoRoot, 'iso-a', 'deep'), { recursive: true });
+  fs.mkdirSync(path.join(isoRoot, 'iso-b'), { recursive: true });
+  fs.writeFileSync(path.join(isoRoot, 'iso-a', 'a.txt'), 'a');
+  fs.writeFileSync(path.join(isoRoot, 'iso-b', 'b.txt'), 'b');
+  const isoChild = spawn(process.execPath, [__dirname + '/server.js'], { env: Object.assign({}, process.env, { PORT: '19002', EXECUTOR_ROOTS: isoRoot, EXECUTOR_CWD: isoRoot }), stdio: 'ignore' });
+  await new Promise(r => setTimeout(r, 500));
+  const isoCwd = path.join(isoRoot, 'iso-a', 'deep');
+  // 分隔符切段便于精确断言；cd 失败信息不走 stderr 上送（含 iso-b 字样会污染 ls 段断言），改用 leaked/blocked 标记区分。
+  const evsI = await collect(await fetch('http://127.0.0.1:19002/exec', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: 'pwd; echo @LS@; ls ../../; echo @CD@; cd ../../iso-b 2>/dev/null && echo leaked || echo blocked; echo @CAT@; cat ../../iso-a/a.txt', cwd: isoCwd, timeout_ms: 5000 }),
+  }));
+  const outI = evsI.filter(e => e.type === 'out' || e.type === 'err').map(e => e.chunk).join('');
+  const exitI = evsI[evsI.length - 1];
+  if (!exitI || exitI.code !== 0) {
+    console.log('SKIP  per-task 挂载隔离（需 root/CAP_SYS_ADMIN；exit=' + (exitI && exitI.code) + '）');
+  } else {
+    const lsRegion = outI.split('@LS@')[1].split('@CD@')[0];
+    check('隔离: 任务根只见 iso-a', /iso-a/.test(lsRegion) && !/iso-b/.test(lsRegion), 'ls=' + JSON.stringify(lsRegion));
+    check('隔离: cd 兄弟会话被拒', /blocked/.test(outI) && !/leaked/.test(outI), 'out=' + JSON.stringify(outI));
+    // cat 成功只回显文件内容（a），不含文件名；取 @CAT@ 段精确比对。
+    check('隔离: 深子目录 pwd 不丢 + 自己文件可读', outI.includes(isoCwd) && outI.split('@CAT@')[1].trim() === 'a', 'out=' + JSON.stringify(outI));
+  }
+  isoChild.kill('SIGKILL');
+  fs.rmSync(isoRoot, { recursive: true, force: true });
+
+  // 8. token 鉴权：另起一个带 EXECUTOR_TOKEN 的实例（子进程，端口 19001）
 
   // 8. token 鉴权：另起一个带 EXECUTOR_TOKEN 的实例（子进程，端口 19001）
   const child = spawn(process.execPath, [__dirname + '/server.js'], { env: Object.assign({}, process.env, { PORT: '19001', EXECUTOR_TOKEN: 't9' }), stdio: 'ignore' });

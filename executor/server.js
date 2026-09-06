@@ -17,6 +17,11 @@
 //   - timeout_ms 夹在 [1s, EXECUTOR_MAX_TIMEOUT_MS]（默认 30 分钟）；
 //   - stdout/stderr 各自按 max_output_chars 截断（默认 EXECUTOR_MAX_OUTPUT_CHARS=200000），超限后丢弃剩余输出，exit 事件带 truncated 标记。
 //
+// per-task 隔离：每条命令默认在新的 mount 命名空间里跑。启动 wrapper 把 EXECUTOR_CWD（任务根，/workspace/tasks）
+// 覆盖为 tmpfs，只把当前会话的子目录 bind 回原路径上——结果：AI 命令能读写自己的项目，看不到别人的 task 目录。
+// 任务根以外的路径（/workspace/skills、/tmp、/usr、依赖包等）不受影响。mount 命名空间随进程退出自动销毁。
+// 需 CAP_SYS_ADMIN + 默认 seccomp/apparmor unconfined：compose 里 agent-executor 配了 privileged: true。
+//
 // 日志：EXECUTOR_LOG_LEVEL=debug|info|warn|error|none（默认 info，none/off 全静默），分级语义与 core 的 log.js 一致。
 //   info = 关键动作（启动/进程 start/exit/取消/关闭）；debug = 额外打印与 core 的完整交互：
 //   每个请求行、/exec 请求体、每条 SSE 下发帧、每个 JSON 响应（超长内容截断显示）。改环境配置后重启容器生效。
@@ -78,6 +83,36 @@ function brief(s, n) {
   s = String(s);
   n = n || 2000;
   return s.length > n ? s.slice(0, n) + '…(+' + (s.length - n) + ')' : s;
+}
+
+// 单引号安全包裹：内部单引号按 '\'' 规则转义，给 sh -c 拼命令串用。
+function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+
+// per-task 挂载隔离 wrapper：返回一个 sh -c 脚本，shell 启动时跑：
+//   1) 把 cwd 预先 bind 到 /tmp 下的 anchor（避开后面被覆盖的任务根）
+//   2) 在新 mount ns 里把任务根覆盖为 tmpfs（其他会话从此不可见）
+//   3) 在 tmpfs 下重建当前会话目录名，把 anchor bind 回原路径上
+//   4) 拆掉 anchor，切到 cwd，exec 用户命令
+// cwd 不在任务根下时返回 null（不隔离；主要适用于 skill 入口直接跑在 /workspace/skills/<name> 的场景）。
+function isolatedCommand(command, cwd) {
+  if (cwd === DEFAULT_CWD || !cwd.startsWith(DEFAULT_CWD + path.sep)) return null;
+  // 会话根 = 任务根下的第一层子目录（task-YYYYMMDD-NNN）；cwd 可能是其下任意深子目录（terminal 的 cd）。
+  // 隔离时整个会话根 bind 回去，相对子路径自然保留，cd 回原 cwd 不会断。
+  const rel = path.relative(DEFAULT_CWD, cwd);
+  const sessionName = rel.split(path.sep)[0];
+  const sessionRoot = path.join(DEFAULT_CWD, sessionName);
+  return [
+    'set -e',
+    'anchor=$(mktemp -d /tmp/.exanchor.XXXXXXXXXX)',
+    'mount --bind ' + shq(sessionRoot) + ' "$anchor"',
+    'mount -t tmpfs tmpfs ' + shq(DEFAULT_CWD),
+    'mkdir ' + shq(sessionRoot),
+    'mount --bind "$anchor" ' + shq(sessionRoot),
+    'umount "$anchor"',
+    'rmdir "$anchor"',
+    'cd ' + shq(cwd),
+    'exec /bin/sh -c ' + shq(command),
+  ].join('\n');
 }
 
 // 常量时间比较，避免通过响应耗时猜 token
@@ -164,7 +199,14 @@ async function handleExec(req, res) {
   const id = crypto.randomUUID();
   let child;
   try {
-    child = spawn('/bin/sh', ['-c', command], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    // 任务根下的命令走 unshare(2) + mount(2) 临时覆盖 /workspace/tasks 为 tmpfs，只保留当前会话目录；
+    // cwd 在任务根外（如 skill 入口跑在技能目录）时直接 spawn。详见 isolatedCommand。
+    const isolation = isolatedCommand(command, cwd);
+    if (isolation) {
+      child = spawn('unshare', ['--mount', '/bin/sh', '-c', isolation], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    } else {
+      child = spawn('/bin/sh', ['-c', command], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    }
   } catch (e) {
     return send(res, 500, { error: 'spawn 失败：' + e.message });
   }
