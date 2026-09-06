@@ -131,7 +131,11 @@ function isolatedCommand(command, cwd) {
     'mount --bind /dev/null /proc/sysrq-trigger',
     'mount --bind /proc/sys /proc/sys',
     'mount -o remount,bind,ro /proc/sys',
-    ...(hideWorkdir ? ['mount -t tmpfs tmpfs ' + shq(APP_DIR)] : []),
+    ...(hideWorkdir ? [
+      'mount -t tmpfs tmpfs ' + shq(APP_DIR),
+      // 防止 umount /app：bind mount 到自己，制造"子挂载"使内核引用计数 > 0
+      'mount --bind ' + shq(APP_DIR) + ' ' + shq(APP_DIR),
+    ] : []),
     'anchor=$(mktemp -d /tmp/.exanchor.XXXXXXXXXX)',
     'mount --bind ' + shq(sessionRoot) + ' "$anchor"',
     'mount -t tmpfs tmpfs ' + shq(DEFAULT_CWD),
