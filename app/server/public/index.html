@@ -1621,9 +1621,19 @@
   const ta = $('msg-input');
   function autosize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }
   ta.addEventListener('input', autosize);
+  // 触屏设备(手机/平板)上:Enter 走默认行为(插入 \n),发消息靠发送按钮,
+  // 避免软键盘的回车键直接被吞走导致连换行都打不出来。桌面/笔记本继续走 Enter=发送。
+  // 用 (hover:none)&&(pointer:coarse) 判定「以触摸为主」的设备,标准且不依赖 UA 字符串。
+  const isTouchPrimary = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
   ta.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' || e.isComposing) return; // 中文输入法候选中的回车不拦截
-    // 桌面端:Ctrl/⌘/Shift+Enter 在光标处换行;普通 Enter 发送
+    // 输入法组合中（包括拼音输入法「确认英文上屏」那次 Enter）不拦截,
+    // 让 IME 自行处理。e.isComposing 是标准信号；旧版 Chrome 等环境下
+    // keyCode 恒为 229,作为兜底。
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key !== 'Enter') return;
+    // 触屏:Enter 走默认(换行),不拦截、不发送。
+    if (isTouchPrimary) return;
+    // 桌面:Ctrl/⌘/Shift+Enter 在光标处换行;普通 Enter 发送
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       e.preventDefault();
       if (!document.execCommand('insertText', false, '\n')) {
