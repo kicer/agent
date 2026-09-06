@@ -551,7 +551,8 @@
     const bubble = text ? (() => { const r = mdHtml(m.content); return '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>'; })() : '';
     return '<div class="msg other">' + think + bubble + actionsHtml(m.created_at, m.content || '', m.id) + '</div>';
   }
-  // 思考过程折叠面板:summary 固定名「思考过程」,body 展示推理全文
+  // 思考过程折叠面板:summary 固定名「思考过程」,body 展示推理全文。
+  // 历史重渲染默认收起(与原设计一致),流式阶段的展开行为由 ensureStreamThinkPanel 显式控制。
   function thinkPanelHtml(text) {
     return '<details class="msg-think"><summary>思考过程</summary><div class="msg-think-body">' + esc(text) + '</div></details>';
   }
@@ -610,12 +611,15 @@
     return '<button class="act act-del" title="删除本条" data-msg-id="' + msgId + '">' +
       '<svg class="ic sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>';
   }
-  function renderToolCard(id, name, argsStr, createdAt) {
+  function renderToolCard(id, name, argsStr, createdAt, opts) {
     const div = document.createElement('div');
     div.className = 'tool-card';
     div.id = 'tool-' + id;
+    // 流式执行(open=true):结果在 tool-result 里增量填入,展开才能看到实时输出,回合结束也别自动折上。
+    // 历史重渲染(默认 open=false):保持原来的收起观感,用户点 summary 再展开。
+    const open = !!(opts && opts.open);
     div.innerHTML =
-      '<details><summary><span class="spin">◌</span>' +
+      '<details' + (open ? ' open' : '') + '><summary><span class="spin">◌</span>' +
       '<span class="tool-name">' + esc(name) + '</span>' +
       '<span class="tool-args">' + esc(toolArgsSummary(name, argsStr)) + '</span></summary>' +
       '<pre class="tool-args-full">' + esc(toolArgsFull(argsStr)) + '</pre>' +
@@ -752,10 +756,15 @@
     const box = $('chat-view');
     box.scrollTop = box.scrollHeight;
   }
-  // 仅当用户贴近底部且未主动暂停时才自动滚动(AI 内容增量到达)
+  // 仅在「贴底」时跟随输出。userPaused 由 scroll 事件根据当前距底距离持续同步,
+  // 覆盖滚轮/拖滚动条/键盘/触屏滑动等所有方式,只要用户把视口移出底部就停止跟随,
+  // 重新回到底部(且无主动暂停意图)就恢复。wheel/touchmove 仍作为「主动向上」的即时信号。
+  // 注意:不要在 maybeAutoScroll 里再判 isNearBottom —— 增量已经写进 DOM,一次大 delta
+  // 把内容推过阈值后 isNearBottom 会变 false,导致后续跟着丢失,看起来像「不跟了」。
+  // 「是否贴底」在 scroll 事件里捕获就行,那一刻是 DOM 变更前的真实位置。
   let userPaused = false;
   function maybeAutoScroll() {
-    if (!userPaused && isNearBottom()) scrollBottom();
+    if (!userPaused) scrollBottom();
   }
   // AI 是否「正在干活」:流式输出中,或会话处于 active(含工具执行与多轮模型调用的间隙)
   function scrollBusy() { return state.streaming || state.status === 'active'; }
@@ -791,7 +800,10 @@
       touchY = e.touches[0].clientY;
     }, { passive: true });
     box.addEventListener('scroll', () => {
-      if (isNearBottom()) userPaused = false;
+      // 用 scroll 事件(而非 wheel/touchmove)统一收敛「是否在底部」,
+      // 这样拖滚动条、键盘 PageUp/Home、触屏惯性滑等都会被纳入判断。
+      // 程序触发的 scrollBottom 总是精确落底,isNearBottom() 恒为 true,不会误标记。
+      userPaused = !isNearBottom();
       updateScrollBottomBtn();
     }, { passive: true });
   }
@@ -1377,12 +1389,9 @@
           }
           if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
           state.streaming = false;
-          // 思考面板默认折叠，避免挡着后续气泡；点击展开
-                    if (state.streamWrap) {
-                      const t = state.streamWrap.querySelector('.msg-think');
-                      if (t && t.open) t.open = false;
-                    }
-                    // 摘要卡片不再自动折起：它就是本轮的正式产出，由用户自己决定收不收起。
+          // 思考面板与工具卡保持展开状态：流式过程中用户能跟着看过程,回合结束也别自动折上,
+          // 由用户自己决定是否收起（点 summary 即可折叠）。历史重渲染时也保持这个默认(open 见 renderToolCard / thinkPanelHtml）。
+                    // 摘要卡片同样不再自动折起：它就是本轮的正式产出。
           state.streamWrap = null;
           state.streamReasoning = '';
           state.streamThinkEl = null;
@@ -1421,7 +1430,8 @@
       const d = JSON.parse(ev.data);
       removeTyping(); // 工具卡出现也算即时反馈
       if (state.toolCards[d.id]) return; // assistant_message 已建卡(含完整参数),不重复创建
-      const card = renderToolCard(d.id, d.name, d.arguments, Date.now());
+      // 流式 tool_call:展开卡片,实时看到执行参数与结果,回合结束也不自动折上
+      const card = renderToolCard(d.id, d.name, d.arguments, Date.now(), { open: true });
       $('chat-view').appendChild(card);
       state.toolCards[d.id] = card;
       maybeAutoScroll();
