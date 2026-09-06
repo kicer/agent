@@ -42,7 +42,7 @@ services:
       # debug 会把与 core 的完整交互打印出来（请求、/exec 请求体、每条 SSE 帧、JSON 响应）：
       - EXECUTOR_LOG_LEVEL=info
     # 资源限制：兜住 AI 失控命令（烧 CPU / 吃内存 / fork 炸弹 / 写盘撞满宿主机磁盘）。cgroup/ulimit 随 fork 继承。
-    # 这些是性能/容量护栏，不限制可调用的 syscall：apt-get install、fuse 装载等仍需 privileged: true 放开。
+    # 这些是性能/容量护栏，不限制可调用的 syscall；执行能力由下方 cap_add/security_opt 控制。
     cpus: "2.0"       # 容器整体最多用 2 核（超出限流不杀进程），按宿主机核数调整
     mem_limit: 2g     # 内存失控 → 容器被 OOM kill（restart 策略自动拉起，代价是该容器内所有在执行命令随容器重启丢失）
     pids_limit: 512   # 进程+线程总数上限，防 fork 炸弹耗尽宿主机进程表
@@ -53,11 +53,16 @@ services:
       fsize:
         soft: 2147483648
         hard: 2147483648
-    # privileged: true 拿最大执行权限（默认能力集 + seccomp/apparmor unconfined）。
-    # 原因：executor 需在每条命令前 unshare(2) + mount(2) 临时覆盖 /workspace/tasks 为 tmpfs，
-    # 只回挂当前会话目录，让 AI 看不到别人的项目。默认 cap_drop + 默认 seccomp/apparmor 会拦下这两个调用。
+    # per-task 隔离需 unshare(2)/mount(2)：只需 CAP_SYS_ADMIN（cap_add），不必 privileged。
+    # 实测 Docker 29（Ubuntu，AppArmor 启用）：默认 AppArmor profile（docker-default）会拦 mount 系统调用，
+    # 单加 SYS_ADMIN 仍报 Permission denied，需本容器 apparmor unconfined；默认 seccomp profile 对持 CAP_SYS_ADMIN
+    # 的进程本就放行 mount/unshare，无需改动。相比 privileged: true 去掉的是：宿主机设备透传（/dev 裸盘）、
+    # 全套能力集、seccomp 封锁——保留的这三道仍是隔离层。
     # 安全网：容器仅 expose 9000 + agent-internal 外网不可见；cpus/mem/pids/fsize cgroup 仍受控。
-    privileged: true
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor=unconfined
     networks:
       - agent-internal
 

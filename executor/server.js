@@ -20,7 +20,7 @@
 // per-task 隔离：每条命令默认在新的 mount 命名空间里跑。启动 wrapper 把 EXECUTOR_CWD（任务根，/workspace/tasks）
 // 覆盖为 tmpfs，只把当前会话的子目录 bind 回原路径上——结果：AI 命令能读写自己的项目，看不到别人的 task 目录。
 // 任务根以外的路径（/workspace/skills、/tmp、/usr、依赖包等）不受影响。mount 命名空间随进程退出自动销毁。
-// 需 CAP_SYS_ADMIN + 默认 seccomp/apparmor unconfined：compose 里 agent-executor 配了 privileged: true。
+// 需 CAP_SYS_ADMIN，且 AppArmor 不能拦 mount（Docker 默认 docker-default profile 会拦）：compose 里 agent-executor 配 cap_add SYS_ADMIN + apparmor=unconfined，不用 privileged（实测默认 seccomp 对持 CAP_SYS_ADMIN 的进程放行 mount/unshare）。
 //
 // 日志：EXECUTOR_LOG_LEVEL=debug|info|warn|error|none（默认 info，none/off 全静默），分级语义与 core 的 log.js 一致。
 //   info = 关键动作（启动/进程 start/exit/取消/关闭）；debug = 额外打印与 core 的完整交互：

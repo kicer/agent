@@ -353,7 +353,7 @@ stateDiagram-v2
 | `EXECUTOR_TOKEN` | 空 | 可选 Bearer 鉴权 |
 | `EXECUTOR_LOG_LEVEL` | `info` | 分级日志（debug 打满请求/响应交互） |
 
-**per-task 挂载隔离**（`server.js` 的 `isolatedCommand`）：cwd 在任务根（`EXECUTOR_CWD`）严格之下的命令，spawn 时包一层 wrapper，在新的 mount namespace 里把任务根覆盖为 tmpfs、只把当前会话根（第一层子目录）bind 回原路径——AI 只能看到/改自己的项目，看不到别的会话；cwd 在任务根本身或其外（如 skill 入口跑在技能目录）不隔离直接 spawn。需 compose 配 `privileged: true`（默认 cap_drop + seccomp/apparmor 会拦 `unshare(2)`/`mount(2)`）；`unshare`/`mount`/`mktemp` 来自 debian 基础包 util-linux。
+**per-task 挂载隔离**（`server.js` 的 `isolatedCommand`）：cwd 在任务根（`EXECUTOR_CWD`）严格之下的命令，spawn 时包一层 wrapper，在新的 mount namespace 里把任务根覆盖为 tmpfs、只把当前会话根（第一层子目录）bind 回原路径——AI 只能看到/改自己的项目，看不到别的会话；cwd 在任务根本身或其外（如 skill 入口跑在技能目录）不隔离直接 spawn。需 compose 配 `cap_add: SYS_ADMIN` + `security_opt: apparmor=unconfined`（不用 privileged：实测 Docker 29，默认 AppArmor profile 拦 `mount(2)`，单加 SYS_ADMIN 不够；默认 seccomp 对持 CAP_SYS_ADMIN 的进程放行 `unshare(2)`/`mount(2)`，无需改动）；`unshare`/`mount`/`mktemp` 来自 debian 基础包 util-linux。
 
 **资源护栏**（compose 层，**不在 server.js**）：
 `cpus 2.0` / `mem_limit 2g` / `pids_limit 512` / `ulimits.fsize 2G` —— 防 AI 失控命令。残余缺口（只限单文件不限总量）在 compose 注释里已标。
