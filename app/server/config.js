@@ -65,6 +65,7 @@ function hostnameOf(url) {
 }
 
 // 旧版扁平 models[]（每模型自带 url/api_key）自动迁移为 platforms 层级：同 url+api_key 归为同一平台同一 key。
+// 输出新格式:models 在平台层,keys 只含 api_key/concurrency。
 function migrateLegacyModels(models) {
   const groups = [];
   const byKey = new Map();
@@ -78,53 +79,66 @@ function migrateLegacyModels(models) {
       // 平台名 = 主机名首段;同名(如只 path 不同)自动加序号，避免「平台名/模型id」唯一键碰撞。
       let name = hostnameOf(url) || ('p' + (groups.length + 1));
       for (let n = 2; groups.some(g => g.name === name); n++) name = (hostnameOf(url) || 'p') + '-' + n;
-      p = { name, url, type: 'openai', keys: [{ api_key: apiKey, concurrency: 1, models: [] }] };
+      p = { name, url, type: 'openai', models: [], keys: [{ api_key: apiKey, concurrency: 1 }] };
       byKey.set(gk, p);
       groups.push(p);
     }
-    p.keys[0].models.push({ id: m.id, display_name: m.display_name || m.id, vision: m.vision === true });
+    p.models.push({ id: m.id, display_name: m.display_name || m.id, vision: m.vision === true });
   }
   return groups;
 }
 
-// 规范化并校验 platforms 层级：平台(name/url/type) → keys(api_key/concurrency) → models(id/display_name/vision/enable)。
-// 内部唯一键 = 平台名/模型id：不同平台允许同模型 id，同平台内必须唯一（会话/模型池/用量均按该键认模型）；
-// 允许键/列表为空（便于页面增删）。
+// 规范化并校验 platforms 层级：平台(name/url/type) → models(id/display_name/...) + keys(api_key/concurrency)。
+// 新版结构：models 提到平台层（与 url/type 同级），所有 key 共用同一份 models；key 数组里只放
+// {api_key, concurrency}，不再挂 models。旧版 keys[j].models 写法直接报错，让用户改 YAML。
+// 内部唯一键 = 平台名/模型id：不同平台允许同模型 id，同平台内必须唯一（会话/模型池/用量均按该键认模型）。
 function normalizePlatforms(rawPlatforms) {
   const seen = new Set(); // 已用唯一键（平台名/模型id）
   const out = [];
   for (let pi = 0; pi < rawPlatforms.length; pi++) {
     const p = rawPlatforms[pi] || {};
     if (!p.url) throw new Error('platforms[' + pi + '] 缺少 url（OpenAI 兼容 /v1 地址）');
+    // 检测旧格式 keys[j].models：发现则报错,不兼容(改动 3)。
+    for (let ki = 0; ki < (p.keys || []).length; ki++) {
+      if (Array.isArray(p.keys[ki] && p.keys[ki].models)) {
+        throw new Error('platforms[' + pi + '].keys[' + ki + '].models 写法已废弃：' +
+          'models 应提到 platforms[' + pi + '].models（与 url/type 同级），所有 key 共用同一份 models。' +
+          '请改写 config.yml。');
+      }
+    }
     const url = String(p.url).replace(/\/+$/, '');
     const name = String(p.name || '').trim() || (hostnameOf(url) || ('p' + (pi + 1)));
-    // type 可完全自定义（不校验白名单）；它决定余额查询适配器，由 routes/platforms.js 按类型分发（当前仅 deepseek 已接入，其余类型查询时返回不支持）。
-    const type = String(p.type || 'openai').trim();
+    // type 可完全自定义（不校验白名单）；它决定余额查询适配器，由 routes/platforms.js 按类型分发。
+    // 缺省取平台 name：用户起名"bigmodel"时不显式配 type 也能命中 bigmodel 适配器；
+    // 自定义名（如"zhipu-prod"）若不命中已接入 adapter,查询时返回 400（不静默回退）。
+    const type = String(p.type || name).trim();
+    // 平台层 models 解析
+    const models = [];
+    for (let mi = 0; mi < (p.models || []).length; mi++) {
+      const m = p.models[mi] || {};
+      if (!m || !m.id) throw new Error('平台「' + name + '」的 models[' + mi + '] 缺少 id');
+      const uid = name + '/' + String(m.id);
+      if (seen.has(uid)) throw new Error('模型重复：平台「' + name + '」下已有模型 id：' + m.id + '（不同平台可同名，同平台内必须唯一）');
+      seen.add(uid);
+      models.push({
+        id: String(m.id),
+        display_name: m.display_name ? String(m.display_name) : String(m.id), // 缺省 = id
+        vision: m.vision === true, // 支持时 read_file 读图会回传图片，会话上下文会告知 AI
+        enable: m.enable !== false, // 选填，默认启用；禁用后不进模型池，不参与分配/绑定（重启生效）
+        // 选填：模型特有的请求体参数对象。发往上游时整体合并进 body 顶层。
+        extra_params: (m.extra_params && typeof m.extra_params === 'object' && !Array.isArray(m.extra_params)) ? m.extra_params : {},
+        // 选填：前端启用「深度思考」时合并进 body。可覆盖 extra_params 的同名键。
+        thinking_params: (m.thinking_params && typeof m.thinking_params === 'object' && !Array.isArray(m.thinking_params)) ? m.thinking_params : {},
+      });
+    }
+    // keys 仅含 api_key/concurrency（不再挂 models）
     const keys = [];
     for (let ki = 0; ki < (p.keys || []).length; ki++) {
       const k = p.keys[ki] || {};
       const concurrency = Math.max(1, parseInt(k.concurrency, 10) || 1);
-      const models = [];
-      for (let mi = 0; mi < (k.models || []).length; mi++) {
-        const m = k.models[mi] || {};
-        if (!m || !m.id) throw new Error('平台「' + name + '」key#' + (ki + 1) + ' 的 models[' + mi + '] 缺少 id');
-        const uid = name + '/' + String(m.id);
-        if (seen.has(uid)) throw new Error('模型重复：平台「' + name + '」下已有模型 id：' + m.id + '（不同平台可同名，同平台内必须唯一）');
-        seen.add(uid);
-        models.push({
-          id: String(m.id),
-          display_name: m.display_name ? String(m.display_name) : String(m.id),
-          vision: m.vision === true, // 支持时 read_file 读图会回传图片，会话上下文会告知 AI
-          enable: m.enable !== false, // 选填，默认启用；禁用后不进模型池，不参与分配/绑定（重启生效）
-          // 选填：模型特有的请求体参数对象。发往上游时整体合并进 body 顶层。
-          extra_params: (m.extra_params && typeof m.extra_params === 'object' && !Array.isArray(m.extra_params)) ? m.extra_params : {},
-          // 选填：前端启用「深度思考」时合并进 body。可覆盖 extra_params 的同名键。
-          thinking_params: (m.thinking_params && typeof m.thinking_params === 'object' && !Array.isArray(m.thinking_params)) ? m.thinking_params : {},
-        });
-      }
-      keys.push({ api_key: String(k.api_key || ''), concurrency, models });
+      keys.push({ api_key: String(k.api_key || ''), concurrency });
     }
-    out.push({ name, url, type, keys });
+    out.push({ name, url, type, models, keys });
   }
   return out;
 }
@@ -134,22 +148,25 @@ function parseAndValidate(rawText, configPath) {
   let raw = YAML.parse(rawText || '') || {};
   const cfg = deepMerge(DEFAULTS, raw);
 
-  // ---------- 模型配置：platforms 层级（platforms[].keys[].models[]）----------
-  // 旧版扁平 models[]（每模型自带 url/api_key）自动迁移；cfg.models 为打平后的运行时视图，
-  // 每项继承所属平台的 url/type 与 key 的 api_key/concurrency，并携带位置下标（前端 PATCH 定位用）。
+  // ---------- 模型配置：platforms 层级（platforms[].models[] + platforms[].keys[]）----------
+  // models 提到平台层（与 url/type 同级），多 key 共用同一份 models。
+  // cfg.models 为打平后的运行时视图：每个 key 都展开一份（key 数 × models 数），
+  // 内部唯一键 = 「平台名/模型id」（key_index 是副本下标，不参与 id 命名空间）；
+  // 调用处（池/会话/路由/用量）按 id 认模型，key_index 仅用于按 key 拆余额展示。
   if ((!Array.isArray(raw.platforms) || !raw.platforms.length) && Array.isArray(raw.models) && raw.models.length) {
     raw = Object.assign({}, raw, { platforms: migrateLegacyModels(raw.models) });
     log.info('config', '检测到旧配置 models[] 扁平格式，已自动迁移为 platforms 层级；建议改写 config.yml 为 platforms 格式');
   }
   if (!Array.isArray(raw.platforms) || !raw.platforms.length) {
-    throw new Error('配置缺少 platforms：至少需要一个平台 {name, url, keys:[{api_key, models:[{id}]}]}')
+    throw new Error('配置缺少 platforms：至少需要一个平台 {name, url, keys:[{api_key}], models:[{id}]}')
   }
   cfg.platforms = normalizePlatforms(raw.platforms);
   cfg.models = [];
-  cfg.platforms.forEach((p, pi) => p.keys.forEach((k, ki) => k.models.forEach((m, mi) => {
+  cfg.platforms.forEach((p, pi) => p.keys.forEach((k, ki) => p.models.forEach((m, mi) => {
     cfg.models.push({
       // id = 内部唯一键「平台名/模型id」（池/会话/用量/前端均按它认模型，调用处无需区分）；
       // mid = 发给上游的原始模型名（请求体 body.model 用它）。
+      // key_index 是 key 副本下标：同 id 在 cfg.models 里会出现 N 次（N=key 数），便于按 key 拆余额。
       id: p.name + '/' + m.id, mid: m.id,
       display_name: m.display_name, vision: m.vision, enable: m.enable,
       extra_params: m.extra_params, thinking_params: m.thinking_params,

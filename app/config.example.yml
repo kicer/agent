@@ -1,40 +1,46 @@
 # 自用通用 Agent 系统配置示例
 # 复制为 config.yml 后按需修改；容器内通过 AGENT_CONFIG 指定路径。
 
-# 模型池：平台(platforms) → Key → 模型 三层层级。url/type 配在平台，api_key/concurrency 配在 Key，
-# 模型只声明 {id, display_name, vision, enable}。加载时自动打平成全局模型列表。
+# 模型池：平台(platforms) → models + keys 两层结构。url/type/models 配在平台层（同一份 models
+# 被该平台下所有 key 共用），api_key/concurrency 配在 keys 里（每个 key 独立账号/额度）。
+# 加载时自动打平：每个 key 复制一份该平台下所有 models，生成全局 cfg.models 列表。
 # 暂按每模型 1 会话调度；concurrency 已解析入库，多会话并发后续再接调度。
 platforms:
   - name: proxy-a                        # 平台名；留空取 url 主机名首段。注意：它是模型唯一键的一部分，改名等于重建其下所有模型（历史会话回绑失效、用量统计分家）
     url: "https://proxy-a.example.com/v1" # OpenAI 兼容 /v1 地址，该平台下所有模型共用
-    type: openai                          # openai/deepseek/custom，决定余额查询适配器（预留）
+    type: openai                          # 选填，缺省取 name；余额查询按 type 找适配器（已接 deepseek/bigmodel），未命中返回「暂未接入」
+    models:                               # 该平台下所有模型（与 url/type 同级）；多 key 共用
+      - id: ds1                           # 上游模型名；只需同平台内唯一（不同平台可同名），内部唯一键 = 平台名/模型id，历史会话按它绑定，页面不可改
+        display_name: "AMD DeepSeek 1"    # 显示名，缺省同 id
+        # vision: true                   # 选填，默认 false；支持时 read_file 读图会压缩回传（长边≤2000px JPEG），会话上下文会告知 AI
+        # enable: false                  # 选填，默认 true；禁用后不进模型池，不参与分配/绑定（重启生效）
+        # extra_params:                  # 选填：每次发往上游都会合并进 body 顶层的对象；同 key 覆盖默认（model/messages/stream/temperature/tools）
+        #   top_p: 0.9
+        #   response_format: { type: "json_object" }
+        # thinking_params:               # 选填：仅「深度思考」开启时合并进 body（优先级高于 extra_params）
+        #   thinking: { type: "enabled", budget_tokens: 4096 }
+      - id: ds2
+        display_name: "AMD DeepSeek 2"
+      - id: ds3
+        # display_name 缺省 = id
     keys:
       - api_key: "sk-..."                 # 各 Key 独立（同平台不同账号/额度），留空则不带鉴权头
         concurrency: 1                    # 该 Key 并发会话数，默认 1（当前仅记录，未参与调度）
-        models:
-          - id: ds1                       # 上游模型名；只需同平台内唯一（不同平台可同名），内部唯一键 = 平台名/模型id，历史会话按它绑定，页面不可改
-            display_name: "AMD DeepSeek 1" # 显示名，缺省同 id
-            # vision: true                # 选填，默认 false；支持时 read_file 读图会压缩回传（长边≤2000px JPEG），会话上下文会告知 AI
-            # enable: false               # 选填，默认 true；禁用后不进模型池，不参与分配/绑定（重启生效）
-            # extra_params:                # 选填：每次发往上游都会合并进 body 顶层的对象；同 key 覆盖默认（model/messages/stream/temperature/tools）
-            #   top_p: 0.9
-            #   response_format: { type: "json_object" }
-            # thinking_params:              # 选填：仅「深度思考」开启时合并进 body（优先级高于 extra_params）
-            #   thinking: { type: "enabled", budget_tokens: 4096 }
-          - id: ds2
-            display_name: "AMD DeepSeek 2"
-      - api_key: "sk-..."                 # 同平台的第二个 Key
-        models:
-          - id: ds3
-            display_name: "AMD DeepSeek 3"
+      - api_key: "sk-..."                 # 同平台的第二个 Key，自动可用上面所有 models
   - name: proxy-c
     url: "https://proxy-c.example.com/v1"
-    type: custom
+    # type 缺省取 name（=proxy-c），未命中适配器时余额查询会返回「暂未接入」
+    models:
+      - id: ds4
+        display_name: "No Auth Model"
     keys:
       - api_key: ""
-        models:
-          - id: ds4
-            display_name: "No Auth Model"
+  - name: bigmodel                       # 智谱 bigmodel：起名 bigmodel 可省略 type，自动命中 bigmodel 适配器
+    url: "https://open.bigmodel.cn/api/paas/v4"
+    models:
+      - id: glm-4.6
+    keys:
+      - api_key: "your-key"
 
 workspace_root: "./data/tasks"
 # 数据根目录：db（默认 .agent.db）与启动 prompt dump（prompt.txt）放这里；相对路径按启动目录展开。
