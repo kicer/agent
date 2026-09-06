@@ -1,5 +1,5 @@
 // agent-executor 冒烟测试：node smoke-test.js（在本目录执行）。
-// 覆盖：/health、/exec 流式输出与退出事件、增量下发时序、cwd 白名单拒绝、任务根边界（缺省/恰为任务根 → 400）、DELETE 取消、EXECUTOR_TOKEN 鉴权、per-task 挂载隔离、客户端半路断连不击穿服务。
+// 覆盖：/health、/exec 流式输出与退出事件、增量下发时序、cwd 白名单拒绝、任务根边界（缺省/恰为任务根 → 400）、DELETE 取消、EXECUTOR_TOKEN 鉴权、per-task 挂载隔离（含 nsenter /proc/1 逃逸回归）、客户端半路断连不击穿服务。
 // 注意：隔离用例需 root/CAP_SYS_ADMIN（unshare+mount），无权限时自动 SKIP 不计失败；其余用例 cwd 故意取任务根外目录，保持非隔离路径可在无权限环境跑。
 process.env.PORT = process.env.PORT || '19000';
 const SELF = process.env.__SELF_DIR__ || __dirname; // 宿主机测试：白名单取本目录
@@ -101,7 +101,8 @@ async function main() {
 
   // 7.5 per-task 挂载隔离：另起一个实例（端口 19002），EXECUTOR_CWD=.iso-tasks（任务根），
   // 下放 iso-a / iso-b 两个「会话」目录；cwd 取 iso-a 的深层子目录（模拟 terminal 的 cd），验证：
-  //   任务根下只看到 iso-a、cd 兄弟会话被拒、自己文件可读；无 mount 权限时整组 SKIP。
+  //   任务根下只看到 iso-a、cd 兄弟会话被拒、自己文件可读；另验 nsenter /proc/1 逃逸封堵与 /proc/sys 只读；
+  //   及 wrapper 内（新 pid ns、命令即 PID 1）超时杀进程语义；无 mount 权限时整组 SKIP。
   const isoRoot = path.join(__dirname, '.iso-tasks');
   fs.rmSync(isoRoot, { recursive: true, force: true });
   fs.mkdirSync(path.join(isoRoot, 'iso-a', 'deep'), { recursive: true });
@@ -114,7 +115,7 @@ async function main() {
   // 分隔符切段便于精确断言；cd 失败信息不走 stderr 上送（含 iso-b 字样会污染 ls 段断言），改用 leaked/blocked 标记区分。
   const evsI = await collect(await fetch('http://127.0.0.1:19002/exec', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command: 'pwd; echo @LS@; ls ../../; echo @CD@; cd ../../iso-b 2>/dev/null && echo leaked || echo blocked; echo @CAT@; cat ../../iso-a/a.txt', cwd: isoCwd, timeout_ms: 5000 }),
+    body: JSON.stringify({ command: 'pwd; echo @LS@; ls ../../; echo @CD@; cd ../../iso-b 2>/dev/null && echo leaked || echo blocked; echo @CAT@; cat ../../iso-a/a.txt; echo; echo @NS@; nsenter --mount=/proc/1/ns/mnt ls ' + isoRoot + ' 2>&1; echo @SYS@; echo 1 > /proc/sys/kernel/panic 2>/dev/null && echo sysctl_writable || echo sysctl_ro', cwd: isoCwd, timeout_ms: 5000 }),
   }));
   const outI = evsI.filter(e => e.type === 'out' || e.type === 'err').map(e => e.chunk).join('');
   const exitI = evsI[evsI.length - 1];
@@ -124,8 +125,21 @@ async function main() {
     const lsRegion = outI.split('@LS@')[1].split('@CD@')[0];
     check('隔离: 任务根只见 iso-a', /iso-a/.test(lsRegion) && !/iso-b/.test(lsRegion), 'ls=' + JSON.stringify(lsRegion));
     check('隔离: cd 兄弟会话被拒', /blocked/.test(outI) && !/leaked/.test(outI), 'out=' + JSON.stringify(outI));
-    // cat 成功只回显文件内容（a），不含文件名；取 @CAT@ 段精确比对。
-    check('隔离: 深子目录 pwd 不丢 + 自己文件可读', outI.includes(isoCwd) && outI.split('@CAT@')[1].trim() === 'a', 'out=' + JSON.stringify(outI));
+    // cat 成功只回显文件内容（a），不含文件名；取 @CAT@…@NS@ 段精确比对。
+    check('隔离: 深子目录 pwd 不丢 + 自己文件可读', outI.includes(isoCwd) && outI.split('@CAT@')[1].split('@NS@')[0].trim() === 'a', 'out=' + JSON.stringify(outI));
+    // 逃逸回归：/proc/1 已是本 pid ns 的命令自身，借它 nsenter 只能进同一个隔离 ns，看不到 iso-b。
+    // 必须绝对路径：nsenter 进 mount ns 后会 chdir("/")，相对路径在新 ns 根下解析会失真。
+    const nsRegion = outI.split('@NS@')[1].split('@SYS@')[0];
+    check('逃逸: nsenter /proc/1 后仍只见 iso-a', /iso-a/.test(nsRegion) && !/iso-b/.test(nsRegion), 'ns=' + JSON.stringify(nsRegion));
+    // 重挂的 proc 必须还原 docker 的 /proc/sys 只读防护（否则 kernel.core_pattern 可写 → 宿主逃逸面）。
+    check('逃逸: 新 proc 下 /proc/sys 仍只读', /sysctl_ro/.test(outI) && !/sysctl_writable/.test(outI), 'out=' + JSON.stringify(outI));
+    // wrapper 内超时杀进程：命令已是新 pid ns 的 PID 1，验证杀进程组/超时对 PID 1 同样有效。
+    const evsTK = await collect(await fetch('http://127.0.0.1:19002/exec', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: 'sleep 30', cwd: isoCwd, timeout_ms: 600 }),
+    }));
+    const exitTK = evsTK[evsTK.length - 1];
+    check('隔离: wrapper 内超时杀进程（PID 1 语义）', exitTK && exitTK.killed_by === 'timeout', JSON.stringify(exitTK));
   }
   isoChild.kill('SIGKILL');
   fs.rmSync(isoRoot, { recursive: true, force: true });

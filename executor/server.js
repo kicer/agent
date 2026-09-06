@@ -19,8 +19,13 @@
 //   - timeout_ms 夹在 [1s, EXECUTOR_MAX_TIMEOUT_MS]（默认 30 分钟）；
 //   - stdout/stderr 各自按 max_output_chars 截断（默认 EXECUTOR_MAX_OUTPUT_CHARS=200000），超限后丢弃剩余输出，exit 事件带 truncated 标记。
 //
-// per-task 隔离：每条命令默认在新的 mount 命名空间里跑。启动 wrapper 把 EXECUTOR_CWD（任务根，/workspace/tasks）
+// per-task 隔离：每条命令默认在新的 mount + pid 命名空间里跑。启动 wrapper 把 EXECUTOR_CWD（任务根，/workspace/tasks）
 // 覆盖为 tmpfs，只把当前会话的子目录 bind 回原路径上——结果：AI 命令能读写自己的项目，看不到别人的 task 目录。
+// 同时 unshare --pid + 重挂 /proc：否则 /proc 仍是宿主视图，/proc/1（executor 主进程）的 ns/mnt 符号链接是原始 mount ns
+// 的句柄，AI 用 nsenter --mount=/proc/1/ns/mnt 即可逃逸回未隔离视图（已实测复现）；重挂后 /proc/1 即命令自身。
+// 新 proc 可写会顶掉 docker 的防护，wrapper 逐项还原：/proc/sys 只读 bind（防 core_pattern 类宿主逃逸）、
+// /dev/null 遮蔽 kcore/keys（docker maskPaths）与 sysrq-trigger（可写 proc 新暴露，echo b 可重启宿主机）。
+// 副作用红利：pid ns 内 ps 只见自家进程树；double-fork 脱管的守护进程随命令退出被内核连带清理。
 // 任务根以外的路径（/workspace/skills、/tmp、/usr、依赖包等）不受影响。mount 命名空间随进程退出自动销毁。
 // 需 CAP_SYS_ADMIN，且 AppArmor 不能拦 mount（Docker 默认 docker-default profile 会拦）：compose 里 agent-executor 配 cap_add SYS_ADMIN + apparmor=unconfined，不用 privileged（实测默认 seccomp 对持 CAP_SYS_ADMIN 的进程放行 mount/unshare）。
 //
@@ -92,11 +97,12 @@ function brief(s, n) {
 // 单引号安全包裹：内部单引号按 '\'' 规则转义，给 sh -c 拼命令串用。
 function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 
-// per-task 挂载隔离 wrapper：返回一个 sh -c 脚本，shell 启动时跑：
+// per-task 挂载隔离 wrapper：返回一个 sh -c 脚本，shell 启动时跑（与 unshare --mount --pid --fork 配合）：
+//   0) 重挂 proc 到新 pid ns（封掉 nsenter /proc/1/ns/mnt 逃逸），还原 /proc/sys 只读与 mask 遮蔽
 //   1) 把 cwd 预先 bind 到 /tmp 下的 anchor（避开后面被覆盖的任务根）
 //   2) 在新 mount ns 里把任务根覆盖为 tmpfs（其他会话从此不可见）
 //   3) 在 tmpfs 下重建当前会话目录名，把 anchor bind 回原路径上
-//   4) 拆掉 anchor，切到 cwd，exec 用户命令
+//   4) 拆掉 anchor，切到 cwd，exec 用户命令（此时已是新 pid ns 的 PID 1）
 // cwd 不在任务根下时返回 null（不隔离；主要适用于 skill 入口直接跑在 /workspace/skills/<name> 的场景）。
 // cwd 恰为任务根本身已在 handleExec 边界拒绝，首条分支仅作兜底。
 function isolatedCommand(command, cwd) {
@@ -108,6 +114,16 @@ function isolatedCommand(command, cwd) {
   const sessionRoot = path.join(DEFAULT_CWD, sessionName);
   return [
     'set -e',
+    // pid/proc 侧：重挂 proc 绑定本 pid ns（flags 对齐 docker），/proc/1 自此即命令自身，无宿主 ns 句柄可指。
+    // 新 proc 是可写的，若不还原会顶掉 docker 防护：/proc/sys 可写→kernel.core_pattern 宿主 root 逃逸；
+    // 新 mount 盖住旧 /proc 后 maskPaths（kcore/keys）失效；sysrq-trigger 虽非 docker 遮蔽，但可写 proc 下
+    // root+SYS_ADMIN 可 echo b 直接重启宿主机，一并遮蔽。mount 失败由 set -e 断令，fail-closed。
+    'mount -t proc -o nosuid,noexec,nodev proc /proc',
+    'mount --bind /dev/null /proc/kcore',
+    'mount --bind /dev/null /proc/keys',
+    'mount --bind /dev/null /proc/sysrq-trigger',
+    'mount --bind /proc/sys /proc/sys',
+    'mount -o remount,bind,ro /proc/sys',
     'anchor=$(mktemp -d /tmp/.exanchor.XXXXXXXXXX)',
     'mount --bind ' + shq(sessionRoot) + ' "$anchor"',
     'mount -t tmpfs tmpfs ' + shq(DEFAULT_CWD),
@@ -209,11 +225,12 @@ async function handleExec(req, res) {
   const id = crypto.randomUUID();
   let child;
   try {
-    // 任务根下的命令走 unshare(2) + mount(2) 临时覆盖 /workspace/tasks 为 tmpfs，只保留当前会话目录；
-    // cwd 在任务根外（如 skill 入口跑在技能目录）时直接 spawn。详见 isolatedCommand。
+    // 任务根下的命令走 unshare(2) + mount(2)：新 mount ns 里用 tmpfs 盖住 /workspace/tasks 只留当前会话目录；
+    // 新 pid ns（--pid --fork）+ wrapper 重挂 proc，封掉借 /proc/1/ns/mnt nsenter 回原始 ns 的逃逸路径（详见 isolatedCommand）。
+    // cwd 在任务根外（如 skill 入口跑在技能目录）时直接 spawn。
     const isolation = isolatedCommand(command, cwd);
     if (isolation) {
-      child = spawn('unshare', ['--mount', '/bin/sh', '-c', isolation], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn('unshare', ['--mount', '--pid', '--fork', '/bin/sh', '-c', isolation], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     } else {
       child = spawn('/bin/sh', ['-c', command], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     }
