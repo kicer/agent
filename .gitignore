@@ -13,3 +13,4 @@ skills/*/__pycache__/
 *.log
 .DS_Store
 app/server/version.json
+*.apk
