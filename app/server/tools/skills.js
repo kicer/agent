@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const YAML = require('yaml');
 const log = require('../log');
+const rexec = require('../remote-exec');
 
 class SkillNotFoundError extends Error {
   constructor(msg) { super(msg); this.name = 'SkillNotFoundError'; }
@@ -112,8 +113,22 @@ function hashFile(p) {
 
 // 在技能目录下执行一个前台命令，返回 stdout+stderr；非零退出抛 DependencyInstallError。
 // 安装命令兼有硬超时（默认 10 分钟），防 pip/apt 挂死阻塞会话。
-function execSyncCapture(cmd, args, cwd, timeoutMs) {
+// 配了 executor：命令拼成单条 shell 行交远端执行（core 镜像已不带 python/pip）。
+// 注意传 PYTHONPATH=共享 deps：远端进程原有 PYTHONPATH 会被覆盖（executor 容器不预装到 site-packages，仅影响技能依赖可见性）。
+function execSyncCapture(ctx, cmd, args, cwd, timeoutMs) {
   const limit = timeoutMs || 600000;
+  const cfg = ctx && ctx.cfg;
+  if (cfg && rexec.isRemote(cfg)) {
+    return rexec.run(cfg, { command: rexec.shellLine(cmd, args), cwd, timeout_ms: limit, env: { PYTHONPATH: depsRoot(ctx) } })
+      .then(r => {
+        if (r.killed_by === 'timeout') throw new DependencyInstallError('依赖安装超时（' + limit + 'ms）已终止：\n' + r.out.trim(), -1);
+        if (r.code === 0) return r.out.trim();
+        throw new DependencyInstallError((r.out.trim() || ('依赖命令退出码 ' + r.code)) + ' [exit: ' + r.code + ']', r.code);
+      }, e => {
+        if (e instanceof DependencyInstallError) throw e;
+        throw new DependencyInstallError('依赖命令远程执行失败：' + e.message, -1);
+      });
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, env: process.env, detached: true });
     let out = '';
@@ -162,11 +177,11 @@ async function ensureDeps(ctx, dir, skillName) {
       const target = depsRoot(ctx);
       fs.mkdirSync(target, { recursive: true });
       log.debug('skills', skillName + '：pip install --target ' + target);
-      await execSyncCapture('python3', ['-m', 'pip', 'install', '--target', target, '-r', reqPath], dir);
+      await execSyncCapture(ctx, 'python3', ['-m', 'pip', 'install', '--target', target, '-r', reqPath], dir);
     }
     if (hasInstall) {
       log.debug('skills', skillName + '：执行 install.sh');
-      await execSyncCapture('bash', ['install.sh'], dir);
+      await execSyncCapture(ctx, 'bash', ['install.sh'], dir);
     }
   } catch (e) {
     if (e instanceof DependencyInstallError) throw e;
@@ -211,7 +226,22 @@ function validateArgs(fm, inputArgs, skillName) {
 }
 
 // 前台执行技能入口，带超时与取消支持；成功 resolve stdout，失败 reject SkillExecutionError。
+// 配了 executor：入口命令拼成单条 shell 行（参数单引号转义，JSON payload 安全）交远端执行，
+// cwd 指向技能目录、PYTHONPATH 指向共享 deps；core 与 executor 同路径挂载 skills，无需翻译。
 function runEntry(ctx, entry, args, cwd, timeoutMs) {
+  const cfg = ctx.cfg;
+  if (cfg && rexec.isRemote(cfg)) {
+    return rexec.run(cfg, {
+      command: rexec.shellLine(entry, args), cwd, timeout_ms: timeoutMs,
+      env: { PYTHONPATH: depsRoot(ctx) }, run: ctx.run,
+    }).then(r => {
+      const trimmed = r.out.replace(/\n+$/, '').trim();
+      if (r.killed_by === 'timeout') throw new SkillExecutionError('技能执行超时（' + timeoutMs + 'ms）已终止：\n' + trimmed, -1);
+      if (r.killed_by === 'cancelled') throw new SkillExecutionError('技能执行被用户终止', -1);
+      if (r.code === 0) return trimmed || '（无输出）';
+      throw new SkillExecutionError((trimmed || ('技能执行失败，退出码 ' + r.code)) + '\n[exit code: ' + r.code + ']', r.code);
+    });
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(entry, args, { cwd, env: skillEnv(ctx), detached: true });
     if (ctx.run && ctx.run.procs) ctx.run.procs.add(child);

@@ -7,6 +7,7 @@ const { spawn } = require('child_process');
 const { Minimatch } = require('minimatch');
 const mcp = require('../mcp');
 const skills = require('./skills');
+const rexec = require('../remote-exec');
 
 function makeMatcher(pattern, opts) {
   const mm = new Minimatch(pattern, opts || {});
@@ -548,6 +549,21 @@ async function toolTerminal(ctx, args) {
   let cwd = ctx.taskDir;
   if (args.cd) cwd = resolveInTask(ctx.taskDir, args.cd);
   if (!fs.existsSync(cwd)) throw new Error('工作目录不存在：' + cwd);
+
+  // 配了 executor.url（或 env EXECUTOR_URL）：命令交给远端 agent-executor 执行，文本拼回与本地完全一致。
+  if (rexec.isRemote(cfg)) {
+    const r = await rexec.run(cfg, { command: args.command, cwd, timeout_ms: timeout, run: ctx.run });
+    let text = selectOutput(r.out.replace(/\n+$/, ''), args.head_lines, args.tail_lines);
+    if (r.killed_by === 'timeout') {
+      text += (text ? '\n' : '') + '（命令超时 ' + timeout + 'ms，已终止；这是超时不是命令本身失败）';
+    } else if (r.killed_by === 'cancelled') {
+      text += (text ? '\n' : '') + '（用户终止任务，进程被 kill）';
+    } else {
+      text += (text ? '\n' : '') + '[exit code: ' + r.code + ']';
+    }
+    if (r.truncated) text += '\n（输出超长，已在 executor 侧截断）';
+    return truncate(text || '（无输出）', maxChars);
+  }
 
   return new Promise((resolve) => {
     const child = spawn('/bin/sh', ['-c', args.command], { cwd, detached: true, env: process.env });

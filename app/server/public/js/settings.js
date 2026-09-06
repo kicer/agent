@@ -113,6 +113,7 @@ function svcCard(st) {
   html += kvPlain('工作区', st.workspace_root);
   html += kvPlain('数据目录', st.data_root);
   html += kvPlain('技能目录', st.skills_root);
+  html += kvPlain('命令执行', st.executor_url ? st.executor_url + '（远端）' : '本地');
   if (pendingKeys.size) html += kvPlain('待生效改动', Array.from(pendingKeys).join(', '));
   html += '<button class="primary-btn" id="restart-btn" style="width:100%;margin-top:8px" onclick="cfgUI.restart()">重启服务</button>' +
     '<div class="cfg-note">配置改动重启后生效;重启约需十几秒,期间页面暂不可用。非 Docker 部署不会自动拉起。</div></div>';

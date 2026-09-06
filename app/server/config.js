@@ -10,6 +10,10 @@ const DEFAULTS = {
   data_root: './data',
   workspace_root: './data/tasks',
   db_path: '', // 默认为 data_root/.agent.db
+  // agent-executor（独立命令执行容器）：url 非空时 terminal 工具与技能命令全部改走远端执行
+  // （core 镜像不再携带 python/libreoffice 等重工具链）；留空则本地 spawn（裸机开发兼容）。
+  // 配置留空时退到环境变量 EXECUTOR_URL / EXECUTOR_TOKEN（compose 注入）。
+  executor: { url: '', token: '' },
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
   agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2, language: '中文' },
   // 大图上传预处理：图片文件超过 threshold_kb 时，浏览器端询问用户后用 canvas 压缩
@@ -160,6 +164,11 @@ function parseAndValidate(rawText, configPath) {
   cfg.workspace_root = path.resolve(cfg.workspace_root);
   cfg.data_root = path.resolve(cfg.data_root);
   if (!cfg.db_path) cfg.db_path = path.join(cfg.data_root, '.agent.db');
+
+  // executor 远程执行：配置优先，env 兑底（compose 注入 EXECUTOR_URL/EXECUTOR_TOKEN）；url 去尾部斜杠（拼 /exec 用）。
+  if (!cfg.executor || typeof cfg.executor !== 'object') cfg.executor = {};
+  cfg.executor.url = String(cfg.executor.url || process.env.EXECUTOR_URL || '').trim().replace(/\/+$/, '');
+  cfg.executor.token = String(cfg.executor.token || process.env.EXECUTOR_TOKEN || '').trim();
 
   // 日志等级:只认 debug/info/warn/error/none(off 是 none 别名),非法值按 info(不影响启动)
   cfg.log_level = String(cfg.log_level || 'info').trim().toLowerCase();

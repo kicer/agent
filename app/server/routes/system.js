@@ -43,6 +43,7 @@ router.get('/status', wrap((req, res) => {
     data_root: cfg.data_root,
     skills_root: cfg.skills_root,
     db_path: cfg.db_path,
+    executor_url: (cfg.executor && cfg.executor.url) || '',
     port: cfg.port,
     auth_enabled: !!(cfg.auth && cfg.auth.users && cfg.auth.users.length),
     running_sessions: engine.activeRuns(),

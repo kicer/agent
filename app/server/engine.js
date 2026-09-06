@@ -371,6 +371,8 @@ function activeRuns() {
 
 function killRunProcs(run) {
   for (const proc of run.procs) {
+    // 远端 executor 任务句柄（remote-exec.js）：发 DELETE 取消，不能本地 kill。
+    if (typeof proc.remoteKill === 'function') { try { proc.remoteKill(); } catch (_) {} continue; }
     try { process.kill(-proc.pid, 'SIGKILL'); } catch (_) {
       try { proc.kill('SIGKILL'); } catch (__) {}
     }
