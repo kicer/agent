@@ -292,12 +292,17 @@
     <!-- 已完成/已终止会话:选择模型继续(搬自 index;phase-bar「选择模型」入口) -->
     <div id="bind-model-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeModelSwitch()">
       <div class="modal">
-        <button class="modal-close-btn" onclick="closeModelSwitch()">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
-        <h3>选择模型继续会话</h3>
-        <p class="empty-tip" style="margin-bottom:10px">为已结束(已完成/已终止)的会话指定一个空闲模型，绑定后继续对话将优先使用该模型。</p>
-        <div class="btn-row" id="bind-model-list" style="flex-direction:column;align-items:stretch;gap:8px;"></div>
+        <div class="msw-header">
+          <div class="msw-titles">
+            <h3>切换模型</h3>
+            <p class="msw-sub">选择一个模型继续当前会话</p>
+          </div>
+          <button class="modal-close-btn" onclick="closeModelSwitch()">
+            <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div class="msw-list" id="bind-model-list"></div>
+        <div class="msw-footer" id="bind-model-footer"></div>
       </div>
     </div>
 
@@ -1056,20 +1061,78 @@
   async function openModelSwitch() {
     if (!state.sessionId) return;
     const list = $('bind-model-list');
+    const footer = $('bind-model-footer');
     list.innerHTML = '<div class="empty-tip">加载中…</div>';
     $('bind-model-modal').classList.remove('hidden');
     try {
-      // 已删除但重启前仍在运行池里的模型不再展示,避免误绑到重启后就消失的模型
       const rows = ((await req('GET', '/api/models')) || []).filter(m => !SET.deletedModels[m.id]);
       if (!rows.length) {
         list.innerHTML = '<div class="empty-tip">还没有配置模型。</div>';
+        footer.textContent = '';
         return;
       }
-      list.innerHTML = rows.map(m => m.is_busy
-        ? '<button class="ghost-btn" disabled>' + esc(m.display_name || m.id) + ' · 占用中</button>'
-        : '<button class="primary-btn" onclick="bindModel(\'' + esc(m.id) + '\')">' + esc(m.display_name || m.id) + '</button>').join('');
+      // 平台颜色盘(循环使用)
+      const DOT_COLORS = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#06B6D4','#F97316'];
+      // 按平台分组: platform -> { name, keyCount, models[] }
+      const platMap = new Map();
+      for (const m of rows) {
+        if (!platMap.has(m.platform)) {
+          platMap.set(m.platform, { name: m.platform || '未知平台', keyCount: 0, models: [] });
+        }
+        const g = platMap.get(m.platform);
+        // 统计 key 数(cfg.models 里同平台但不同 key_index 的条目数)
+        // 同时收集该平台的 key_index 集合
+        if (g.keyIndices === undefined) g.keyIndices = new Set();
+        if (m.key_index !== undefined) g.keyIndices.add(m.key_index);
+        // 同 id 的 model 取第一条(cfg.models 同 id 会出现 N 次,N=key 数)
+        if (!g.seenIds) g.seenIds = new Set();
+        if (!g.seenIds.has(m.id)) {
+          g.seenIds.add(m.id);
+          g.models.push(m);
+        }
+      }
+      // 平台是否锁定:该平台下任意模型 is_busy 则整平台锁定
+      let totalAvailable = 0;
+      let totalAll = 0;
+      const groups = [];
+      for (const [platName, g] of platMap) {
+        const isLocked = g.models.some(m => m.is_busy);
+        g.keyCount = g.keyIndices ? g.keyIndices.size : 1;
+        for (const m of g.models) {
+          totalAll++;
+          if (!isLocked && !m.is_busy) totalAvailable++;
+        }
+        groups.push({ platName, isLocked, keyCount: g.keyCount, models: g.models });
+      }
+      list.innerHTML = groups.map((grp, gi) => {
+        const dotColor = DOT_COLORS[gi % DOT_COLORS.length];
+        const itemHtml = grp.models.map(m => {
+          const disabled = m.is_busy || grp.isLocked;
+          return '<div class="msw-item' + (disabled ? ' disabled' : '') + '"' +
+            (disabled ? '' : ' onclick="bindModel(\'' + esc(m.id) + '\')"') + '>' +
+            '<div class="msw-radio"></div>' +
+            '<div class="msw-info">' +
+              '<div class="msw-name">' + esc(m.display_name || m.mid || m.id) + '</div>' +
+              '<div class="msw-tags">' +
+                (m.vision ? '<span class="msw-tag vision">Vision</span>' : '') +
+                '<span class="msw-tag thinking">Thinking</span>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+        return '<div class="msw-group">' +
+          '<div class="msw-group-header">' +
+            '<span class="msw-dot" style="background:' + dotColor + '"></span>' +
+            '<span>' + esc(grp.platName) + '</span>' +
+            '<span class="msw-group-keys">' + grp.keyCount + ' key' + (grp.keyCount > 1 ? 's' : '') + '</span>' +
+          '</div>' +
+          itemHtml +
+        '</div>';
+      }).join('');
+      footer.textContent = '共 ' + totalAvailable + ' / ' + totalAll + ' 个模型可用';
     } catch (e) {
       list.innerHTML = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
+      footer.textContent = '';
     }
   }
   function closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); }

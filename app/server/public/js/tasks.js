@@ -771,31 +771,82 @@ const ui = {
   async openModelSwitch() {
     if (!state.sessionId) return;
     const list = $('bind-model-list');
+    const footer = $('bind-model-footer');
     list.innerHTML = '<div class="empty-tip">加载中…</div>';
     $('bind-model-modal').classList.remove('hidden');
     try {
-      const rows = await req('GET', '/api/models');
+      const rows = (await req('GET', '/api/models')) || [];
       if (!rows.length) {
         list.innerHTML = '<div class="empty-tip">还没有配置模型。</div>';
+        footer && (footer.textContent = '');
         return;
       }
-      list.innerHTML = rows.map(m => m.is_busy
-        ? '<button class="ghost-btn" disabled>' + esc(m.display_name || m.id) + ' · 占用中</button>'
-        : '<button class="primary-btn" onclick="ui.bindModel(\'' + esc(m.id) + '\')">' + esc(m.display_name || m.id) + '</button>').join('');
+      const DOT_COLORS = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#06B6D4','#F97316'];
+      const platMap = new Map();
+      for (const m of rows) {
+        if (!platMap.has(m.platform)) {
+          platMap.set(m.platform, { name: m.platform || '未知平台', keyIndices: new Set(), models: [], seenIds: new Set() });
+        }
+        const g = platMap.get(m.platform);
+        if (m.key_index !== undefined) g.keyIndices.add(m.key_index);
+        if (!g.seenIds.has(m.id)) {
+          g.seenIds.add(m.id);
+          g.models.push(m);
+        }
+      }
+      let totalAvailable = 0, totalAll = 0;
+      const groups = [];
+      let gi = 0;
+      for (const [platName, g] of platMap) {
+        const isLocked = g.models.some(m => m.is_busy);
+        const keyCount = g.keyIndices.size || 1;
+        for (const m of g.models) {
+          totalAll++;
+          if (!isLocked && !m.is_busy) totalAvailable++;
+        }
+        groups.push({ platName, isLocked, keyCount, models: g.models, dotColor: DOT_COLORS[gi % DOT_COLORS.length] });
+        gi++;
+      }
+      list.innerHTML = groups.map(grp => {
+        const itemHtml = grp.models.map(m => {
+          const disabled = m.is_busy || grp.isLocked;
+          return '<div class="msw-item' + (disabled ? ' disabled' : '') + '"' +
+            (disabled ? '' : ' onclick="ui.bindModel(\'' + esc(m.id) + '\')"') + '>' +
+            '<div class="msw-radio"></div>' +
+            '<div class="msw-info">' +
+              '<div class="msw-name">' + esc(m.display_name || m.mid || m.id) + '</div>' +
+              '<div class="msw-tags">' +
+                (m.vision ? '<span class="msw-tag vision">Vision</span>' : '') +
+                '<span class="msw-tag thinking">Thinking</span>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+        return '<div class="msw-group">' +
+          '<div class="msw-group-header">' +
+            '<span class="msw-dot" style="background:' + grp.dotColor + '"></span>' +
+            '<span>' + esc(grp.platName) + '</span>' +
+            '<span class="msw-group-keys">' + grp.keyCount + ' key' + (grp.keyCount > 1 ? 's' : '') + '</span>' +
+          '</div>' +
+          itemHtml +
+        '</div>';
+      }).join('');
+      footer && (footer.textContent = '共 ' + totalAvailable + ' / ' + totalAll + ' 个模型可用');
     } catch (e) {
       list.innerHTML = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
+      footer && (footer.textContent = '');
     }
   },
   closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); },
   async bindModel(modelId) {
     if (!state.sessionId) return;
+    const sid = state.sessionId;
+    this.closeModelSwitch();
     try {
-      await req('POST', '/api/sessions/' + state.sessionId + '/bind', { model_id: modelId });
+      await req('POST', '/api/sessions/' + sid + '/bind', { model_id: modelId });
       toast('已绑定模型 ' + modelId);
-      this.closeModelSwitch();
     } catch (e) { toast('绑定失败:' + e.message); }
-    // 无论成败都刷新状态(失败多为并发占用,状态可能已变)
-    try { await renderDetail(await req('GET', '/api/sessions/' + state.sessionId)); } catch (_) {}
+    try { await renderDetail(await req('GET', '/api/sessions/' + sid)); } catch (_) {}
   },
   async createSession() {
     try {

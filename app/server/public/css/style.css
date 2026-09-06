@@ -1021,8 +1021,32 @@ label.icon-btn { cursor: pointer; }
 }
 .modal-close-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
 .modal .modal-text { font-size: 14px; color: #556; margin-bottom: 12px; white-space: pre-wrap; }
-.modal .del-dir { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink); margin-bottom: 14px; cursor: pointer; }
-.modal .del-dir input { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--active); }
+	.modal .del-dir { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink); margin-bottom: 14px; cursor: pointer; }
+	.modal .del-dir input { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--active); }
+
+	/* 模型选择弹窗(会话页 phase-bar「选择模型」入口) */
+	.msw-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+	.msw-titles h3 { margin: 0 0 4px 0; font-size: 16px; }
+	.msw-sub { font-size: 13px; color: var(--gray-light); margin: 0; }
+	.msw-list { max-height: 420px; overflow-y: auto; margin: 0 -4px; padding-right: 4px; }
+	.msw-footer { text-align: center; font-size: 13px; color: var(--gray-light); margin-top: 12px; }
+	.msw-group { margin-bottom: 16px; }
+	.msw-group-header { display: flex; align-items: center; gap: 8px; padding: 6px 4px; font-size: 13px; font-weight: 600; color: var(--ink); }
+	.msw-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+	.msw-group-keys { font-size: 11px; color: var(--gray-light); margin-left: auto; background: var(--surface); border-radius: 10px; padding: 1px 6px; }
+	.msw-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background 0.15s; }
+	.msw-item:hover:not(.disabled) { background: var(--surface); }
+	.msw-item.disabled { opacity: 0.45; cursor: not-allowed; }
+	.msw-item.selected { background: color-mix(in srgb, var(--active) 8%, transparent); }
+	.msw-radio { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #dde1ea; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: border-color 0.15s, background 0.15s; }
+	.msw-item.selected .msw-radio { border-color: var(--active); background: var(--active); }
+	.msw-item.selected .msw-radio::after { content: '✓'; color: #fff; font-size: 11px; font-weight: 700; }
+	.msw-info { flex: 1; min-width: 0; }
+	.msw-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.msw-tags { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+	.msw-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
+	.msw-tag.vision { background: #dbeafe; color: #1d4ed8; }
+	.msw-tag.thinking { background: #fef3c7; color: #92400e; }
 
 /* ================= 桌面端布局(≥960px) =================
    历史侧边栏常驻左侧(由 body.drawer-open 控制展开/折叠,不用遮罩);
