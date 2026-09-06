@@ -32,8 +32,11 @@ WORKDIR /app
 COPY server.js ./
 
 EXPOSE 9000
+# EXECUTOR_LOG_LEVEL：日志等级 debug|info|warn|error|none（默认 info）。
+# debug 会把与 core 的完整交互逐条打印（请求行、/exec 请求体、每条 SSE 帧、JSON 响应）。
 ENV PORT=9000 \
     EXECUTOR_ROOTS=/workspace \
-    EXECUTOR_CWD=/workspace/tasks
+    EXECUTOR_CWD=/workspace/tasks \
+    EXECUTOR_LOG_LEVEL=info
 
 CMD ["node", "server.js"]

@@ -124,9 +124,12 @@ function createAuth(cfg) {
     const { user, password } = req.body || {};
     const expect = validUsers.get(String(user || ''));
     if (expect == null || !timingEqual(expect, String(password == null ? '' : password))) {
+      log.warn('auth', '登录失败（用户名或密码错误）：user=' + String(user || '-') + ' ip=' + (req.ip || '-'));
       return res.status(401).json({ error: '用户名或密码错误' });
     }
     setAuthCookie(res, String(user));
+    // 用户进入系统的唯一关口：记一条 info，便于对照后续该用户的会话/消息日志
+    log.info('auth', '用户 ' + String(user) + ' 登录 ip=' + (req.ip || '-'));
     // token 一并回给前端：WebView 封装 APK 杀进程后 cookie 可能没落盘，
     // 前端存 localStorage，下次进登录页用 /api/login_restore 自动恢复。
     res.json({ ok: true, user: String(user), token: signToken(String(user), Date.now() + ttlMs, secret) });
@@ -139,6 +142,8 @@ function createAuth(cfg) {
     const data = readToken(h.startsWith('Bearer ') ? h.slice(7).trim() : '', secret);
     if (!data || !validUsers.has(data.user)) return res.status(401).json({ error: '登录态已失效，请重新登录' });
     setAuthCookie(res, data.user); // 重新签发，顺带续期
+    // APK 冷启动常触发，属自动恢复而非手动登录，记 debug 避免刷屏
+    log.debug('auth', '用户 ' + data.user + ' 恢复登录态（login_restore）');
     res.json({ ok: true, user: data.user });
   });
 

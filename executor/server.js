@@ -17,6 +17,10 @@
 //   - timeout_ms 夹在 [1s, EXECUTOR_MAX_TIMEOUT_MS]（默认 30 分钟）；
 //   - stdout/stderr 各自按 max_output_chars 截断（默认 EXECUTOR_MAX_OUTPUT_CHARS=200000），超限后丢弃剩余输出，exit 事件带 truncated 标记。
 //
+// 日志：EXECUTOR_LOG_LEVEL=debug|info|warn|error|none（默认 info，none/off 全静默），分级语义与 core 的 log.js 一致。
+//   info = 关键动作（启动/进程 start/exit/取消/关闭）；debug = 额外打印与 core 的完整交互：
+//   每个请求行、/exec 请求体、每条 SSE 下发帧、每个 JSON 响应（超长内容截断显示）。改环境配置后重启容器生效。
+//
 // 约定：core 与 executor 把同一份宿主机 ./tasks、./skills 挂到相同容器路径（/workspace/*），
 // 所以 core 下发的任务目录 cwd 在 executor 内原样可用。
 
@@ -37,8 +41,42 @@ const BODY_LIMIT = 1024 * 1024; // /exec 请求体上限 1MB
 
 const runs = new Map(); // id -> { child, killedBy, started_at, cwd }
 
-// 统一日志（ISO 时间戳 + 前缀）
-function log(...args) { console.log(new Date().toISOString(), '[executor]', ...args); }
+// ---------- 分级日志（格式与 core 的 log.js 对齐：<ts> [<level>] [executor] <args>）----------
+const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
+function parseLevel(l) {
+  const s = String(l || 'info').trim().toLowerCase();
+  if (s === 'none' || s === 'off') return Infinity;
+  return LEVELS[s] == null ? LEVELS.info : LEVELS[s];
+}
+const LOG_LEVEL = parseLevel(process.env.EXECUTOR_LOG_LEVEL);
+
+const pad = (n, w) => String(n).padStart(w || 2, '0');
+function stamp() {
+  const d = new Date();
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+    pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + '.' + pad(d.getMilliseconds(), 3);
+}
+function emit(fn, level, args) {
+  if (LEVELS[level] < LOG_LEVEL) return;
+  const rest = Array.prototype.slice.call(args);
+  const head = stamp() + ' [' + level + '] [executor]';
+  if (typeof rest[0] === 'string') rest[0] = head + ' ' + rest[0];
+  else rest.unshift(head);
+  fn.apply(console, rest);
+}
+const log = {
+  debug() { emit(console.log, 'debug', arguments); },
+  info() { emit(console.log, 'info', arguments); },
+  warn() { emit(console.warn, 'warn', arguments); },
+  error() { emit(console.error, 'error', arguments); },
+};
+
+// debug 交互日志的文本截断：保留可读性，超长只留头部并标注丢弃量。
+function brief(s, n) {
+  s = String(s);
+  n = n || 2000;
+  return s.length > n ? s.slice(0, n) + '…(+' + (s.length - n) + ')' : s;
+}
 
 // 常量时间比较，避免通过响应耗时猜 token
 function tokenOk(req) {
@@ -51,6 +89,7 @@ function tokenOk(req) {
 }
 
 function send(res, status, obj) {
+  log.debug('resp', status, brief(JSON.stringify(obj)));
   const body = JSON.stringify(obj);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(body);
@@ -90,11 +129,15 @@ function killGroup(entry) {
   catch (_) { try { child.kill('SIGKILL'); } catch (__) { /* 已退出 */ } }
 }
 
-function sseWrite(res, obj) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); }
+function sseWrite(res, obj) {
+  log.debug('sse →', brief(JSON.stringify(obj)));
+  res.write('data: ' + JSON.stringify(obj) + '\n\n');
+}
 
 async function handleExec(req, res) {
   let args;
   try { args = await readJsonBody(req); } catch (e) { return send(res, 400, { error: e.message }); }
+  log.debug('exec ←', brief(JSON.stringify(args)));
 
   const command = String(args.command || '');
   if (!command.trim()) return send(res, 400, { error: 'command 必填' });
@@ -126,7 +169,7 @@ async function handleExec(req, res) {
 
   const entry = { child, killedBy: null, started_at: Date.now(), cwd, timer: null };
   runs.set(id, entry);
-  log('start', id, 'pid=' + child.pid, 'cwd=' + cwd, 'timeout=' + timeout + 'ms', JSON.stringify(command).slice(0, 200));
+  log.info('start', id, 'pid=' + child.pid, 'cwd=' + cwd, 'timeout=' + timeout + 'ms', JSON.stringify(command).slice(0, 200));
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -166,10 +209,10 @@ async function handleExec(req, res) {
       type: 'exit', code, signal: child.signalCode, killed_by: entry.killedBy,
       stdout_chars: out.stdout, stderr_chars: out.stderr, truncated: out.truncated,
     });
-    log('exit ', id, 'code=' + code, 'killed_by=' + entry.killedBy, 'out=' + out.stdout + 'B err=' + out.stderr + 'B');
+    log.info('exit ', id, 'code=' + code, 'killed_by=' + entry.killedBy, 'out=' + out.stdout + 'B err=' + out.stderr + 'B');
     res.end();
   }
-  child.on('error', err => { entry.killedBy = entry.killedBy || 'spawn_error'; log('spawn error', id, err.message); streamChunk('err', Buffer.from('spawn 失败：' + err.message + '\n')); finish(-1); });
+  child.on('error', err => { entry.killedBy = entry.killedBy || 'spawn_error'; log.error('spawn error', id, err.message); streamChunk('err', Buffer.from('spawn 失败：' + err.message + '\n')); finish(-1); });
   child.on('close', (code) => finish(entry.killedBy ? -1 : (code === null ? -1 : code)));
 }
 
@@ -182,17 +225,21 @@ function handleKill(req, res, id) {
 }
 
 const server = http.createServer(async (req, res) => {
+  log.debug('req ', req.method, req.url);
   const url = new URL(req.url, 'http://x');
   const seg = url.pathname.split('/').filter(Boolean);
 
   if (url.pathname === '/health') return send(res, 200, { ok: true, time: Date.now(), running: Array.from(runs.entries()).map(([id, e]) => ({ id, pid: e.child.pid, cwd: e.cwd, started_at: e.started_at })) });
-  if (!tokenOk(req)) return send(res, 401, { error: '缺少或错误的 Authorization: Bearer token' });
+  if (!tokenOk(req)) {
+    log.warn('auth', '拒绝（token 缺失或错误）', req.method, url.pathname);
+    return send(res, 401, { error: '缺少或错误的 Authorization: Bearer token' });
+  }
 
   try {
     if (req.method === 'POST' && url.pathname === '/exec') return await handleExec(req, res);
     if (req.method === 'DELETE' && seg.length === 2 && seg[0] === 'exec') return handleKill(req, res, seg[1]);
   } catch (e) {
-    log('处理异常：', e.message);
+    log.error('处理异常：', e.message);
     if (!res.headersSent) send(res, 500, { error: e.message }); else res.end();
     return;
   }
@@ -200,12 +247,12 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  log('listening on ' + PORT + '  roots=' + ROOTS.join(', ') + '  default_cwd=' + DEFAULT_CWD + '  auth=' + (TOKEN ? 'token' : 'off'));
+  log.info('listening on ' + PORT + '  roots=' + ROOTS.join(', ') + '  default_cwd=' + DEFAULT_CWD + '  auth=' + (TOKEN ? 'token' : 'off') + '  log_level=' + (process.env.EXECUTOR_LOG_LEVEL || 'info'));
 });
 
 // 退出前杀掉所有在跑的进程组，防容器停止后遗留
 function shutdown(sig) {
-  log('收到 ' + sig + '，停止服务（杀掉 ' + runs.size + ' 个运行中任务）');
+  log.info('收到 ' + sig + '，停止服务（杀掉 ' + runs.size + ' 个运行中任务）');
   for (const entry of runs.values()) { entry.killedBy = 'shutdown'; killGroup(entry); }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
