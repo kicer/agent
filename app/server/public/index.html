@@ -244,10 +244,12 @@
         <div id="mpe-keys"></div>
         <div class="mpe-sec-head"><span>模型</span><button class="ghost-btn sm" onclick="sUI.mAddModel()">＋ 模型</button></div>
         <div id="mpe-models"></div>
+        <label class="del-dir"><input type="checkbox" id="mpe-restart" checked> 保存后立即重启服务</label>
         <div class="btn-row">
+          <button class="ghost-btn danger hidden" id="mpe-del-btn" onclick="sUI.mDelPlat()">删除平台</button>
           <button class="primary-btn" onclick="sUI.mSave()">保存</button>
         </div>
-        <div class="cfg-note">写入 config.yml,到「服务」页重启后生效。已有 Key 仅显示脱敏值,换 Key 请删行后重加;模型 id 不可改(历史会话按 id 绑定)。改平台名等于重建其下所有模型。</div>
+        <div class="cfg-note">仅写入 config.yml,不影响其他数据。已有 Key 只显示脱敏值,换 Key 请删行后重加。</div>
       </div>
     </div>
 
@@ -2826,9 +2828,12 @@
     }
     renderSetPage();
   }
-  // 重启服务(搬自 settings.js restart)
+  // 重启服务(搬自 settings.js restart):确认弹窗 + 执行。可复用部分拆为 restartNow(平台弹窗勾选「保存后立即重启」直用)。
   async function restart() {
     if (!await confirmModal('重启服务', '重启服务使新配置生效?正在执行的 AI 会话会被打断。', '重启')) return;
+    await restartNow();
+  }
+  async function restartNow() {
     try {
       await req('POST', '/api/system/restart');
     } catch (e) {
@@ -3309,7 +3314,7 @@
     loadModelCards();
   }
   // ---------- 平台编辑/新增弹窗(共用一套 UI 与渲染) ----------
-  // SET.pfEdit 工作态:keys/models 行数组;ref=null 为弹窗新增行,ref=原配置下标(仅保存时算 diff 用)。
+  // pfEdit 工作态:keys/models 行数组;ref=null 为弹窗新增行,ref=原配置下标(仅保存时算 diff 用)。
   // 保存 = 一次批量 PATCH(body.edits),服务端同一次读文/校验/写盘,原子生效。
   let pfEdit = null;
   // 当前平台名下的去重模型列表(打平 cfgModels 取首份 key 副本,已含 deletedModels/pendingEnable 过滤)
@@ -3332,6 +3337,8 @@
     // 运行态 type = 规范化后的值(缺省已填 name);与 name 相同时置空,表示“跟随平台名”
     $('mpe-type').value = add ? '' : ((p.type && p.type !== p.name) ? p.type : '');
     if (add) { pfEdit.keys.push({ ref: null, api_key: '', concurrency: 1 }); pfEdit.models.push({ ref: null, id: '', display_name: '', vision: false, enable: true }); }
+    $('mpe-restart').checked = true; // 默认勾选「保存后立即重启」
+    $('mpe-del-btn').classList.toggle('hidden', add);
     renderPfRows();
     $('model-edit-modal').classList.remove('hidden');
   }
@@ -3348,7 +3355,7 @@
     const isNew = r.ref == null;
     return '<div class="mpe-row">' +
       '<input class="mpe-mid" type="text" placeholder="id(上游模型名)" value="' + esc(r.id) + '"' +
-        (isNew ? ' oninput="sUI.mModId(' + i + ',this.value)"' : ' disabled title="历史会话按 id 绑定,不可改"') + '>' +
+        (isNew ? ' oninput="sUI.mModId(' + i + ',this.value)"' : ' disabled title="不可修改"') + '>' +
       '<input class="mpe-grow" type="text" placeholder="显示名(留空同 id)" value="' + esc(r.display_name) + '" oninput="sUI.mModName(' + i + ',this.value)">' +
       '<label class="mpe-vis" title="vision:支持图片输入"><input type="checkbox"' + (r.vision ? ' checked' : '') + ' onchange="sUI.mModVision(' + i + ',this.checked)">V</label>' +
       '<button class="mpe-del" title="删除此模型" onclick="sUI.mDelModel(' + i + ')">×</button>' +
@@ -3465,7 +3472,24 @@
       if (!add) for (const r of pfEdit.models) if (r.ref == null) delete SET.deletedModels[pname + '/' + String(r.id || '').trim()];
       closeModelEditor();
       afterWrite();
+      // 勾选「保存后立即重启」:配置已落盘,直接走重启流程(含 409 强打确认 + 健库轮询自刷新)
+      if ($('mpe-restart') && $('mpe-restart').checked) await restartNow();
     } catch (e) { toast('保存失败:' + e.message); }
+  }
+  // 删除整个平台:仅改 config.yml(一次 delete platforms[pi]),重启前列表已无它(effective 实时解析文件)
+  async function delPlatformFromModal() {
+    if (!pfEdit || pfEdit.idx < 0) return;
+    const pi = pfEdit.idx;
+    const p = SET.cfgPlatforms[pi] || {};
+    closeModelEditor();
+    const ok = await confirmModal('删除平台', '删除平台「' + (p.name || ('平台' + pi)) + '」及其全部 Key 与模型?此操作仅修改 config.yml。', '删除', true);
+    if (!ok) return;
+    try {
+      await req('PATCH', '/api/config', { path: ['platforms', pi], op: 'delete' });
+      // 运行池重启前仍持有该平台的模型:标记隐藏,防会话页选择弹窗误绑
+      for (const m of (p.models || [])) SET.deletedModels[p.name + '/' + m.id] = true;
+      afterWrite();
+    } catch (e) { toast('删除失败:' + e.message); }
   }
 
   // ---------- 设置区对外接口(动态卡片里的 onclick 均指向这里) ----------
@@ -3511,6 +3535,7 @@
     mModId: function (i, v) { setPfModel(i, 'id', v); },
     mModName: function (i, v) { setPfModel(i, 'display_name', v); },
     mModVision: function (i, v) { setPfModel(i, 'vision', v); },
+    mDelPlat: delPlatformFromModal,
     toggleGroup: toggleModelGroup,
     refreshBalance: refreshBalance,
     mToggleEnable: toggleModelEnable,
