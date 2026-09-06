@@ -318,7 +318,7 @@ stateDiagram-v2
 
 ### 5.11 `balance.js` —— 余额查询
 
-- 按 `platform.type` 分发到 `ADAPTERS`；当前只接 `deepseek`（`/user/balance`）。
+- 按 `platform.type` 分发到 `ADAPTERS`；已接 `deepseek`（`/user/balance`）与 `bigmodel`（`/api/biz/account/query-customer-account-report`）。
 - 上游根地址 = `cfg.platforms[i].url` 去掉尾部 `/` 与 `/v1`（余额端点在站点根）。
 - `types()` 返回已接入类型列表，前端设置页据此决定要不要展示余额行。
 
