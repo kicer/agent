@@ -21,6 +21,8 @@
 //   info = 关键动作（启动/进程 start/exit/取消/关闭）；debug = 额外打印与 core 的完整交互：
 //   每个请求行、/exec 请求体、每条 SSE 下发帧、每个 JSON 响应（超长内容截断显示）。改环境配置后重启容器生效。
 //
+// 资源护栏（CPU/内存/进程数/单文件大小）不在本进程内实现，由 docker-compose 的 cgroup/ulimit 限制，见顶层 docker-compose.yml agent-executor 段。
+//
 // 约定：core 与 executor 把同一份宿主机 ./tasks、./skills 挂到相同容器路径（/workspace/*），
 // 所以 core 下发的任务目录 cwd 在 executor 内原样可用。
 

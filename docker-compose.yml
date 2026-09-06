@@ -40,7 +40,19 @@ services:
       - EXECUTOR_TOKEN=whoami
       # 日志等级：debug|info|warn|error|none（默认 info）；
       # debug 会把与 core 的完整交互打印出来（请求、/exec 请求体、每条 SSE 帧、JSON 响应）：
-      - EXECUTOR_LOG_LEVEL=debug
+      - EXECUTOR_LOG_LEVEL=info
+    # ---- 资源限制：兜住 AI 失控命令（烧 CPU / 吃内存 / fork 炸弹 / 写盘撞满宿主机磁盘）----
+    # 均作用于容器整体及命令派生的全部子进程（cgroup/ulimit 随 fork 继承），改后 docker compose up -d 重建生效：
+    cpus: "2.0"       # 容器整体最多用 2 核（超出限流不杀进程），按宿主机核数调整
+    mem_limit: 2g     # 内存失控 → 容器被 OOM kill（restart 策略自动拉起，代价是该容器内所有在执行命令随容器重启丢失）
+    pids_limit: 512   # 进程+线程总数上限，防 fork 炸弹耗尽宿主机进程表
+    ulimits:
+      # 单文件最大 2G（字节，RLIMIT_FSIZE）：dd/cat /dev/urandom 写巨型文件超限即被内核 SIGXFSZ 杀掉，
+      # 对 bind 卷上的写入同样生效（内核层限制，与文件系统无关）。
+      # 注意：只限单文件不限总占用量，“大量文件堆满磁盘”需宿主机侧配额（xfs project quota / 独立分区）兜底。
+      fsize:
+        soft: 2147483648
+        hard: 2147483648
     cap_drop:
       - SYS_ADMIN
       - DAC_OVERRIDE
