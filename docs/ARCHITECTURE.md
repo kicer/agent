@@ -329,7 +329,7 @@ stateDiagram-v2
 单文件 Node HTTP 服务（`executor/server.js`），零依赖。端点：
 
 - `GET /health` → `{ok, running:[{id, pid, cwd, started_at}]}`，免鉴权。
-- `POST /exec` body `{command, cwd?, timeout_ms?, max_output_chars?, env?}` → SSE 流：
+- `POST /exec` body `{command, cwd（必填）, timeout_ms?, max_output_chars?, env?}` → SSE 流：
   - `start`（带 id + pid + cwd）→ `out`/`err` 增量分块 → `exit` 收尾。
   - 期间每 15s 一条 `: ping` 注释行保活。
 - `DELETE /exec/:id` → 杀进程组（`process.kill(-pid, SIGKILL)`）。
@@ -338,6 +338,7 @@ stateDiagram-v2
 
 - `EXECUTOR_TOKEN` 非空时，除 `/health` 外必须 `Authorization: Bearer`（常时间比较）。
 - `cwd` 必须落在 `EXECUTOR_ROOTS`（逗号分隔白名单，默认 `/workspace`）realpath 之下，防穿越。
+- `cwd` 不得是任务根本身（realpath 相等即拒）：它是全部会话目录的父目录，在其下执行会暴露所有会话，且隔离 wrapper 在此层无从生效；缺省 cwd 落任务根同样被拒 → 等效必填。
 - `timeout_ms` 夹在 `[1000, EXECUTOR_MAX_TIMEOUT_MS=1800000]`。
 - 输出按 `max_output_chars`（默认 200000）截断，**截断后仍持续消费管道**（防子进程因 pipe 满阻塞），并设 `truncated=true`。
 
@@ -353,7 +354,7 @@ stateDiagram-v2
 | `EXECUTOR_TOKEN` | 空 | 可选 Bearer 鉴权 |
 | `EXECUTOR_LOG_LEVEL` | `info` | 分级日志（debug 打满请求/响应交互） |
 
-**per-task 挂载隔离**（`server.js` 的 `isolatedCommand`）：cwd 在任务根（`EXECUTOR_CWD`）严格之下的命令，spawn 时包一层 wrapper，在新的 mount namespace 里把任务根覆盖为 tmpfs、只把当前会话根（第一层子目录）bind 回原路径——AI 只能看到/改自己的项目，看不到别的会话；cwd 在任务根本身或其外（如 skill 入口跑在技能目录）不隔离直接 spawn。需 compose 配 `cap_add: SYS_ADMIN` + `security_opt: apparmor=unconfined`（不用 privileged：实测 Docker 29，默认 AppArmor profile 拦 `mount(2)`，单加 SYS_ADMIN 不够；默认 seccomp 对持 CAP_SYS_ADMIN 的进程放行 `unshare(2)`/`mount(2)`，无需改动）；`unshare`/`mount`/`mktemp` 来自 debian 基础包 util-linux。
+**per-task 挂载隔离**（`server.js` 的 `isolatedCommand`）：cwd 在任务根（`EXECUTOR_CWD`）严格之下的命令，spawn 时包一层 wrapper，在新的 mount namespace 里把任务根覆盖为 tmpfs、只把当前会话根（第一层子目录）bind 回原路径——AI 只能看到/改自己的项目，看不到别的会话；cwd 恰为任务根被 /exec 边界直接拒 400（见上）；cwd 在任务根外（如 skill 入口跑在技能目录）不隔离直接 spawn。需 compose 配 `cap_add: SYS_ADMIN` + `security_opt: apparmor=unconfined`（不用 privileged：实测 Docker 29，默认 AppArmor profile 拦 `mount(2)`，单加 SYS_ADMIN 不够；默认 seccomp 对持 CAP_SYS_ADMIN 的进程放行 `unshare(2)`/`mount(2)`，无需改动）；`unshare`/`mount`/`mktemp` 来自 debian 基础包 util-linux。
 
 **资源护栏**（compose 层，**不在 server.js**）：
 `cpus 2.0` / `mem_limit 2g` / `pids_limit 512` / `ulimits.fsize 2G` —— 防 AI 失控命令。残余缺口（只限单文件不限总量）在 compose 注释里已标。

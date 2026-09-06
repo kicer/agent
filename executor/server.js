@@ -14,6 +14,8 @@
 // 安全约束：
 //   - 设置 EXECUTOR_TOKEN 后，除 /health 外必须带 Authorization: Bearer <token>（compose 内网互访，token 可选）；
 //   - cwd 必须落在 EXECUTOR_ROOTS（逗号分隔白名单，默认 /workspace）内，先解析再 realpath 校验，防穿越；
+//   - cwd 不得是任务根（EXECUTOR_CWD）本身：它是全部会话目录的父目录，直接在其下执行会暴露所有会话，
+//     隔离 wrapper 在此层也无从生效；缺省 cwd 即落到任务根、同样被拒，等效 cwd 必填；
 //   - timeout_ms 夹在 [1s, EXECUTOR_MAX_TIMEOUT_MS]（默认 30 分钟）；
 //   - stdout/stderr 各自按 max_output_chars 截断（默认 EXECUTOR_MAX_OUTPUT_CHARS=200000），超限后丢弃剩余输出，exit 事件带 truncated 标记。
 //
@@ -41,6 +43,8 @@ const PORT = parseInt(process.env.PORT, 10) || 9000;
 const TOKEN = process.env.EXECUTOR_TOKEN || '';
 const ROOTS = (process.env.EXECUTOR_ROOTS || '/workspace').split(',').map(s => s.trim()).filter(Boolean).map(p => path.resolve(p));
 const DEFAULT_CWD = process.env.EXECUTOR_CWD || path.join(ROOTS[0], 'tasks');
+// 任务根 realpath：/exec 一律拒绝 cwd 恰好等于它（见 handleExec）。拒绝后「任务根下的命令必进隔离 wrapper」成为硬不变式。
+const REAL_TASK_ROOT = (() => { try { return fs.realpathSync(DEFAULT_CWD); } catch (_) { return null; } })();
 const MAX_TIMEOUT = parseInt(process.env.EXECUTOR_MAX_TIMEOUT_MS, 10) || 30 * 60 * 1000;
 const DEFAULT_MAX_OUT = parseInt(process.env.EXECUTOR_MAX_OUTPUT_CHARS, 10) || 200000;
 const PING_MS = 15000;
@@ -94,6 +98,7 @@ function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 //   3) 在 tmpfs 下重建当前会话目录名，把 anchor bind 回原路径上
 //   4) 拆掉 anchor，切到 cwd，exec 用户命令
 // cwd 不在任务根下时返回 null（不隔离；主要适用于 skill 入口直接跑在 /workspace/skills/<name> 的场景）。
+// cwd 恰为任务根本身已在 handleExec 边界拒绝，首条分支仅作兜底。
 function isolatedCommand(command, cwd) {
   if (cwd === DEFAULT_CWD || !cwd.startsWith(DEFAULT_CWD + path.sep)) return null;
   // 会话根 = 任务根下的第一层子目录（task-YYYYMMDD-NNN）；cwd 可能是其下任意深子目录（terminal 的 cd）。
@@ -168,6 +173,8 @@ function killGroup(entry) {
 
 function sseWrite(res, obj) {
   log.debug('sse →', brief(JSON.stringify(obj)));
+  // 客户端断开后 res 已死：实测 Node 20 对 destroyed 的 write 静默丢弃，但不依赖该行为，写前显式拦。
+  if (res.writableEnded || res.destroyed) return;
   res.write('data: ' + JSON.stringify(obj) + '\n\n');
 }
 
@@ -179,9 +186,12 @@ async function handleExec(req, res) {
   const command = String(args.command || '');
   if (!command.trim()) return send(res, 400, { error: 'command 必填' });
 
-  const rawCwd = args.cwd ? String(args.cwd) : DEFAULT_CWD;
+  const rawCwd = args.cwd ? String(args.cwd) : DEFAULT_CWD; // 缺省落任务根 → 下面边界拒绝，等效必填
   const cwd = checkCwd(rawCwd);
   if (!cwd) return send(res, 400, { error: 'cwd 不存在或不在白名单目录内：' + rawCwd + '（允许：' + ROOTS.join(', ') + '）' });
+  if (REAL_TASK_ROOT && cwd === REAL_TASK_ROOT) {
+    return send(res, 400, { error: 'cwd 不能是任务根本身（全部会话目录的父目录，在其下执行会暴露所有会话）：请在具体会话子目录内执行：' + rawCwd });
+  }
 
   let timeout = parseInt(args.timeout_ms, 10);
   if (!isFinite(timeout) || timeout <= 0) timeout = 5 * 60 * 1000;
@@ -221,7 +231,7 @@ async function handleExec(req, res) {
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no', // nginx 前置时对 SSE 关缓冲（配合 core 的 proxy_buffering off 习惯）
   });
-  const ping = setInterval(() => { res.write(': ping\n\n'); }, PING_MS);
+  const ping = setInterval(() => { if (!res.writableEnded && !res.destroyed) res.write(': ping\n\n'); }, PING_MS);
   // 先下发 start 事件：core 靠这里的 id 调 DELETE /exec/:id 取消
   sseWrite(res, { type: 'start', id, pid: child.pid, cwd });
 
@@ -249,11 +259,14 @@ async function handleExec(req, res) {
   function finish(code) {
     if (!runs.has(id)) return;
     clearTimeout(entry.timer); clearInterval(ping); runs.delete(id);
+    // 清理与日志先行：客户端已断开（destroyed，writableEnded 恒 false）也要留 exit 痕迹；
+    // 之后不再碰 res：不对已死/已 end 的响应 write（sseWrite 内有同款守卫兜底）也不重复 end()。
+    log.info('exit ', id, 'code=' + code, 'killed_by=' + entry.killedBy, 'out=' + out.stdout + 'B err=' + out.stderr + 'B');
+    if (res.writableEnded || res.destroyed) return;
     sseWrite(res, {
       type: 'exit', code, signal: child.signalCode, killed_by: entry.killedBy,
       stdout_chars: out.stdout, stderr_chars: out.stderr, truncated: out.truncated,
     });
-    log.info('exit ', id, 'code=' + code, 'killed_by=' + entry.killedBy, 'out=' + out.stdout + 'B err=' + out.stderr + 'B');
     res.end();
   }
   child.on('error', err => { entry.killedBy = entry.killedBy || 'spawn_error'; log.error('spawn error', id, err.message); streamChunk('err', Buffer.from('spawn 失败：' + err.message + '\n')); finish(-1); });
