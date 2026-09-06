@@ -1,5 +1,5 @@
 // agent-executor 冒烟测试：node smoke-test.js（在本目录执行）。
-// 覆盖：/health、/exec 流式输出与退出事件、增量下发时序、cwd 白名单拒绝、任务根边界（缺省/恰为任务根 → 400）、DELETE 取消、EXECUTOR_TOKEN 鉴权、per-task 挂载隔离（含 nsenter /proc/1 逃逸回归）、客户端半路断连不击穿服务。
+// 覆盖：/health、/exec 流式输出与退出事件、增量下发时序、cwd 白名单拒绝、任务根边界（缺省/恰为任务根 → 400）、DELETE 取消、EXECUTOR_TOKEN 鉴权与子进程 env 剥除、per-task 挂载隔离（含 nsenter /proc/1 逃逸回归、WORKDIR 源码遮蔽）、客户端半路断连不击穿服务。
 // 注意：隔离用例需 root/CAP_SYS_ADMIN（unshare+mount），无权限时自动 SKIP 不计失败；其余用例 cwd 故意取任务根外目录，保持非隔离路径可在无权限环境跑。
 process.env.PORT = process.env.PORT || '19000';
 const SELF = process.env.__SELF_DIR__ || __dirname; // 宿主机测试：白名单取本目录
@@ -99,11 +99,11 @@ async function main() {
   await new Promise(r => setTimeout(r, 800)); // 留给服务端 close→杀进程→finish 走完
   check('客户端半路断连不击穿服务（/health 仍 200）', (await fetch(BASE + '/health')).status === 200);
 
-  // 7.5 per-task 挂载隔离：另起一个实例（端口 19002），EXECUTOR_CWD=.iso-tasks（任务根），
-  // 下放 iso-a / iso-b 两个「会话」目录；cwd 取 iso-a 的深层子目录（模拟 terminal 的 cd），验证：
-  //   任务根下只看到 iso-a、cd 兄弟会话被拒、自己文件可读；另验 nsenter /proc/1 逃逸封堵与 /proc/sys 只读；
-  //   及 wrapper 内（新 pid ns、命令即 PID 1）超时杀进程语义；无 mount 权限时整组 SKIP。
-  const isoRoot = path.join(__dirname, '.iso-tasks');
+  // 7.5 per-task 挂载隔离：另起一个实例（端口 19002），任务根放系统 tmp（与 server 代码目录分离，
+  // 使 WORKDIR 遮蔽分支真实生效），下放 iso-a / iso-b 两个「会话」目录；cwd 取 iso-a 的深层子目录（模拟 terminal 的 cd），验证：
+  //   任务根下只看到 iso-a、cd 兄弟会话被拒、自己文件可读；另验 nsenter /proc/1 逃逸封堵、/proc/sys 只读、
+  //   WORKDIR 内 server.js 不可读；及 wrapper 内（新 pid ns、命令即 PID 1）超时杀进程语义；无 mount 权限时整组 SKIP。
+  const isoRoot = path.join(require('os').tmpdir(), '.ex-smoke-iso');
   fs.rmSync(isoRoot, { recursive: true, force: true });
   fs.mkdirSync(path.join(isoRoot, 'iso-a', 'deep'), { recursive: true });
   fs.mkdirSync(path.join(isoRoot, 'iso-b'), { recursive: true });
@@ -115,7 +115,7 @@ async function main() {
   // 分隔符切段便于精确断言；cd 失败信息不走 stderr 上送（含 iso-b 字样会污染 ls 段断言），改用 leaked/blocked 标记区分。
   const evsI = await collect(await fetch('http://127.0.0.1:19002/exec', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command: 'pwd; echo @LS@; ls ../../; echo @CD@; cd ../../iso-b 2>/dev/null && echo leaked || echo blocked; echo @CAT@; cat ../../iso-a/a.txt; echo; echo @NS@; nsenter --mount=/proc/1/ns/mnt ls ' + isoRoot + ' 2>&1; echo @SYS@; echo 1 > /proc/sys/kernel/panic 2>/dev/null && echo sysctl_writable || echo sysctl_ro', cwd: isoCwd, timeout_ms: 5000 }),
+    body: JSON.stringify({ command: 'pwd; echo @LS@; ls ../../; echo @CD@; cd ../../iso-b 2>/dev/null && echo leaked || echo blocked; echo @CAT@; cat ../../iso-a/a.txt; echo; echo @NS@; nsenter --mount=/proc/1/ns/mnt ls ' + isoRoot + ' 2>&1; echo @SYS@; echo 1 > /proc/sys/kernel/panic 2>/dev/null && echo sysctl_writable || echo sysctl_ro; echo @APP@; test -f ' + __dirname + '/server.js && echo server_visible || echo server_hidden', cwd: isoCwd, timeout_ms: 5000 }),
   }));
   const outI = evsI.filter(e => e.type === 'out' || e.type === 'err').map(e => e.chunk).join('');
   const exitI = evsI[evsI.length - 1];
@@ -133,6 +133,8 @@ async function main() {
     check('逃逸: nsenter /proc/1 后仍只见 iso-a', /iso-a/.test(nsRegion) && !/iso-b/.test(nsRegion), 'ns=' + JSON.stringify(nsRegion));
     // 重挂的 proc 必须还原 docker 的 /proc/sys 只读防护（否则 kernel.core_pattern 可写 → 宿主逃逸面）。
     check('逃逸: 新 proc 下 /proc/sys 仍只读', /sysctl_ro/.test(outI) && !/sysctl_writable/.test(outI), 'out=' + JSON.stringify(outI));
+    // WORKDIR 遮蔽：iso 实例任务根在系统 tmp，与 server 代码目录不嵌套 → tmpfs 遮蔽分支生效，server.js 不可读。
+    check('遮蔽: WORKDIR 内 server.js 不可读', /server_hidden/.test(outI) && !/server_visible/.test(outI), 'out=' + JSON.stringify(outI));
     // wrapper 内超时杀进程：命令已是新 pid ns 的 PID 1，验证杀进程组/超时对 PID 1 同样有效。
     const evsTK = await collect(await fetch('http://127.0.0.1:19002/exec', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -153,9 +155,10 @@ async function main() {
   check('无 token 401', noTok.status === 401, 'status=' + noTok.status);
   const healthNoTok = await fetch('http://127.0.0.1:19001/health');
   check('带 token 时 /health 仍免鉴权', healthNoTok.status === 200);
-  const withTok = await fetch('http://127.0.0.1:19001/exec', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer t9' }, body: JSON.stringify({ command: 'echo hi', cwd: SELF }) });
+  const withTok = await fetch('http://127.0.0.1:19001/exec', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer t9' }, body: JSON.stringify({ command: "env | grep -q 'EXECUTOR_TOKEN=' && echo token_leak || echo token_absent", cwd: SELF }) });
   const evs8 = await collect(withTok);
-  check('带 token 正常执行', evs8.some(e => e.type === 'out' && e.chunk.trim() === 'hi'), JSON.stringify(evs8));
+  // 带 token 请求本身正常，且子进程 env 已剥除 EXECUTOR_TOKEN（否则命令里 dump env 就能拿 token 回环绕隔离）。
+  check('带 token 正常执行且子进程 env 已剥 EXECUTOR_TOKEN', evs8.some(e => e.type === 'out' && e.chunk.includes('token_absent')) && !evs8.some(e => (e.chunk || '').includes('token_leak')), JSON.stringify(evs8));
   child.kill('SIGKILL');
   fs.rmSync(TASK_ROOT, { recursive: true, force: true });
 

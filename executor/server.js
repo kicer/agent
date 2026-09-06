@@ -25,6 +25,8 @@
 // 的句柄，AI 用 nsenter --mount=/proc/1/ns/mnt 即可逃逸回未隔离视图（已实测复现）；重挂后 /proc/1 即命令自身。
 // 新 proc 可写会顶掉 docker 的防护，wrapper 逐项还原：/proc/sys 只读 bind（防 core_pattern 类宿主逃逸）、
 // /dev/null 遮蔽 kcore/keys（docker maskPaths）与 sysrq-trigger（可写 proc 新暴露，echo b 可重启宿主机）。
+// wrapper 还把 server.js 所在目录（镜像 WORKDIR，容器内 /app）用 tmpfs 盖掉，AI 读不到 executor 源码；
+// 且下发命令的 env 剥掉 EXECUTOR_TOKEN——否则命令里 env 一 dump 就拿 token 回环 POST /exec 以任意会话目录起命令，绕过隔离。
 // 副作用红利：pid ns 内 ps 只见自家进程树；double-fork 脱管的守护进程随命令退出被内核连带清理。
 // 任务根以外的路径（/workspace/skills、/tmp、/usr、依赖包等）不受影响。mount 命名空间随进程退出自动销毁。
 // 需 CAP_SYS_ADMIN，且 AppArmor 不能拦 mount（Docker 默认 docker-default profile 会拦）：compose 里 agent-executor 配 cap_add SYS_ADMIN + apparmor=unconfined，不用 privileged（实测默认 seccomp 对持 CAP_SYS_ADMIN 的进程放行 mount/unshare）。
@@ -50,6 +52,8 @@ const ROOTS = (process.env.EXECUTOR_ROOTS || '/workspace').split(',').map(s => s
 const DEFAULT_CWD = process.env.EXECUTOR_CWD || path.join(ROOTS[0], 'tasks');
 // 任务根 realpath：/exec 一律拒绝 cwd 恰好等于它（见 handleExec）。拒绝后「任务根下的命令必进隔离 wrapper」成为硬不变式。
 const REAL_TASK_ROOT = (() => { try { return fs.realpathSync(DEFAULT_CWD); } catch (_) { return null; } })();
+// server.js 所在目录（镜像 WORKDIR /app）：隔离 wrapper 用 tmpfs 盖住，不让 AI 读 executor 源码。
+const APP_DIR = __dirname;
 const MAX_TIMEOUT = parseInt(process.env.EXECUTOR_MAX_TIMEOUT_MS, 10) || 30 * 60 * 1000;
 const DEFAULT_MAX_OUT = parseInt(process.env.EXECUTOR_MAX_OUTPUT_CHARS, 10) || 200000;
 const PING_MS = 15000;
@@ -100,7 +104,7 @@ function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 // per-task 挂载隔离 wrapper：返回一个 sh -c 脚本，shell 启动时跑（与 unshare --mount --pid --fork 配合）：
 //   0) 重挂 proc 到新 pid ns（封掉 nsenter /proc/1/ns/mnt 逃逸），还原 /proc/sys 只读与 mask 遮蔽
 //   1) 把 cwd 预先 bind 到 /tmp 下的 anchor（避开后面被覆盖的任务根）
-//   2) 在新 mount ns 里把任务根覆盖为 tmpfs（其他会话从此不可见）
+//   2) 在新 mount ns 里把任务根覆盖为 tmpfs（其他会话从此不可见）；同法盖住 APP_DIR（源码遮蔽）
 //   3) 在 tmpfs 下重建当前会话目录名，把 anchor bind 回原路径上
 //   4) 拆掉 anchor，切到 cwd，exec 用户命令（此时已是新 pid ns 的 PID 1）
 // cwd 不在任务根下时返回 null（不隔离；主要适用于 skill 入口直接跑在 /workspace/skills/<name> 的场景）。
@@ -112,6 +116,9 @@ function isolatedCommand(command, cwd) {
   const rel = path.relative(DEFAULT_CWD, cwd);
   const sessionName = rel.split(path.sep)[0];
   const sessionRoot = path.join(DEFAULT_CWD, sessionName);
+  // 遮蔽 executor 自身代码目录（镜像 WORKDIR，容器内 /app）：tmpfs 盖住，AI 命令读不到 server.js。
+  // 任务根/cwd 与 WORKDIR 相互嵌套时（宿主机开发态，smoke 即如此）跳过，避免把任务树一起盖掉。
+  const hideWorkdir = !DEFAULT_CWD.startsWith(APP_DIR + path.sep) && !APP_DIR.startsWith(DEFAULT_CWD + path.sep) && !cwd.startsWith(APP_DIR + path.sep);
   return [
     'set -e',
     // pid/proc 侧：重挂 proc 绑定本 pid ns（flags 对齐 docker），/proc/1 自此即命令自身，无宿主 ns 句柄可指。
@@ -124,6 +131,7 @@ function isolatedCommand(command, cwd) {
     'mount --bind /dev/null /proc/sysrq-trigger',
     'mount --bind /proc/sys /proc/sys',
     'mount -o remount,bind,ro /proc/sys',
+    ...(hideWorkdir ? ['mount -t tmpfs tmpfs ' + shq(APP_DIR)] : []),
     'anchor=$(mktemp -d /tmp/.exanchor.XXXXXXXXXX)',
     'mount --bind ' + shq(sessionRoot) + ' "$anchor"',
     'mount -t tmpfs tmpfs ' + shq(DEFAULT_CWD),
@@ -221,6 +229,9 @@ async function handleExec(req, res) {
   if (args.env && typeof args.env === 'object') {
     for (const [k, v] of Object.entries(args.env)) env[String(k)] = String(v);
   }
+  // 剥掉鉴权 token（合并后再删，防 args.env 重注）：AI 命令拿到 token 即可从容器内回环 POST /exec，
+  // 以任意（他人会话）cwd 起命令，绕过 per-task 隔离。server 侧比对用的是 TOKEN 常量，不受影响。
+  delete env.EXECUTOR_TOKEN;
 
   const id = crypto.randomUUID();
   let child;
