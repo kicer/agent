@@ -1347,6 +1347,12 @@
     state.streamThinkEl = body;
     return body;
   }
+  // 思考结束(正文开始流式或本轮收尾):自动折叠思考面板并去掉流式高亮边框;用户仍可手动点开回看
+  function collapseStreamThink() {
+    if (!state.streamThinkEl) return;
+    const det = state.streamThinkEl.closest('details');
+    if (det) { det.open = false; det.classList.remove('streaming'); }
+  }
 
   function connectStream() {
     closeStream();
@@ -1368,6 +1374,7 @@
         if (!state.streamText.trim()) return; // 忽略前导空白(纯工具调用回合无文本)
         ensureStreamWrap();
         state.streamText = d.text; // 上面 if 已 trim 为非空
+        collapseStreamThink();    // 首个正文 delta:思考已结束,折叠思考面板
       }
       state.streamEl.textContent = state.streamText;
       state.streaming = true;
@@ -1437,9 +1444,9 @@
           }
           if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
           state.streaming = false;
-          // 思考面板与工具卡保持展开状态：流式过程中用户能跟着看过程,回合结束也别自动折上,
-          // 由用户自己决定是否收起（点 summary 即可折叠）。历史重渲染时也保持这个默认(open 见 renderToolCard / thinkPanelHtml）。
-                    // 摘要卡片同样不再自动折起：它就是本轮的正式产出。
+          // 思考面板本轮结束兜底折叠(正常已在首个正文 delta 时折过,这里是 no-op);
+          // 覆盖无正文的回合(如纯工具调用/纯思考),也顺带清掉 .streaming 高亮。工具卡保持展开,由用户自行收起。
+          collapseStreamThink();
           state.streamWrap = null;
           state.streamReasoning = '';
           state.streamThinkEl = null;
@@ -1502,6 +1509,7 @@
       }
       state.streaming = false;
       state.streamEl = null; // 防御性清理:回合异常结束(如终止)时不留悬空气泡到下一轮
+      collapseStreamThink(); // 异常收尾兜底:未折叠的思考面板收起并去掉流式高亮
       state.streamText = '';
       state.streamWrap = null;
       state.streamReasoning = '';
