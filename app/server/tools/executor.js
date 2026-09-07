@@ -152,7 +152,7 @@ async function readImageAsBlocks(abs, rel, size) {
       .toBuffer({ resolveWithObject: true });
     return {
       text: '[图片文件] ' + rel + '（原 ' + size + ' 字节，已压缩为 ' + r.info.width + '×' + r.info.height +
-        ' JPEG ' + r.data.length + ' 字节，图片见同条消息的 image_url 内容块）',
+        ' JPEG ' + r.data.length + ' 字节）',
       image_data_url: 'data:image/jpeg;base64,' + r.data.toString('base64'),
     };
   } catch (err) {

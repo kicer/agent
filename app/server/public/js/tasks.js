@@ -339,10 +339,9 @@ function parseToolContent(content) {
   return { text: content, imageUrl: null };
 }
 
-function fillToolResult(id, content, isError, liveImageUrl, hasImage, msgId) {
+function fillToolResult(id, content, isError, liveImageUrl) {
   const card = document.getElementById('tool-' + id);
   if (!card) return;
-  if (msgId) card.dataset.msgId = msgId;
   if (isError) card.classList.add('error');
   card.querySelector('.spin').textContent = isError ? '✕' : '✓';
   const parsed = parseToolContent(content);
@@ -361,36 +360,6 @@ function fillToolResult(id, content, isError, liveImageUrl, hasImage, msgId) {
     el.src = img;
     el.title = '点击放大查看';
     pre.insertAdjacentElement('afterend', el);
-  } else if (!img && hasImage && !card.querySelector('.tool-img-load')) {
-    // base64 已剥离且非实时图片时，显示「加载图片」按钮（按需从服务端获取）
-    const btn = document.createElement('button');
-    btn.className = 'tool-img-load';
-    btn.textContent = '加载图片';
-    btn.title = '点击加载图片';
-    btn.style.marginTop = '4px';
-    btn.onclick = async function () {
-      btn.textContent = '加载中…';
-      btn.disabled = true;
-      try {
-        const mid = card.dataset.msgId;
-        const sessionId = state.sessionId;
-        if (!mid || !sessionId) { btn.textContent = '加载失败'; return; }
-        const resp = await fetch('/api/sessions/' + sessionId + '/messages/' + mid + '/image');
-        if (!resp.ok) throw new Error('加载失败');
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const el = document.createElement('img');
-        el.className = 'tool-img';
-        el.src = url;
-        el.title = '点击放大查看';
-        btn.insertAdjacentElement('afterend', el);
-        btn.remove();
-      } catch (e) {
-        btn.textContent = '加载失败';
-        btn.disabled = false;
-      }
-    };
-    pre.insertAdjacentElement('afterend', btn);
   }
 }
 
@@ -409,7 +378,7 @@ function copyBtnHtml(text) {
 function msgNode(m, cardMap) {
   if (m.role === 'tool') {
     if (m.tool_call_id && cardMap && cardMap[m.tool_call_id]) {
-      fillToolResult(m.tool_call_id, m.content, false, null, m.hasImage, m.id);
+      fillToolResult(m.tool_call_id, m.content, false);
     }
     return null;
   }
@@ -458,8 +427,6 @@ async function renderDetail(detail) {
   state.streamText = '';
   state.turnEl = null;
   state.toolCards = {};
-  // tool_call_id → message id 映射（从 assistant 消息的 tool_call_msg_ids 字段构建）
-  state.toolCallMsgIds = {};
   // 切换会话后重置滚动跟随状态
   userPaused = false;
   state.streaming = false;
@@ -471,10 +438,6 @@ async function renderDetail(detail) {
   updateScrollBottomBtn(); // 打开仍在运行中的会话时,立即恢复右下角转圈
   $('chat-title').textContent = s.title || s.id;
   for (const m of detail.messages) {
-    // 收集 tool_call_msg_ids（assistant 消息携带的 tool_call_id → message_id 映射）
-    if (m.role === 'assistant' && m.tool_call_msg_ids) {
-      Object.assign(state.toolCallMsgIds, m.tool_call_msg_ids);
-    }
     const node = msgNode(m, state.toolCards);
     if (node) box.appendChild(node);
     if (m.role === 'assistant') appendToolCardsFromAssistant(m, box);
@@ -482,46 +445,8 @@ async function renderDetail(detail) {
   if (!detail.messages.length) {
     box.innerHTML = '<div class="empty-tip">描述你的需求,AI 会和你讨论并直接干活。</div>';
   }
-  // 事件委托：tool card 的 <details> 展开时懒加载内容
-  box.addEventListener('toggle', e => {
-    const details = e.target.closest('details');
-    if (!details) return;
-    const card = details.closest('.tool-card');
-    if (!card) return;
-    const toolCallId = card.id.replace(/^tool-/, '');
-    const pre = card.querySelector('.tool-result');
-    // 内容为空或"执行中…"才需要加载（避免重复加载）
-    if (!pre || pre.textContent === '执行中…') {
-      loadToolCardContent(card, toolCallId);
-    }
-  }, true);
   scrollBottom();
   loadFiles();
-}
-
-// 懒加载 tool card 内容：按需从服务端获取 tool 消息完整 content（含 base64 图片）
-async function loadToolCardContent(card, toolCallId) {
-  const msgId = state.toolCallMsgIds && state.toolCallMsgIds[toolCallId];
-  if (!msgId) {
-    // 映射不存在（不应该），什么也不做
-    return;
-  }
-  try {
-    const resp = await fetch('/api/sessions/' + state.sessionId + '/messages/' + msgId);
-    if (!resp.ok) return;
-    const msg = await resp.json();
-    if (msg.role !== 'tool') return;
-    // 解析 image_url（parseToolContent 依赖 content 格式）
-    let imageUrl = null;
-    if (typeof msg.content === 'string' && msg.content.startsWith('{"__blocks__":')) {
-      try {
-        const blocks = JSON.parse(msg.content).__blocks__ || [];
-        const img = blocks.find(b => b && b.type === 'image_url');
-        imageUrl = img && img.image_url && img.image_url.url || null;
-      } catch (_) {}
-    }
-    fillToolResult(toolCallId, msg.content, false, imageUrl, false, msg.id);
-  } catch (_) {}
 }
 
 // ---------- 滚动跟随 ----------

@@ -479,6 +479,7 @@
     streamReasoning: '',        // 当前流式累积思考文本
     streamThinkEl: null,        // 当前流式思考面板的 body 节点（未出现思考时为 null）
     toolCards: {},              // tool_call_id -> 工具卡片元素(同步 index 工具卡样式)
+    toolCallMsgIds: {},         // tool_call_id -> tool 消息行 id（历史懒加载映射，renderDetail 重建）
         typingEl: null,             // 「思考中」占位
         streaming: false,
         pendingSummary: false,      // 是否在等待「压缩」总结 AI 回复（避免重复弹窗；同时用于按钮 disabled 防重入）
@@ -656,13 +657,14 @@
     return div;
   }
   // tool 消息 content:纯文本,或含图片时的哨兵 JSON {"__blocks__":[...]}(read_file 读图回传)
+  // 顺手剥掉旧数据里的「，图片见同条消息的 image_url 内容块」尾巴（新版文案已去掉，历史行还在库里）
   function parseToolContent(content) {
     if (typeof content === 'string' && content.startsWith('{"__blocks__":')) {
       try {
         const blocks = JSON.parse(content).__blocks__ || [];
         const img = blocks.find(b => b.type === 'image_url');
         return {
-          text: blocks.filter(b => b.type === 'text').map(b => b.text).join('\n'),
+          text: blocks.filter(b => b.type === 'text').map(b => (b.text || '').replace(/，图片见同条消息的 image_url 内容块/g, '')).join('\n'),
           imageUrl: img && img.image_url && img.image_url.url || null,
         };
       } catch (_) { /* 解析失败按原文显示 */ }
@@ -712,6 +714,45 @@
     }
   }
 
+  // ---------- tool 卡懒加载 ----------
+  // 历史接口不再返回 role=tool 消息（内容大、含 base64 图片）；assistant 消息附带
+  // tool_call_msg_ids 映射（tool_call.id → tool 消息行 id）。首次展开卡片时才拉取全文回填。
+  function hookToolCardLazyLoad() {
+    const box = $('chat-view');
+    if (!box || box.dataset.toolLazyHooked) return;
+    box.dataset.toolLazyHooked = '1';
+    // toggle 事件不冒泡，用捕获阶段代理到列表容器
+    box.addEventListener('toggle', e => {
+      const details = e.target;
+      if (!details || details.tagName !== 'DETAILS') return;
+      const card = details.closest('.tool-card');
+      if (!card) return;
+      const pre = card.querySelector('.tool-result');
+      // 仍是占位文案才拉取（已回填/流式输出中/加载失败复位后的文案都偏离占位时不重复触发）
+      if (pre && pre.textContent !== '执行中…') return;
+      loadToolCardContent(card);
+    }, true);
+  }
+
+  async function loadToolCardContent(card) {
+    const toolCallId = card.id.replace(/^tool-/, '');
+    const msgId = state.toolCallMsgIds && state.toolCallMsgIds[toolCallId];
+    if (!msgId || card.dataset.loading) return; // 无映射（tool 结果尚未产出/实时回合）：SSE 会自己填
+    card.dataset.loading = '1';
+    const pre = card.querySelector('.tool-result');
+    if (pre) pre.textContent = '加载中…';
+    try {
+      const m = await req('GET', '/api/sessions/' + state.sessionId + '/messages/' + msgId);
+      if (m && m.role === 'tool') fillToolResult(toolCallId, m.content, !!m.is_error, undefined, m.id);
+      else if (pre) pre.textContent = '(无结果)';
+    } catch (_) {
+      // 复位占位，再次折叠/展开可重试
+      if (pre) pre.textContent = '执行中…';
+    } finally {
+      delete card.dataset.loading;
+    }
+  }
+
   function msgNode(m) {
     if (m.role === 'user') return userMsgHtml(m);
     // 被「压缩总结」标记的摘要消息：重渲染成摘要卡片，而不是普通 AI 气泡
@@ -725,6 +766,7 @@
     state.sessionType = (s && s.assistant_type) || 'secretary'; // 顶部 icon 跟随会话类型
     state.status = (s && s.status) || '';
     state.toolCards = {};
+    state.toolCallMsgIds = {}; // tool_call.id → tool 消息行 id（展开时懒加载用）
     userPaused = false;
     removeTyping();
     renderHeader();
@@ -750,6 +792,7 @@
       }
       const node = msgNode(m);
       if (node) target.insertAdjacentHTML('beforeend', node);
+      if (m.role === 'assistant' && m.tool_call_msg_ids) Object.assign(state.toolCallMsgIds, m.tool_call_msg_ids);
       if (m.role === 'assistant') appendToolCardsFromAssistant(m, target);
       else if (m.role === 'tool' && m.tool_call_id) fillToolResult(m.tool_call_id, m.content, !!m.is_error, undefined, m.id);
     }
@@ -757,6 +800,7 @@
     if (!(detail.messages || []).length) {
       box.innerHTML = '<div class="drawer-empty">描述你的需求，AI 会和你讨论并直接干活。</div>';
     }
+    hookToolCardLazyLoad();
     scrollBottom();
     updateScrollBottomBtn();
   }
