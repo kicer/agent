@@ -1826,18 +1826,96 @@
   $('attach-btn').addEventListener('click', toggleFilesPanel);
   $('files-mask').addEventListener('click', () => setFilesPanel(false)); // 点遮罩收起
 
-  // 任务文件面板多选状态：Set 保留当前选中的文件路径；filesAllPaths 保留当前面板所有路径
+  // 任务文件面板多选状态：Set 保留当前选中的文件路径；filesAllPaths 保留当前面板所有路径。
+  // 文件夹作为整体选中项存储（键加 d: 前缀），下载时由后端打包成 zip。
+  const DIR_SEL_PREFIX = 'd:';
   const fileSelected = new Set();
   let filesAllPaths = [];
+  let filesTreeRoot = null; // 最近一次渲染的目录树（供全选折叠/有效性计算）
+
+  const dirSelKey = p => DIR_SEL_PREFIX + p;
+  const isDirSelKey = k => k.startsWith(DIR_SEL_PREFIX);
+  const selDirPath = k => k.slice(DIR_SEL_PREFIX.length);
+  // 文件是否被整体勾选的祖先目录覆盖
+  function isPathInDirSel(p) {
+    for (const k of fileSelected) {
+      if (isDirSelKey(k) && p.startsWith(selDirPath(k) + '/')) return true;
+    }
+    return false;
+  }
+  // 文件是否被选中：自身被勾，或其某个祖先目录被整体勾选
+  function isFileEffectivelySelected(p) {
+    return fileSelected.has(p) || isPathInDirSel(p);
+  }
+  // 目录节点内所有文件的相对路径（递归）
+  function filesUnderDir(node) {
+    let out = node.files.map(f => f.filename);
+    for (const d of node.dirs.values()) out = out.concat(filesUnderDir(d));
+    return out;
+  }
+  // 树中全部目录节点（父在前），附各自包含的文件列表
+  function collectDirNodes(node, out) {
+    out = out || [];
+    node = node || filesTreeRoot;
+    if (!node) return out;
+    for (const d of node.dirs.values()) {
+      out.push({ path: d.path, files: filesUnderDir(d) });
+      collectDirNodes(d, out);
+    }
+    return out;
+  }
+  // 把选中集归一化为执行列表 [{path, isDir}]：
+  //  1) 去掉已被整体勾选目录覆盖的单项文件；
+  //  2) 目录内文件全部选中时折叠为目录项（父目录优先，避免重复打包）。
+  function effectiveSelection() {
+    const dirs = []; const files = [];
+    for (const k of fileSelected) {
+      if (isDirSelKey(k)) dirs.push(selDirPath(k)); else files.push(k);
+    }
+    const covered = p => dirs.some(d => p.startsWith(d + '/'));
+    const kept = files.filter(p => !covered(p));
+    for (const dn of collectDirNodes()) { // 父在前
+      if (dirs.includes(dn.path)) continue;
+      if (dirs.some(d => dn.path.startsWith(d + '/'))) continue; // 祖先已选
+      if (dn.files.length && dn.files.every(p => fileSelected.has(p) || covered(p))) {
+        for (let i = dirs.length - 1; i >= 0; i--) if (dirs[i].startsWith(dn.path + '/')) dirs.splice(i, 1);
+        dirs.push(dn.path);
+        for (let i = kept.length - 1; i >= 0; i--) if (kept[i].startsWith(dn.path + '/')) kept.splice(i, 1);
+      }
+    }
+    return dirs.map(path => ({ path, isDir: true })).concat(kept.map(path => ({ path, isDir: false })));
+  }
+
+  // 重算面板内（或指定范围内）文件行/目录勾选框的视觉状态：统一按选中集推导，
+  // 避免各处手写 DOM 同步漏掉嵌套目录。目录勾选态 = 显式整选，或内部文件全部被覆盖。
+  function refreshFileSelStates(scope) {
+    scope = scope || $('files-list');
+    scope.querySelectorAll('.file-row').forEach(r => {
+      const p = r.dataset.path;
+      const sel = !!p && isFileEffectivelySelected(p);
+      r.classList.toggle('selected', sel);
+      const ck = r.querySelector('.file-check');
+      if (ck) ck.setAttribute('aria-checked', sel ? 'true' : 'false');
+    });
+    scope.querySelectorAll('.file-dir').forEach(dEl => {
+      const ck = dEl.querySelector(':scope > .file-dir-head > .file-check');
+      if (!ck) return;
+      if (fileSelected.has(dirSelKey(dEl.dataset.dir))) { ck.setAttribute('aria-checked', 'true'); return; }
+      const rows = Array.prototype.slice.call(dEl.querySelectorAll('.file-row'));
+      ck.setAttribute('aria-checked',
+        (rows.length > 0 && rows.every(r => isFileEffectivelySelected(r.dataset.path || ''))) ? 'true' : 'false');
+    });
+  }
 
   function updateFilesFooter() {
     const n = fileSelected.size;
     const total = filesAllPaths.length;
+    const effCount = effectiveSelection().length;
     const countEl = $('files-count');
     const dlBtn = $('files-bulk-download');
     const delBtn = $('files-bulk-delete');
     const togBtn = $('files-toggle-all');
-    if (countEl) countEl.textContent = n ? '已选择 ' + n + ' 个文件' : '未选择文件';
+    if (countEl) countEl.textContent = effCount ? '已选择 ' + effCount + ' 项' : '未选择文件';
     if (dlBtn) dlBtn.disabled = n === 0;
     if (delBtn) delBtn.disabled = n === 0;
     // 全选按钮：没有文件时禁用；全部选中=打勾态；部分选中=减号态；都未选=加号态
@@ -1847,10 +1925,10 @@
       togBtn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
       togBtn.tabIndex = disabled ? -1 : 0;
       let state = 'none';
-      if (n === total && total > 0) state = 'all';
+      if (total > 0 && filesAllPaths.every(isFileEffectivelySelected)) state = 'all';
       else if (n > 0) state = 'some';
       togBtn.dataset.state = state;
-      togBtn.setAttribute('aria-checked', n === total && total > 0 ? 'true' : (n > 0 ? 'mixed' : 'false'));
+      togBtn.setAttribute('aria-checked', state === 'all' ? 'true' : (n > 0 ? 'mixed' : 'false'));
       togBtn.title = state === 'all' ? '取消全选' : '全选';
       togBtn.setAttribute('aria-label', state === 'all' ? '取消全选' : '全选');
     }
@@ -1862,20 +1940,13 @@
     if (total === 0) return;
     const togBtn = $('files-toggle-all');
     if (togBtn && togBtn.getAttribute('aria-disabled') === 'true') return;
-    if (fileSelected.size === total) {
+    if (filesAllPaths.every(p => fileSelected.has(p))) {
       fileSelected.clear();
     } else {
       for (const p of filesAllPaths) fileSelected.add(p);
     }
-    // 同步每行的视觉状态
-    const rows = $('files-list').querySelectorAll('.file-row');
-    rows.forEach(r => {
-      const p = r.dataset.path;
-      const sel = fileSelected.has(p);
-      r.classList.toggle('selected', sel);
-      const ck = r.querySelector('.file-check');
-      if (ck) ck.setAttribute('aria-checked', sel ? 'true' : 'false');
-    });
+    // 同步文件行与目录头勾选框的视觉状态
+    refreshFileSelStates();
     updateFilesFooter();
   }
 
@@ -1925,7 +1996,7 @@
   // 缩进：每层加深一点，封顶避免深层目录把文件名挤出屏幕
   function filesIndent(depth) { return 8 + Math.min(depth, 3) * 14; }
 
-  function fileRowHtml(f, depth) {
+  function fileRowHtml(f, depth, dirSel) {
     // 预览策略：md/txt/html + 图片在 fs-viewer 预览（pdf 不预）
     const low = f.filename.toLowerCase();
     const fsPv = /\.(md|txt|html?|png|jpe?g|gif|webp|svg)$/.test(low);
@@ -1934,8 +2005,9 @@
       : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
     const name = esc(String(f.filename).split('/').pop() || f.filename);
     const ftime = fmtTime(f.ctime || f.mtime);
-    return '<div class="file-row' + (fsPv ? ' clickable' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '" style="padding-left:' + filesIndent(depth) + 'px">' +
-      '<span class="file-check" role="checkbox" aria-checked="false" aria-label="选择"></span>' +
+    const sel = !!dirSel || isFileEffectivelySelected(f.filename);
+    return '<div class="file-row' + (fsPv ? ' clickable' : '') + (sel ? ' selected' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '" style="padding-left:' + filesIndent(depth) + 'px">' +
+      '<span class="file-check" role="checkbox" aria-checked="' + (sel ? 'true' : 'false') + '" aria-label="选择"></span>' +
       '<div class="file-main">' +
         '<div class="file-name">' + name + '</div>' +
         '<div class="file-meta">' + ico + '<span class="file-size">' + fmtSize(f.size) + '</span>' +
@@ -1944,20 +2016,26 @@
     '</div>';
   }
 
-  function dirNodeHtml(node, depth) {
+  // 目录头带勾选框：整个文件夹作为一个选中项（下载时后端打包成 zip）；点其余区域仍为折叠/展开。
+  // dirSel 为真时子孙目录/文件跟随父目录显示选中态。
+  function dirNodeHtml(node, depth, dirSel) {
     const dirs = sortDirsByName(Array.from(node.dirs.values()));
     sortFilesByTime(node.files);
     const collapsed = filesCollapsedDirs.has(node.path);
+    const under = filesUnderDir(node);
+    const checked = !!dirSel || fileSelected.has(dirSelKey(node.path)) ||
+      (under.length > 0 && under.every(isFileEffectivelySelected));
     return '<div class="file-dir' + (collapsed ? ' collapsed' : '') + '" data-dir="' + esc(node.path) + '">' +
       '<div class="file-dir-head" role="button" aria-expanded="' + (collapsed ? 'false' : 'true') + '" style="padding-left:' + filesIndent(depth) + 'px">' +
+        '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"></span>' +
         '<svg class="file-dir-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
         '<svg class="file-dir-ico" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>' +
         '<span class="file-dir-name">' + esc(node.name) + '</span>' +
         '<span class="file-dir-count">' + countDirFiles(node) + ' 个文件</span>' +
       '</div>' +
       '<div class="file-dir-body">' +
-        dirs.map(function (d) { return dirNodeHtml(d, depth + 1); }).join('') +
-        node.files.map(function (f) { return fileRowHtml(f, depth + 1); }).join('') +
+        dirs.map(function (d) { return dirNodeHtml(d, depth + 1, checked); }).join('') +
+        node.files.map(function (f) { return fileRowHtml(f, depth + 1, checked); }).join('') +
       '</div>' +
     '</div>';
   }
@@ -1973,6 +2051,7 @@
     // 重新拉取前清空旧选择，避免脏数据遗留
     fileSelected.clear();
     filesAllPaths = [];
+    filesTreeRoot = null;
     updateFilesFooter();
     try {
       const files = await req('GET', '/api/sessions/' + state.sessionId + '/files');
@@ -1983,7 +2062,8 @@
       }
       filesAllPaths = files.map(f => f.filename);
       // 按目录分组渲染(后端已按时间倒序,组内再排一次防旧排序缓存)
-      el.innerHTML = filesTreeHtml(buildFilesTree(files));
+      filesTreeRoot = buildFilesTree(files);
+      el.innerHTML = filesTreeHtml(filesTreeRoot);
       // 重新渲染后刷新底部计数与按钮状态
       updateFilesFooter();
     } catch (e) { toast('读取文件失败:' + e.message); }
@@ -2075,19 +2155,23 @@
     } catch (e) { toast('删除失败:' + e.message); }
   }
   // 列表事件委托：
-    //  1) 点击目录头：折叠/展开该目录（记住状态，刷新列表后保持）；
+    //  1) 点击目录头勾选框：整体选中/取消该文件夹（下载时后端打包成 zip）；点目录头其余区域：折叠/展开该目录（记住状态，刷新列表后保持）；
     //  2) 点击勾选框：仅选中状态，不触发预览/下载；
     //  3) 一旦处于多选模式（Set 非空），整行点击仅切换选中状态，不再预览/下载；
     //  4) 未进入多选模式时，点击文件名/图标根据 row.dataset.preview 决定预览或下载。
     $('files-list').addEventListener('click', e => {
-      // 目录头：切换折叠/展开
+      // 目录头：勾选框切换选中，其余区域切换折叠/展开
       const head = e.target.closest('.file-dir-head');
       if (head) {
         const dirEl = head.closest('.file-dir');
         if (!dirEl) return;
+        const dp = dirEl.dataset.dir;
+        if (dp && e.target.closest('.file-check')) {
+          toggleDirSelect(dp, dirEl);
+          return;
+        }
         const collapsed = dirEl.classList.toggle('collapsed');
         head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-        const dp = dirEl.dataset.dir;
         if (dp) { if (collapsed) filesCollapsedDirs.add(dp); else filesCollapsedDirs.delete(dp); }
         return;
       }
@@ -2098,18 +2182,59 @@
       const isCheck = !!e.target.closest('.file-check');
       // 多选模式下：任何点击（仅选框/文件名/其他）都只切换选中
       if (isCheck || fileSelected.size > 0) {
-        if (fileSelected.has(path)) { fileSelected.delete(path); row.classList.remove('selected'); }
-        else { fileSelected.add(path); row.classList.add('selected'); }
-        const ck = row.querySelector('.file-check');
-        if (ck) ck.setAttribute('aria-checked', fileSelected.has(path) ? 'true' : 'false');
+        // 已被整体勾选文件夹覆盖的行：点选无效，选中与否由文件夹勾选框决定
+        if (isPathInDirSel(path)) return;
+        if (fileSelected.has(path)) { fileSelected.delete(path); }
+        else { fileSelected.add(path); }
+        // 同步本行与所在目录链的勾选态（目录可能因内部全选/取消全选而变）
+        refreshFileSelStates();
         updateFilesFooter();
         return;
       }
-      // 默认模式：依据是否可预览选择预览/下载
+    // 默认模式：依据是否可预览选择预览/下载
       if (row.dataset.preview === '1') previewInFs(path);
       else downloadFile(path);
     });
 
+  // 整体选中/取消一个文件夹：目录作为单条选中项（d: 前缀），内部行视觉态由 refreshFileSelStates 重算。
+  // 整体勾选时取消内部单项/子目录勾选（已被覆盖，避免重复计入）；取消勾选时子项恢复未选。
+  function toggleDirSelect(dirPath, dirEl) {
+    const key = dirSelKey(dirPath);
+    const on = !fileSelected.has(key);
+    if (on) {
+      fileSelected.add(key);
+      // 整体勾选后，内部单项文件/子目录勾选都被覆盖，直接移除避免重复计入
+      const prefix = dirPath + '/';
+      for (const k of Array.from(fileSelected)) {
+        if (k === key) continue;
+        const p = isDirSelKey(k) ? selDirPath(k) : k;
+        if (p.startsWith(prefix)) fileSelected.delete(k);
+      }
+    } else {
+      fileSelected.delete(key);
+    }
+    const ck = dirEl.querySelector(':scope > .file-dir-head > .file-check');
+    if (ck) ck.setAttribute('aria-checked', on ? 'true' : 'false');
+    // 子孙目录/文件跟随父目录选中态；取消时按“自身被选或被其他祖先目录覆盖”重新计算
+    refreshFileSelStates(dirEl);
+    updateFilesFooter();
+  }
+
+    // 批量下载：选中项含文件夹（含全选后整目录被覆盖的情况）时，整个选择交给后端打包成
+    // 一个 zip 一次下载；纯文件选择保持逐文件直链下载。zip 同样走签名直链（与单文件同链路）。
+    async function bulkZipDownload(paths) {
+      try {
+        const r = await req('GET', '/api/sessions/' + state.sessionId + '/files/zip-token?paths=' + encodeURIComponent(JSON.stringify(paths)));
+        if (!r || !r.url) throw new Error('未拿到打包链接');
+        const a = document.createElement('a');
+        a.href = r.url;
+        a.download = r.name || 'archive.zip';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { try { a.remove(); } catch (_) {} }, 1000);
+      } catch (e) { toast('打包下载失败:' + e.message); }
+    }
     // 批量下载：先把所有 download-token 拿完，再用服务器直链逐个触发下载。
     // 两个历史坑：
     //  1) 边拿 token 边 location.href：首个下载导航会打断后续 fetch（第 2 个报失败）；
@@ -2119,7 +2244,9 @@
     //     → 回到服务器原始直链（文件名跟 Content-Disposition），与单文件下载同一条链路。
     async function bulkDownload() {
       if (!state.sessionId || fileSelected.size === 0) return;
-      const names = Array.from(fileSelected);
+      const eff = effectiveSelection();
+      if (eff.some(x => x.isDir)) { bulkZipDownload(eff.map(x => x.path)); return; }
+      const names = eff.map(x => x.path);
       // 第一阶段：全部 token 先拿到手（此时还没发生任何导航，fetch 不会被打断）
       const items = [];
       for (const name of names) {
@@ -2144,8 +2271,8 @@
     }
     async function bulkDelete() {
       if (!state.sessionId || fileSelected.size === 0) return;
-      const names = Array.from(fileSelected);
-      if (!await confirmModal('批量删除', '确认删除选中的 ' + names.length + ' 个文件？', '删除', true)) return;
+      const names = effectiveSelection().map(x => x.path); // 目录整体删除（后端 rm -r，含子项）
+      if (!await confirmModal('批量删除', '确认删除选中的 ' + names.length + ' 项（文件夹会连同内部文件一起删除）？', '删除', true)) return;
       let ok = 0, fail = 0;
       for (const name of names) {
         try {
@@ -2153,7 +2280,7 @@
           ok++;
         } catch (e) { fail++; toast('删除失败:' + name + ' ' + e.message); }
       }
-      if (ok) toast('已删除 ' + ok + ' 个文件');
+      if (ok) toast('已删除 ' + ok + ' 项');
       loadFiles(); // 重新拉取并重置选中
     }
     $('files-bulk-download').addEventListener('click', bulkDownload);

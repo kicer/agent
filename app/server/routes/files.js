@@ -179,6 +179,248 @@ router.get('/:id/files/download', serveDownload);
 // 供解析不了 Content-Disposition 的下载器兜底；path 参数与验签逻辑完全一致。
 router.get('/:id/files/download-name/*', serveDownload);
 
+// ---------- 打包下载（选中项含文件夹时，后端把整个选择打成 zip 流式返回） ----------
+// 纯 Node 实现（STORE 不压缩 + 手拼 zip 结构）：任务目录里多是媒体/生成产物，
+// 压缩收益低；两遍读文件（先算 CRC 再磁盘流发送），内存占用与总大小无关。
+
+const CRC32_TABLE = (function () {
+  const t = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c;
+  }
+  return t;
+})();
+function crc32Update(c, buf) {
+  for (let i = 0; i < buf.length; i++) c = (c >>> 8) ^ CRC32_TABLE[(c ^ buf[i]) & 0xFF];
+  return c;
+}
+function crc32Final(c) { return (c ^ 0xFFFFFFFF) >>> 0; }
+
+// 文件修改时间 → zip 的 DOS time/date 两个 16 位字段
+function dosDateTime(ms) {
+  const d = new Date(ms || Date.now());
+  return {
+    time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1),
+    date: (Math.max(d.getFullYear() - 1980, 0) << 9) | ((d.getMonth() + 1) << 5) | d.getDate(),
+  };
+}
+
+// zip 条目一律以任务目录为根（rel 用正斜杠），保留所选文件夹内部层级
+function collectZipEntries(dir, paths) {
+  const entries = [];
+  const seen = new Set();
+  const addFile = function (abs, rel, st) {
+    if (seen.has(rel)) return;
+    seen.add(rel);
+    if (st.size >= 0xFFFFFFFF) {
+      throw Object.assign(new Error('文件超过 4GB，无法打包：' + rel), { status_code: 400 });
+    }
+    entries.push({ abs, rel, size: st.size, mtime: st.mtimeMs });
+  };
+  const walk = function (absDir, relDir) {
+    let list;
+    try { list = fs.readdirSync(absDir, { withFileTypes: true }); } catch (_) { return; }
+    for (const e of list) {
+      const abs = path.join(absDir, e.name);
+      const rel = relDir ? relDir + '/' + e.name : e.name;
+      let st;
+      try { st = fs.statSync(abs); } catch (_) { continue; }
+      if (st.isDirectory()) walk(abs, rel);
+      else if (st.isFile()) addFile(abs, rel, st);
+    }
+  };
+  for (const p of paths) {
+    const abs = resolveInTask(dir, p);
+    const st = fs.statSync(abs);
+    const rel = path.relative(dir, abs).split(path.sep).join('/');
+    if (st.isFile()) addFile(abs, rel, st);
+    else if (st.isDirectory()) walk(abs, rel);
+  }
+  if (!entries.length) throw Object.assign(new Error('没有可打包的文件'), { status_code: 400 });
+  if (entries.length > 65535) throw Object.assign(new Error('文件过多，无法打包'), { status_code: 400 });
+  return entries;
+}
+
+function zipLocalHeader(e) {
+  const name = Buffer.from(e.rel, 'utf8');
+  const b = Buffer.alloc(30);
+  b.writeUInt32LE(0x04034b50, 0);
+  b.writeUInt16LE(20, 4);            // version needed
+  b.writeUInt16LE(0x0800, 6);        // flags: UTF-8 文件名
+  b.writeUInt16LE(0, 8);             // method: store
+  const dt = dosDateTime(e.mtime);
+  b.writeUInt16LE(dt.time, 10); b.writeUInt16LE(dt.date, 12);
+  b.writeUInt32LE(e.crc, 14);
+  b.writeUInt32LE(e.size, 18); b.writeUInt32LE(e.size, 22);
+  b.writeUInt16LE(name.length, 26);
+  b.writeUInt16LE(0, 28);
+  return Buffer.concat([b, name]);
+}
+
+function zipCentralEntry(e) {
+  const name = Buffer.from(e.rel, 'utf8');
+  const b = Buffer.alloc(46);
+  b.writeUInt32LE(0x02014b50, 0);
+  b.writeUInt16LE(20, 4); b.writeUInt16LE(20, 6);
+  b.writeUInt16LE(0x0800, 8); b.writeUInt16LE(0, 10);
+  const dt = dosDateTime(e.mtime);
+  b.writeUInt16LE(dt.time, 12); b.writeUInt16LE(dt.date, 14);
+  b.writeUInt32LE(e.crc, 16);
+  b.writeUInt32LE(e.size, 20); b.writeUInt32LE(e.size, 24);
+  b.writeUInt16LE(name.length, 28);
+  b.writeUInt16LE(0, 30); b.writeUInt16LE(0, 32);   // extra / comment 长度
+  b.writeUInt16LE(0, 34); b.writeUInt16LE(0, 36);   // disk start / internal attrs
+  b.writeUInt32LE(0, 38);                           // external attrs
+  b.writeUInt32LE(e.offset, 42);                    // local header 偏移
+  return Buffer.concat([b, name]);
+}
+
+function zipEocd(count, cdSize, cdOffset) {
+  const b = Buffer.alloc(22);
+  b.writeUInt32LE(0x06054b50, 0);
+  b.writeUInt16LE(0, 4); b.writeUInt16LE(0, 6);
+  b.writeUInt16LE(count, 8); b.writeUInt16LE(count, 10);
+  b.writeUInt32LE(cdSize, 12); b.writeUInt32LE(cdOffset, 16);
+  return b;
+}
+
+function writeChunk(res, buf) {
+  return new Promise(function (resolve, reject) {
+    res.write(buf, function (err) { err ? reject(err) : resolve(); });
+  });
+}
+function pipeFileToRes(res, abs) {
+  return new Promise(function (resolve, reject) {
+    const s = fs.createReadStream(abs);
+    s.on('error', reject);
+    s.on('end', resolve);
+    s.pipe(res, { end: false });
+  });
+}
+
+// 流式写出 zip：每个条目两遍读（第一遍算 CRC，第二遍发送），不整包进内存
+async function hashFileForZip(abs) {
+  let c = 0xFFFFFFFF;
+  await new Promise(function (resolve, reject) {
+    const s = fs.createReadStream(abs);
+    s.on('data', function (buf) { c = crc32Update(c, buf); });
+    s.on('error', reject);
+    s.on('end', resolve);
+  });
+  return crc32Final(c);
+}
+
+async function streamZip(res, entries) {
+  for (const e of entries) e.crc = await hashFileForZip(e.abs);
+  let offset = 0;
+  const central = [];
+  for (const e of entries) {
+    const head = zipLocalHeader(e);
+    e.offset = offset;
+    await writeChunk(res, head); offset += head.length;
+    await pipeFileToRes(res, e.abs); offset += e.size;
+    central.push(zipCentralEntry(e));
+  }
+  let cdSize = 0;
+  for (const b of central) { await writeChunk(res, b); cdSize += b.length; }
+  await writeChunk(res, zipEocd(entries.length, cdSize, offset));
+}
+
+// paths 参数：URL 编码的 JSON 字符串数组（可含文件与文件夹相对路径）
+function parseZipPaths(raw) {
+  let arr;
+  try { arr = JSON.parse(String(raw || '')); } catch (_) { arr = null; }
+  if (!Array.isArray(arr) || !arr.length || arr.length > 500 ||
+      !arr.every(p => typeof p === 'string' && !!p.trim())) {
+    throw Object.assign(new Error('paths 参数无效'), { status_code: 400 });
+  }
+  return arr;
+}
+
+// 打包名：单个文件夹 → <名字>.zip；多项 → task-files-<时间戳>.zip
+function zipNameFor(paths) {
+  if (paths.length === 1) {
+    const leaf = path.basename(String(paths[0]).replace(/\/+$/, '')) || 'archive';
+    const noExt = leaf.replace(/\.[^.]+$/, '');
+    return (noExt || leaf) + '.zip';
+  }
+  const d = new Date();
+  const pad = function (n) { return String(n).padStart(2, '0'); };
+  return 'task-files-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) +
+    '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '.zip';
+}
+
+function signZipToken(sessionId, pathsRaw, expires) {
+  return crypto.createHmac('sha256', downloadTokenSecret)
+    .update(sessionId + '\nzip\n' + pathsRaw + '\n' + expires).digest('hex');
+}
+function validZipToken(sessionId, pathsRaw, expires, t) {
+  const exp = Number(expires);
+  if (!t || !Number.isFinite(exp) || exp < Date.now()) return false;
+  const expected = signZipToken(sessionId, pathsRaw, exp);
+  try {
+    return crypto.timingSafeEqual(Buffer.from(String(t), 'utf8'), Buffer.from(expected, 'utf8'));
+  } catch (_) { return false; }
+}
+
+// 签发打包下载链接（需正常认证；与单文件下载同一条 token 链路）
+router.get('/:id/files/zip-token', function (req, res) {
+  try {
+    const raw = String(req.query.paths || '');
+    const paths = parseZipPaths(raw);
+    const dir = engine.taskDirOf(req.params.id);
+    for (const p of paths) fs.statSync(resolveInTask(dir, p)); // 先验路径安全与存在性
+    const expires = Date.now() + DOWNLOAD_TOKEN_TTL_MS;
+    const t = signZipToken(req.params.id, raw, expires);
+    const name = zipNameFor(paths);
+    // URL 末段带上 zip 名，供解析不了 Content-Disposition 的下载器兜底（同 download-name）
+    res.json({
+      name,
+      url: '/api/sessions/' + encodeURIComponent(req.params.id) + '/files/zip-name/'
+        + encodeURIComponent(name) + '?paths='
+        + encodeURIComponent(raw) + '&expires=' + expires + '&t=' + t,
+    });
+  } catch (err) {
+    res.status(err.status_code || 404).json({ error: String(err && err.message || err) });
+  }
+});
+
+// zip 流式下载核心（token 验签逻辑与 serveDownload 一致；无 token 时走 cookie 认证）
+async function serveZip(req, res) {
+  try {
+    const raw = String(req.query.paths || '');
+    if (req.query.t && !validZipToken(req.params.id, raw, req.query.expires, String(req.query.t))) {
+      return res.status(403).json({ error: '下载链接已过期或无效' });
+    }
+    const paths = parseZipPaths(raw);
+    const dir = engine.taskDirOf(req.params.id);
+    const entries = collectZipEntries(dir, paths);
+    const name = zipNameFor(paths);
+    log.info('file', (req.user || '-') + ' ' + req.params.id + ' 打包下载 ' + name +
+      '（' + paths.length + ' 项 / ' + entries.length + ' 个文件）');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', downloadDisposition(name));
+    await streamZip(res, entries);
+    res.end();
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(err.status_code || 500).json({ error: String(err && err.message || err) });
+    } else {
+      log.error('file', 'zip 流中断', err);
+      try { res.destroy(); } catch (_) {}
+    }
+  }
+}
+
+router.get('/:id/files/zip', function (req, res) { serveZip(req, res); });
+// 加固形式：URL 末段带 zip 文件名；paths 与验签逻辑与 /zip 完全一致
+router.get('/:id/files/zip-name/*', function (req, res) { serveZip(req, res); });
+
 router.delete('/:id/files', function (req, res) {
   try {
     const rel = String(req.query.path || '');

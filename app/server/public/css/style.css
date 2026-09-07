@@ -521,6 +521,13 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 }
 .files-panel .file-row.selected .file-check::after { opacity: 1; }
 
+/* 目录头勾选框：复用 .file-check 圆形样式；选中态直接看 aria-checked（目录不在 .file-row 内） */
+.files-panel .file-dir-head .file-check { margin-top: 0; }
+.files-panel .file-dir-head .file-check[aria-checked="true"] {
+  background: var(--active); border-color: var(--active);
+}
+.files-panel .file-dir-head .file-check[aria-checked="true"]::after { opacity: 1; }
+
 /* 底部"全选"复选框：复用 .file-check 的尺寸与对勾伪元素（通过同时加 file-check class），
    区别是这里用方角、与行内圆区分开。状态由 data-state 决定，不进 .file-row。 */
 .files-panel .files-panel-check {
