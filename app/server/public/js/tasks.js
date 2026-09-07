@@ -339,9 +339,10 @@ function parseToolContent(content) {
   return { text: content, imageUrl: null };
 }
 
-function fillToolResult(id, content, isError, liveImageUrl) {
+function fillToolResult(id, content, isError, liveImageUrl, hasImage, msgId) {
   const card = document.getElementById('tool-' + id);
   if (!card) return;
+  if (msgId) card.dataset.msgId = msgId;
   if (isError) card.classList.add('error');
   card.querySelector('.spin').textContent = isError ? '✕' : '✓';
   const parsed = parseToolContent(content);
@@ -360,6 +361,36 @@ function fillToolResult(id, content, isError, liveImageUrl) {
     el.src = img;
     el.title = '点击放大查看';
     pre.insertAdjacentElement('afterend', el);
+  } else if (!img && hasImage && !card.querySelector('.tool-img-load')) {
+    // base64 已剥离且非实时图片时，显示「加载图片」按钮（按需从服务端获取）
+    const btn = document.createElement('button');
+    btn.className = 'tool-img-load';
+    btn.textContent = '加载图片';
+    btn.title = '点击加载图片';
+    btn.style.marginTop = '4px';
+    btn.onclick = async function () {
+      btn.textContent = '加载中…';
+      btn.disabled = true;
+      try {
+        const mid = card.dataset.msgId;
+        const sessionId = state.sessionId;
+        if (!mid || !sessionId) { btn.textContent = '加载失败'; return; }
+        const resp = await fetch('/api/sessions/' + sessionId + '/messages/' + mid + '/image');
+        if (!resp.ok) throw new Error('加载失败');
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const el = document.createElement('img');
+        el.className = 'tool-img';
+        el.src = url;
+        el.title = '点击放大查看';
+        btn.insertAdjacentElement('afterend', el);
+        btn.remove();
+      } catch (e) {
+        btn.textContent = '加载失败';
+        btn.disabled = false;
+      }
+    };
+    pre.insertAdjacentElement('afterend', btn);
   }
 }
 
@@ -378,7 +409,7 @@ function copyBtnHtml(text) {
 function msgNode(m, cardMap) {
   if (m.role === 'tool') {
     if (m.tool_call_id && cardMap && cardMap[m.tool_call_id]) {
-      fillToolResult(m.tool_call_id, m.content, false);
+      fillToolResult(m.tool_call_id, m.content, false, null, m.hasImage, m.id);
     }
     return null;
   }
