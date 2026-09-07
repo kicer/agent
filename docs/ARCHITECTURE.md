@@ -147,8 +147,8 @@ messages          id PK / session_id FK / role (system|user|assistant|tool) /
                   content (TEXT, 含 __blocks__ 哨兵 JSON 多模态) / reasoning /
                   tool_calls (JSON) / tool_call_id / name / type /
                   is_error / created_at
-                  # type 取值: summary / archived / errAck / summarize_request /
-                  #            session_context (name 列 = SESSION_CONTEXT_NAME)
+                  # type 取值: summary / archived / errAck / session_context (name 列 = SESSION_CONTEXT_NAME)
+                  # 旧版遗留: summarize_request（压缩指令 user 消息，已废弃，仅 buildMessages 兼容旧库）
 
 files             id PK / session_id / filename / size / created_at
                   # 仅记录元数据；文件本体在 workspace 目录里
@@ -218,7 +218,7 @@ stateDiagram-v2
 - `run.cancelled = true` 是停止的最终信号；远端子进程通过 `run.procs` 注册（local spawn 用 child、remote-exec 用 `remoteKill` 句柄），`killRunProcs` 按类型分别处理。
 - `lastIncludedId` 跟踪本轮已纳入模型请求的最新消息 id；流式期间到达的新 user 消息靠它在下一轮迭代时自动带上。
 - **errAck 机制**：工具参数结构性错误（JSON 非法/缺必填）→ 整条 assistant 标 `type='errAck'`，关联 tool 回执一并丢弃，发请求时由 user 错误提示替代（`llm.buildMessages`）—— 防止模型模仿自己的坏样本死循环。
-- **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。`summarize_request` 指令只在当前压缩回合内发模型（`llm.buildMessages` 通过 `lastClosingAssistant` 判定）。
+- **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。压缩回合**不插入任何指令消息**：由 `engine.summarizeContext` 在内存 run 上标 `summaryMode`，`runLoopInner` 据此把 system prompt 整体替换为 `server/templates/compress-prompt.txt`（`llm.compressPromptText`）且该回合不传 tools；回合内首条无 tool_calls 的收尾回复即摘要。（`llm.buildMessages` 仍保留旧库 `summarize_request` 行的处理，仅为历史数据兼容。）
 - **图片（多模态）**：`messages.content` 列是 TEXT，含图时存 `{"__blocks__":[content...]}` 哨兵 JSON；发请求时还原为 OpenAI `image_url` 块，且**只保留最后一条 assistant 之后的图**（`lastAssistant` 判定）—— 之前的图剥 base64 改成"已省略"文字描述，省 token；DB 始终存全量供 UI 重渲染。
 - **保持租约**（`holdSweeper`）：sweeper_ms 巡检（默认 10s）；held 会话无观看者 idle_release_ms 释放（默认 3 分钟），有观看者 active_max_ms 强制释放（默认 30 分钟）。active 闲置（绑了模型但无 run 在跑、无未回应消息）按相同租约处理。
 
@@ -421,7 +421,7 @@ stateDiagram-v2
 - `terminal.max_output_chars`（默认 10000）—— AI 看到的命令输出上限；executor 侧另有 `EXECUTOR_MAX_OUTPUT_CHARS=200000` 兜底。
 - `skills.skills_root` —— 缺省取 `workspace_root` 的同级 `skills/`。
 - `model_hold` —— 保持租约；详情见 §5.1。
-- `compress.prompt` —— 上下文压缩时给 AI 的指令（可改中文/英文/其他语言）。
+- 上下文压缩 —— 无配置项：压缩回合的 system prompt 整体替换为固定模板 `server/templates/compress-prompt.txt`，该回合不传 tools；调整压缩策略直接改该文件。
 - `auth.users` —— 明文密码配在配置里（自用场景）；`secret` 留空则随机生成（重启掉登录态，建议固定随机串）。
 - `mcp_servers[].enable: false` —— 启动不加载该服务（配置保留），其余工具不受影响。
 - `executor.url` / `executor.token` —— 留空走环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN`（compose 默认注入）。

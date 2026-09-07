@@ -77,7 +77,9 @@ router.delete('/:id/messages', wrap((req, res) => {
 //   mode='generate_only'       AI 总结；摘要之前的历史存档（type='archived'，UI 保留展示、不再发给模型）
 //   mode='compress_and_clear'  AI 总结；前端完成后另调 DELETE ?keep=summary 把存档行物理清空，界面只留摘要
 // 摘要行本身两种模式都会标成 type='summary'（见 engine.runLoopInner），作为后续轮次的上下文起点。
-// 后端负责「丢一条 type='summarize_request' 的 user 消息」（响应回显 prompt 供前端直接渲染该指令气泡），
+// 后端直接开启一个压缩回合（不往会话插入任何消息）：该回合的 system prompt 整体替换为
+// templates/compress-prompt.txt 且不传 tools（见 engine.summarizeContext）；
+// 响应回显 prompt 供前端直接渲染该指令气泡（仅展示，不入库），
 // 并在总结回合的最终 SSE assistant_message 上带 is_summary + mode 给前端走收尾。
 // 状态非 active 时才允许（避免与正在跑的回合抢上下文）。本接口只是「丢一条总结请求进队列」，
 // 不等待 AI 完成——前端通过现有 SSE 流听 assistant_message 事件拿结果。

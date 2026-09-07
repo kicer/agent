@@ -5,6 +5,14 @@ const path = require('path');
 
 const SYSTEM_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'system-prompt.txt'), 'utf8');
 
+// 上下文压缩提示词：点「压缩」时不再往会话里插入指令消息，而是把压缩回合的
+// system prompt 整体替换为这份提示词（见 engine.summarizeContext / runLoopInner），
+// 且该回合不随请求发送 tools。需要调整压缩策略时直接改这个模板文件。
+const COMPRESS_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'compress-prompt.txt'), 'utf8');
+function compressPromptText() {
+  return COMPRESS_PROMPT_TEMPLATE;
+}
+
 // system prompt 完全静态：所有会话共用同一份内容，利于上游前缀缓存。
 // 动态会话信息（日期/任务目录/模型显示名）不再拼入 system prompt，
 // 而是在新建会话时作为首条 user 消息发送，见 engine.js 的 sessionContextContent。
@@ -76,14 +84,16 @@ function cachedDecodeBlocks(session, row) {
 // - type='archived'（压缩时摘要之前的全部旧行，含旧摘要/指令/工具轮）：不发模型。
 //   这是「仅摘要」的核心语义：UI 照常保留展示，但后续对话从摘要开始，旧历史不再烧 token；
 //   「压缩总结」则另由前端 DELETE keep=summary 把存档行物理删除。
-// - type='summarize_request'（压缩指令）：只在触发的那一压缩回合内发给模型（见下方判定），
-//   回合完成后不再携带，防旧指令让 AI 误以为还要再总结。
+// - type='summarize_request'（旧版压缩指令，已废弃）：新版压缩改为整体替换 system prompt
+//   （见 compressPromptText），不再产生这种消息行；此处分支仅为兼容旧库里残留的指令行。
 // errAck 行（AI tool call 参数错误，见 engine.checkToolArgs）：整条不发给模型，
 // 关联 tool 回执按 id 一并跳过（否则会留下无 tool_call 配对的孤儿 tool 消息，上游拒收）；
 // 改以一条 user 错误提示替代，让模型看到原因后重新生成工具调用 ——
 // 坏样本留在上下文里只会被模型继续模仿，反复报同一个错。
-function buildMessages(session, language) {
-  const messages = [{ role: 'system', content: systemPromptText(language) }];
+// systemPromptOverride：非空时用它整体替换首条 system 消息（压缩回合传入
+// compressPromptText()，见 engine.runLoopInner）；缺省走常规 system prompt。
+function buildMessages(session, language, systemPromptOverride) {
+  const messages = [{ role: 'system', content: systemPromptOverride || systemPromptText(language) }];
   const history = session.history;
   // 行被删除后清理残留的图片解析缓存条目（只增不清会缓慢泄漏；条数不会超过现存行数）
   if (session.blocksCache && session.blocksCache.size > history.length) {
@@ -99,9 +109,9 @@ function buildMessages(session, language) {
     if (history[i].role === 'assistant' && history[i].type !== 'errAck' && history[i].type !== 'archived') { lastAssistant = i; break; }
   }
   const dropToolCallIds = new Set();
-  // summarize_request 「已答复」判定的前置信息：最后一次「回合收尾回复」（无 tool_calls 的 assistant）的位置。
-  // 指令行在其之后 = 还在等 AI 响应这条指令（当前压缩回合），应发给模型；在其之前 = 旧指令，跳过防污染。
-  // errAck 带 tool_calls 不在此列；历史里残留的旧指令（如 generate_only）后面必然跟着摘要收尾行，自然被跳过。
+  // 旧版 summarize_request 「已答复」判定的前置信息：最后一次「回合收尾回复」（无 tool_calls 的 assistant）的位置。
+  // 指令行在其之后 = 还在等 AI 响应这条指令（旧版压缩回合未收尾），应发给模型；在其之前 = 旧指令，跳过防污染。
+  // 新版压缩不再产生这种行（改为替换 system prompt），此处仅处理旧库升级后的残留数据。
   let lastClosingAssistant = -1;
   history.forEach((row, i) => {
     if (row.role === 'assistant' && !row.tool_calls) lastClosingAssistant = i;
@@ -109,7 +119,7 @@ function buildMessages(session, language) {
   history.forEach((row, i) => {
       // archived：UI 可见，但不进入模型上下文（节省 token）
       if (row.type === 'archived') return;
-      // summarize_request：仅在触发的那一压缩回合内发给模型（见函数头注释）
+      // summarize_request（旧版遗留行）：仅在未收尾的旧压缩回合内发给模型，其余一律跳过
       if (row.type === 'summarize_request') {
         if (i > lastClosingAssistant && (row.content || '').trim()) {
           messages.push({ role: 'user', content: row.content });
@@ -325,4 +335,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks, compressPromptText };

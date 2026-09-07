@@ -1147,7 +1147,8 @@
     //     （UI 保留全部展示，但旧消息不再发给模型）；前端把摘要前旧消息就地淡出存档。
     //   压缩总结（compress_and_clear）：同上，另由前端自动调 DELETE ?keep=summary 物理清空，
     //     聊天里只留摘要卡片（不可恢复）。
-    // 开始压缩后：后端响应回显 prompt，前端把它直接渲染成一条普通用户消息气泡；
+    // 开始压缩后：后端响应回显 prompt，前端把它渲染成一条普通用户消息气泡（仅展示：
+    // 指令不再入库、也不发给模型，压缩回合的 system prompt 已整体替换为压缩提示词）；
     // 压缩回合中间的 AI 回复（思考/工具调用等）全部按普通消息渲染；
     // 只有回合收尾的那条最终答复才带 is_summary，渲染成摘要卡片。
     // 后端 summarize 路由收 body.mode；runLoopInner 在最终 assistant_message SSE 上带 is_summary + mode。
@@ -1428,7 +1429,7 @@
             bubble.innerHTML = r.html;
             state.streamWrap.appendChild(bubble);
           }
-          // 「压缩」总结回合的最终答复（后端已保证只有收尾无工具调用且紧邻 summarize_request 的那条才带 is_summary，
+          // 「压缩」总结回合的最终答复（后端已保证只有压缩回合里首条无工具调用的收尾回复才带 is_summary，
           // 中间 AI 回复已按普通消息渲染）：把已流式输出的气泡装进摘要卡片（与历史重渲染同款样式），
           // 并标记 wrap 为 msg-summary-live：compress_and_clear 清空历史时保留该节点，不再重新渲染摘要。
           // open=true 让用户立刻读到；后续轮次不自动折起（卡片可手动点 summary 收起）。
@@ -1445,6 +1446,11 @@
             if (bubble) body.appendChild(bubble); // 把总结气泡收进卡片 body（保留原位，不打乱思考面板顺序）
             wrap0.insertBefore(det, ref);
             wrap0.classList.add('msg-summary-live');
+          }
+          // 补上尾部操作行(时间戳+复制/删除),与历史重渲染(aiMsgHtml)同款;
+          // created_at 由后端落库时间随事件回传,重进会话后时刻不变
+          if (state.streamWrap) {
+            state.streamWrap.insertAdjacentHTML('beforeend', actionsHtml(d.created_at, d.content || '', d.id));
           }
           if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
           state.streaming = false;

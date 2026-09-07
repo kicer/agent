@@ -28,17 +28,8 @@ const DEFAULTS = {
     model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },
     // 日志等级:debug < info < warn < error < none,只输出 >= 阈值等级的日志;none=全部静默。
     log_level: 'info',
-    // 上下文压缩：顶栏「压缩」按钮触发时把这段 prompt 作为 user 消息发给 AI，
-    // 要求它回顾整段对话并生成结构化总结；收到回复后由前端弹窗询问是否物理清空历史，
-    // 仅保留这条总结作为后续对话的唯一上下文，省 token。可按需改写 prompt（中文/英文均可）。
-    compress: {
-      prompt: '请基于以上全部对话历史，生成一段结构化总结，作为之后继续对话的唯一上下文。要求：\n' +
-              '1) 提炼关键事实、决定、约束、待办；\n' +
-              '2) 保留用户的偏好与命名约定；\n' +
-              '3) 忽略寒暄与已完成的工具调用细节；\n' +
-              '4) 中文输出，简洁。\n' +
-              '直接输出总结正文即可，不要加前言/标题/列表前缀。',
-    },
+    // 上下文压缩提示词不再走配置：压缩回合直接整体替换 system prompt，
+    // 默认提示词固定在 server/templates/compress-prompt.txt（见 llm.compressPromptText）。
   platforms: [],
   // 登录认证：{ users: [{user, password}], secret?, ttl_ms? }，密码明文存配置（自用场景）。
   // users 为空则不启用认证（可交给前置 nginx-proxy，但手机浏览器原生下载不带 Basic 头，不推荐）。
