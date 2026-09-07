@@ -240,18 +240,18 @@
         <input type="text" id="mpe-name" placeholder="平台名(留空取 url 主机名首段)">
         <input type="text" id="mpe-url" placeholder="平台上游地址(OpenAI 兼容 /v1)">
         <div class="mpe-sec">
-          <div class="mpe-sec-head"><span>API Keys(同平台多 Key 共用下方模型)</span><button class="ghost-btn sm" onclick="sUI.mAddKey()">＋ Key</button></div>
+          <div class="mpe-sec-head"><span>Key列表</span><button class="ghost-btn sm" onclick="sUI.mAddKey()">添加Key</button></div>
           <div id="mpe-keys"></div>
         </div>
         <div class="mpe-sec">
-          <div class="mpe-sec-head"><span>模型</span><button class="ghost-btn sm" onclick="sUI.mAddModel()">＋ 模型</button></div>
+          <div class="mpe-sec-head"><span>模型</span><button class="ghost-btn sm" onclick="sUI.mAddModel()">添加模型</button></div>
           <div id="mpe-models"></div>
         </div>
         <div class="btn-row mpe-foot">
           <button class="ghost-btn danger hidden" id="mpe-del-btn" onclick="sUI.mDelPlat()">删除平台</button>
           <button class="primary-btn" onclick="sUI.mSave()">保存</button>
         </div>
-        <div class="cfg-note">仅写入 config.yml。Key 留空=保持原值,输入新值即替换;保存后点页面上的「重启服务」按钮生效。</div>
+        <div class="cfg-note">后仅写入配置，点击「重启服务」后生效。</div>
       </div>
     </div>
 
@@ -2480,6 +2480,8 @@
   let drawerWasOpenBeforeSet = false;
   function closeSettings() {
     SET.stack = []; SET.snaps = {}; setUnderHide();
+    // 退回会话页才重置模型池状态:平台卡全部折叠、余额清空,下次进入重新自动查
+    SET.expandedGroups = {}; SET.balanceByGroup = {}; SET.balanceRequested = {};
     $('settings-page').classList.add('hidden');
     if (drawerMQ.matches && drawerWasOpenBeforeSet) { openDrawer(true); drawerWasOpenBeforeSet = false; }
   }
@@ -3289,9 +3291,9 @@
       SET.cfgPlatforms.forEach((p, pi) => { html += modelGroupHtml(pi); });
       // 有待重启的变更:列表顶部常驻「重启服务」横幅(增/改/删模型、启停开关、平台弹窗保存均经 afterWrite 置位)
       box.innerHTML = (SET.modelsPendingRestart
-          ? '<div class="restart-bar"><span>配置改动已写入 config.yml,重启后生效</span><button class="primary-btn" onclick="sUI.restartNow()">重启服务</button></div>'
+          ? '<div class="restart-bar"><span>配置已写入，重启后生效</span><button class="primary-btn" onclick="sUI.restartNow()">重启服务</button></div>'
           : '') + html +
-        '<div class="empty-tip">token 格式为「输入 / 输出」;展开平台卡时按 Key 自动查余额,点刷新图标可重查;点任一模型卡编辑整个平台。</div>';
+        '<div class="empty-tip">token 显示格式为「输入 / 输出」。</div>';
     } catch (e) {
       const box = $('model-cards');
       if (box && (!ctx || ctx())) box.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
@@ -3302,9 +3304,7 @@
     setActions('<button class="icon-btn" title="添加模型" onclick="sUI.openAdd()">' +
       '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
     setBody('<div class="set-scroll" id="model-cards"><div class="empty-tip">加载中…</div></div>');
-    // 每次进入本页:余额结果与「已自动查过」标记重置(同 index 的 Tab onShow)
-    SET.balanceByGroup = {};
-    SET.balanceRequested = {};
+    // 余额与展开态跨设置内导航保持(仅 closeSettings 回会话页时重置),重进本页不重复查余额
     loadModelCards(ctx);
   }
   function idxOf(id) {
@@ -3348,8 +3348,8 @@
   // Key 行:全部可编辑。已有 Key 输入框置空 + placeholder 提示当前脱敏值,输入新值=替换,留空=保持。
   function pfKeysRowHtml(r, i) {
     const ph = r.ref == null
-      ? 'api_key(留空则不带鉴权头)'
-      : '当前: ' + (r.masked ? maskKey(r.masked) : '无 key') + '(留空保持不变,输入即替换)';
+      ? 'API KEY'
+      : '当前: ' + (r.masked ? maskKey(r.masked) : '无 key');
     return '<div class="mpe-row">' +
       '<input class="mpe-grow" type="text" placeholder="' + esc(ph) + '" value="' + esc(r.api_key) + '" oninput="sUI.mKeyApi(' + i + ',this.value)">' +
       '<button class="mpe-del" title="删除此 Key" onclick="sUI.mDelKey(' + i + ')">×</button>' +
@@ -3364,8 +3364,8 @@
         '<button class="mpe-del" title="删除此模型" onclick="sUI.mDelModel(' + i + ')">×</button>' +
       '</div>' +
       '<div class="mpe-cks">' +
-        '<label class="mpe-ck"><input type="checkbox"' + (r.vision ? ' checked' : '') + ' onchange="sUI.mModVision(' + i + ',this.checked)">vision(图片输入)</label>' +
-        '<label class="mpe-ck"><input type="checkbox"' + (r.enable !== false ? ' checked' : '') + ' onchange="sUI.mModEnable(' + i + ',this.checked)">enable(启用)</label>' +
+        '<label class="mpe-ck"><input type="checkbox"' + (r.vision ? ' checked' : '') + ' onchange="sUI.mModVision(' + i + ',this.checked)">图片输入</label>' +
+        '<label class="mpe-ck"><input type="checkbox"' + (r.enable !== false ? ' checked' : '') + ' onchange="sUI.mModEnable(' + i + ',this.checked)">启用</label>' +
       '</div>' +
     '</div>';
   }
