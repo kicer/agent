@@ -550,10 +550,14 @@
     const bubble = text ? (() => { const r = mdHtml(m.content); return '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>'; })() : '';
     return '<div class="msg other">' + think + bubble + actionsHtml(m.created_at, m.content || '', m.id) + '</div>';
   }
-  // 思考过程折叠面板:summary 固定名「思考过程」,body 展示推理全文。
+  // 思考过程折叠面板:summary 固定名「思考过程」+ 右侧复制按钮,body 展示推理全文。
   // 历史重渲染默认收起(与原设计一致),流式阶段的展开行为由 ensureStreamThinkPanel 显式控制。
+  // 复制按钮走 onCopyClick 统一代理:点击时从 DOM 取思考全文(不依赖 b64,流式增量也能复制)
+  const THINK_COPY_BTN = '<button class="act act-copy" title="复制思考内容">' +
+    '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
+    '</button>';
   function thinkPanelHtml(text) {
-    return '<details class="msg-think"><summary>思考过程</summary><div class="msg-think-body">' + esc(text) + '</div></details>';
+    return '<details class="msg-think"><summary>思考过程' + THINK_COPY_BTN + '</summary><div class="msg-think-body">' + esc(text) + '</div></details>';
   }
 
   // 「压缩」摘要卡片：流式收尾与历史重渲染共用的头部（图标 + 标题 + 右侧说明）。
@@ -600,7 +604,7 @@
   function toolCopyBtnHtml(text) {
     if (!text) return '';
     const b64 = btoa(unescape(encodeURIComponent(text)));
-    return '<button class="act act-copy" title="复制工具输出" data-b64="' + b64 + '">' +
+    return '<button class="act act-copy" title="复制参数与结果" data-b64="' + b64 + '">' +
       '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>';
   }
   // 工具卡「删除本条」：删的是 tool 消息行；后端会把它在父 assistant 里的调用同步摘除。
@@ -1337,7 +1341,7 @@
     det.className = 'msg-think streaming';
     det.open = true; // 流式阶段默认展开，看思考增量
     const sum = document.createElement('summary');
-    sum.textContent = '思考过程';
+    sum.innerHTML = '思考过程' + THINK_COPY_BTN;
     const body = document.createElement('div');
     body.className = 'msg-think-body';
     det.appendChild(sum);
@@ -1531,8 +1535,24 @@
   async function onCopyClick(e) {
     const copyBtn = e.target.closest('.act-copy');
     if (!copyBtn) return;
+    const toolCard = copyBtn.closest('.tool-card');
+    const think = copyBtn.closest('.msg-think');
+    if (think) e.preventDefault(); // 按钮在 summary 内:只复制,不触发折叠/展开
     let text = '';
-    try { text = decodeURIComponent(escape(atob(copyBtn.dataset.b64 || ''))); } catch (_) {}
+    if (toolCard) {
+      // 工具卡:参数 + 结果一并复制。点时取 DOM 现值,多次回填/流式更新后也不会复制旧内容
+      const args = toolCard.querySelector('.tool-args-full');
+      const res = toolCard.querySelector('.tool-result');
+      const parts = [];
+      if (args) parts.push('command:\n' + args.textContent);
+      if (res) parts.push('result:\n' + res.textContent);
+      text = parts.join('\n\n');
+    } else if (think) {
+      const b = think.querySelector('.msg-think-body');
+      text = b ? b.textContent : '';
+    } else {
+      try { text = decodeURIComponent(escape(atob(copyBtn.dataset.b64 || ''))); } catch (_) {}
+    }
     const ok = await copyText(text);
     toast(ok ? '已复制' : '复制失败');
     if (ok) {

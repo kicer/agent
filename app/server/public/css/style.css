@@ -147,6 +147,11 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   transition: transform .15s; display: inline-block;
 }
 .msg-think[open] > summary::before { transform: rotate(90deg); }
+/* summary 右侧复制按钮:靠右对齐,点击只复制不折叠(onCopyClick 里 preventDefault) */
+.msg-think > summary .act-copy { margin-left: auto; display: inline-flex; color: var(--gray-light); padding: 2px; border-radius: 4px; }
+.msg-think > summary .act-copy svg { width: 12px; height: 12px; }
+.msg-think > summary .act-copy:hover { color: var(--ink); }
+.msg-think > summary .act-copy.copied { color: #2e7d32; }
 .msg-think-body {
   padding: 4px 12px 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
