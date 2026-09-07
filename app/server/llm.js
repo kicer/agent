@@ -249,6 +249,13 @@ async function callModel(cfg, modelId, messages, tools, options) {
   const headers = { 'Content-Type': 'application/json' };
   if (modelCfg.api_key) headers.Authorization = 'Bearer ' + modelCfg.api_key;
 
+  if (opts.onFetchParams) {
+    const logBody = { ...body };
+    delete logBody.messages;
+    delete logBody.tools;
+    opts.onFetchParams(logBody);
+  }
+
   const res = await fetch(modelCfg.url + '/chat/completions', {
     method: 'POST',
     headers,

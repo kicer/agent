@@ -640,6 +640,7 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       // 本轮是否启用深度思考；由 postUserMessage 从消息 POST 参数写进 run
       deepThink: !!run.deepThink,
       onMeta: handleSseMeta,
+      onFetchParams: params => log.debug('req', JSON.stringify(params, null, 2)),
       onBadData: raw => log.warn('sse', sessionId + ' 坏帧：' + raw.slice(0, 200)),
       // data 解析成功但没有 choices（如 event: error 帧）：上游发了非正常响应，
       // 之前会伪装成"0 字"沉默忽略，这里 warn 把原始 evt 打出来便于定位。
