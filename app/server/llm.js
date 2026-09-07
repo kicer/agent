@@ -5,12 +5,50 @@ const path = require('path');
 
 const SYSTEM_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'system-prompt.txt'), 'utf8');
 
-// 上下文压缩提示词：点「压缩」时不再往会话里插入指令消息，而是把压缩回合的
-// system prompt 整体替换为这份提示词（见 engine.summarizeContext / runLoopInner），
-// 且该回合不随请求发送 tools。需要调整压缩策略时直接改这个模板文件。
+// 上下文压缩提示词（templates/compress-prompt.txt）：点「压缩」时不插入指令消息，
+// 压缩回合只发一条 system（本模板，{{conversation}} 占位符替换为完整历史纯文本，
+// 见 compressPromptText / historyTranscript）+ 一句 user 触发语，且该回合不传 tools。
+// 需要调整压缩策略时直接改这个模板文件（不写 {{conversation}} 则历史自动追加到末尾）。
 const COMPRESS_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'compress-prompt.txt'), 'utf8');
-function compressPromptText() {
-  return COMPRESS_PROMPT_TEMPLATE;
+
+// 把即将压缩的会话历史序列化为「用户/AI 交互记录」纯文本，填入模板 {{conversation}} 处。
+// 与 buildMessages 同取舍：archived 行不进记录（旧摘要之后的内容才算「本轮上下文」）；
+// __blocks__ 哨兵 JSON 还原为文字，图片以 [图片] 占位，base64 不进摘要记录。
+function historyTranscript(session) {
+  const lines = [];
+  for (const row of (session && session.history) || []) {
+    if (row.type === 'archived') continue;
+    let content = row.content || '';
+    const blocks = decodeBlocks(content);
+    if (blocks) content = blocks.map(b => (b && b.type === 'text' ? b.text : '[图片]')).join('\n');
+    if (row.role === 'user') {
+      lines.push(row.name === 'session_context' ? '[环境信息]\n' + content : '[用户] ' + content);
+    } else if (row.role === 'assistant') {
+      const parts = [];
+      if (content) parts.push('[AI] ' + content);
+      let calls = null;
+      if (row.tool_calls) { try { calls = JSON.parse(row.tool_calls); } catch (_) {} }
+      for (const c of calls || []) {
+        const f = (c && c.function) || {};
+        parts.push('[AI 调用工具 ' + (f.name || '') + '] ' + (f.arguments || ''));
+      }
+      if (parts.length) lines.push(parts.join('\n'));
+    } else if (row.role === 'tool') {
+      lines.push('[工具 ' + (row.name || '') + ' 输出] ' + content);
+    }
+  }
+  return lines.join('\n\n');
+}
+
+// 填充压缩模板：替换全部 {{conversation}} 占位符；用函数形式传替换串，
+// 避免历史文本里的 $&、$' 等序列被 String.replace 当作替换模式误解析。
+// 模板里没写占位符时，把记录追加到末尾（保证任何改法的模板都能拿到历史）。
+function compressPromptText(conversation) {
+  const rec = String(conversation == null ? '' : conversation);
+  if (COMPRESS_PROMPT_TEMPLATE.includes('{{conversation}}')) {
+    return COMPRESS_PROMPT_TEMPLATE.replaceAll('{{conversation}}', () => rec);
+  }
+  return COMPRESS_PROMPT_TEMPLATE + '\n\n## 对话记录\n' + rec;
 }
 
 // system prompt 完全静态：所有会话共用同一份内容，利于上游前缀缓存。
@@ -90,10 +128,8 @@ function cachedDecodeBlocks(session, row) {
 // 关联 tool 回执按 id 一并跳过（否则会留下无 tool_call 配对的孤儿 tool 消息，上游拒收）；
 // 改以一条 user 错误提示替代，让模型看到原因后重新生成工具调用 ——
 // 坏样本留在上下文里只会被模型继续模仿，反复报同一个错。
-// systemPromptOverride：非空时用它整体替换首条 system 消息（压缩回合传入
-// compressPromptText()，见 engine.runLoopInner）；缺省走常规 system prompt。
-function buildMessages(session, language, systemPromptOverride) {
-  const messages = [{ role: 'system', content: systemPromptOverride || systemPromptText(language) }];
+function buildMessages(session, language) {
+  const messages = [{ role: 'system', content: systemPromptText(language) }];
   const history = session.history;
   // 行被删除后清理残留的图片解析缓存条目（只增不清会缓慢泄漏；条数不会超过现存行数）
   if (session.blocksCache && session.blocksCache.size > history.length) {
@@ -335,4 +371,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks, compressPromptText };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks, compressPromptText, historyTranscript };

@@ -2,7 +2,7 @@
 // 单进程内存模型：JS 单线程 + better-sqlite3 同步 API，不存在跨进程竞争。
 const fs = require('fs');
 const path = require('path');
-const { buildMessages, callModel, encodeBlocks, compressPromptText } = require('./llm');
+const { buildMessages, callModel, encodeBlocks, compressPromptText, historyTranscript } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const mcp = require('./mcp');
 const log = require('./log');
@@ -433,10 +433,13 @@ async function runLoopInner(sessionId, run) {
     session.history = loadHistoryForModel(sessionId);
     for (const m of session.history) if (m.id > lastIncludedId) lastIncludedId = m.id;
     // 压缩回合（run.summaryMode 非空 = 由「压缩」按钮发起、尚未产出摘要）：
-    // system prompt 整体替换为压缩提示词（templates/compress-prompt.txt），
-    // 且不随请求传 tools：模型拿得到完整历史，但只能输出总结文本，不会再调工具。
+    // 只发一条 system（压缩模板，{{conversation}} 占位符已填入完整历史纯文本）
+    // + 一句触发 user，历史不再以 messages 重复占 token；且不传 tools，模型只能输出摘要文本。
     const compressing = !!run.summaryMode;
-    const messages = buildMessages(session, (cfg.agent || {}).language, compressing ? compressPromptText() : null);
+    const messages = compressing
+      ? [{ role: 'system', content: compressPromptText(historyTranscript(session)) },
+        { role: 'user', content: '请按以上要求输出「上下文摘要」。' }]
+      : buildMessages(session, (cfg.agent || {}).language);
     // 内置工具 + 启动时发现的 MCP 工具，一起随 system prompt 发给模型（压缩回合不发）
     const tools = compressing ? [] : TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
 
@@ -918,8 +921,9 @@ function deleteSession(sessionId, deleteDir) {
 }
 
 // 上下文压缩：phase-bar「压缩」按钮触发。不再往会话里插入指令消息：
-// 压缩回合的 system prompt 直接整体替换为 templates/compress-prompt.txt（见 llm.compressPromptText），
-// 且该回合不传 tools（见 runLoopInner 的 compressing 分支），模型基于完整历史输出总结。
+// 压缩回合只发一条 system（templates/compress-prompt.txt 模板，{{conversation}} 占位符
+// 替换为完整历史纯文本，见 llm.compressPromptText / historyTranscript）+ 一句触发语，
+// 且不传 tools（见 runLoopInner 的 compressing 分支），模型直接基于该记录输出摘要。
 // 识别标记 = run.summaryMode（仅在内存 run 上，不入库）：runLoopInner 据此换 prompt/去 tools，
 // 并在压缩回合的收尾答复 emit 时带 is_summary: true + mode，前端按用户选择的模式走完最后一步
 //（compress_and_clear 时调 DELETE ?keep=summary 清空历史、仅留该摘要并标 type='summary'）。
@@ -929,8 +933,9 @@ function deleteSession(sessionId, deleteDir) {
 // 重启后需重新点「压缩」。
 // 限制：与 clearSessionMessages 类似——会话执行中(active)禁止操作，避免和正在跑的回合抢上下文。
 // mode: 'generate_only' 或 'compress_and_clear'，由路由校验后传入。
-// 响应回显 prompt：前端「开始压缩后直接把压缩指令渲染成一条普通用户消息气泡」；
-// 该气泡仅供展示，不入库也不发给模型（指令走 system prompt）。
+// 响应回显 prompt：前端「开始压缩后渲染成一条普通用户消息气泡」；只回一句短提示，
+// 不回完整模板（压缩指令的真实内容在压缩回合开跑时实时序列化进 system prompt，
+// 与气泡无关，气泡仅供展示、不入库也不发给模型）。
 function summarizeContext(sessionId, mode) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -938,7 +943,7 @@ function summarizeContext(sessionId, mode) {
   if (run && run.looping) {
     throw Object.assign(new Error('任务正在执行，请先「终止」再压缩'), { status_code: 409 });
   }
-  const prompt = compressPromptText();
+  const prompt = '正在压缩上下文：AI 将基于完整对话记录生成摘要…';
   // 与 postUserMessage 同样的唤醒/排队流转，但不落任何消息行；
   // run.summaryMode 标记本回合为压缩回合，摘要产出后由 runLoopInner 清空。
   // 状态流转时顺带重置 deepThink：压缩回合不需要思考参数，避免沿用上一轮的残留值。

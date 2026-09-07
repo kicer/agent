@@ -93,9 +93,9 @@ model_hold:
   active_max_ms: 1800000    # 30 分钟
   sweep_ms: 10000           # 10 秒
 
-# 上下文压缩：顶栏「压缩」按钮触发。压缩指令不再作为 user 消息插入会话，
-# 而是把压缩回合的 system prompt 整体替换为固定模板，且该回合不传 tools。
-# 默认提示词在 server/templates/compress-prompt.txt，需要调整压缩策略时直接改该文件。
+# 上下文压缩：顶栏「压缩」按钮触发。压缩指令不作为 user 消息插入会话：
+# 压缩回合只发一条 system（模板里 {{conversation}} 占位符自动替换为完整历史）+ 一句触发语，且该回合不传 tools。
+# 提示词固定在 server/templates/compress-prompt.txt，需要调整压缩策略时直接改该文件。
 
 # 登录认证（推荐启用）：多用户，用户名/明文密码直接配在这里（自用场景）。
 # 登录页 /login，会话 token 以 HttpOnly cookie 下发（替代 nginx htpasswd：
