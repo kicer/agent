@@ -25,30 +25,17 @@ function sendErr(res, err) {
   res.status(code).json({ error: String(err && err.message || err) });
 }
 
-// 从哨兵 JSON __blocks__ 中剥离 base64 图片数据，避免加载会话时传输大体积 base64。
-// 返回新content字符串，以及 hasImage 布尔标志（标识原内容含图片，可用于前端按需加载）。
-function stripBase64FromContent(content) {
-  if (typeof content !== 'string' || !content.startsWith('{"__blocks__":')) {
-    return { content, hasImage: false };
-  }
-  try {
-    const parsed = JSON.parse(content);
-    if (!Array.isArray(parsed.__blocks__)) return { content, hasImage: false };
-    let hasImage = false;
-    const blocks = parsed.__blocks__.map(block => {
-      if (block && block.type === 'image_url' && block.image_url && block.image_url.url) {
-        const url = block.image_url.url;
-        if (url.startsWith('data:')) {
-          hasImage = true;
-          return { type: 'image_url', image_url: { url: '' } }; // 剥离 base64，置空由前端按需加载
-        }
-      }
-      return block;
-    });
-    return { content: JSON.stringify({ __blocks__: blocks }), hasImage };
-  } catch (_) {
-    return { content, hasImage: false };
-  }
+// 按需加载单条消息的完整内容（用于 tool 消息的懒加载）。
+// 返回消息行原始 content（含 base64 图片），前端负责渲染。
+function getMessage(req, res) {
+  const session = engine.getSession(req.params.id);
+  if (!session) return sendErr(res, Object.assign(new Error('会话不存在'), { status_code: 404 }));
+  const db = engine.getDb();
+  const row = db.prepare(
+    'SELECT id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, created_at FROM messages WHERE id = ? AND session_id = ?'
+  ).get(req.params.mid, req.params.id);
+  if (!row) return sendErr(res, Object.assign(new Error('消息不存在'), { status_code: 404 }));
+  res.json(row);
 }
 
 // 递归列出任务目录文件
@@ -152,12 +139,38 @@ router.get('/:id', wrap((req, res) => {
   const session = engine.getSession(req.params.id);
   if (!session) return sendErr(res, Object.assign(new Error('会话不存在'), { status_code: 404 }));
   const db = engine.getDb();
-  const rows = db.prepare('SELECT id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, created_at FROM messages WHERE session_id = ? ORDER BY id').all(session.id);
-  // 剥离 base64 图片数据，避免大体积传输；前端按 hasImage 标志按需加载图片
-  const messages = rows.map(row => {
-    const { content, hasImage } = stripBase64FromContent(row.content);
-    return { ...row, content, hasImage };
-  });
+  // 查询所有消息，tool 消息用于建立 tool_call_id → message_id 映射，但不随消息返回
+  const allRows = db.prepare(
+    'SELECT id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, created_at FROM messages WHERE session_id = ? ORDER BY id'
+  ).all(session.id);
+
+  // 建立 tool_call_id → message_id 映射（供 assistant 消息的 tool_calls 展开时懒加载用）
+  const toolCallMsgMap = {}; // tool_call_id → message id
+  for (const row of allRows) {
+    if (row.role === 'tool' && row.tool_call_id) {
+      toolCallMsgMap[row.tool_call_id] = row.id;
+    }
+  }
+
+  // 过滤掉 tool 消息，但为 assistant 消息附带 tool_call 懒加载映射
+  const messages = [];
+  for (const row of allRows) {
+    if (row.role === 'tool') continue;
+    // assistant 消息附加 tool_call_msg_ids（让前端知道展开时去拉哪条消息）
+    if (row.role === 'assistant' && row.tool_calls) {
+      let toolCalls;
+      try { toolCalls = JSON.parse(row.tool_calls); } catch (_) { toolCalls = []; }
+      const tool_call_msg_ids = {};
+      for (const tc of toolCalls) {
+        if (tc && tc.id && toolCallMsgMap[tc.id]) {
+          tool_call_msg_ids[tc.id] = toolCallMsgMap[tc.id];
+        }
+      }
+      row.tool_call_msg_ids = Object.keys(tool_call_msg_ids).length ? tool_call_msg_ids : undefined;
+    }
+    messages.push(row);
+  }
+
   const taskDir = engine.taskDirOf(session.id);
   res.json({
     session,
@@ -168,37 +181,8 @@ router.get('/:id', wrap((req, res) => {
   });
 }));
 
-// 按需加载消息的图片（base64 已剥离，由前端此接口获取）
-router.get('/:id/messages/:mid/image', wrap((req, res) => {
-  const session = engine.getSession(req.params.id);
-  if (!session) return sendErr(res, Object.assign(new Error('会话不存在'), { status_code: 404 }));
-  const db = engine.getDb();
-  const row = db.prepare(
-    'SELECT content FROM messages WHERE id = ? AND session_id = ?'
-  ).get(req.params.mid, req.params.id);
-  if (!row) return sendErr(res, Object.assign(new Error('消息不存在'), { status_code: 404 }));
-  const blocks = (function () {
-    if (typeof row.content !== 'string' || !row.content.startsWith('{"__blocks__":')) return null;
-    try {
-      const parsed = JSON.parse(row.content);
-      return Array.isArray(parsed.__blocks__) ? parsed.__blocks__ : null;
-    } catch (_) { return null; }
-  })();
-  if (!blocks) return sendErr(res, Object.assign(new Error('该消息不含图片'), { status_code: 404 }));
-  const imgBlock = blocks.find(b => b && b.type === 'image_url' && b.image_url && b.image_url.url);
-  if (!imgBlock || !imgBlock.image_url.url || !imgBlock.image_url.url.startsWith('data:')) {
-    return sendErr(res, Object.assign(new Error('图片数据不存在或已被清理'), { status_code: 404 }));
-  }
-  const url = imgBlock.image_url.url; // e.g. "data:image/jpeg;base64,/9j/..."
-  const mimeMatch = /^data:([^;]+);base64,/.exec(url);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-  const base64Data = url.slice(url.indexOf(',') + 1);
-  const buffer = Buffer.from(base64Data, 'base64');
-  res.set('Content-Type', mime);
-  res.set('Content-Length', buffer.length);
-  res.set('Cache-Control', 'private, max-age=86400');
-  res.send(buffer);
-}));
+// 按需加载单条消息的完整内容（用于 tool 消息的懒加载）
+router.get('/:id/messages/:mid', wrap(getMessage));
 
 router.post('/:id/bind', wrap((req, res) => {
   res.json(engine.bindToSession(req.params.id, req.body && req.body.model_id));
