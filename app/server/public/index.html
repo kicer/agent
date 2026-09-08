@@ -1965,8 +1965,15 @@
 
   // ---------- 目录分组：后端返回扁平列表(路径可含子目录)，前端组树渲染 ----------
   // 规则：每一级都是目录在上、文件在下；同级目录按名称排序，同级文件按时间倒序(新的在前)。
-  // filesCollapsedDirs 记住手动折叠过的目录(相对路径)，上传/删除后重新渲染仍保持折叠。
-  const filesCollapsedDirs = new Set();
+  // 顶层包一个虚拟的「/」根目录(depth 0)：默认只展开顶层下面的一级目录，二级及以下默认收起，
+  // 用户点开某目录时也只露出它的直接子项，不自动展开其下所有文件。
+  // filesDirOpen 记住用户手动展开/折叠过的目录(路径 → 是否展开；'' 为顶层「/」)，上传/删除重渲染后仍生效。
+  const filesDirOpen = new Map();
+  function isDirCollapsed(path, depth) {
+    const ov = filesDirOpen.get(path);
+    if (ov !== undefined) return !ov;
+    return depth > 1; // depth:0=顶层「/」,1=一级目录(均默认展开),更深默认收起
+  }
 
   function fileTimeOf(f) { return f.ctime || f.mtime || 0; }
   function sortFilesByTime(arr) {
@@ -2031,19 +2038,22 @@
 
   // 目录头带勾选框：整个文件夹作为一个选中项（下载时后端打包成 zip）；点其余区域仍为折叠/展开。
   // dirSel 为真时子孙目录/文件跟随父目录显示选中态。
+  // 顶层「/」为虚拟节点不提供整体勾选（勾选框仅占位隐藏），且已有底部全选按钮覆盖该语义。
   function dirNodeHtml(node, depth, dirSel) {
     const dirs = sortDirsByName(Array.from(node.dirs.values()));
     sortFilesByTime(node.files);
-    const collapsed = filesCollapsedDirs.has(node.path);
+    const isRoot = depth === 0;
+    const collapsed = isDirCollapsed(node.path, depth);
     const under = filesUnderDir(node);
     const checked = !!dirSel || fileSelected.has(dirSelKey(node.path)) ||
       (under.length > 0 && under.every(isFileEffectivelySelected));
     return '<div class="file-dir' + (collapsed ? ' collapsed' : '') + '" data-dir="' + esc(node.path) + '">' +
       '<div class="file-dir-head" role="button" aria-expanded="' + (collapsed ? 'false' : 'true') + '" style="padding-left:' + filesIndent(depth) + 'px">' +
-        '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"></span>' +
+        '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"' +
+          (isRoot ? ' style="visibility:hidden" aria-hidden="true"' : '') + '></span>' +
         '<svg class="file-dir-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
         '<svg class="file-dir-ico" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>' +
-        '<span class="file-dir-name">' + esc(node.name) + '</span>' +
+        '<span class="file-dir-name">' + esc(node.name || '/') + '</span>' +
         '<span class="file-dir-count">' + countDirFiles(node) + ' 个文件</span>' +
       '</div>' +
       '<div class="file-dir-body">' +
@@ -2053,10 +2063,9 @@
     '</div>';
   }
 
-  // 顶层：目录在上、文件在下（无目录的文件直接平铺）
+  // 顶层：整棵树包进虚拟的「/」根目录，目录在上、文件在下（根下的散文件也在该节点内平铺）
   function filesTreeHtml(root) {
-    return sortDirsByName(Array.from(root.dirs.values())).map(function (d) { return dirNodeHtml(d, 0); }).join('') +
-      sortFilesByTime(root.files).map(function (f) { return fileRowHtml(f, 0); }).join('');
+    return dirNodeHtml(root, 0);
   }
 
   async function loadFiles() {
@@ -2185,7 +2194,8 @@
         }
         const collapsed = dirEl.classList.toggle('collapsed');
         head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-        if (dp) { if (collapsed) filesCollapsedDirs.add(dp); else filesCollapsedDirs.delete(dp); }
+        if (dp === undefined) return; // 理论上不会发生：所有目录节点都带 data-dir（顶层「/」为空串）
+        filesDirOpen.set(dp, !collapsed);
         return;
       }
       const row = e.target.closest('.file-row');
