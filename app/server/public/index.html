@@ -818,7 +818,7 @@
   }
 
   // ---------- 历史懒加载：开会话只拉最近 CHAT_PAGE_SIZE 条，上滑接近顶部时再逐页补更早的 ----------
-  const CHAT_PAGE_SIZE = 30;   // 每页非 tool 消息数
+  const CHAT_PAGE_SIZE = 20;   // 每页非 tool 消息数
   const CHAT_TOP_TRIGGER = 100; // 距顶不足此像素时触发拉更早页
   let chatLoadingMore = false;  // 防重入（滚动事件高频触发）
   async function loadOlderMessages() {
