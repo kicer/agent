@@ -836,7 +836,11 @@
     box.insertBefore(tip, box.firstChild);
     try {
       const detail = await req('GET', '/api/sessions/' + id + '?limit=' + CHAT_PAGE_SIZE + '&before=' + (state.chatOldestId || 0));
-      tip.remove(); // 先于存档合并/锚点计算移除，提示行不参与消息流几何
+      // 趁提示行还在流内量几何：下方锚点公式据此得「新 scrollTop = 旧 scrollTop + 新页高 - 提示行高」，
+      // 旧内容逐像素不动，新页最后一行恰好向下补进提示行的位置
+      const prevH = box.scrollHeight; // 含提示行高度
+      const prevTop = box.scrollTop;
+      tip.remove(); // 量完再移除，存档合并/几何计算中提示行不掺和
       if (state.sessionId !== id || state.view !== 'chat') return; // 请求期间已切会话/视图，丢弃
       const frag = document.createElement('div'); // 离屏容器（DocumentFragment 不支持 insertAdjacentHTML）
       const { closeArc } = appendMessagesDom(detail.messages || [], frag);
@@ -857,9 +861,7 @@
         end.textContent = '没有更早的消息了';
         frag.insertBefore(end, frag.firstChild);
       }
-      // 前插保持视口锚定：新 scrollTop = 旧 scrollTop + 新增高度
-      const prevH = box.scrollHeight;
-      const prevTop = box.scrollTop;
+      // 前插保持视口锚定：prevH 含提示行高，差值即「新增页高 - 提示行高」，提示行被新页尾行原位覆盖
       while (frag.firstChild) box.insertBefore(frag.firstChild, box.firstChild);
       box.scrollTop = box.scrollHeight - prevH + prevTop;
       state.chatHasMore = !!detail.has_more;
