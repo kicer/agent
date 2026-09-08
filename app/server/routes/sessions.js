@@ -178,7 +178,9 @@ router.get('/:id', wrap((req, res) => {
     let sql = 'SELECT ' + MSG_COLS + " FROM messages WHERE session_id = ? AND role != 'tool'";
     if (Number.isFinite(before) && before > 0) { sql += ' AND id < ?'; args.push(before); }
     args.push(limit + 1);
-    let rows = db.prepare(sql + ' ORDER BY id DESC LIMIT ?').all.apply(null, args);
+    // 注意：better-sqlite3 的 all 必须以 Statement 实例为 this 调用，不能脱离绑定
+    const stmt = db.prepare(sql + ' ORDER BY id DESC LIMIT ?');
+    let rows = stmt.all(...args);
     hasMore = rows.length > limit;
     if (hasMore) rows = rows.slice(0, limit);
     rows.reverse(); // 还原时间升序
