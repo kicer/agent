@@ -2912,18 +2912,22 @@
     for (const ch of String(name || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
     return AVATAR_COLORS[h % AVATAR_COLORS.length];
   }
-  // 侧边栏底部用户区:拉取真实登录用户名,头像样式与设置页 user-card 一致(按用户名取色+首两字)
-  async function loadDrawerUser() {
+  // 侧边栏底部用户区:展示真实登录用户名,头像样式与设置页 user-card 一致(按用户名取色+首两字)。
+  // 启动校验已经拉到登录用户时直接传入，避免同一次加载重复请求 /api/me；未传入时自拉兜底。
+  async function loadDrawerUser(knownUser) {
     const av = $('drawer-avatar'), un = $('drawer-user-name');
     if (!av || !un) return;
-    try {
-      const r = await req('GET', '/api/me');
-      const name = r && r.user ? String(r.user) : '';
-      if (!name) return; // 未登录态(理论上不会出现,401 已自动跳登录页)
-      av.textContent = userInitials(name);
-      av.style.background = avatarColor(name);
-      un.textContent = name;
-    } catch (_) { /* 未启用认证时无 /api/me,保留默认占位 */ }
+    let name = knownUser ? String(knownUser) : '';
+    if (!name) {
+      try {
+        const r = await req('GET', '/api/me');
+        name = r && r.user ? String(r.user) : '';
+      } catch (_) { return; /* 未启用认证时无 /api/me,保留默认占位 */ }
+    }
+    if (!name) return; // 未登录态(理论上不会出现,401 已自动跳登录页)
+    av.textContent = userInitials(name);
+    av.style.background = avatarColor(name);
+    un.textContent = name;
   }
   function userCardHtml(me) {
     return '<div class="settings-card user-card">' +
@@ -3988,6 +3992,7 @@
   drawerMQ.addEventListener('change', e => openDrawer(e.matches));
   // 页面加载时校验 cookie 身份：防止 localStorage 旧 token 通过 autoRestore 恢复错误用户
   (async () => {
+    let verifiedUser = null; // 校验结果顺带复用给侧边栏，避免同一次加载请求两次 /api/me
     try {
       const res = await fetch('/api/me', { credentials: 'include' });
       if (res.ok) {
@@ -3999,10 +4004,11 @@
           location.href = '/logout';
           return;
         }
+        verifiedUser = String(j.user);
       }
     } catch (_) { /* 网络错误放过，让后续请求正常走 */ }
     loadSessionList();
-    loadDrawerUser(); // 侧边栏底部展示真实登录用户(未启用认证时静默回退默认占位)
+    loadDrawerUser(verifiedUser); // 侧边栏底部展示真实登录用户(未启用认证/拉取失败时静默回退默认占位)
   })();
   </script>
 </body>
