@@ -2571,7 +2571,10 @@
       const dx = t.clientX - g.x0, dy = t.clientY - g.y0;
       if (!g.horiz) {
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;      // 方向未定,等待
-        if (dy > dx || dx < 0) { g.cancelled = true; return; } // 纵向滚动或向左,放弃
+        // 纵向主导或向左：放弃接管。必须用绝对值比较：手指上滑时 dy 为负，
+        // 若用有符号的 dy > dx 判断，上滑+哪怕几像素的右偏（很常见的斜向拖动）
+        // 会被误判成横向手势并 preventDefault，导致左缘区域向上滚动被接管卡死。
+        if (dx <= 0 || Math.abs(dy) >= Math.abs(dx)) { g.cancelled = true; return; }
         g.horiz = true;
       }
       e.preventDefault(); // 手势归属抽屉:阻止页面滚动/系统返回
