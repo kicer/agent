@@ -485,7 +485,10 @@
         pendingSummary: false,      // 是否在等待「压缩」总结 AI 回复（避免重复弹窗；同时用于按钮 disabled 防重入）
         pendingSummaryMode: null,   // pendingSummary 期间记录用户选的模式：'generate_only' 或 'compress_and_clear'
         lastAssistantMsgId: null,   // 最近处理过的 SSE assistant_message id：重复 id 直接丢，防重渲染（补「2 遍」问题）
-      };
+    chatHasMore: false,           // 当前会话是否还有更早的历史未加载（消息懒加载分页）
+    chatOldestId: null,           // 已加载最早一条消息的行 id（拉更早页的 before 游标）
+    chatLoadedCount: 0,           // 已加载消息条数（重拉详情时按同量分页，避免退回全量渲染）
+  };
 
   // ---------- 视图切换 ----------
   function setView(view) {
@@ -760,6 +763,35 @@
     return null; // tool 结果不单独展示
   }
 
+  // 把一段消息渲染进目标容器（全量渲染时传 chat-view；懒加载更早页时传离屏 div 再前插进盒子）。
+  // tool 行由后端过滤不返回，工具卡内容展开时由 hookToolCardLazyLoad 按 tool_call_msg_ids 拉取。
+  // 返回 closeArc：若目标是分页前插且页尾存档段还要与现有顶部合并，调用方可不调它（不补「已存档」尾注）。
+  function appendMessagesDom(messages, target) {
+    // 存档段（type='archived'，「仅摘要」时摘要之前的旧历史）：连成一截淡色容器，
+    // 段尾插一条「已存档、不再发给 AI」说明，紧接摘要卡片，一眼能看出上下文从哪里算起。
+    let arcWrap = null;
+    const closeArc = () => {
+      if (!arcWrap) return;
+      arcWrap.insertAdjacentHTML('beforeend',
+        '<div class="archived-note">以上消息已存档，不再发送给 AI；后续对话从摘要开始</div>');
+      arcWrap = null;
+    };
+    for (const m of messages || []) {
+      let t = target;
+      if (m.type === 'archived') {
+        if (!arcWrap) { arcWrap = document.createElement('div'); arcWrap.className = 'msg-archived'; target.appendChild(arcWrap); }
+        t = arcWrap;
+      } else {
+        closeArc();
+      }
+      const node = msgNode(m);
+      if (node) t.insertAdjacentHTML('beforeend', node);
+      if (m.role === 'assistant' && m.tool_call_msg_ids) Object.assign(state.toolCallMsgIds, m.tool_call_msg_ids);
+      if (m.role === 'assistant') appendToolCardsFromAssistant(m, t);
+    }
+    return { closeArc };
+  }
+
   function renderDetail(detail) {
     const s = detail.session;
     state.sessionTitle = (s && s.title) || '';
@@ -773,36 +805,60 @@
     updatePhaseBar({ model_id: s && s.model_id, queue_pos: detail.queue_pos });
     const box = $('chat-view');
     box.innerHTML = '';
-    // 存档段（type='archived'，「仅摘要」时摘要之前的旧历史）：连成一截淡色容器，
-    // 段尾插一条「已存档、不再发给 AI」说明，紧接摘要卡片，一眼能看出上下文从哪里算起。
-    let arcWrap = null;
-    const closeArc = () => {
-      if (!arcWrap) return;
-      arcWrap.insertAdjacentHTML('beforeend',
-        '<div class="archived-note">以上消息已存档，不再发送给 AI；后续对话从摘要开始</div>');
-      arcWrap = null;
-    };
-    for (const m of detail.messages || []) {
-      let target = box;
-      if (m.type === 'archived') {
-        if (!arcWrap) { arcWrap = document.createElement('div'); arcWrap.className = 'msg-archived'; box.appendChild(arcWrap); }
-        target = arcWrap;
-      } else {
-        closeArc();
-      }
-      const node = msgNode(m);
-      if (node) target.insertAdjacentHTML('beforeend', node);
-      if (m.role === 'assistant' && m.tool_call_msg_ids) Object.assign(state.toolCallMsgIds, m.tool_call_msg_ids);
-      if (m.role === 'assistant') appendToolCardsFromAssistant(m, target);
-      else if (m.role === 'tool' && m.tool_call_id) fillToolResult(m.tool_call_id, m.content, !!m.is_error, undefined, m.id);
-    }
-    closeArc();
+    appendMessagesDom(detail.messages || [], box).closeArc();
     if (!(detail.messages || []).length) {
       box.innerHTML = '<div class="drawer-empty">描述你的需求，AI 会和你讨论并直接干活。</div>';
     }
+    state.chatHasMore = !!detail.has_more;
+    state.chatOldestId = detail.oldest_id || null;
+    state.chatLoadedCount = (detail.messages || []).length;
     hookToolCardLazyLoad();
     scrollBottom();
     updateScrollBottomBtn();
+  }
+
+  // ---------- 历史懒加载：开会话只拉最近 CHAT_PAGE_SIZE 条，上滑接近顶部时再逐页补更早的 ----------
+  const CHAT_PAGE_SIZE = 30;   // 每页非 tool 消息数
+  const CHAT_TOP_TRIGGER = 100; // 距顶不足此像素时触发拉更早页
+  let chatLoadingMore = false;  // 防重入（滚动事件高频触发）
+  async function loadOlderMessages() {
+    if (chatLoadingMore || state.view !== 'chat' || !state.sessionId || !state.chatHasMore) return;
+    chatLoadingMore = true;
+    const id = state.sessionId;
+    const box = $('chat-view');
+    try {
+      const detail = await req('GET', '/api/sessions/' + id + '?limit=' + CHAT_PAGE_SIZE + '&before=' + (state.chatOldestId || 0));
+      if (state.sessionId !== id || state.view !== 'chat') return; // 请求期间已切会话/视图，丢弃
+      const frag = document.createElement('div'); // 离屏容器（DocumentFragment 不支持 insertAdjacentHTML）
+      const { closeArc } = appendMessagesDom(detail.messages || [], frag);
+      // 存档段跨页合并：存档块总是从历史最开头连排到摘要前，只可能碰盒子顶部；
+      // 本页尾部是未收尾的存档容器且现有顶部也是存档容器时，子节点并进现有容器（不重复加尾注）
+      const firstArc = box.firstElementChild && box.firstElementChild.classList.contains('msg-archived') ? box.firstElementChild : null;
+      const tail = frag.lastChild;
+      if (firstArc && tail && tail.classList && tail.classList.contains('msg-archived') && !tail.querySelector('.archived-note')) {
+        while (tail.firstChild) firstArc.insertBefore(tail.firstChild, firstArc.firstChild);
+        frag.removeChild(tail);
+      } else {
+        closeArc(); // 本页以存档段结尾且不与现有存档段相连：补「已存档」尾注
+      }
+      // 前插保持视口锚定：新 scrollTop = 旧 scrollTop + 新增高度
+      const prevH = box.scrollHeight;
+      const prevTop = box.scrollTop;
+      while (frag.firstChild) box.insertBefore(frag.firstChild, box.firstChild);
+      box.scrollTop = box.scrollHeight - prevH + prevTop;
+      state.chatHasMore = !!detail.has_more;
+      if (detail.oldest_id) state.chatOldestId = detail.oldest_id;
+      state.chatLoadedCount += (detail.messages || []).length;
+      // 旧页太短导致补完后仍贴在触发区：继续拉下一页，避免卡在顶部要再动一下才加载
+      if (box.scrollTop <= CHAT_TOP_TRIGGER && state.chatHasMore) {
+        chatLoadingMore = false;
+        loadOlderMessages();
+      }
+    } catch (e) {
+      if (state.sessionId === id) toast('加载更早消息失败:' + e.message);
+    } finally {
+      chatLoadingMore = false;
+    }
   }
 
   function appendUserMsg(content, fileNames, msgId) {
@@ -876,6 +932,7 @@
       // 程序触发的 scrollBottom 总是精确落底,isNearBottom() 恒为 true,不会误标记。
       userPaused = !isNearBottom();
       updateScrollBottomBtn();
+      if (box.scrollTop <= CHAT_TOP_TRIGGER) loadOlderMessages(); // 上滑接近顶部 → 懒加载更早历史
     }, { passive: true });
   }
 
@@ -1006,12 +1063,15 @@
     state.streaming = false;
     state.attachments = [];
     userPaused = false;
+    state.chatHasMore = false; // 分页状态先复位：防详情返回前用旧会话的游标/标志拉到错会话的消息
+    state.chatOldestId = null;
+    state.chatLoadedCount = 0;
     renderAttachChips();
     renderDrawerList(); // 会话切换后立刻重画抽屉高亮,避免下次打开才看到更新
     setView('chat');
     $('chat-view').innerHTML = '<div class="drawer-empty">加载中…</div>';
     try {
-      const detail = await req('GET', '/api/sessions/' + id);
+      const detail = await req('GET', '/api/sessions/' + id + '?limit=' + CHAT_PAGE_SIZE);
       if (state.sessionId !== id) return; // 期间已切到别的会话
       renderDetail(detail);
       connectStream();
@@ -1201,9 +1261,9 @@
       await req('POST', '/api/sessions/' + id + '/bind', { model_id: modelId });
       toast('已绑定模型 ' + modelId);
     } catch (e) { toast('绑定失败:' + e.message); }
-    // 无论成败都刷新会话详情(失败多为并发占用,状态可能已变)
+    // 无论成败都刷新会话详情(失败多为并发占用,状态可能已变);按已加载量分页重渲染，避免长会话退回全量重建
     try {
-      const detail = await req('GET', '/api/sessions/' + id);
+      const detail = await req('GET', '/api/sessions/' + id + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount));
       if (state.sessionId === id) { renderDetail(detail); connectStream(); }
       loadSessionList();
     } catch (_) {}
@@ -1650,7 +1710,8 @@
     try {
       await req('DELETE', '/api/sessions/' + state.sessionId + '/messages/' + msgId);
       toast('已删除');
-      const detail = await req('GET', '/api/sessions/' + state.sessionId);
+      // 按已加载量分页重拉（长会话删一条不该退回全量重建）
+      const detail = await req('GET', '/api/sessions/' + state.sessionId + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount));
       if (state.view === 'chat') renderDetail(detail);
     } catch (err) {
       toast('删除失败:' + err.message);
@@ -2050,7 +2111,7 @@
       (under.length > 0 && under.every(isFileEffectivelySelected));
     const indent = filesIndent(depth) + (isRoot ? 24 : 0);
     return '<div class="file-dir' + (collapsed ? ' collapsed' : '') + '" data-dir="' + esc(node.path) + '">' +
-      '<div class="file-dir-head" role="button" aria-expanded="' + (collapsed ? 'false' : 'true') + '" style="padding-left:' + indent + 'px">' +
+      '<div class="file-dir-head" role="button" aria-expanded="' + (collapsed ? 'false' : 'true') + '">' +
         (isRoot ? '' : '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"></span>') +
         '<svg class="file-dir-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
         '<svg class="file-dir-ico" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>' +

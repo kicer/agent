@@ -135,40 +135,62 @@ router.get('/', wrap((req, res) => {
   res.json(rows);
 }));
 
+// assistant 消息附加 tool_call_msg_ids（tool_call.id → tool 消息行 id，让前端展开工具卡时知道去拉哪条消息）
+function attachToolCallMap(row, toolCallMsgMap) {
+  if (row.role === 'assistant' && row.tool_calls) {
+    let toolCalls;
+    try { toolCalls = JSON.parse(row.tool_calls); } catch (_) { toolCalls = []; }
+    const tool_call_msg_ids = {};
+    for (const tc of toolCalls) {
+      if (tc && tc.id && toolCallMsgMap[tc.id]) {
+        tool_call_msg_ids[tc.id] = toolCallMsgMap[tc.id];
+      }
+    }
+    row.tool_call_msg_ids = Object.keys(tool_call_msg_ids).length ? tool_call_msg_ids : undefined;
+  }
+  return row;
+}
+
+const MSG_COLS = 'id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, created_at';
+
 router.get('/:id', wrap((req, res) => {
   const session = engine.getSession(req.params.id);
   if (!session) return sendErr(res, Object.assign(new Error('会话不存在'), { status_code: 404 }));
   const db = engine.getDb();
-  // 查询所有消息，tool 消息用于建立 tool_call_id → message_id 映射，但不随消息返回
-  const allRows = db.prepare(
-    'SELECT id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, created_at FROM messages WHERE session_id = ? ORDER BY id'
-  ).all(session.id);
 
-  // 建立 tool_call_id → message_id 映射（供 assistant 消息的 tool_calls 展开时懒加载用）
-  const toolCallMsgMap = {}; // tool_call_id → message id
-  for (const row of allRows) {
-    if (row.role === 'tool' && row.tool_call_id) {
-      toolCallMsgMap[row.tool_call_id] = row.id;
-    }
-  }
+  // tool_call_id → tool 消息行 id 映射：单独轻查询（只取 id），不随分页窗口截断，
+  // 保证分页边界处的 assistant 消息也能拿到自己 tool 行的懒加载映射
+  const toolCallMsgMap = {};
+  for (const r of db.prepare(
+    "SELECT id, tool_call_id FROM messages WHERE session_id = ? AND role = 'tool' AND tool_call_id IS NOT NULL AND tool_call_id != ''"
+  ).all(session.id)) toolCallMsgMap[r.tool_call_id] = r.id;
 
-  // 过滤掉 tool 消息，但为 assistant 消息附带 tool_call 懒加载映射
-  const messages = [];
-  for (const row of allRows) {
-    if (row.role === 'tool') continue;
-    // assistant 消息附加 tool_call_msg_ids（让前端知道展开时去拉哪条消息）
-    if (row.role === 'assistant' && row.tool_calls) {
-      let toolCalls;
-      try { toolCalls = JSON.parse(row.tool_calls); } catch (_) { toolCalls = []; }
-      const tool_call_msg_ids = {};
-      for (const tc of toolCalls) {
-        if (tc && tc.id && toolCallMsgMap[tc.id]) {
-          tool_call_msg_ids[tc.id] = toolCallMsgMap[tc.id];
-        }
-      }
-      row.tool_call_msg_ids = Object.keys(tool_call_msg_ids).length ? tool_call_msg_ids : undefined;
+  // 历史懒加载：传 limit 只返回最近 limit 条非 tool 消息（tool 不单独展示，不计入），
+  // before 为行 id 游标（取 id < before 的更早一页）；多取一条判断是否还有更早历史。
+  // 不传 limit 保持旧行为：返回全部消息。
+  let limit = parseInt(req.query.limit, 10);
+  limit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 0;
+  let hasMore = false;
+  let messages = [];
+  if (limit) {
+    const before = parseInt(req.query.before, 10);
+    const args = [session.id];
+    let sql = 'SELECT ' + MSG_COLS + " FROM messages WHERE session_id = ? AND role != 'tool'";
+    if (Number.isFinite(before) && before > 0) { sql += ' AND id < ?'; args.push(before); }
+    args.push(limit + 1);
+    let rows = db.prepare(sql + ' ORDER BY id DESC LIMIT ?').all.apply(null, args);
+    hasMore = rows.length > limit;
+    if (hasMore) rows = rows.slice(0, limit);
+    rows.reverse(); // 还原时间升序
+    messages = rows.map(r => attachToolCallMap(r, toolCallMsgMap));
+  } else {
+    const allRows = db.prepare(
+      'SELECT ' + MSG_COLS + ' FROM messages WHERE session_id = ? ORDER BY id'
+    ).all(session.id);
+    for (const row of allRows) {
+      if (row.role === 'tool') continue; // tool 结果不单独展示，由映射懒加载
+      messages.push(attachToolCallMap(row, toolCallMsgMap));
     }
-    messages.push(row);
   }
 
   const taskDir = engine.taskDirOf(session.id);
@@ -178,6 +200,8 @@ router.get('/:id', wrap((req, res) => {
     files: listTaskFiles(taskDir),
     queue_pos: session.status === 'queued' ? engine.queuePosition(session.id) : null,
     running: !!(engine.getRun(session.id) || {}).looping,
+    has_more: hasMore, // 分页模式下：是否还有更早的历史
+    oldest_id: messages.length ? messages[0].id : null, // 本页最早行 id，作为下一页 before 游标
   });
 }));
 
