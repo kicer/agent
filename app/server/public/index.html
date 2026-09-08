@@ -1965,14 +1965,14 @@
 
   // ---------- 目录分组：后端返回扁平列表(路径可含子目录)，前端组树渲染 ----------
   // 规则：每一级都是目录在上、文件在下；同级目录按名称排序，同级文件按时间倒序(新的在前)。
-  // 顶层包一个虚拟的「/」根目录(depth 0)：默认只展开顶层下面的一级目录，二级及以下默认收起，
-  // 用户点开某目录时也只露出它的直接子项，不自动展开其下所有文件。
+  // 顶层包一个虚拟的「/」根目录(depth 0)：默认只展开根目录本身，即只显示工作目录下的直接子项(一级目录/文件)，
+  // 所有子目录一律收起，用户点到哪一层才展开那一层，不自动展开其下所有文件。
   // filesDirOpen 记住用户手动展开/折叠过的目录(路径 → 是否展开；'' 为顶层「/」)，上传/删除重渲染后仍生效。
   const filesDirOpen = new Map();
   function isDirCollapsed(path, depth) {
     const ov = filesDirOpen.get(path);
     if (ov !== undefined) return !ov;
-    return depth > 1; // depth:0=顶层「/」,1=一级目录(均默认展开),更深默认收起
+    return depth > 0; // 只有顶层「/」默认展开，其下所有目录默认收起
   }
 
   function fileTimeOf(f) { return f.ctime || f.mtime || 0; }
@@ -2038,7 +2038,8 @@
 
   // 目录头带勾选框：整个文件夹作为一个选中项（下载时后端打包成 zip）；点其余区域仍为折叠/展开。
   // dirSel 为真时子孙目录/文件跟随父目录显示选中态。
-  // 顶层「/」为虚拟节点不提供整体勾选（勾选框仅占位隐藏），且已有底部全选按钮覆盖该语义。
+  // 顶层「/」是虚拟节点，不渲染勾选框（不可整体选中，全选语义由底部全选按钮承担），
+  // 并补回勾选框占位宽度(16px + 8px gap)保持与子级的缩进节奏。
   function dirNodeHtml(node, depth, dirSel) {
     const dirs = sortDirsByName(Array.from(node.dirs.values()));
     sortFilesByTime(node.files);
@@ -2047,10 +2048,10 @@
     const under = filesUnderDir(node);
     const checked = !!dirSel || fileSelected.has(dirSelKey(node.path)) ||
       (under.length > 0 && under.every(isFileEffectivelySelected));
+    const indent = filesIndent(depth) + (isRoot ? 24 : 0);
     return '<div class="file-dir' + (collapsed ? ' collapsed' : '') + '" data-dir="' + esc(node.path) + '">' +
-      '<div class="file-dir-head" role="button" aria-expanded="' + (collapsed ? 'false' : 'true') + '" style="padding-left:' + filesIndent(depth) + 'px">' +
-        '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"' +
-          (isRoot ? ' style="visibility:hidden" aria-hidden="true"' : '') + '></span>' +
+      '<div class="file-dir-head" role="button" aria-expanded="' + (collapsed ? 'false' : 'true') + '" style="padding-left:' + indent + 'px">' +
+        (isRoot ? '' : '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"></span>') +
         '<svg class="file-dir-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
         '<svg class="file-dir-ico" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>' +
         '<span class="file-dir-name">' + esc(node.name || '/') + '</span>' +
