@@ -827,6 +827,7 @@
   async function loadOlderMessages() {
     if (chatLoadingMore || state.view !== 'chat' || !state.sessionId || !state.chatHasMore) return;
     chatLoadingMore = true;
+    toast('正在加载更早消息...'); // 轻提示：拉取期间可见，toast 复用同一元素不会叠加
     const id = state.sessionId;
     const box = $('chat-view');
     try {
@@ -852,6 +853,7 @@
       state.chatHasMore = !!detail.has_more;
       if (detail.oldest_id) state.chatOldestId = detail.oldest_id;
       state.chatLoadedCount += (detail.messages || []).length;
+      if (!state.chatHasMore) toast('已加载全部历史消息'); // 翻到最早一页时把进行中提示换成终点提示
       // 旧页太短导致补完后仍贴在触发区：继续拉下一页，避免卡在顶部要再动一下才加载
       if (box.scrollTop <= CHAT_TOP_TRIGGER && state.chatHasMore) {
         chatLoadingMore = false;
