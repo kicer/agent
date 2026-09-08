@@ -815,10 +815,13 @@
     hookToolCardLazyLoad();
     scrollBottom();
     updateScrollBottomBtn();
+    // 首屏条数太少撑不满滚动区时不会产生 scroll 事件，上滑永远触发不了加载：自动补一页
+    if (state.chatHasMore && box.scrollHeight <= box.clientHeight + CHAT_TOP_TRIGGER) loadOlderMessages();
   }
 
-  // ---------- 历史懒加载：开会话只拉最近 CHAT_PAGE_SIZE 条，上滑接近顶部时再逐页补更早的 ----------
-  const CHAT_PAGE_SIZE = 20;   // 每页非 tool 消息数
+  // ---------- 历史懒加载：开会话先只拉最近 CHAT_INIT_PAGE_SIZE 条，上滑接近顶部后每次再补 CHAT_PAGE_SIZE 条 ----------
+  const CHAT_INIT_PAGE_SIZE = 3;  // 打开会话首屏非 tool 消息条数
+  const CHAT_PAGE_SIZE = 10;      // 上滑到顶后每页补充条数
   const CHAT_TOP_TRIGGER = 100; // 距顶不足此像素时触发拉更早页
   let chatLoadingMore = false;  // 防重入（滚动事件高频触发）
   async function loadOlderMessages() {
@@ -1071,7 +1074,7 @@
     setView('chat');
     $('chat-view').innerHTML = '<div class="drawer-empty">加载中…</div>';
     try {
-      const detail = await req('GET', '/api/sessions/' + id + '?limit=' + CHAT_PAGE_SIZE);
+      const detail = await req('GET', '/api/sessions/' + id + '?limit=' + CHAT_INIT_PAGE_SIZE);
       if (state.sessionId !== id) return; // 期间已切到别的会话
       renderDetail(detail);
       connectStream();
