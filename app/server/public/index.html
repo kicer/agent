@@ -1817,10 +1817,23 @@
     $('files-mask').classList.toggle('show', open);
     $('attach-btn').classList.toggle('active', open);
   }
-  function toggleFilesPanel() {
+  let ensuringSessionForFiles = false; // 防止建会话请求发出前重复点击按钮导致连建两个会话
+  async function toggleFilesPanel() {
     const panel = $('files-panel');
     const open = !panel.classList.contains('open');
-    if (open && !state.sessionId) { toast('先发送一条消息创建会话,再管理任务文件'); return; }
+    if (open && !state.sessionId) {
+      // 新建会话页直接管理文件:自动建档会话再弹面板;建会话失败(如无可用模型)给出提示
+      if (ensuringSessionForFiles) return;
+      ensuringSessionForFiles = true;
+      try {
+        await ensureSession();
+      } catch (e) {
+        toast('创建会话失败:' + e.message);
+        return;
+      } finally {
+        ensuringSessionForFiles = false;
+      }
+    }
     setFilesPanel(open);
   }
   $('attach-btn').addEventListener('click', toggleFilesPanel);
