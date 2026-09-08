@@ -827,11 +827,16 @@
   async function loadOlderMessages() {
     if (chatLoadingMore || state.view !== 'chat' || !state.sessionId || !state.chatHasMore) return;
     chatLoadingMore = true;
-    toast('正在加载更早消息...'); // 轻提示：拉取期间可见，toast 复用同一元素不会叠加
     const id = state.sessionId;
     const box = $('chat-view');
+    // 消息流顶部内联轻提示（不用底部全局 toast，太重）：更早页补上后这行自动被顶掉移除
+    const tip = document.createElement('div');
+    tip.className = 'chat-load-earlier';
+    tip.textContent = '正在加载更早消息…';
+    box.insertBefore(tip, box.firstChild);
     try {
       const detail = await req('GET', '/api/sessions/' + id + '?limit=' + CHAT_PAGE_SIZE + '&before=' + (state.chatOldestId || 0));
+      tip.remove(); // 先于存档合并/锚点计算移除，提示行不参与消息流几何
       if (state.sessionId !== id || state.view !== 'chat') return; // 请求期间已切会话/视图，丢弃
       const frag = document.createElement('div'); // 离屏容器（DocumentFragment 不支持 insertAdjacentHTML）
       const { closeArc } = appendMessagesDom(detail.messages || [], frag);
@@ -845,6 +850,13 @@
       } else {
         closeArc(); // 本页以存档段结尾且不与现有存档段相连：补「已存档」尾注
       }
+      if (!detail.has_more) {
+        // 已翻到最早：在内容流最顶上留一行终点提示（切会话时随 renderDetail 清空）
+        const end = document.createElement('div');
+        end.className = 'chat-load-earlier';
+        end.textContent = '没有更早的消息了';
+        frag.insertBefore(end, frag.firstChild);
+      }
       // 前插保持视口锚定：新 scrollTop = 旧 scrollTop + 新增高度
       const prevH = box.scrollHeight;
       const prevTop = box.scrollTop;
@@ -853,15 +865,15 @@
       state.chatHasMore = !!detail.has_more;
       if (detail.oldest_id) state.chatOldestId = detail.oldest_id;
       state.chatLoadedCount += (detail.messages || []).length;
-      if (!state.chatHasMore) toast('已加载全部历史消息'); // 翻到最早一页时把进行中提示换成终点提示
       // 旧页太短导致补完后仍贴在触发区：继续拉下一页，避免卡在顶部要再动一下才加载
       if (box.scrollTop <= CHAT_TOP_TRIGGER && state.chatHasMore) {
         chatLoadingMore = false;
-        loadOlderMessages();
+        await loadOlderMessages(); // await：防重入锁由整条递归链末端统一释放，避免本层 finally 提前解锁导致重复拉同一页
       }
     } catch (e) {
       if (state.sessionId === id) toast('加载更早消息失败:' + e.message);
     } finally {
+      tip.remove(); // 失败/丢弃路径下也要收掉进行中提示（已移除时是空操作）
       chatLoadingMore = false;
     }
   }
