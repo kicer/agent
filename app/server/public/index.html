@@ -2571,11 +2571,15 @@
       const dx = t.clientX - g.x0, dy = t.clientY - g.y0;
       if (!g.horiz) {
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;      // 方向未定,等待
-        // 纵向主导或向左：放弃接管。必须用绝对值比较：手指上滑时 dy 为负，
-        // 若用有符号的 dy > dx 判断，上滑+哪怕几像素的右偏（很常见的斜向拖动）
-        // 会被误判成横向手势并 preventDefault，导致左缘区域向上滚动被接管卡死。
-        if (dx <= 0 || Math.abs(dy) >= Math.abs(dx)) { g.cancelled = true; return; }
-        g.horiz = true;
+        // 主轴判定带 6px 死区：明确右滑才接管，明确纵向/向左才放弃，模糊时继续观察。
+        // 两点教训：
+        // 1) 必须用绝对值比较——手指上滑时 dy 为负，有符号的 dy > dx 会把「上滑+几像素
+        //    右偏」误判成横向手势并 preventDefault，导致左缘向上滚动被接管卡死；
+        // 2) 拇指甩动轨迹天然带弧度，单帧 |dx| 略大不代表横向意图——一锤定音会误抢
+        //    斜向上滑动，故模糊区间不表态，等后续位移把方向差拉开再判。
+        if (dx > Math.abs(dy) + 6) g.horiz = true;                    // 明确右滑 → 接管
+        else if (dx < -6 || Math.abs(dy) > Math.abs(dx) + 6) { g.cancelled = true; return; } // 明确向左/纵向 → 放弃
+        else return;                                                   // 死区内，继续观察
       }
       e.preventDefault(); // 手势归属抽屉:阻止页面滚动/系统返回
       const w = drawer.offsetWidth || 300;
