@@ -292,7 +292,7 @@ stateDiagram-v2
   - `POST /api/login_restore`（Authorization: Bearer）→ 验签 + 重新签发。
   - `POST /api/password`（认证中）→ 校验 + 改写 config.yml（保留注释 + 校验失败不动文件） + 内存同步生效。
   - `POST /api/logout` / `GET /logout`。
-- 中间件：cookie 或 Authorization: Basic 任一通过；公开路径白名单（`/login`, `/api/login` 等）+ 签名下载链接（`?t=...`）放行；其余 API 401、页面重定向 `/login`。
+- 中间件：cookie 或 Authorization: Basic 任一通过（**cookie 优先**，见 §14.16；`/api/me` 与中间件同一解析顺序，保证显示身份 = 数据身份）；公开路径白名单（`/login`, `/api/login` 等）+ 签名下载链接（`?t=...`）放行；其余 API 401、页面重定向 `/login`。
 - `req.user` 在中间件通过后挂上，**业务路由不要信客户端传的 user/body 里的 user**。
 
 ### 5.8 `config.js` —— 配置加载与读写
@@ -509,7 +509,7 @@ sequenceDiagram
     A->>A: timingEqual(密码)
     A-->>U: 200 Set-Cookie: agent_token=<HMAC>+ JSON {user, token}
     Note over U: localStorage 存 token（APK 兜底）
-    U->>M: GET /api/* (Cookie 或 Authorization: Bearer)
+    U->>M: GET /api/* (Cookie；curl/脚本用 Authorization: Basic)
     M->>M: parseCookie / readToken / timingSafeEqual
     M->>M: req.user = username
     M-->>U: 业务路由
@@ -643,6 +643,7 @@ sequenceDiagram
 13. **模型 tool_calls 不带 id** —— `runLoopInner` 兜底补 `'call_' + 随机串`（与 `tool_call_id` 落库一致，`buildMessages` 按 id 配对丢弃 errAck 关联回执）。
 14. **编辑 SKILL.md 不会立即生效** —— 不需要重启，但需要 `routes/skills.js` 的 `refreshSkillPrompt()` 异步重建 system prompt 段落（fire-and-forget，扫描失败不影响 API 响应）。
 15. **`pids_limit` 与 `ulimit` 区别** —— 前者是 cgroup pids 控制器算整个容器的进程+线程；后者是 per-process `RLIMIT_FSIZE` 等。被杀时 OOM kill vs SIGXFSZ 行为不同。
+16. **浏览器内双凭据身份分裂** —— 前端 `req()` 曾附加 sessionStorage 里的 Basic 头兜底 cookie，但 sessionStorage 按标签页隔离、刷新后残留（新标签页不继承，复制标签页则继承），cookie 是浏览器全局：A/B 切号登录后刷新旧标签页，会出现 `/api/me`（读 cookie）是 A、会话列表（Basic 优先于 cookie）是 B 的不一致，SSE（EventSource 只能带 cookie）又跟着 A。现已统一：浏览器身份只认 cookie（`req()` 不带 Basic 头，登录页不再存明文口令），服务端 `authUser` 也是 cookie 优先；Basic 仅供 curl/脚本无 cookie 时使用。
 
 ---
 

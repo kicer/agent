@@ -120,6 +120,15 @@ function createAuth(cfg) {
     return null;
   }
 
+  // 统一身份解析：cookie 优先于 Authorization: Basic。
+  // cookie 是浏览器全局的（切号登录立即覆盖、SSE 导航下载都带它），而 Basic 头可能来自
+  // 旧标签页残留的 sessionStorage 凭据——两者取用时若 Basic 优先，会出现 /api/me（读 cookie）
+  // 与业务路由（读 Basic）身份分裂。统一 cookie 优先保证同一浏览器内所有请求认定同一用户，
+  // Basic 仅作为无 cookie 场景（curl / API 脚本）的兜底。
+  function authUser(req) {
+    return sessionUser(req) || basicAuthUser(req, users);
+  }
+
   // ----- 登录/登出 API -----
   router.post('/api/login', (req, res) => {
     const { user, password } = req.body || {};
@@ -188,7 +197,8 @@ function createAuth(cfg) {
   });
 
   router.get('/api/me', (req, res) => {
-    res.json({ user: sessionUser(req) });
+    // 与中间件同一解析顺序（cookie 优先），保证 /api/me 显示的用户与业务路由认定的用户一致
+    res.json({ user: authUser(req) });
   });
 
   // ----- 登录页 / 登出跳转 -----
@@ -205,8 +215,7 @@ function createAuth(cfg) {
 
   // ----- 全局认证中间件：cookie 或 Basic 任一通过；否则 API 回 401、页面跳登录页 -----
   const middleware = (req, res, next) => {
-    const fromBasic = basicAuthUser(req, users);
-    const user = fromBasic || sessionUser(req);
+    const user = authUser(req);
     if (user) { req.user = user; return next(); }
     if (isPublicPath(req.path) || isSignedDownload(req)) return next();
     if (req.path.startsWith('/api/')) return res.status(401).json({ error: '未登录' });

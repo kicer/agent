@@ -427,9 +427,9 @@
   // ---------- API(与 core.js 的 req 保持一致) ----------
   async function req(method, url, body, isForm) {
     const opt = { method, headers: {} };
-    // 从 sessionStorage 取登录凭据，自动加 Basic auth 头，确保 cookie 残留时认证也不出错
-    const creds = sessionStorage.getItem('agent_creds');
-    if (creds) opt.headers['Authorization'] = 'Basic ' + creds;
+    // 浏览器身份只认 HttpOnly cookie：服务端所有路由（含 /api/me、SSE）统一按 cookie 认定用户。
+    // 不要在此附加 sessionStorage 里的 Basic 头——sessionStorage 按标签页隔离、刷新后残留，
+    // 而 cookie 是浏览器全局的；两者并用会在多用户切号后出现 /api/me 是 A、列表数据是 B 的分裂。
     if (body && !isForm) {
       opt.headers['Content-Type'] = 'application/json';
       opt.body = JSON.stringify(body);
@@ -3936,7 +3936,7 @@
     // 账户
     changePassword: changePassword,
     logout: async function () {
-      sessionStorage.removeItem('agent_creds'); // 清 Basic auth 凭据
+      sessionStorage.removeItem('agent_creds'); // 旧版本遗留的 Basic 凭据，顺带清理
       localStorage.removeItem('agent_token');  // 清 autoRestore token，防止自动恢复旧用户
       try { await fetch('/api/logout', { method: 'POST' }); } catch (_) {}
       location.href = '/logout';
@@ -3987,16 +3987,15 @@
   openDrawer(drawerMQ.matches); // 桌面端:侧边栏默认展开;跨断点缩放窗口时同步切换开合态
   drawerMQ.addEventListener('change', e => openDrawer(e.matches));
   // 页面加载时校验 cookie 身份：防止 localStorage 旧 token 通过 autoRestore 恢复错误用户
-  // 仅用 cookie 认证（不带 Basic auth），检测服务端实际认定的用户身份
   (async () => {
     try {
-      const res = await fetch('/api/me', { credentials: 'include', headers: { Authorization: '' } });
+      const res = await fetch('/api/me', { credentials: 'include' });
       if (res.ok) {
         const j = await res.json();
         if (!j.user) {
           // cookie 无效或用户已从配置中移除 → 彻底清理所有前端凭据并跳登录
           localStorage.removeItem('agent_token');
-          sessionStorage.removeItem('agent_creds');
+          sessionStorage.removeItem('agent_creds'); // 旧版本遗留的 Basic 凭据，顺带清理
           location.href = '/logout';
           return;
         }

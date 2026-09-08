@@ -96,10 +96,9 @@
         }
         const j = await res.json().catch(() => ({}));
         if (j && j.token) {
+          // 仅存签名 token 供 WebView 场景 login_restore 恢复；
+          // 不再往 sessionStorage 写明文口令——Basic 头与 cookie 作用域不同，会引发多标签页身份分裂
           localStorage.setItem(TOKEN_KEY, j.token);
-          // 持久化凭据供 req() 使用 Basic auth，避免 cookie 残留导致切换用户后认证错乱
-          const creds = btoa(encodeURIComponent((document.getElementById('login-user').value || '') + ':' + (document.getElementById('login-pass').value || '')));
-          sessionStorage.setItem('agent_creds', creds);
         }
         location.replace('/'); // 替换而非压栈：历史里不留 /login 条目，登录后侧滑不会退回登录页
       } catch (e2) {
