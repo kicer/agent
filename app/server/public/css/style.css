@@ -13,7 +13,12 @@
   --radius-lg: 24px;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { height: 100%; }
+/* 整站是视口锁定的 app shell:文档本身永不滚动,滚动只发生在内部容器
+   (消息流 #chat-view / 抽屉列表 .drawer-list / 设置页 .set-scroll,均已 overflow-y:auto)。
+   不写 overflow:hidden 时,桌面端只要有一行内容没收缩下(nowrap 胶囊/代码块/宽表格),
+   浏览器就给窗口加横向滚动条;横向条又吃掉一屏高度,而 #app 死守 height:100%,
+   于是竖横向滚动条一起出现、缩窗口页面不动。 */
+html, body { height: 100%; overflow: hidden; }
 body {
   font-family: "PingFang SC", -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Microsoft YaHei", sans-serif;
   color: var(--ink);
@@ -82,7 +87,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ---------- 未对话状态:模式选择 ---------- */
 #welcome-view {
-  flex: 1; overflow-y: auto;
+  flex: 1; overflow-y: auto; overflow-x: hidden;
   display: flex; flex-direction: column; align-items: center;
   padding: max(48px, 10vh) 24px 24px;
 }
@@ -123,7 +128,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .mode-hint { margin-top: 14px; font-size: 13px; color: var(--gray); min-height: 20px; text-align: center; }
 
 /* ---------- 对话状态:对话内容区 ---------- */
-#chat-view { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 16px 8px; }
+/* overflow-x 显式 hidden:overflow-y:auto 会把 visible 的 overflow-x 计算成 auto,
+   宽代码块/表格自带横向滚动,不该再让消息流整体横向溢出 */
+#chat-view { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 16px 16px 8px; }
 .msg { display: flex; flex-direction: column; margin-bottom: 18px; max-width: 100%; }
 .msg.me { align-items: flex-end; }
 .msg.other { align-items: flex-start; }
@@ -821,7 +828,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .header-right .icon-btn:active, .header-right label.icon-btn:active { background: var(--surface); }
 label.icon-btn { cursor: pointer; }
 #set-body { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; }
-.set-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px calc(16px + env(safe-area-inset-bottom, 0px)); }
+.set-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 12px calc(16px + env(safe-area-inset-bottom, 0px)); }
 .empty-tip { color: var(--gray-light); text-align: center; padding: 18px; font-size: 13px; }
 
 /* ---------- 设置主页卡片 ---------- */
@@ -1101,9 +1108,16 @@ label.icon-btn { cursor: pointer; }
 @media (min-width: 960px) {
   :root { --sidebar-w: 280px; }
 
-  /* 会话区占满侧栏右侧;折叠时占满整个窗口 */
-  #app { max-width: none; margin-left: var(--sidebar-w); transition: margin-left .25s ease; }
-  body:not(.drawer-open) #app { margin-left: 0; }
+  /* 会话区占满侧栏右侧;折叠时占满整个窗口。
+     宽度显式算出来(calc(100% - 侧栏)),不靠 max-width/margin auto 推导,
+     保证窗口任意缩放都实时跟着缩,内容不会被顶出视口。 */
+  #app {
+    max-width: none;
+    width: calc(100% - var(--sidebar-w));
+    margin: 0 0 0 var(--sidebar-w);
+    transition: width .25s ease, margin-left .25s ease;
+  }
+  body:not(.drawer-open) #app { width: 100%; margin-left: 0; }
 
   /* 侧边栏:常驻左列,轻边框与页面区隔 */
   #drawer { width: var(--sidebar-w); box-shadow: none; border-right: 1px solid var(--border); }
