@@ -277,10 +277,10 @@ function dispatchQueued() {
     if (!session || session.status !== 'queued') continue;
     // 上面已确认有空闲模型，pickModelFor 必能回退到 freeModel；
     // 无待回应消息的会话（如新建后从未发言）只预留不占跑，绑成 held 等首条消息。
-    // 待开跑的压缩回合（内存 run.summaryMode，见 summarizeContext）也算待处理：
+    // 待开跑的压缩回合（内存 run.summarizing，见 summarizeContext）也算待处理：
     // 它没有对应的用户消息行，hasPendingUser 判不到，需单独纳入。
     const run0 = runs.get(session.id);
-    const pending = hasPendingUser(session.id) || !!(run0 && run0.summaryMode);
+    const pending = hasPendingUser(session.id) || !!(run0 && run0.summarizing);
     bindModel(session, pickModelFor(session), pending ? 'active' : 'held');
     emitStatus(session.id);
     if (pending) runLoop(session.id);
@@ -432,10 +432,10 @@ async function runLoopInner(sessionId, run) {
     if (!session || session.status !== 'active' || !session.model_id) break;
     session.history = loadHistoryForModel(sessionId);
     for (const m of session.history) if (m.id > lastIncludedId) lastIncludedId = m.id;
-    // 压缩回合（run.summaryMode 非空 = 由「压缩」按钮发起、尚未产出摘要）：
+    // 压缩回合（run.summarizing = 由「压缩」按钮发起、尚未产出摘要）：
     // 只发一条 system（压缩模板，{{conversation}} 占位符已填入完整历史纯文本）
     // + 一句触发 user，历史不再以 messages 重复占 token；且不传 tools，模型只能输出摘要文本。
-    const compressing = !!run.summaryMode;
+    const compressing = !!run.summarizing;
     const messages = compressing
       ? [{ role: 'system', content: compressPromptText(historyTranscript(session)) },
         { role: 'user', content: '请按以上要求输出「上下文摘要」。' }]
@@ -504,26 +504,22 @@ async function runLoopInner(sessionId, run) {
         if (isErrAck) log.info('msg', sessionId + ' 本轮 tool call 参数错误，assistant 标记 errAck（不再进入模型上下文）');
         recordModelUsage(sessionId, session.model_id, result.usage);
         // 「压缩」回合的总结判定：压缩时不传 tools，因此本回合第一条「无 tool_calls 的收尾回复」
-        // 就是摘要（compressing 取自本回合的 run.summaryMode 标记）；回合中间若有异常产生的
+        // 就是摘要（compressing 取自本回合的 run.summarizing 标记）；回合中间若有异常产生的
         // 工具轮（理论上不会）都是普通消息，前端照常渲染。
-        // 该标志传到前端后，前端按用户在弹窗选的模式走后续。mode 从发起请求时记录在 run 上的 summaryMode 取（不入库）。
         const isSummary = !hasTools && compressing;
         bus.emit(sessionId, 'assistant_message', {
               id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning,
               tool_calls: msgRow.tool_calls, type: msgRow.type, created_at: msgRow.created_at,
               is_summary: isSummary,
-              mode: isSummary ? (run.summaryMode || null) : null,
             });
             if (isSummary) {
-              // 摘要落地：不管哪种模式，这条收尾答复都在库里标成 type='summary'
+              // 摘要落地：这条收尾答复在库里标成 type='summary'
               //（前端重渲染成摘要卡片；也是模型上下文的起点），并把之前的消息存档：
               //   type='archived' 行 UI 照常展示，但 buildMessages 不再发给模型——
               //   后续对话从这条摘要开始，旧历史不再烧 token。
-              // 两种模式的差别只在收尾：compress_and_clear 时前端另调 DELETE ?keep=summary
-              //   把存档行物理删除（仅留摘要）；generate_only 则保留展示。
               // session_context 行不存档：它是环境信息，始终随新回合发送（loadHistoryForModel 置顶）。
               // 旧摘要行（多轮压缩）一并存档：被新摘要覆盖替代，不再进上下文。
-              run.summaryMode = null;
+              run.summarizing = null;
               if ((msgRow.content || '').trim()) {
                 db.prepare("UPDATE messages SET type = 'summary' WHERE id = ?").run(assistantId);
                 const n = db.prepare(
@@ -831,8 +827,8 @@ function postUserMessage(sessionId, content, opts) {
     run.deepThink = !!(opts && opts.deepThink);
     // 真实用户消息到达：若还有个「已排队但尚未开跑」的压缩回合（见 summarizeContext），
     // 让它作废，避免新消息被误当成压缩回合处理；已在跑（looping）的不动，
-    // 由其收尾时自行清空 summaryMode。
-    if (run.summaryMode && !run.looping) run.summaryMode = null;
+    // 由其收尾时自行清空 summarizing。
+    if (run.summarizing && !run.looping) run.summarizing = null;
   if (session.status === 'active' && run.looping) {
     // 正在跑：下一轮迭代会从 DB 重新加载历史，自动带上这条消息
     return { message_id: messageId, delivered: 'live' };
@@ -924,19 +920,17 @@ function deleteSession(sessionId, deleteDir) {
 // 压缩回合只发一条 system（templates/compress-prompt.txt 模板，{{conversation}} 占位符
 // 替换为完整历史纯文本，见 llm.compressPromptText / historyTranscript）+ 一句触发语，
 // 且不传 tools（见 runLoopInner 的 compressing 分支），模型直接基于该记录输出摘要。
-// 识别标记 = run.summaryMode（仅在内存 run 上，不入库）：runLoopInner 据此换 prompt/去 tools，
-// 并在压缩回合的收尾答复 emit 时带 is_summary: true + mode，前端按用户选择的模式走完最后一步
-//（compress_and_clear 时调 DELETE ?keep=summary 清空历史、仅留该摘要并标 type='summary'）。
-// 两种模式收尾都一样先落库：摘要行标 type='summary'，它之前的全部消息标 type='archived'
-//（UI 保留展示、不再发给模型，后续对话从摘要开始）；区别只在 compress_and_clear 额外物理删除。
+// 识别标记 = run.summarizing（仅在内存 run 上，不入库）：runLoopInner 据此换 prompt/去 tools，
+// 并在压缩回合的收尾答复 emit 时带 is_summary: true，前端据此把气泡装进摘要卡片并淡出存档旧历史。
+// 收尾落库：摘要行标 type='summary'，它之前的全部消息标 type='archived'
+//（UI 保留展示、不再发给模型，后续对话从摘要开始）。
 // 注意：排队等模型的压缩回合只记在内存 run 上，服务重启会丢（旧版靠库里的指令行存活）；
 // 重启后需重新点「压缩」。
 // 限制：与 clearSessionMessages 类似——会话执行中(active)禁止操作，避免和正在跑的回合抢上下文。
-// mode: 'generate_only' 或 'compress_and_clear'，由路由校验后传入。
 // 响应回显 prompt：前端「开始压缩后渲染成一条普通用户消息气泡」；只回一句短提示，
 // 不回完整模板（压缩指令的真实内容在压缩回合开跑时实时序列化进 system prompt，
 // 与气泡无关，气泡仅供展示、不入库也不发给模型）。
-function summarizeContext(sessionId, mode) {
+function summarizeContext(sessionId) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   const run = runs.get(sessionId);
@@ -945,10 +939,10 @@ function summarizeContext(sessionId, mode) {
   }
   const prompt = '正在压缩上下文：AI 将基于完整对话记录生成摘要…';
   // 与 postUserMessage 同样的唤醒/排队流转，但不落任何消息行；
-  // run.summaryMode 标记本回合为压缩回合，摘要产出后由 runLoopInner 清空。
+  // run.summarizing 标记本回合为压缩回合，摘要产出后由 runLoopInner 清空。
   // 状态流转时顺带重置 deepThink：压缩回合不需要思考参数，避免沿用上一轮的残留值。
   const r = getRun(sessionId, true);
-  r.summaryMode = mode || null;
+  r.summarizing = true;
   r.deepThink = false;
   let delivered;
   if (session.status === 'held') {
@@ -963,7 +957,7 @@ function summarizeContext(sessionId, mode) {
     delivered = 'live';
   } else {
     // 排队 / 已完成 / 已终止 → 重新入队；若派发后已立即拿到空闲模型，则算直接送达
-    //（dispatchQueued 会把带 summaryMode 的排队会话当作有待处理回合开跑）
+    //（dispatchQueued 会把带 summarizing 的排队会话当作有待处理回合开跑）
     touch(sessionId, { status: 'queued', cancelled_at: null, completed_at: null, held_at: null });
     enqueue(sessionId);
     dispatchQueued();
@@ -980,9 +974,7 @@ function summarizeContext(sessionId, mode) {
 // 清空后不自动重建会话上下文：此时通常未绑定模型，预置只会产生“尚未绑定/未知”占位。
 // 待用户选择模型（bindToSession）或再次发言并自动绑定模型（runLoop 入口）时，
 // 由 ensureSessionContext 注入当时的有效信息。
-// opts.keepSummary=true（「压缩总结」收尾用）：不物理清空，只保留最后一条 assistant 总结消息，
-// 并给它打 type='summary' 标记（前端重渲染成摘要卡片；buildMessages 正常携带它作为上下文起点）。
-function clearSessionMessages(sessionId, opts) {
+function clearSessionMessages(sessionId) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   const run = runs.get(sessionId);
@@ -997,16 +989,7 @@ function clearSessionMessages(sessionId, opts) {
   runs.delete(sessionId);
   dequeue(sessionId);
   releaseModel(sessionId);
-  const lastSummary = opts && opts.keepSummary ? db.prepare(
-    "SELECT id FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1"
-  ).get(sessionId) : null;
-  if (lastSummary) {
-    // 保留总结行，其余（含旧版遗留的 summarize_request 指令、中间工具轮）全部删除
-    db.prepare('DELETE FROM messages WHERE session_id = ? AND id != ?').run(sessionId, lastSummary.id);
-    db.prepare("UPDATE messages SET type = 'summary' WHERE id = ?").run(lastSummary.id);
-  } else {
-    db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
-  }
+  db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null });
   bus.emit(sessionId, 'done', { status: 'completed' });
   emitStatus(sessionId);

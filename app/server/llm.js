@@ -118,10 +118,9 @@ function cachedDecodeBlocks(session, row) {
 // 模型如需重看可再次 read_file（新消息在尾部，会重新携带图片）。
 // 压缩摘要相关行（见 engine.runLoopInner / summarizeContext）：
 // - type='summary'（assistant，收尾答复）：不跳过。它是压缩后后续轮次的上下文起点，
-//   正常以 assistant 历史行发给模型；「仅摘要」与「压缩总结」两种模式都会打此标。
+//   正常以 assistant 历史行发给模型；压缩收尾时打此标。
 // - type='archived'（压缩时摘要之前的全部旧行，含旧摘要/指令/工具轮）：不发模型。
-//   这是「仅摘要」的核心语义：UI 照常保留展示，但后续对话从摘要开始，旧历史不再烧 token；
-//   「压缩总结」则另由前端 DELETE keep=summary 把存档行物理删除。
+//   即压缩的核心语义：UI 照常保留展示，但后续对话从摘要开始，旧历史不再烧 token。
 // - type='summarize_request'（旧版压缩指令，已废弃）：新版压缩改为整体替换 system prompt
 //   （见 compressPromptText），不再产生这种消息行；此处分支仅为兼容旧库里残留的指令行。
 // errAck 行（AI tool call 参数错误，见 engine.checkToolArgs）：整条不发给模型，

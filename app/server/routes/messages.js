@@ -65,30 +65,24 @@ router.post('/:id/release', wrap((req, res) => {
 
 // 清空会话内容：删除全部消息记录，保留会话本身与任务目录文件（不再随下条消息重发旧历史）。
 // 状态收尾为已完成并释放模型/出队；正在执行的回合会被拒绝（需先「终止」）。
-// ?keep=summary：「压缩总结」收尾专用 —— 只保留最后一条 assistant 总结消息并打上 type='summary' 标记。
 router.delete('/:id/messages', wrap((req, res) => {
-  const keep = String((req.query && req.query.keep) || '').trim();
-  const r = engine.clearSessionMessages(req.params.id, { keepSummary: keep === 'summary' });
-  log.info('msg', (req.user || '-') + ' ' + req.params.id + (keep === 'summary' ? ' 压缩清理（仅保留摘要）' : ' 清空会话内容（文件保留）'));
+  const r = engine.clearSessionMessages(req.params.id);
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 清空会话内容（文件保留）');
   res.json(r);
 }));
 
-// 上下文压缩：phase-bar「压缩」按钮触发。弹窗选模式后调本接口：
-//   mode='generate_only'       AI 总结；摘要之前的历史存档（type='archived'，UI 保留展示、不再发给模型）
-//   mode='compress_and_clear'  AI 总结；前端完成后另调 DELETE ?keep=summary 把存档行物理清空，界面只留摘要
-// 摘要行本身两种模式都会标成 type='summary'（见 engine.runLoopInner），作为后续轮次的上下文起点。
+// 上下文压缩：phase-bar「压缩」按钮弹窗里点「摘要」触发。
+// AI 总结；摘要之前的历史存档（type='archived'，UI 保留展示、不再发给模型）。
+// 摘要行本身标成 type='summary'（见 engine.runLoopInner），作为后续轮次的上下文起点。
 // 后端直接开启一个压缩回合（不往会话插入任何消息）：该回合只发一条 system（模板 +
 // 完整历史填入 {{conversation}}）且不带 tools（见 engine.summarizeContext）；
 // 响应仅回显一句短提示 prompt 供前端渲染指令气泡（不入库、不含模板正文），
-// 并在总结回合的最终 SSE assistant_message 上带 is_summary + mode 给前端走收尾。
+// 并在总结回合的最终 SSE assistant_message 上带 is_summary 给前端走收尾。
 // 状态非 active 时才允许（避免与正在跑的回合抢上下文）。本接口只是「丢一条总结请求进队列」，
 // 不等待 AI 完成——前端通过现有 SSE 流听 assistant_message 事件拿结果。
 router.post('/:id/summarize', wrap((req, res) => {
-  const mode = String((req.body && req.body.mode) || '').trim();
-  const valid = mode === 'generate_only' || mode === 'compress_and_clear';
-  if (!valid) return res.status(400).json({ error: 'mode 必须是 generate_only 或 compress_and_clear' });
-  const r = engine.summarizeContext(req.params.id, mode);
-  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 上下文压缩（mode=' + mode + ', ' + (r.delivered || '?') + '）');
+  const r = engine.summarizeContext(req.params.id);
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 上下文压缩（' + (r.delivered || '?') + '）');
   res.json(r);
 }));
 

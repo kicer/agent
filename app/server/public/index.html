@@ -483,7 +483,6 @@
         typingEl: null,             // 「思考中」占位
         streaming: false,
         pendingSummary: false,      // 是否在等待「压缩」总结 AI 回复（避免重复弹窗；同时用于按钮 disabled 防重入）
-        pendingSummaryMode: null,   // pendingSummary 期间记录用户选的模式：'generate_only' 或 'compress_and_clear'
         lastAssistantMsgId: null,   // 最近处理过的 SSE assistant_message id：重复 id 直接丢，防重渲染（补「2 遍」问题）
     chatHasMore: false,           // 当前会话是否还有更早的历史未加载（消息懒加载分页）
     chatOldestId: null,           // 已加载最早一条消息的行 id（拉更早页的 before 游标）
@@ -1060,9 +1059,8 @@
     if (state.es) { state.es.close(); state.es = null; }
     // SSE 一断，本地「等待压缩收尾」状态就成孤儿（再也收不到带 is_summary 的最终消息）：
     // 复位以免压缩按钮永久 disabled / 防重入卡死。切会话、重开流都会经过这里。
-    // （后果仅是：离开期间的 compress_and_clear 不会自动清理历史，历史保持完整，重进会话后可重新发起。）
+    // （后果仅是：离开期间的摘要不会自动淡出存档，重进会话后由 renderDetail 按库内标记渲染，历史保持完整。）
     state.pendingSummary = false;
-    state.pendingSummaryMode = null;
   }
 
   async function openSession(id) {
@@ -1288,64 +1286,62 @@
     } catch (_) {}
   }
   // ---------- 「压缩」上下文总结 ----------
-    // 用户点 phase-bar「压缩」按钮 → 弹窗选后续动作：
-    //   取消：不做任何事
-    //   仅摘要（generate_only）：AI 总结落库后，后端把摘要标 type='summary'、之前的消息标 type='archived'
+    // 用户点 phase-bar「压缩」按钮 → 弹窗选动作（右上角 X 关闭 = 不做任何事）：
+    //   摘要（generate_only）：AI 总结落库后，后端把摘要标 type='summary'、之前的消息标 type='archived'
     //     （UI 保留全部展示，但旧消息不再发给模型）；前端把摘要前旧消息就地淡出存档。
-    //   压缩总结（compress_and_clear）：同上，另由前端自动调 DELETE ?keep=summary 物理清空，
-    //     聊天里只留摘要卡片（不可恢复）。
+    //   清空：直接走 clearChat()（DELETE 全部聊天记录，从零开始，不可恢复）。
     // 开始压缩后：后端响应回显 prompt，前端把它渲染成一条普通用户消息气泡（仅展示：
     // 指令不再入库、也不发给模型，压缩回合的 system prompt 已整体替换为压缩提示词）；
     // 压缩回合中间的 AI 回复（思考/工具调用等）全部按普通消息渲染；
     // 只有回合收尾的那条最终答复才带 is_summary，渲染成摘要卡片。
-    // 后端 summarize 路由收 body.mode；runLoopInner 在最终 assistant_message SSE 上带 is_summary + mode。
+    // 后端 summarize 路由无需 body；runLoopInner 在最终 assistant_message SSE 上带 is_summary。
     async function summarizeChat() {
       if (!state.sessionId) return;
       if (state.pendingSummary) return; // 已在请求中，防重入
       if (state.status === 'active') { toast('AI 还在输出，请稍候再压缩'); return; }
-      // 弹出三按钮选择器。走复用 confirmModal + 专选项的路线会丢掉「第三按钮」。
-      // 这里用一个内部 helper 返回 'cancel' | 'generate_only' | 'compress_and_clear'。
-      const mode = await compressModeModal();
-      if (!mode || mode === 'cancel') return;
+      // 弹窗两个动作：摘要（generate_only）/ 清空（clear → clearChat）；右上 X / 点遮罩 / Esc 关闭。
+      const choice = await compressModeModal();
+      if (!choice) return;
+      if (choice === 'clear') { await clearChat(); return; }
       state.pendingSummary = true;
-      state.pendingSummaryMode = mode;
       const btn = $('compress-btn');
       if (btn) btn.disabled = true;
       try {
-        const r = await req('POST', '/api/sessions/' + state.sessionId + '/summarize', { mode });
+        const r = await req('POST', '/api/sessions/' + state.sessionId + '/summarize');
         // 开始压缩后直接把「压缩指令」当成普通用户消息发出来（后端回显 prompt）；
         // 后续中间的 AI 回复全部按普通消息渲染，直到带 is_summary 的最终答复才转摘要卡片。
         if (r && r.prompt) appendUserMsg(r.prompt);
         if (r && r.delivered === 'live') addTyping(); // 已直接送达：先挂打字占位，首个 delta 到达时自动移除
-        toast(mode === 'compress_and_clear' ? '已发起压缩，完成后将自动清空历史…' : '已生成摘要中…');
+        toast('已生成摘要中…');
       } catch (e) {
         state.pendingSummary = false;
-        state.pendingSummaryMode = null;
         if (btn) btn.disabled = false;
         toast('压缩失败：' + e.message);
       }
     }
 
-    // 压缩模式选择弹窗：三按钮（取消 / 仅摘要 / 压缩总结）。
-      // 返回字符串 'cancel' | 'generate_only' | 'compress_and_clear'。
-      // 这里手写一个独立小弹窗以避免与 confirmModal(两按钮)耦合；复用现有 modal-overlay 样式。
-      // 颜色复用现有按钮语义：仅摘要 = primary-btn（蓝/确定风）；压缩总结 = ghost-btn.danger（红/删除风）。
+    // 压缩动作选择弹窗：右上 X 关闭 + 两个动作（摘要 / 清空）。
+      // 返回 'generate_only' | 'clear' | null（关闭取消）。
+      // 这里手写一个独立小弹窗以避免与 confirmModal(两按钮)耦合；复用现有 modal-overlay / modal-close-btn 样式。
+      // 颜色复用现有按钮语义：摘要 = primary-btn（蓝/确定风）；清空 = ghost-btn.danger（红/删除风）。
       function compressModeModal() {
         return new Promise(resolve => {
           const wrap = document.createElement('div');
           wrap.className = 'modal-overlay';
           wrap.innerHTML =
             '<div class="modal">' +
+              '<button class="modal-close-btn" data-act="cancel" aria-label="关闭">' +
+                '<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' +
+              '</button>' +
               '<h3 id="compress-modal-title">压缩上下文</h3>' +
               '<div class="modal-body" style="font-size:14px;line-height:1.55;color:#555;padding:4px 0 12px;">' +
                 'AI 将基于当前上下文生成结构化总结；完成后摘要之前的旧消息都会<b>存档</b>，不再发送给 AI，后续对话从摘要开始。' +
-                '<br>· 「仅摘要」= 聊天里<b>保留全部历史展示</b>（旧消息变淡标注已存档），并多一张摘要卡片。' +
-                '<br>· 「压缩总结」= 额外<b>清空聊天界面</b>，只留这条摘要（不可恢复）。' +
+                '<br>· 「摘要」= 聊天里<b>保留全部历史展示</b>（旧消息变淡标注已存档），并多一张摘要卡片。' +
+                '<br>· 「清空」= 直接<b>删除本会话全部聊天记录</b>，从零开始（不可恢复，任务文件保留）。' +
               '</div>' +
               '<div class="btn-row">' +
-                '<button class="ghost-btn" data-act="cancel">取消</button>' +
-                '<button class="primary-btn" data-act="generate_only">仅摘要</button>' +
-                '<button class="ghost-btn danger" data-act="compress_and_clear">压缩总结</button>' +
+                '<button class="ghost-btn danger" data-act="clear">清空</button>' +
+                '<button class="primary-btn" data-act="generate_only">摘要</button>' +
               '</div>' +
             '</div>';
           function close(v) {
@@ -1353,17 +1349,17 @@
             document.removeEventListener('keydown', onKey);
             resolve(v);
           }
-          function onKey(e) { if (e.key === 'Escape') close('cancel'); }
-          wrap.addEventListener('click', e => { if (e.target === wrap) close('cancel'); });
-          wrap.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => close(b.dataset.act)));
+          function onKey(e) { if (e.key === 'Escape') close(null); }
+          wrap.addEventListener('click', e => { if (e.target === wrap) close(null); });
+          wrap.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => close(b.dataset.act === 'cancel' ? null : b.dataset.act)));
           document.addEventListener('keydown', onKey);
           document.body.appendChild(wrap);
-          // 默认聚焦「取消」避免误触发
-          wrap.querySelector('[data-act="cancel"]').focus();
+          // 默认聚焦关闭按钮，避免误触发两个动作
+          wrap.querySelector('.modal-close-btn').focus();
         });
       }
 
-    // 「仅摘要」实时收尾：后端已把摘要之前的消息行标成 type='archived'，这里把 DOM 里
+    // 「摘要」实时收尾：后端已把摘要之前的消息行标成 type='archived'，这里把 DOM 里
       // 摘要卡片（.msg-summary-live，多轮压缩取最后一张）之前的所有兄弟节点收进淡色存档容器，
       // 尾部附一条「已存档」说明，与 renderDetail 重渲染样式一致。
       function archiveDomBeforeSummary() {
@@ -1381,49 +1377,26 @@
         box.insertBefore(arc, card);
       }
 
-    // 「压缩总结」模式下 AI 总结落库后自动调用的收尾：DELETE ?keep=summary 清空历史，
-      // 仅保留最后一条消息并标成 type='summary'（库里打标，供下次重渲染成摘要卡片）。
-      // 与 clearChat 不同：不弹确认（用户已在压缩弹窗中表态）。
-      // 前端不重新刷新摘要消息：压缩过程中摘要内容已经流式发给用户（msg-summary-live 节点），
-      // 只需把被清掉的历史消息从 DOM 移除，保留该节点即可；列表/状态照常刷新。
-      async function clearAfterSummary(id) {
-        if (!id) return;
+    // 「清空」：删除本会话全部聊天记录（AI 后续对话不再携带这段历史），任务文件不受影响。
+      // 入口：压缩动作弹窗的「清空」按钮。
+      async function clearChat() {
+        if (!state.sessionId) return;
+        const id = state.sessionId;
+        const ok = await confirmModal('清空会话内容',
+          '将删除本会话的全部聊天记录，AI 后续对话不再携带这段历史（从零开始，更省 token）。任务文件全部保留，不受影响。此操作不可恢复。',
+          '清空', true);
+        if (!ok) return;
         try {
-          await req('DELETE', '/api/sessions/' + id + '/messages?keep=summary');
-          toast('已压缩，仅保留总结');
-          if (state.sessionId === id && state.view === 'chat') {
-            const box = $('chat-view');
-            const cards = box.querySelectorAll('.msg-summary-live');
-            const live = cards.length ? cards[cards.length - 1] : null;
-            if (live) {
-              for (const el of Array.from(box.children)) {
-                if (el !== live) el.remove();
-              }
-              scrollBottom();
-            } else {
-              // 本页没赶上流式摘要（如压缩途中重开过页面）：库里摘要已带 type='summary' 标记，
-              // 整页重渲染兼容一把（这是唯一需要刷新摘要消息的例外场景）。
-              try {
-                const detail = await req('GET', '/api/sessions/' + id);
-                if (state.sessionId === id && state.view === 'chat') renderDetail(detail);
-              } catch (_) {}
-            }
-            // 压缩回合的流式容器随历史一起作废，避免后续事件往已移除节点里写
-            state.streamWrap = null;
-            state.streamEl = null;
-            state.streamText = '';
-          }
+          await req('DELETE', '/api/sessions/' + id + '/messages');
+          toast('会话内容已清空，文件已保留');
+          // 服务端已将会话收尾为 completed 并清空消息：重新拉取详情即为干净起点
+          const detail = await req('GET', '/api/sessions/' + id);
+          if (state.sessionId === id) { renderDetail(detail); connectStream(); }
           loadSessionList();
-        } catch (e) { toast('压缩清理失败：' + e.message); }
+        } catch (e) { toast('清空失败：' + e.message); }
         const cpBtn = $('compress-btn');
         if (cpBtn) cpBtn.disabled = state.status === 'active';
       }
-
-      async function clearChat() {
-          // 清空按钮已从 phase-bar 移除。仅在「压缩总结」模式下由 clearAfterSummary 自动调用 DELETE。
-          // 保留函数壳子避免被工具/手动调用打断；不再绑定 UI 入口。
-          return;
-        }
 
   // ---------- 发送 ----------
   async function uploadFiles(sessionId, files) {
@@ -1578,7 +1551,7 @@
           }
           // 「压缩」总结回合的最终答复（后端已保证只有压缩回合里首条无工具调用的收尾回复才带 is_summary，
           // 中间 AI 回复已按普通消息渲染）：把已流式输出的气泡装进摘要卡片（与历史重渲染同款样式），
-          // 并标记 wrap 为 msg-summary-live：compress_and_clear 清空历史时保留该节点，不再重新渲染摘要。
+          // 并标记 wrap 为 msg-summary-live：archiveDomBeforeSummary 据此定位摘要卡片，之前的旧消息收进存档容器。
           // open=true 让用户立刻读到；后续轮次不自动折起（卡片可手动点 summary 收起）。
           // 防重：同一 streamWrap 已有卡片则不再重复插入（保护 SSE 重连重发等场景）。
           if (d.is_summary && hasText && state.streamWrap && !state.streamWrap.querySelector('.msg-summary')) {
@@ -1609,31 +1582,20 @@
           state.streamThinkEl = null;
           maybeAutoScroll();
           updateScrollBottomBtn();
-          // 「压缩」总结完成后：根据用户在弹窗选择的 mode 走最后一步。
-                // 两种模式下后端都已把摘要标成 type='summary' 并把之前的旧消息标成 type='archived'
-                //（不再发给模型），区别只在 UI：
-                //   generate_only —— 聊天保留全部展示，把摘要之前的旧消息就地淡出存档；
-                //   compress_and_clear —— 另调 DELETE ?keep=summary 物理清空，界面只留摘要。
+          // 「压缩」总结完成后：后端已把摘要标成 type='summary' 并把之前的旧消息标成 type='archived'
+                //（不再发给模型）；聊天保留全部展示，把摘要之前的旧消息就地淡出存档。
                 // 仅在客户端主动点了压缩（pendingSummary）时才走收尾；避免历史重加载/跨设备重连误触发。
                 // 仅有内容的总结才走后续流；空的/错误的总结只复位按钮状态。
                 if (d.is_summary && state.pendingSummary && hasText) {
-                  const mode = state.pendingSummaryMode;
                   state.pendingSummary = false;
-                  state.pendingSummaryMode = null;
-                  if (mode === 'compress_and_clear') {
-                    // 自动调 DELETE 清空历史，仅保留这条总结作为后续起点。
-                    clearAfterSummary(state.sessionId);
-                  } else if (mode === 'generate_only') {
-                    // 历史保留展示，但摘要之前的旧消息已存档：同步淡出 + 尾部说明，和重进入后的样式一致。
-                    archiveDomBeforeSummary();
-                    toast('已生成摘要：旧历史已存档，后续对话从摘要开始');
-                    const cpBtn = $('compress-btn');
-                    if (cpBtn) cpBtn.disabled = state.status === 'active';
-                  }
+                  // 历史保留展示，但摘要之前的旧消息已存档：同步淡出 + 尾部说明，和重进入后的样式一致。
+                  archiveDomBeforeSummary();
+                  toast('已生成摘要：旧历史已存档，后续对话从摘要开始');
+                  const cpBtn = $('compress-btn');
+                  if (cpBtn) cpBtn.disabled = state.status === 'active';
                 } else if (d.is_summary && state.pendingSummary && !hasText) {
                   // AI 总结为空/出错，复位状态。用于按钮状态还原。
                   state.pendingSummary = false;
-                  state.pendingSummaryMode = null;
                   const cpBtn = $('compress-btn');
                   if (cpBtn) cpBtn.disabled = state.status === 'active';
                 }
@@ -1659,7 +1621,6 @@
       // 复位等待状态并还原压缩按钮，历史保持原样不动。
       if (state.pendingSummary) {
         state.pendingSummary = false;
-        state.pendingSummaryMode = null;
         toast('压缩回合已结束，未收到摘要，历史未变动');
         const cpBtn = $('compress-btn');
         if (cpBtn) cpBtn.disabled = state.status === 'active';
