@@ -545,7 +545,7 @@
     return { text: m[2] || '', files: files };
   }
 
-  function actionsHtml(ts, content, msgId) {
+  function actionsHtml(ts, content, msgId, usage) {
     const b64 = btoa(unescape(encodeURIComponent(content)));
     // 删除本条:仅已落库消息可删(传 m.id);流式未落库时无 id,不渲染
     const del = msgId
@@ -553,8 +553,19 @@
         '<svg class="ic sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>' +
         '</button>'
       : '';
+    // token 用量：In 输入(+缓存命中率), Out 输出；历史重渲染时 usage 是 JSON 串,流式事件里是对象
+    let u = usage;
+    if (typeof u === 'string') { try { u = JSON.parse(u); } catch (_) { u = null; } }
+    const usageHtml = u && (u.pt || u.ct)
+      ? '<span class="act-usage" title="输入 ' + (u.pt || 0) + ' tok，缓存命中 ' +
+        (u.cached == null ? '未上报' : u.cached + ' tok') + '，输出 ' + (u.ct || 0) + ' tok">' +
+        'In: ' + fmtTok(u.pt || 0) +
+        (u.cached != null && u.pt ? '/' + Math.round(u.cached / u.pt * 100) + '%' : '') +
+        ', Out: ' + fmtTok(u.ct || 0) + '</span>'
+      : '';
     return '<div class="msg-actions">' +
       '<span>' + fmtTime(ts) + '</span>' +
+      usageHtml +
       '<button class="act act-copy" title="复制" data-b64="' + b64 + '">' +
         '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
       '</button>' +
@@ -580,7 +591,7 @@
     if (!text && !reason) return null; // 纯工具调用的应答:不渲染气泡,工具卡由 appendToolCardsFromAssistant 铺
     const think = reason ? thinkPanelHtml(m.reasoning) : '';
     const bubble = text ? (() => { const r = mdHtml(m.content); return '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>'; })() : '';
-    return '<div class="msg other">' + think + bubble + actionsHtml(m.created_at, m.content || '', m.id) + '</div>';
+    return '<div class="msg other">' + think + bubble + actionsHtml(m.created_at, m.content || '', m.id, m.usage) + '</div>';
   }
   // 思考过程折叠面板:summary 固定名「思考过程」+ 右侧复制按钮,body 展示推理全文。
   // 历史重渲染默认收起(与原设计一致),流式阶段的展开行为由 ensureStreamThinkPanel 显式控制。
@@ -613,7 +624,7 @@
       '<details class="msg-summary">' + summaryHeaderHtml() +
         '<div class="msg-summary-body"><div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div></div>' +
       '</details>' +
-      actionsHtml(m.created_at, m.content || '', m.id) +
+      actionsHtml(m.created_at, m.content || '', m.id, m.usage) +
     '</div>';
   }
 
@@ -1436,7 +1447,7 @@
       const upNames = Array.from($('up-cards').querySelectorAll('.up-card[data-done="1"]'))
         .map(c => c.dataset.name).filter(Boolean);
       const text = upNames.length
-        ? '用户上传了文件：' + upNames.join('、') + '\n' + content
+        ? '用户上传了文件：' + upNames.join('、') + '\n\n' + content
         : content;
       const body = { content: text, deepThink: !!state.deepThink };
       const sent = await req('POST', '/api/sessions/' + id + '/messages', body);
@@ -1588,7 +1599,7 @@
           // 补上尾部操作行(时间戳+复制/删除),与历史重渲染(aiMsgHtml)同款;
           // created_at 由后端落库时间随事件回传,重进会话后时刻不变
           if (state.streamWrap) {
-            state.streamWrap.insertAdjacentHTML('beforeend', actionsHtml(d.created_at, d.content || '', d.id));
+            state.streamWrap.insertAdjacentHTML('beforeend', actionsHtml(d.created_at, d.content || '', d.id, d.usage));
           }
           if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
           state.streaming = false;
@@ -3638,6 +3649,9 @@
       '</div>' +
       '<div class="cfg-kv"><label>今日 token</label><b title="输入 / 输出">' + (run ? fmtTok(run.today_prompt) + ' / ' + fmtTok(run.today_completion) : '--') + '</b></div>' +
       '<div class="cfg-kv"><label>累计 token</label><b title="输入 / 输出">' + (run ? fmtTok(run.total_prompt) + ' / ' + fmtTok(run.total_completion) : '--') + '</b></div>' +
+      '<div class="cfg-kv"><label>缓存命中</label><b title="今日缓存 / 累计缓存 tok；历史命中率 = 累计缓存命中 ÷ 累计输入">' +
+        (run && run.total_prompt ? fmtTok(run.total_cached || 0) + ' · ' + Math.round((run.total_cached || 0) / run.total_prompt * 100) + '%' : '--') +
+        '</b></div>' +
     '</div>';
   }
   // 平台卡:头部 = 平台名 + N keys 徒章 + 启用/总数模型数;体内 = 每 Key 一行余额(仅已接入类型)+ 该平台模型列表。

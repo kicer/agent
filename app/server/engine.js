@@ -66,10 +66,11 @@ function loadHistory(sessionId) {
 
 function saveMessage(sessionId, msg) {
   const info = db.prepare(
-    'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)'
+    'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, usage, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
   ).run(sessionId, msg.role, msg.content || null, msg.reasoning || null,
     msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
-    msg.tool_call_id || null, msg.name || null, msg.type || null, msg.is_error ? 1 : 0, msg.created_at || now());
+    msg.tool_call_id || null, msg.name || null, msg.type || null, msg.is_error ? 1 : 0,
+    msg.usage ? JSON.stringify(msg.usage) : null, msg.created_at || now());
   // 关键动作日志：AI 每轮回复落库（含纯工具调用轮）
   if (msg.role === 'assistant') {
     const calls = msg.tool_calls || [];
@@ -90,37 +91,41 @@ function saveMessage(sessionId, msg) {
 
 // 记录一次模型回合的 token 用量（上游未返回 usage 时跳过）。
 // 写入 model_usage 表,不建会话外键：删会话后累计统计仍保留。
+// cached_tokens：上游 prompt_tokens_details.cached_tokens（输入前缀缓存命中量，部分上游不报）。
 function recordModelUsage(sessionId, modelId, usage) {
   if (!modelId || !usage) return;
   const pt = usage.prompt_tokens || 0;
   const ct = usage.completion_tokens || 0;
   const tt = usage.total_tokens || (pt + ct);
+  const cached = (usage.prompt_tokens_details && usage.prompt_tokens_details.cached_tokens) || 0;
   if (!pt && !ct && !tt) return;
   db.prepare(
-    'INSERT INTO model_usage (session_id, model_id, prompt_tokens, completion_tokens, total_tokens, created_at) VALUES (?,?,?,?,?,?)'
-  ).run(sessionId, modelId, pt, ct, tt, now());
+    'INSERT INTO model_usage (session_id, model_id, prompt_tokens, completion_tokens, total_tokens, cached_tokens, created_at) VALUES (?,?,?,?,?,?,?)'
+  ).run(sessionId, modelId, pt, ct, tt, cached, now());
 }
 
-// 每模型 token 用量统计:今日(本地时区自然日起)+ 累计,输入/输出分开。
-// 返回 { [model_id]: { today_prompt, today_completion, total_prompt, total_completion } },
+// 每模型 token 用量统计:今日(本地时区自然日起)+ 累计,输入/输出/缓存命中分开。
+// 返回 { [model_id]: { today_prompt, today_completion, today_cached, total_prompt, total_completion, total_cached } },
 // 配置内的模型保证有零值占位。
 function modelUsageStats() {
   const d = new Date();
   const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const stats = {};
   const slot = function (id) {
-    if (!stats[id]) stats[id] = { today_prompt: 0, today_completion: 0, total_prompt: 0, total_completion: 0 };
+    if (!stats[id]) stats[id] = { today_prompt: 0, today_completion: 0, today_cached: 0, total_prompt: 0, total_completion: 0, total_cached: 0 };
     return stats[id];
   };
   for (const m of cfg.models) slot(m.id);
-  const sumSql = 'SELECT model_id, SUM(prompt_tokens) AS p, SUM(completion_tokens) AS c FROM model_usage';
+  const sumSql = 'SELECT model_id, SUM(prompt_tokens) AS p, SUM(completion_tokens) AS c, SUM(cached_tokens) AS k FROM model_usage';
   for (const r of db.prepare(sumSql + ' WHERE created_at >= ? GROUP BY model_id').all(dayStart)) {
     slot(r.model_id).today_prompt = r.p || 0;
     slot(r.model_id).today_completion = r.c || 0;
+    slot(r.model_id).today_cached = r.k || 0;
   }
   for (const r of db.prepare(sumSql + ' GROUP BY model_id').all()) {
     slot(r.model_id).total_prompt = r.p || 0;
     slot(r.model_id).total_completion = r.c || 0;
+    slot(r.model_id).total_cached = r.k || 0;
   }
   return stats;
 }
@@ -480,6 +485,13 @@ async function runLoopInner(sessionId, run) {
       })) : null,
       // 落库与 SSE 事件共用同一时间戳:前端流式收尾时直接拿来渲染时间行,重进会话后时刻不跳变
       created_at: now(),
+      // token 用量快照（msg-actions 展示 In/Out/命中率）：上游不报 details 时 cached 置 null 以区分“未报”与“0 命中”
+      usage: result.usage ? {
+        pt: result.usage.prompt_tokens || 0,
+        ct: result.usage.completion_tokens || 0,
+        cached: result.usage.prompt_tokens_details
+          ? (result.usage.prompt_tokens_details.cached_tokens || 0) : null,
+      } : null,
     };
     const assistantId = saveMessage(sessionId, msgRow);
         if (isErrAck) log.info('msg', sessionId + ' 本轮 tool call 参数错误，assistant 标记 errAck（不再进入模型上下文）');
@@ -491,7 +503,7 @@ async function runLoopInner(sessionId, run) {
         bus.emit(sessionId, 'assistant_message', {
               id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning,
               tool_calls: msgRow.tool_calls, type: msgRow.type, created_at: msgRow.created_at,
-              is_summary: isSummary,
+              usage: msgRow.usage, is_summary: isSummary,
             });
             if (isSummary) {
               // 摘要落地：这条收尾答复在库里标成 type='summary'

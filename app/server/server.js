@@ -70,8 +70,10 @@ app.get('/api/models', (req, res) => {
     const s = stats[r.id] || {};
     r.today_prompt = s.today_prompt || 0;
     r.today_completion = s.today_completion || 0;
+    r.today_cached = s.today_cached || 0;
     r.total_prompt = s.total_prompt || 0;
     r.total_completion = s.total_completion || 0;
+    r.total_cached = s.total_cached || 0;
   }
   res.json(rows);
 });

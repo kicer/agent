@@ -47,6 +47,8 @@ function initDb(dbPath) {
   try { db.exec('ALTER TABLE messages ADD COLUMN type TEXT'); } catch (_) { /* 已存在 */ }
   // 升级老库：tool 回执执行失败标记。此前只走 SSE 不落库，重进会话后 UI 丢失红色错误样式
   try { db.exec('ALTER TABLE messages ADD COLUMN is_error INTEGER NOT NULL DEFAULT 0'); } catch (_) { /* 已存在 */ }
+  // 升级老库：assistant 消息的 token 用量 {pt,ct,cached} JSON（msg-actions 展示 In/Out/缓存命中率）
+  try { db.exec('ALTER TABLE messages ADD COLUMN usage TEXT'); } catch (_) { /* 已存在 */ }
   db.exec(`
 
     CREATE TABLE IF NOT EXISTS files (
@@ -87,6 +89,7 @@ function initDb(dbPath) {
       prompt_tokens INTEGER DEFAULT 0,
       completion_tokens INTEGER DEFAULT 0,
       total_tokens INTEGER DEFAULT 0,
+      cached_tokens INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL
     );
 
@@ -94,6 +97,8 @@ function initDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_files_session ON files(session_id);
     CREATE INDEX IF NOT EXISTS idx_model_usage_model_time ON model_usage(model_id, created_at);
   `);
+  // 升级老库：model_usage 补 cached_tokens 列（输入 token 缓存命中量累计，算历史命中率）
+  try { db.exec('ALTER TABLE model_usage ADD COLUMN cached_tokens INTEGER DEFAULT 0'); } catch (_) { /* 已存在 */ }
   // 迁移：旧库补 held_at 列（held 保持租约起始时间）
   const cols = db.prepare('PRAGMA table_info(sessions)').all();
   if (!cols.some(c => c.name === 'held_at')) db.exec('ALTER TABLE sessions ADD COLUMN held_at INTEGER');
