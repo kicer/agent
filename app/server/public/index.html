@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Agent 任务台</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/vendor/marked.min.js"></script>
   <meta name="theme-color" content="#3964FE">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -385,7 +385,7 @@
   // ---------- 工具 ----------
   function $(id) { return document.getElementById(id); }
   function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
-  // ---------- markdown 渲染(同步 index:marked CDN;缺失/异常时回退转义纯文本) ----------
+  // ---------- markdown 渲染(同步 index:本地 vendor/marked.min.js;缺失/异常时回退转义纯文本) ----------
   // 返回 { html, fmt }:fmt=false 表示未做转换,气泡不带 .md 类、保持 pre-wrap 原文排版
   if (typeof marked !== 'undefined') marked.setOptions({ breaks: true, gfm: true });
   function mdHtml(text) {
@@ -917,7 +917,9 @@
       const firstArc = box.firstElementChild && box.firstElementChild.classList.contains('msg-archived') ? box.firstElementChild : null;
       const tail = frag.lastChild;
       if (firstArc && tail && tail.classList && tail.classList.contains('msg-archived') && !tail.querySelector('.archived-note')) {
-        while (tail.firstChild) firstArc.insertBefore(tail.firstChild, firstArc.firstChild);
+        // 逆序会打乱存档段顺序：锁住现有首位作固定锚点，尾部子节点依时间序前插进去
+        const arcAnchor = firstArc.firstChild;
+        while (tail.firstChild) firstArc.insertBefore(tail.firstChild, arcAnchor);
         frag.removeChild(tail);
       } else {
         closeArc(); // 本页以存档段结尾且不与现有存档段相连：补「已存档」尾注
@@ -930,7 +932,9 @@
         frag.insertBefore(end, frag.firstChild);
       }
       // 前插保持视口锚定：prevH 含提示行高，差值即「新增页高 - 提示行高」，提示行被新页尾行原位覆盖
-      while (frag.firstChild) box.insertBefore(frag.firstChild, box.firstChild);
+      // 注意先固定锚点：每轮现取 box.firstChild 会把新页插成逆序（终点提示也会随之沉到新页与现有内容之间）
+      const anchor = box.firstChild;
+      while (frag.firstChild) box.insertBefore(frag.firstChild, anchor);
       box.scrollTop = box.scrollHeight - prevH + prevTop;
       state.chatHasMore = !!detail.has_more;
       if (detail.oldest_id) state.chatOldestId = detail.oldest_id;

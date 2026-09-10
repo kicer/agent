@@ -398,7 +398,7 @@ stateDiagram-v2
 
 ## 8. 前端
 
-`app/server/public/` 是 H5 SPA（无构建步骤，CDN 引 `marked.min.js` 渲染 Markdown）。`index.html` 是主入口，按 Tab 组织：
+`app/server/public/` 是 H5 SPA（无构建步骤，本地 `vendor/marked.min.js` 渲染 Markdown，不引外部 CDN）。`index.html` 是主入口，按 Tab 组织：
 
 - `js/tasks.js` —— 任务 Tab：会话列表（活跃/归档分页 + 搜索 + 滑入滑出聊天）、聊天 SSE 流式、文件管理、阶段开关。
 - `js/models.js` —— 模型 Tab：模型池状态、token 用量。
