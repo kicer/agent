@@ -376,6 +376,9 @@ async function runLoop(sessionId) {
   const run = getRun(sessionId, true);
   if (run.looping) return; // 已有循环在跑（下一轮迭代会自动带上最新消息）
   run.looping = true;
+  // 回合级 In token 峰值（整轮结束后供自动压缩检查）；记录本回合是否为压缩回合，压缩回合不再自启压缩防递归
+  run.turnMaxPt = 0;
+  const wasCompressTurn = !!run.summarizing;
   try {
     await runLoopInner(sessionId, run);
   } catch (err) {
@@ -384,6 +387,8 @@ async function runLoop(sessionId) {
   } finally {
     run.looping = false;
     finalize(sessionId, run);
+    // 自动压缩只在回合完全结束（循环已退、finalize 已收尾）后检查：AI↔tools 交互途中绝不触发
+    maybeAutoCompress(sessionId, run, wasCompressTurn);
   }
 }
 
@@ -496,6 +501,8 @@ async function runLoopInner(sessionId, run) {
     const assistantId = saveMessage(sessionId, msgRow);
         if (isErrAck) log.info('msg', sessionId + ' 本轮 tool call 参数错误，assistant 标记 errAck（不再进入模型上下文）');
         recordModelUsage(sessionId, session.model_id, result.usage);
+        // 回合级 In token 峰值：工具迭代只会越滚越大，取各轮 prompt_tokens 最大值作自动压缩判据
+        if (msgRow.usage && msgRow.usage.pt > (run.turnMaxPt || 0)) run.turnMaxPt = msgRow.usage.pt;
         // 「压缩」回合的总结判定：压缩时不传 tools，因此本回合第一条「无 tool_calls 的收尾回复」
         // 就是摘要（compressing 取自本回合的 run.summarizing 标记）；回合中间若有异常产生的
         // 工具轮（理论上不会）都是普通消息，前端照常渲染。
@@ -908,6 +915,27 @@ function summarizeContext(sessionId) {
     delivered = after && after.status === 'active' ? 'live' : 'queued';
   }
   return { prompt, delivered };
+}
+
+// 回合结束后的自动压缩检查（由 runLoop finally 调用，即 AI↔工具循环完全停止、finalize 收尾之后）。
+// 规则：agent.auto_compress_tokens > 0 且本回合 In token 峰值（run.turnMaxPt，各模型轮 prompt_tokens 最大者）
+// ≥ 阈值 → 自动发起一次与手动「摘要」完全相同的压缩回合；阈值 0 = 永不启用。
+// 护栏：压缩回合自身不再检查（防递归）；被终止的回合不触发；仅正常收尾进入 held 后触发；
+// 先发 auto_compress 事件再启动压缩，前端据此挂上收尾状态（SSE 同连接事件有序，早于任何流式帧）。
+function maybeAutoCompress(sessionId, run, wasCompressTurn) {
+  try {
+    if (wasCompressTurn || run.cancelled) return;
+    const th = Math.floor(Number((cfg.agent || {}).auto_compress_tokens) || 0);
+    const maxPt = run.turnMaxPt || 0;
+    if (th <= 0 || maxPt < th) return;
+    const s = getSession(sessionId);
+    if (!s || s.status !== 'held') return; // 只有正常结束的回合才自动压缩；取消/已释放等状态不动
+    bus.emit(sessionId, 'auto_compress', { prompt_tokens: maxPt, threshold: th });
+    summarizeContext(sessionId);
+    log.info('msg', sessionId + ' 自动压缩触发：回合 In ' + maxPt + ' ≥ 阈值 ' + th);
+  } catch (e) {
+    log.warn('msg', sessionId + ' 自动压缩启动失败：' + (e && e.message || e));
+  }
 }
 
 // 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件。

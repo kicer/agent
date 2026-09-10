@@ -1741,6 +1741,14 @@
       fillToolResult(d.tool_call_id, d.content, d.is_error, d.image_url, d.msg_id);
       maybeAutoScroll();
     });
+    // 后端回合结束后自动压缩触发：挂上与手动「摘要」同一套收尾链路（摘要卡片 + 旧消息淡出存档）
+    es.addEventListener('auto_compress', ev => {
+      const d = JSON.parse(ev.data);
+      state.pendingSummary = true;
+      const btn = $('compress-btn');
+      if (btn) btn.disabled = true;
+      toast('本轮 In ' + fmtTok(d.prompt_tokens) + ' 超过阈值 ' + fmtTok(d.threshold) + '，自动压缩上下文中…');
+    });
     es.addEventListener('done', ev => {
       removeTyping(); // 本轮结束,占位亦终止(如模型报错无回复)
       // 压缩回合异常结束的兜底（模型报错回合直接 break / 被终止 → 不会有带 is_summary 的最终消息）：
@@ -3242,6 +3250,7 @@
       { path: 'agent.max_tool_iterations', label: '单会话最大工具轮次', type: 'int' },
       { path: 'agent.max_retries', label: '上游失败重试次数', type: 'int' },
       { path: 'agent.language', label: '回复语言(留空不限)', type: 'text' },
+      { path: 'agent.auto_compress_tokens', label: '自动压缩 In 阈值(0=关)', type: 'int' },
     ] },
     { group: '终端工具', items: [
       { path: 'terminal.default_timeout_ms', label: '命令默认超时(ms)', type: 'int' },
