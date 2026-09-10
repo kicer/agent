@@ -1657,7 +1657,8 @@
       removeTyping();
       if (state.toolCards[d.id]) return; // 重连/重复广播防御
       state.toolCallStreaming[d.id] = { name: d.name || '', args: '' };
-      const card = renderToolCard(d.id, d.name, '', Date.now(), { open: true, generating: true });
+      // 保持原折叠态：参数进度看摘要行的「生成参数中… N 字符」，不自动展开
+      const card = renderToolCard(d.id, d.name, '', Date.now(), { generating: true });
       $('chat-view').appendChild(card);
       state.toolCards[d.id] = card;
       maybeAutoScroll();
