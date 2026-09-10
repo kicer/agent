@@ -151,7 +151,7 @@ function attachToolCallMap(row, toolCallMsgMap) {
   return row;
 }
 
-const MSG_COLS = 'id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, created_at';
+const MSG_COLS = 'id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, usage, created_at';
 
 router.get('/:id', wrap((req, res) => {
   const session = engine.getSession(req.params.id);
