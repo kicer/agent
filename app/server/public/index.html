@@ -2477,14 +2477,22 @@
       '<div class="up-info">' +
         '<div class="up-name" title="' + esc(file.name) + '">' + esc(file.name) + '</div>' +
         '<div class="up-meta">' + uploadTypeLabel(file.name) + ' · ' + fmtSize(file.size) + '</div>' +
-        '</div>' +
-        '<div class="up-mask"><span class="up-pct">0%</span></div>';
-      const mask = card.querySelector('.up-mask');
-      const pctEl = card.querySelector('.up-pct');
-      // 无单卡删除入口:发送消息或切换会话时整体清空(clearUploadCards)
-      // 倒序:最后上传的排最前;新卡入位后横向滚回左端保证可见
-      row.prepend(card);
-      row.scrollTo({ left: 0, behavior: 'smooth' });
+      '</div>' +
+      '<button class="up-x hidden" title="不再随消息告知该文件" aria-label="移除卡片">' +
+        '<svg class="ic" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' +
+      '</button>' +
+      '<div class="up-mask"><span class="up-pct">0%</span></div>';
+    const mask = card.querySelector('.up-mask');
+    const pctEl = card.querySelector('.up-pct');
+    const closeBtn = card.querySelector('.up-x');
+    // ×掉卡片 = 从 DOM 移除；send() 按现存 data-done 卡片实时拼告知行，自然不再包含该文件（文件本身仍在任务目录）
+    closeBtn.addEventListener('click', () => {
+      card.remove();
+      if (!row.children.length) row.classList.add('hidden');
+    });
+    // 倒序:最后上传的排最前;新卡入位后横向滚回左端保证可见
+    row.prepend(card);
+    row.scrollTo({ left: 0, behavior: 'smooth' });
     return {
       setPct(p) {
         const v = Math.max(0, Math.min(100, Math.round(p)));
@@ -2495,10 +2503,12 @@
         mask.remove();
         card.classList.add('done');
         card.dataset.done = '1'; // 仅成功上传的卡片参与发送时的告知行
+        closeBtn.classList.remove('hidden');
       },
       fail() {
         card.classList.add('err');
         mask.innerHTML = '<span class="up-pct">上传失败</span>';
+        closeBtn.classList.remove('hidden');
       },
     };
   }
