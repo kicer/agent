@@ -290,23 +290,23 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .up-cards {
   display: flex; gap: 6px;
   overflow-x: auto; overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none; /* Firefox 隐藏滚动条，保留拖动/滚轮滑动 */
+  -ms-overflow-style: none;
   -webkit-overflow-scrolling: touch;
 }
-.up-cards::-webkit-scrollbar { height: 4px; }
-.up-cards::-webkit-scrollbar-thumb { background: #ccd0da; border-radius: 2px; }
+.up-cards::-webkit-scrollbar { display: none; }
 .up-card {
   position: relative; flex: 0 0 auto;
-  display: flex; align-items: center; gap: 7px;
+  display: flex; align-items: center; gap: 8px;
   width: 158px; max-width: 56vw;
   background: var(--surface); border: 1px solid #e3e6ee; border-radius: 10px;
-  padding: 6px 8px; overflow: hidden;
+  padding: 10px 11px; overflow: hidden;
 }
 .up-ico { color: var(--gray); display: flex; flex: none; }
 .up-ico .ic { width: 18px; height: 18px; }
 .up-info { flex: 1; min-width: 0; }
 .up-name { font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.up-meta { font-size: 10.5px; color: var(--gray); margin-top: 1px; }
+.up-meta { font-size: 10.5px; color: var(--gray); margin-top: 3px; }
 .up-mask {
   position: absolute; inset: 0; z-index: 1;
   background: rgba(255, 255, 255, .78);
