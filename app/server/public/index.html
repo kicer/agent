@@ -1416,7 +1416,7 @@
   async function send() {
     const ta = $('msg-input');
     const content = ta.value.trim();
-    // 附件仅上传到任务目录，不再随正文拼通知行：没有文字就不发（避免产生空消息）。
+    // 没有文字就不发（避免产生空消息）；上传文件告知行在发送时拼在正文前（见下）。
     if (!content) {
       if (state.attachments.length) toast('附件需随一条文字消息发送');
       return;
@@ -1432,12 +1432,19 @@
       const id = await ensureSession();
       let atts = [];
       if (pending.length) atts = await uploadFiles(id, pending);
-      const body = { content, deepThink: !!state.deepThink };
+      // 输入区上传卡片里成功入库的文件:正文前拼一行告知，让 AI 知道任务目录多了哪些文件
+      const upNames = Array.from($('up-cards').querySelectorAll('.up-card[data-done="1"]'))
+        .map(c => c.dataset.name).filter(Boolean);
+      const text = upNames.length
+        ? '用户上传了文件：' + upNames.join('、') + '\n' + content
+        : content;
+      const body = { content: text, deepThink: !!state.deepThink };
       const sent = await req('POST', '/api/sessions/' + id + '/messages', body);
-      clearUploadCards(); // 消息已发出,上传文件卡片完成提示使命,自动清掉
+      clearUploadCards(); // 消息已发出(告知行已拼入正文),卡片使命完成清掉
 
-      appendUserMsg(content, atts.map(a => a.name), sent && sent.message_id);
+      appendUserMsg(text, atts.map(a => a.name), sent && sent.message_id);
       if (!state.sessionTitle && content) {
+        // 标题取用户原文，不带文件告知行
         state.sessionTitle = content.length > 24 ? content.slice(0, 24) : content;
       }
       renderHeader();
@@ -2464,6 +2471,7 @@
     row.classList.remove('hidden');
     const card = document.createElement('div');
     card.className = 'up-card';
+    card.dataset.name = file.name; // 发送时按名字在正文前拼告知行
     card.innerHTML =
       '<div class="up-ico">' + uploadIconSvg(file.name) + '</div>' +
       '<div class="up-info">' +
@@ -2486,6 +2494,7 @@
       done() {
         mask.remove();
         card.classList.add('done');
+        card.dataset.done = '1'; // 仅成功上传的卡片参与发送时的告知行
       },
       fail() {
         card.classList.add('err');
