@@ -121,6 +121,7 @@
 
     <!-- ================= 底部输入区 ================= -->
     <footer>
+      <div class="up-cards hidden" id="up-cards" aria-label="已上传文件"></div>
       <div class="attach-chips hidden" id="attach-chips"></div>
       <div class="input-shell">
         <textarea id="msg-input" placeholder="传送信息" rows="2" enterkeyhint="enter"></textarea>
@@ -1088,6 +1089,7 @@
     state.chatOldestId = null;
     state.chatLoadedCount = 0;
     renderAttachChips();
+    clearUploadCards(); // 切会话清掉旧会话的上传卡片
     renderDrawerList(); // 会话切换后立刻重画抽屉高亮,避免下次打开才看到更新
     setView('chat');
     $('chat-view').innerHTML = '<div class="drawer-empty">加载中…</div>';
@@ -1130,6 +1132,7 @@
     state.streaming = false;
     userPaused = false;
     renderAttachChips();
+    clearUploadCards();
     selectMode('secretary'); // 置顶逻辑:新建时自动选中【文秘助理】
     setView('welcome');
     $('chat-view').innerHTML = '';
@@ -2444,7 +2447,65 @@
     }
   }
 
-  // 面板内上传:直接写入当前会话任务目录(>阈值的图片逐个询问压缩;多文件并行上传+总进度条)
+  // ---------- 上传文件卡片(输入区上方:图标 + 文件名/类型大小,逐卡上传进度遮罩;过多横向滚动) ----------
+  function uploadTypeLabel(name) {
+    const m = /\.([A-Za-z0-9]{1,8})$/.exec(name || '');
+    return m ? m[1].toUpperCase() : '文件';
+  }
+  function uploadIconSvg(name) {
+    // 与文件面板同款图标语言:图片用图、其余用文档
+    return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name || '')
+      ? '<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>'
+      : '<svg class="ic" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+  }
+  function addUploadCard(file) {
+    const row = $('up-cards');
+    row.classList.remove('hidden');
+    const card = document.createElement('div');
+    card.className = 'up-card';
+    card.innerHTML =
+      '<div class="up-ico">' + uploadIconSvg(file.name) + '</div>' +
+      '<div class="up-info">' +
+        '<div class="up-name" title="' + esc(file.name) + '">' + esc(file.name) + '</div>' +
+        '<div class="up-meta">' + uploadTypeLabel(file.name) + ' · ' + fmtSize(file.size) + '</div>' +
+      '</div>' +
+      '<button class="up-x hidden" title="关闭" aria-label="关闭"><svg class="ic" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>' +
+      '<div class="up-mask"><span class="up-pct">0%</span></div>';
+    const mask = card.querySelector('.up-mask');
+    const pctEl = card.querySelector('.up-pct');
+    const closeBtn = card.querySelector('.up-x');
+    closeBtn.addEventListener('click', () => {
+      card.remove();
+      if (!row.children.length) row.classList.add('hidden');
+    });
+    row.appendChild(card);
+    // 卡片多到横向溢出时,新卡滚动到可见处
+    card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    return {
+      setPct(p) {
+        const v = Math.max(0, Math.min(100, Math.round(p)));
+        pctEl.textContent = v + '%';
+        card.style.setProperty('--up-p', v + '%');
+      },
+      done() {
+        mask.remove();
+        card.classList.add('done');
+        closeBtn.classList.remove('hidden');
+      },
+      fail() {
+        card.classList.add('err');
+        mask.innerHTML = '<span class="up-pct">上传失败</span>';
+        closeBtn.classList.remove('hidden');
+      },
+    };
+  }
+  function clearUploadCards() {
+    const row = $('up-cards');
+    row.innerHTML = '';
+    row.classList.add('hidden');
+  }
+
+  // 面板内上传:直接写入当前会话任务目录(>阈值的图片逐个询问压缩;多文件并行上传+总进度条+逐卡进度)
   $('file-input').addEventListener('change', async e => {
     const input = e.target;
     const files = Array.prototype.slice.call(input.files || []); // 先快照再清空,FileList 是实时的
@@ -2454,6 +2515,8 @@
     // 大图逐个串行询问压缩(模态弹窗不能并行)
     const ready = [];
     for (const f of files) ready.push(await maybeCompressImage(f));
+    // 每张卡对应一个文件的上传进度(输入区上方;面板内总进度条保留不变)
+    const cards = ready.map(f => addUploadCard(f));
     // ---- 并行上传 + 实时进度 ----
     const progWrap = $('fp-progress'), progBar = $('fp-progress-bar'), progPct = $('fp-progress-pct');
     const tot = ready.reduce((s, f) => s + f.size, 0);
@@ -2466,7 +2529,8 @@
     }
     progWrap.classList.remove('hidden');
     paintProg();
-    const tasks = ready.map(f => new Promise(resolve => {
+    const tasks = ready.map((f, i) => new Promise(resolve => {
+      const card = cards[i];
       const fd = new FormData(); fd.append('files', f, f.name);
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/sessions/' + state.sessionId + '/files');
@@ -2477,14 +2541,15 @@
         loaded.v += ev.loaded - lastLoaded;
         lastLoaded = ev.loaded;
         paintProg();
+        card.setPct(ev.loaded / ev.total * 100);
       };
       xhr.onload = function () {
-        if (xhr.status === 200) done++; else errCount++;
+        if (xhr.status === 200) { done++; card.done(); } else { errCount++; card.fail(); }
         // 终态补齐(可能没收到最后一帧 100%)
         if (lastLoaded < f.size) { loaded.v += f.size - lastLoaded; paintProg(); }
         resolve();
       };
-      xhr.onerror = function () { errCount++; resolve(); };
+      xhr.onerror = function () { errCount++; card.fail(); resolve(); };
       xhr.send(fd);
     }));
     await Promise.all(tasks);
