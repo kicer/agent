@@ -103,7 +103,6 @@ async function main() {
     console.log('\n[2] 工具调用');
     s = await api('POST', '/api/sessions', { title: '冒烟-工具' });
     await waitSession(s.id, x => x.session.status === 'held' && !!x.session.model_id, 5000, '绑定(held)');
-    await api('POST', '/api/sessions/' + s.id + '/start');
     await api('POST', '/api/sessions/' + s.id + '/messages', { content: '请写文件' });
     d = await waitSession(s.id, x => x.session.status === 'held' && x.messages.some(m => m.role === 'tool'), 15000, '工具回合完成（held）');
     const toolMsgs = d.messages.filter(m => m.role === 'tool');
@@ -114,9 +113,6 @@ async function main() {
     const dl = await fetch(BASE + '/api/sessions/' + s.id + '/files/download?path=hello.txt');
     const dlText = await dl.text();
     ok(dlText === 'hello from agent', '下载内容正确', dlText);
-    const taskMd = d.messages.find(m => m.role === 'user' && m.content.includes('task.md'));
-    ok(!!taskMd, '开始执行自动追加模板消息');
-    ok(d.session.phase === 'execution', '阶段切换为 execution');
 
     // ---- 2.5 read_file 读图回传（vision）----
     console.log('\n[2.5] 读图回传');

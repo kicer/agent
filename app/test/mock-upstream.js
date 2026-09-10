@@ -2,6 +2,7 @@
 // 规则：
 //  - 历史里已有 tool 结果 -> 回纯文本收尾
 //  - 最后一条 user 消息含 "写文件" -> 返回 write_file 工具调用
+//  - 含 "慢工具" -> write_file 参数碎片化慢速下传（验证 tool_call 流式早反馈）
 //  - 含 "读图" -> 返回 read_file(pic.png) 工具调用（验证 vision 图片回传）
 //  - 含 "慢" -> 慢速输出（用于终止测试）
 //  - 其他 -> 纯文本 "已收到: <最后一条user消息>"
@@ -41,6 +42,30 @@ function streamToolCall(res) {
   res.end();
 }
 
+// 慢速工具调用场景：参数拆 40 字符/片、90ms 一片共约 7 秒，验证前端 tool_call 参数流式早反馈
+// （tool_call_start 即时建卡 + tool_call_args 实时填充；usage 帧带 cached_tokens 顺带验证命中率展示）
+function streamSlowToolCall(res) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+  const id = 'call-slow-' + Date.now();
+  const args = JSON.stringify({ path: 'slow.txt', content: 'slow stream line. '.repeat(190) }); // ≈3.4k 字符
+  sse(res, { choices: [{ delta: { role: 'assistant', tool_calls: [{ index: 0, id, function: { name: 'write_file' } }] } }] });
+  let pos = 0;
+  const timer = setInterval(() => {
+    if (pos >= args.length) {
+      clearInterval(timer);
+      sse(res, { choices: [{ delta: {}, finish_reason: 'tool_calls' }] });
+      sse(res, { usage: { prompt_tokens: 3000, completion_tokens: 1200, total_tokens: 4200, prompt_tokens_details: { cached_tokens: 2850 } } });
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+    const piece = args.slice(pos, pos + 40);
+    pos += 40;
+    sse(res, { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: piece } }] } }] });
+  }, 90);
+  res.on('close', () => clearInterval(timer));
+}
+
 function streamReadFileCall(res) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const id = 'call-img-' + Date.now();
@@ -76,6 +101,8 @@ const server = http.createServer((req, res) => {
       streamReadFileCall(res);
     } else if (userText.includes('写文件')) {
       streamToolCall(res);
+    } else if (userText.includes('慢工具')) {
+      streamSlowToolCall(res);
     } else if (userText.includes('慢')) {
       streamText(res, '这是一段很长的慢速输出，用来测试终止功能是否生效。', 200);
     } else {
