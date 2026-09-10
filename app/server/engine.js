@@ -917,10 +917,15 @@ function summarizeContext(sessionId) {
   return { prompt, delivered };
 }
 
+// 自动压缩宽限期（ms）：超长回合刚结束时，前端还在收尾渲染（最终消息落 DOM、会话列表刷新等），
+// 同一帧立刻再开压缩回合会叠加大量重排/重绘，会话页面肉眼可见地卡顿，故满足条件后延迟再启动。
+const AUTO_COMPRESS_GRACE_MS = 1500;
+
 // 回合结束后的自动压缩检查（由 runLoop finally 调用，即 AI↔工具循环完全停止、finalize 收尾之后）。
 // 规则：agent.auto_compress_tokens > 0 且本回合 In token 峰值（run.turnMaxPt，各模型轮 prompt_tokens 最大者）
-// ≥ 阈值 → 自动发起一次与手动「摘要」完全相同的压缩回合；阈值 0 = 永不启用。
+// ≥ 阈值 → 延迟 AUTO_COMPRESS_GRACE_MS 后自动发起一次与手动「摘要」完全相同的压缩回合；阈值 0 = 永不启用。
 // 护栏：压缩回合自身不再检查（防递归）；被终止的回合不触发；仅正常收尾进入 held 后触发；
+// 延迟期间用户抢先发言/手动压缩/终止、租约到期释放都会改动 status 或 held_at，回调里校验后自动放弃；
 // 先发 auto_compress 事件再启动压缩，前端据此挂上收尾状态（SSE 同连接事件有序，早于任何流式帧）。
 function maybeAutoCompress(sessionId, run, wasCompressTurn) {
   try {
@@ -930,9 +935,20 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
     if (th <= 0 || maxPt < th) return;
     const s = getSession(sessionId);
     if (!s || s.status !== 'held') return; // 只有正常结束的回合才自动压缩；取消/已释放等状态不动
-    bus.emit(sessionId, 'auto_compress', { prompt_tokens: maxPt, threshold: th });
-    summarizeContext(sessionId);
-    log.info('msg', sessionId + ' 自动压缩触发：回合 In ' + maxPt + ' ≥ 阈值 ' + th);
+    const heldAt = s.held_at; // 记下本次进入 held 的时刻，延迟期间任何状态流转都会清掉或刷新它
+    const timer = setTimeout(() => {
+      try {
+        if (run.cancelled) return;
+        const s2 = getSession(sessionId);
+        if (!s2 || s2.status !== 'held' || s2.held_at !== heldAt) return; // 宽限期内会话有变动，放弃本次自动压缩
+        bus.emit(sessionId, 'auto_compress', { prompt_tokens: maxPt, threshold: th });
+        summarizeContext(sessionId);
+        log.info('msg', sessionId + ' 自动压缩触发：回合 In ' + maxPt + ' ≥ 阈值 ' + th);
+      } catch (e) {
+        log.warn('msg', sessionId + ' 自动压缩启动失败：' + (e && e.message || e));
+      }
+    }, AUTO_COMPRESS_GRACE_MS);
+    if (timer.unref) timer.unref(); // 挂起的宽限定时器不应阻止进程退出
   } catch (e) {
     log.warn('msg', sessionId + ' 自动压缩启动失败：' + (e && e.message || e));
   }
