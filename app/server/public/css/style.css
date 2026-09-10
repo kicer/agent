@@ -288,6 +288,10 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 }
 .attach-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
 .attach-chip .rm { color: var(--gray); display: flex; }
+/* 工具卡参数流式生成中：◌ 呼吸提示（收尾后随 .tool-generating 移除） */
+.tool-card.tool-generating .spin { display: inline-block; color: var(--active); animation: tool-gen-pulse 1s ease-in-out infinite; }
+@keyframes tool-gen-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .2 } }
+
 /* 上传文件卡片行(嵌在输入框内部顶端,由 .input-shell 的 gap 提供间距;逐卡进度遮罩;卡多时横向滚动) */
 .up-cards {
   display: flex; gap: 6px;

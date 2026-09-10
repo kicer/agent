@@ -630,6 +630,9 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       shouldCancel: () => run.cancelled,
       onText: delta => bus.emit(sessionId, 'assistant_delta', { text: delta }),
       onReasoning: delta => bus.emit(sessionId, 'reasoning_delta', { text: delta }),
+      // 工具调用早反馈：id+name 就绪即建卡，参数碎片流式下发（长参数生成期间前端不再空等）
+      onToolCallStart: t => bus.emit(sessionId, 'tool_call_start', { id: t.id, name: t.name }),
+      onToolCallArgs: t => bus.emit(sessionId, 'tool_call_args', { id: t.id, args: t.args }),
       // 本轮是否启用深度思考；由 postUserMessage 从消息 POST 参数写进 run
       deepThink: !!run.deepThink,
       onMeta: handleSseMeta,

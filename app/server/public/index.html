@@ -483,6 +483,7 @@
     streamReasoning: '',        // 当前流式累积思考文本
     streamThinkEl: null,        // 当前流式思考面板的 body 节点（未出现思考时为 null）
     toolCards: {},              // tool_call_id -> 工具卡片元素(同步 index 工具卡样式)
+    toolCallStreaming: {},      // tool_call_id -> {name, args}：参数流式生成中的累积态(早建卡卡面实时填充)
     toolCallMsgIds: {},         // tool_call_id -> tool 消息行 id（历史懒加载映射，renderDetail 重建）
         typingEl: null,             // 「思考中」占位
         streaming: false,
@@ -664,15 +665,29 @@
     // 流式执行(open=true):结果在 tool-result 里增量填入,展开才能看到实时输出,回合结束也别自动折上。
     // 历史重渲染(默认 open=false):保持原来的收起观感,用户点 summary 再展开。
     const open = !!(opts && opts.open);
+    // generating=true:tool_call 参数流式生成中的早卡，占位提示由 finalizeToolCardArgs 替换为完整参数
+    const gen = !!(opts && opts.generating);
+    if (gen) div.classList.add('tool-generating');
     div.innerHTML =
       '<details' + (open ? ' open' : '') + '><summary><span class="spin">◌</span>' +
       '<span class="tool-name">' + esc(name) + '</span>' +
-      '<span class="tool-args">' + esc(toolArgsSummary(name, argsStr)) + '</span></summary>' +
-      '<pre class="tool-args-full">' + esc(toolArgsFull(argsStr)) + '</pre>' +
+      '<span class="tool-args">' + (gen ? '生成参数中…' : esc(toolArgsSummary(name, argsStr))) + '</span></summary>' +
+      '<pre class="tool-args-full">' + (gen ? '' : esc(toolArgsFull(argsStr))) + '</pre>' +
       '<pre class="tool-result">执行中…</pre>' +
       // 时间行/复制按钮在折叠体内:展开卡片才可见
       '<div class="tool-time">' + fmtTime(createdAt || Date.now()) + '</div></details>';
     return div;
+  }
+  // 早卡收尾：回填完整参数、清「生成中」态（assistant_message / 执行时 tool_call 事件都会接手）
+  function finalizeToolCardArgs(id, name, argsStr) {
+    delete state.toolCallStreaming[id];
+    const card = state.toolCards[id];
+    if (!card || !card.classList.contains('tool-generating')) return;
+    card.classList.remove('tool-generating');
+    const argsEl = card.querySelector('.tool-args');
+    if (argsEl) argsEl.textContent = toolArgsSummary(name || '', argsStr || '');
+    const fullEl = card.querySelector('.tool-args-full');
+    if (fullEl) fullEl.textContent = toolArgsFull(argsStr || '');
   }
   // tool 消息 content:纯文本,或含图片时的哨兵 JSON {"__blocks__":[...]}(read_file 读图回传)
   // 顺手剥掉旧数据里的「，图片见同条消息的 image_url 内容块」尾巴（新版文案已去掉，历史行还在库里）
@@ -725,7 +740,10 @@
     try { calls = typeof m.tool_calls === 'string' ? JSON.parse(m.tool_calls) : m.tool_calls; } catch (_) { return; }
     for (const c of calls) {
       const id = c.id || ('c' + Math.random().toString(36).slice(2, 10));
-      if (state.toolCards[id]) continue; // tool_call 事件已经建过同一张卡,不重复创建
+      if (state.toolCards[id]) { // 早卡(流式生成中)：回填完整参数收尾；否则跳过不重复建卡
+        finalizeToolCardArgs(id, c.function && c.function.name, c.function && c.function.arguments);
+        continue;
+      }
       const card = renderToolCard(id, c.function && c.function.name || '工具', c.function && c.function.arguments, m.created_at);
       container.appendChild(card);
       state.toolCards[id] = card;
@@ -813,6 +831,7 @@
     state.sessionType = (s && s.assistant_type) || 'secretary'; // 顶部 icon 跟随会话类型
     state.status = (s && s.status) || '';
     state.toolCards = {};
+    state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
     state.toolCallMsgIds = {}; // tool_call.id → tool 消息行 id（展开时懒加载用）
     userPaused = false;
     removeTyping();
@@ -1064,6 +1083,7 @@
         state.streamEl = null;
         state.streamText = '';
         state.toolCards = {};
+        state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
         state.streaming = false;
         setView('welcome'); // 复用 newChat 同样的视图切换路径
       }
@@ -1093,6 +1113,7 @@
       state.streamWrap = null;
       state.lastAssistantMsgId = null;
     state.toolCards = {};
+    state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
     state.streaming = false;
     state.attachments = [];
     userPaused = false;
@@ -1140,6 +1161,7 @@
     state.streamEl = null;
     state.streamText = '';
     state.toolCards = {};
+    state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
     state.streaming = false;
     userPaused = false;
     renderAttachChips();
@@ -1629,11 +1651,46 @@
                   if (cpBtn) cpBtn.disabled = state.status === 'active';
                 }
         });
+    // 参数流式生成早卡：id+name 就绪即建卡展开，长参数（write_file 大文件）期间不再是死寂 typing
+    es.addEventListener('tool_call_start', ev => {
+      const d = JSON.parse(ev.data);
+      removeTyping();
+      if (state.toolCards[d.id]) return; // 重连/重复广播防御
+      state.toolCallStreaming[d.id] = { name: d.name || '', args: '' };
+      const card = renderToolCard(d.id, d.name, '', Date.now(), { open: true, generating: true });
+      $('chat-view').appendChild(card);
+      state.toolCards[d.id] = card;
+      maybeAutoScroll();
+    });
+    es.addEventListener('tool_call_args', ev => {
+      const d = JSON.parse(ev.data);
+      const st = state.toolCallStreaming[d.id];
+      if (!st) return; // 未建早卡(无 id/name 或已收尾)则丢弃，收尾后残留碎片自然忽略
+      st.args += d.args || '';
+      const card = state.toolCards[d.id];
+      if (!card) return;
+      if (card.dataset.painting) return; // 150ms 合并重绘：超大参数不逐帧刷
+      card.dataset.painting = '1';
+      setTimeout(() => {
+        delete card.dataset.painting;
+        if (!card.isConnected || !state.toolCallStreaming[d.id]) return;
+        const fullEl = card.querySelector('.tool-args-full');
+        if (fullEl) { fullEl.textContent = st.args; fullEl.scrollTop = fullEl.scrollHeight; }
+        const argsEl = card.querySelector('.tool-args');
+        const n = st.args.length;
+        if (argsEl) argsEl.textContent = '生成参数中… ' + (n >= 1024 ? (n / 1024).toFixed(1) + 'k 字符' : n + ' 字符');
+        maybeAutoScroll();
+      }, 150);
+    });
     es.addEventListener('tool_call', ev => {
       const d = JSON.parse(ev.data);
       removeTyping(); // 工具卡出现也算即时反馈
-      if (state.toolCards[d.id]) return; // assistant_message 已建卡(含完整参数),不重复创建
-      // 流式 tool_call:展开卡片,实时看到执行参数与结果,回合结束也不自动折上
+      if (state.toolCards[d.id]) {
+        // 执行时的完整参数事件：若为流式早卡则回填收尾（unwrap 后的干净参数），普通卡不动
+        finalizeToolCardArgs(d.id, d.name, d.arguments);
+        return;
+      }
+      // 无早卡(旧行为/刷新后重连)：直接建展开卡
       const card = renderToolCard(d.id, d.name, d.arguments, Date.now(), { open: true });
       $('chat-view').appendChild(card);
       state.toolCards[d.id] = card;
@@ -1661,7 +1718,13 @@
       state.streamWrap = null;
       state.streamReasoning = '';
       state.streamThinkEl = null;
+      // 异常收尾兜底：把参数未流完的早卡就地回填收尾，避免占位态永远呼吸
+      for (const sid of Object.keys(state.toolCallStreaming)) {
+        const stg = state.toolCallStreaming[sid];
+        finalizeToolCardArgs(sid, stg.name, stg.args);
+      }
       state.toolCards = {};
+      state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
       updateScrollBottomBtn();
       loadSessionList();
     });

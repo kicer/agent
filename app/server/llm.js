@@ -261,6 +261,8 @@ function deepMergeInto(dst, src) {
 
 // 调模型一次。onText(textDelta) 回调流式文本。
 // 返回 { content, tool_calls: [{id,name,arguments(string)}], finish_reason, usage, aborted }
+// 可选回调 opts.onToolCallStart({id,name})：某 tool_call 首次凑齐 id+name 时触发一次；
+// opts.onToolCallArgs({id,args})：此后该调用每段参数增量各触发一次（供前端流式渲染）。
 // options.deepThink: true 时将 modelCfg.thinking_params 合并进 body。
 async function callModel(cfg, modelId, messages, tools, options) {
   const opts = options || {};
@@ -319,6 +321,8 @@ async function callModel(cfg, modelId, messages, tools, options) {
   let aborted = false;
   let sseFrames = 0; // 收到的上游 data 帧数（仅计数成功下传到 onEvent 的）
   const toolCalls = new Map(); // index -> {id, name, arguments}
+  const announced = new Set();  // 已早广播的 slot idx（id+name 就绪即通知前端建卡，不等整轮生成完）
+  const announcedLen = new Map(); // idx -> 已转发的参数字符数（参数碎片只发增量，不重复全量）
 
   try {
     await forEachSSEData(res, evt => {
@@ -354,6 +358,20 @@ async function callModel(cfg, modelId, messages, tools, options) {
         if (tc.function) {
           if (tc.function.name) acc.name += tc.function.name;
           if (tc.function.arguments) acc.arguments += tc.function.arguments;
+        }
+        // 早反馈：id+name 就绪即通知前端建卡（写大文件等长参数生成期间不再静默如卡死）；
+        // 其后参数碎片按增量转发（流式填「生成参数中」卡片）。
+        if (acc.id && acc.name && !announced.has(idx)) {
+          announced.add(idx);
+          announcedLen.set(idx, acc.arguments.length);
+          if (opts.onToolCallStart) opts.onToolCallStart({ id: acc.id, name: acc.name });
+        }
+        if (announced.has(idx) && opts.onToolCallArgs) {
+          const from = announcedLen.get(idx) || 0;
+          if (acc.arguments.length > from) {
+            announcedLen.set(idx, acc.arguments.length);
+            opts.onToolCallArgs({ id: acc.id, args: acc.arguments.slice(from) });
+          }
         }
       }
       },
