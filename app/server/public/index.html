@@ -510,6 +510,7 @@
     attachments: [],            // 待发送附件 {file, name, size}
     lastImgBlobUrl: null,       // 任务文件图片预览的 blob URL，下次预览或开新图时回收
     es: null,                   // EventSource
+    lastSseAt: 0,               // 最近一次收到 SSE 心跳时刻（看门狗静默判死用）
     streamText: '',             // 当前流式累积文本
     streamEl: null,             // 当前流式 AI 气泡
     streamWrap: null,           // 当前流式消息容器（.msg.other）；思考面板与气泡都挂它上面
@@ -1132,6 +1133,33 @@
     state.pendingSummary = false;
   }
 
+  // ---------- SSE 静默看门狗 ----------
+  // 流断档期的 assistant_message/tool_* 等事件不会重放（sse.js 无客户端即丢弃），页面会停在“无回应”假死；
+  // 而 EventSource 本身多半已自动重连——真正缺的是重新拉一次库。服务端每 15s 发可见心跳（event: ping），
+  // 静默超 45s 即判死，自动做一次“切走再切回”式重同步（resyncSession）；重连失败则 45s 后再试，不刷屏。
+  let sseResyncing = false;
+  function resyncSession() {
+    const id = state.sessionId;
+    if (!id || state.view !== 'chat' || sseResyncing) return;
+    sseResyncing = true;
+    state.lastSseAt = Date.now(); // 计时从现在开始，失败也等下个周期再试
+    closeStream();
+    req('GET', '/api/sessions/' + id + '?limit=' + CHAT_INIT_PAGE_SIZE).then(detail => {
+      if (state.sessionId === id && state.view === 'chat') renderDetail(detail);
+    }).catch(() => {}).then(() => {
+      sseResyncing = false;
+      if (state.sessionId === id && state.view === 'chat' && !state.es) connectStream();
+    });
+  }
+  setInterval(() => {
+    if (state.sessionId && state.view === 'chat' && state.es && Date.now() - state.lastSseAt > 45000) resyncSession();
+  }, 5000);
+  // 后台标签页里 interval 被限频；切回前台立刻补一次判定，自动覆盖“休眠/切走醒来后页面停在半截”场景
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.sessionId && state.view === 'chat' && state.es
+        && Date.now() - state.lastSseAt > 45000) resyncSession();
+  });
+
   async function openSession(id) {
       closeStream();
       removeTyping();
@@ -1574,6 +1602,8 @@
     if (!state.sessionId) return;
     const es = new EventSource('/api/sessions/' + state.sessionId + '/stream');
     state.es = es;
+    state.lastSseAt = Date.now(); // 建连即重置静默计时
+    es.addEventListener('ping', () => { state.lastSseAt = Date.now(); }); // 服务端 15s 可见心跳
     es.addEventListener('status', ev => {
       const d = JSON.parse(ev.data);
       state.status = d.status;

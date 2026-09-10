@@ -85,7 +85,8 @@ router.get('/:id/stream', (req, res) => {
   res.write('retry: 3000\n\n');
   bus.addClient(session.id, res);
   const heartbeat = setInterval(() => {
-    try { res.write(': ping\n\n'); } catch (_) {}
+    // 可见心跳：具名事件（注释帧 `: ping` 不触发前端 JS 事件，无法做静默看门狗）
+    try { res.write('event: ping\ndata: {}\n\n'); } catch (_) {}
   }, 15000);
   req.on('close', () => {
     clearInterval(heartbeat);
