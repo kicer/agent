@@ -666,9 +666,11 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
     // sseFrames=0 且 aborted=false 表示上游未发任何 data（疑似流异常）；其他情况可快速区分
     // “上游发了一堆帧但 content 为空” 与 “根本没调用成功”。
     // 末尾附工具参数流式统计：frags=1 说明上游把整段参数打包在单帧里（前端看不到逐片效果，非链路 bug）。
+    // aborted 细分来源：cancel=用户终止置位；stream=未置取消标志但流被 AbortError 掐断
+    //（如上游连接异常），排查时一眼区分“被人停了”与“链路自己断了”。
     log.info('sse', sessionId + ' 本轮汇总：帧 ' + (result && result.sseFrames || 0) +
           '，finish=' + (result && result.finish_reason || '-') +
-          '，aborted=' + (result && result.aborted || false) +
+          '，aborted=' + (result && result.aborted ? (run.cancelled ? 'cancel' : 'stream') : 'false') +
           (tcDbg.starts ? '，tool_call早建卡 ' + tcDbg.starts + ' 张，参数碎片 ' + tcDbg.frags + ' 片/' + tcDbg.chars + ' 字' : ''));
     return result;
   } finally {

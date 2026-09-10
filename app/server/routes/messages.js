@@ -29,7 +29,9 @@ router.post('/:id/messages', wrap((req, res) => {
 
 
 router.post('/:id/stop', wrap((req, res) => {
-  res.json(engine.stop(req.params.id));
+  const r = engine.stop(req.params.id);
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户终止');
+  res.json(r);
 }));
 
 // 断开：held 会话主动放弃模型保持租约，结版为已完成（非终止）
