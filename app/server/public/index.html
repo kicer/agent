@@ -429,7 +429,22 @@
   }
 
   // ---------- API(与 core.js 的 req 保持一致) ----------
-  async function req(method, url, body, isForm) {
+  // 默认单次请求超时：机器休眠几小时后链路中间的 keep-alive 连接被静默拆线（无 FIN/RST），
+  // 回页面后首个 POST 会写进黑洞 socket 永远 Pending（线上已实测 /messages 挂起）。
+  // 超时让黑洞变快失败，再补一次重试（重试必新建连接）。
+  const FETCH_TIMEOUT_MS = 15000;
+  function fetchOnce(url, opt, timeoutMs) {
+    if (!timeoutMs) return fetch(url, opt);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, timeoutMs);
+    const p = fetch(url, Object.assign({}, opt, { signal: ctrl.signal }));
+    return p.finally(() => clearTimeout(timer));
+  }
+  // 只识别“请求铁定/极可能没进服务器”的网络层错误：TypeError=连接失败/重置，AbortError=本函数超时。
+  // HTTP 4xx/5xx 不在此列（已拿到响应，不重试）。
+  function isNetworkErr(e) { return !!e && (e.name === 'AbortError' || e instanceof TypeError); }
+
+  async function req(method, url, body, isForm, timeoutMs) {
     const opt = { method, headers: {} };
     // 浏览器身份只认 HttpOnly cookie：服务端所有路由（含 /api/me、SSE）统一按 cookie 认定用户。
     // 不要在此附加 sessionStorage 里的 Basic 头——sessionStorage 按标签页隔离、刷新后残留，
@@ -440,7 +455,25 @@
     } else if (body && isForm) {
       opt.body = body;
     }
-    const res = await fetch(url, opt);
+    const tmo = timeoutMs == null ? FETCH_TIMEOUT_MS : timeoutMs;
+    let res;
+    try {
+      try {
+        res = await fetchOnce(url, opt, tmo);
+      } catch (e) {
+        if (!isNetworkErr(e)) throw e;
+        // 黑洞/残破连接典型特征：第一次碰死、重连即活——只补发这一次
+        await new Promise(r => setTimeout(r, 300));
+        res = await fetchOnce(url, opt, tmo);
+      }
+    } catch (e) {
+      if (isNetworkErr(e)) {
+        const err = new Error('网络不可用或请求超时');
+        err.network = true;
+        throw err;
+      }
+      throw e;
+    }
     if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
     if (!res.ok) {
       let msg = 'HTTP ' + res.status;
@@ -1442,7 +1475,8 @@
   async function uploadFiles(sessionId, files) {
     const fd = new FormData();
     for (const f of files) fd.append('files', f.file, f.name);
-    const r = await req('POST', '/api/sessions/' + sessionId + '/files', fd, true);
+    // 大文件上传在慢速网络上可以远超普通请求超时：放宽到 120s
+    const r = await req('POST', '/api/sessions/' + sessionId + '/files', fd, true, 120000);
     return (r.uploaded || []).map(u => ({ name: u.filename, size: u.size }));
   }
 
@@ -1484,9 +1518,14 @@
       addTyping();
       loadSessionList();
     } catch (e) {
-      // 发送失败:附件还原,交由用户决定重试或移除
+      // 发送失败:附件还原+草稿文本回填（发送前已清空输入框，挂起/失败不能让文字蒸发），
+      // 用户等待期间新敲的内容排在后面不丢。
       state.attachments = pending.concat(state.attachments);
       renderAttachChips();
+      if (content) {
+        ta.value = content + (ta.value ? '\n' + ta.value : '');
+        autosize();
+      }
       toast('发送失败:' + e.message);
     }
   }
