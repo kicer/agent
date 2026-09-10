@@ -1597,6 +1597,34 @@
     if (det) { det.open = false; det.classList.remove('streaming'); }
   }
 
+  // ---------- 流式 delta 合帧渲染 ----------
+  // 快速输出模型(如 DeepSeek)的 delta 频率远超屏幕刷新率：逐条全量重写文本节点 +
+  // 读布局滚动(scrollHeight/scrollTop)会把主线程挤满，页面与右下角转圈肉眼可见地卡。
+  // 改为 delta 只累积进缓冲，每个动画帧统一刷一次 DOM；文本节点内容只在尾部增长时
+  // 走 appendData 增量追加，避免整段文本节点重建重排。
+  let streamPaintQueued = false;
+  function paintStreamingText(el, full) {
+    if (!el) return;
+    const tn = el.firstChild;
+    if (tn && tn.nodeType === 3) {
+      if (tn.data === full) return; // 无变化不碰 DOM，不触发布局
+      if (full.startsWith(tn.data)) { tn.appendData(full.slice(tn.data.length)); return; }
+    }
+    el.textContent = full; // 结构不符(收尾后重建/罕见回退)才整段重写
+  }
+
+  function scheduleStreamPaint() {
+    if (streamPaintQueued) return;
+    streamPaintQueued = true;
+    requestAnimationFrame(() => {
+      streamPaintQueued = false;
+      paintStreamingText(state.streamEl, state.streamText);
+      paintStreamingText(state.streamThinkEl, state.streamReasoning);
+      maybeAutoScroll();
+      updateScrollBottomBtn();
+    });
+  }
+
   function connectStream() {
     closeStream();
     if (!state.sessionId) return;
@@ -1619,12 +1647,10 @@
         if (!state.streamText.trim()) return; // 忽略前导空白(纯工具调用回合无文本)
         ensureStreamWrap();
         state.streamText = d.text; // 上面 if 已 trim 为非空
-        collapseStreamThink();    // 首个正文 delta:思考已结束,折叠思考面板
+        collapseStreamThink();    // 首个正文 delta：思考已结束，折叠思考面板
       }
-      state.streamEl.textContent = state.streamText;
       state.streaming = true;
-      maybeAutoScroll();
-      updateScrollBottomBtn();
+      scheduleStreamPaint(); // DOM 刷新合到每个动画帧一次：快速输出模型逐 token 重排会挤爆主线程
     });
     es.addEventListener('reasoning_delta', ev => {
       const d = JSON.parse(ev.data);
@@ -1632,10 +1658,8 @@
       state.streamReasoning += d.text;
       if (!state.streamWrap) ensureStreamWrap();
       ensureStreamThinkPanel();
-      state.streamThinkEl.textContent = state.streamReasoning;
       state.streaming = true;
-      maybeAutoScroll();
-      updateScrollBottomBtn();
+      scheduleStreamPaint();
     });
     es.addEventListener('assistant_message', ev => {
               const d = JSON.parse(ev.data);
