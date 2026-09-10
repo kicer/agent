@@ -2548,8 +2548,8 @@
     }));
     await Promise.all(tasks);
     paintProg();
+    // 全部成功不再弹提示(卡片已完成态即反馈);有失败才提醒
     if (errCount) toast('已上传 ' + done + ' 个，失败 ' + errCount + ' 个');
-    else toast('已上传 ' + done + ' 个文件');
     loadFiles();
     // 1.2s 后收起进度条
     setTimeout(() => { progWrap.classList.add('hidden'); progBar.style.width = '0%'; }, 1200);
