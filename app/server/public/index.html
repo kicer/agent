@@ -121,9 +121,9 @@
 
     <!-- ================= 底部输入区 ================= -->
     <footer>
-      <div class="up-cards hidden" id="up-cards" aria-label="已上传文件"></div>
       <div class="attach-chips hidden" id="attach-chips"></div>
       <div class="input-shell">
+        <div class="up-cards hidden" id="up-cards" aria-label="已上传文件"></div>
         <textarea id="msg-input" placeholder="传送信息" rows="2" enterkeyhint="enter"></textarea>
         <div class="input-actions">
           <div class="ia-side ia-left">
@@ -1434,6 +1434,7 @@
       if (pending.length) atts = await uploadFiles(id, pending);
       const body = { content, deepThink: !!state.deepThink };
       const sent = await req('POST', '/api/sessions/' + id + '/messages', body);
+      clearUploadCards(); // 消息已发出,上传文件卡片完成提示使命,自动清掉
 
       appendUserMsg(content, atts.map(a => a.name), sent && sent.message_id);
       if (!state.sessionTitle && content) {
@@ -2447,7 +2448,7 @@
     }
   }
 
-  // ---------- 上传文件卡片(输入区上方:图标 + 文件名/类型大小,逐卡上传进度遮罩;过多横向滚动) ----------
+  // ---------- 上传文件卡片(嵌在输入框内部顶端,随卡片数撑高输入框;新卡插最前,图标 + 文件名/类型大小,逐卡上传进度遮罩;过多横向滚动) ----------
   function uploadTypeLabel(name) {
     const m = /\.([A-Za-z0-9]{1,8})$/.exec(name || '');
     return m ? m[1].toUpperCase() : '文件';
@@ -2468,19 +2469,14 @@
       '<div class="up-info">' +
         '<div class="up-name" title="' + esc(file.name) + '">' + esc(file.name) + '</div>' +
         '<div class="up-meta">' + uploadTypeLabel(file.name) + ' · ' + fmtSize(file.size) + '</div>' +
-      '</div>' +
-      '<button class="up-x hidden" title="关闭" aria-label="关闭"><svg class="ic" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>' +
-      '<div class="up-mask"><span class="up-pct">0%</span></div>';
-    const mask = card.querySelector('.up-mask');
-    const pctEl = card.querySelector('.up-pct');
-    const closeBtn = card.querySelector('.up-x');
-    closeBtn.addEventListener('click', () => {
-      card.remove();
-      if (!row.children.length) row.classList.add('hidden');
-    });
-    row.appendChild(card);
-    // 卡片多到横向溢出时,新卡滚动到可见处
-    card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        '</div>' +
+        '<div class="up-mask"><span class="up-pct">0%</span></div>';
+      const mask = card.querySelector('.up-mask');
+      const pctEl = card.querySelector('.up-pct');
+      // 无单卡删除入口:发送消息或切换会话时整体清空(clearUploadCards)
+      // 倒序:最后上传的排最前;新卡入位后横向滚回左端保证可见
+      row.prepend(card);
+      row.scrollTo({ left: 0, behavior: 'smooth' });
     return {
       setPct(p) {
         const v = Math.max(0, Math.min(100, Math.round(p)));
@@ -2490,12 +2486,10 @@
       done() {
         mask.remove();
         card.classList.add('done');
-        closeBtn.classList.remove('hidden');
       },
       fail() {
         card.classList.add('err');
         mask.innerHTML = '<span class="up-pct">上传失败</span>';
-        closeBtn.classList.remove('hidden');
       },
     };
   }

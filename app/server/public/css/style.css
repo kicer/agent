@@ -286,40 +286,33 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 }
 .attach-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
 .attach-chip .rm { color: var(--gray); display: flex; }
-/* 上传文件卡片行(输入区上方):逐卡进度遮罩;卡多时横向滚动 */
+/* 上传文件卡片行(嵌在输入框内部顶端,由 .input-shell 的 gap 提供间距;逐卡进度遮罩;卡多时横向滚动) */
 .up-cards {
-  display: flex; gap: 8px; margin-bottom: 8px;
+  display: flex; gap: 6px;
   overflow-x: auto; overflow-y: hidden;
-  scrollbar-width: thin; padding-bottom: 2px;
+  scrollbar-width: thin;
   -webkit-overflow-scrolling: touch;
 }
 .up-cards::-webkit-scrollbar { height: 4px; }
 .up-cards::-webkit-scrollbar-thumb { background: #ccd0da; border-radius: 2px; }
 .up-card {
   position: relative; flex: 0 0 auto;
-  display: flex; align-items: center; gap: 8px;
-  width: 210px; max-width: 62vw;
-  background: var(--surface); border: 1px solid #e3e6ee; border-radius: 12px;
-  padding: 9px 10px; overflow: hidden;
+  display: flex; align-items: center; gap: 7px;
+  width: 158px; max-width: 56vw;
+  background: var(--surface); border: 1px solid #e3e6ee; border-radius: 10px;
+  padding: 6px 8px; overflow: hidden;
 }
 .up-ico { color: var(--gray); display: flex; flex: none; }
+.up-ico .ic { width: 18px; height: 18px; }
 .up-info { flex: 1; min-width: 0; }
 .up-name { font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.up-meta { font-size: 11px; color: var(--gray); margin-top: 2px; }
-.up-x {
-  position: absolute; right: 5px; top: 5px; z-index: 2;
-  width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
-  background: rgba(0, 0, 0, .06); color: var(--gray);
-  display: flex; align-items: center; justify-content: center;
-}
-.up-x:hover { background: rgba(0, 0, 0, .12); color: var(--ink); }
-.up-x .ic { width: 11px; height: 11px; stroke-width: 2.4; }
+.up-meta { font-size: 10.5px; color: var(--gray); margin-top: 1px; }
 .up-mask {
   position: absolute; inset: 0; z-index: 1;
   background: rgba(255, 255, 255, .78);
   display: flex; align-items: center; justify-content: center;
 }
-.up-pct { font-size: 12px; font-weight: 600; color: var(--active); }
+.up-pct { font-size: 11px; font-weight: 600; color: var(--active); }
 .up-card.err .up-pct { color: #c0392b; }
 /* 底部进度线:宽度由 --up-p 驱动;终态(完成/失败)收起 */
 .up-card::after {
