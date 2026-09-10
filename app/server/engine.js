@@ -623,6 +623,8 @@ function makeSseMetaHandler(sessionId) {
 // 流式接收 assistant 输出并转发 SSE。返回 callModel 结果。
 async function streamAssistant(sessionId, run, session, messages, tools) {
   run.abortController = new AbortController();
+  // 工具参数流式调试计数：start 建卡次数 / 参数碎片数 / 累计字符（判断上游是否真的分片下发）
+  const tcDbg = { starts: 0, frags: 0, chars: 0 };
   try {
     const handleSseMeta = makeSseMetaHandler(sessionId);
     const result = await callModel(cfg, session.model_id, messages, tools, {
@@ -631,8 +633,19 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       onText: delta => bus.emit(sessionId, 'assistant_delta', { text: delta }),
       onReasoning: delta => bus.emit(sessionId, 'reasoning_delta', { text: delta }),
       // 工具调用早反馈：id+name 就绪即建卡，参数碎片流式下发（长参数生成期间前端不再空等）
-      onToolCallStart: t => bus.emit(sessionId, 'tool_call_start', { id: t.id, name: t.name }),
-      onToolCallArgs: t => bus.emit(sessionId, 'tool_call_args', { id: t.id, args: t.args }),
+      onToolCallStart: t => {
+        tcDbg.starts++;
+        log.debug('tool', sessionId + ' tool_call 早反馈：建卡 name=' + t.name + ' id=' + t.id);
+        bus.emit(sessionId, 'tool_call_start', { id: t.id, name: t.name });
+      },
+      onToolCallArgs: t => {
+        tcDbg.frags++;
+        tcDbg.chars += (t.args || '').length;
+        // 首片必打，其后每 20 片一行，避免超大参数刷屏
+        if (tcDbg.frags === 1 || tcDbg.frags % 20 === 0)
+          log.debug('tool', sessionId + ' tool_call 参数流式：第 ' + tcDbg.frags + ' 片，累计 ' + tcDbg.chars + ' 字');
+        bus.emit(sessionId, 'tool_call_args', { id: t.id, args: t.args });
+      },
       // 本轮是否启用深度思考；由 postUserMessage 从消息 POST 参数写进 run
       deepThink: !!run.deepThink,
       onMeta: handleSseMeta,
@@ -645,9 +658,11 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
     // 本轮上游响应总览：帧数 + 文本长度 + 工具调用 + finish + aborted。
     // sseFrames=0 且 aborted=false 表示上游未发任何 data（疑似流异常）；其他情况可快速区分
     // “上游发了一堆帧但 content 为空” 与 “根本没调用成功”。
+    // 末尾附工具参数流式统计：frags=1 说明上游把整段参数打包在单帧里（前端看不到逐片效果，非链路 bug）。
     log.info('sse', sessionId + ' 本轮汇总：帧 ' + (result && result.sseFrames || 0) +
           '，finish=' + (result && result.finish_reason || '-') +
-          '，aborted=' + (result && result.aborted || false));
+          '，aborted=' + (result && result.aborted || false) +
+          (tcDbg.starts ? '，tool_call早建卡 ' + tcDbg.starts + ' 张，参数碎片 ' + tcDbg.frags + ' 片/' + tcDbg.chars + ' 字' : ''));
     return result;
   } finally {
     run.abortController = null;
