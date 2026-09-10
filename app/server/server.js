@@ -81,20 +81,15 @@ app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 const PORT = process.env.PORT || cfg.port;
 
 // 启动成功后把模型实际收到的各部分 dump 到文件方便人工核对（data_root 默认 ./data，
-// 宿主机对应 <repo>/data/prompt.txt，已被 gitignore）。包含三部分：
+// 宿主机对应 <repo>/data/prompt.txt，已被 gitignore）。包含两部分：
 //  1) system 消息：模板 + 可用技能段落 + 语言指令（进程内恒定，仅技能增删时变）；
-//  2) tools 数组：内置 definitions.json + 启动时发现的 MCP 工具，与每次请求的 tools 字段一致；
-//  3) 会话上下文：每会话首条 user 消息（随日期/任务目录/绑定模型/vision 动态生成），
-//     启动时无真实会话，用占位会话 id + 首个启用模型渲染一份示例。
+//  2) tools 数组：内置 definitions.json + 启动时发现的 MCP 工具，与每次请求的 tools 字段一致。
 function dumpPromptBundle() {
   const file = path.join(cfg.data_root, 'prompt.txt');
   const tools = engine.TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
-  const sampleModel = (cfg.models || []).find(m => m.enable !== false);
-  const sessionCtx = engine.sessionContextContent({ id: '<session_id>', model_id: sampleModel && sampleModel.id });
   const parts = [
     '# ===== 1. System Prompt（system 消息，进程内恒定）=====\n\n' + llm.systemPromptText((cfg.agent || {}).language),
     '\n\n# ===== 2. Tools（' + tools.length + ' 个：内置 + MCP，随每次请求的 tools 字段发送）=====\n\n' + JSON.stringify(tools, null, 2),
-    '\n\n# ===== 3. Session Context（每会话首条 user 消息，按日期/任务目录/绑定模型动态生成；此处为示例）=====\n\n' + sessionCtx,
   ];
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, parts.join(''), 'utf8');

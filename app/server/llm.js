@@ -22,7 +22,7 @@ function historyTranscript(session) {
     const blocks = decodeBlocks(content);
     if (blocks) content = blocks.map(b => (b && b.type === 'text' ? b.text : '[图片]')).join('\n');
     if (row.role === 'user') {
-      lines.push(row.name === 'session_context' ? '[环境信息]\n' + content : '[用户] ' + content);
+      lines.push('[用户] ' + content);
     } else if (row.role === 'assistant') {
       const parts = [];
       if (content) parts.push('[AI] ' + content);
@@ -52,8 +52,6 @@ function compressPromptText(conversation) {
 }
 
 // system prompt 完全静态：所有会话共用同一份内容，利于上游前缀缓存。
-// 动态会话信息（日期/任务目录/模型显示名）不再拼入 system prompt，
-// 而是在新建会话时作为首条 user 消息发送，见 engine.js 的 sessionContextContent。
 function buildSystemPrompt() {
   return SYSTEM_PROMPT_TEMPLATE;
 }

@@ -532,7 +532,8 @@
   });
 
   // ---------- 消息渲染 ----------
-  // 服务端把附件说明拼在正文前(【系统通知】用户上传了文件：...),此处拆开单独展示 📎 行
+  // 旧消息兼容：早期服务端把附件说明拼在正文前(【系统通知】用户上传了文件：...),此处拆开单独展示 📎 行；
+  // 新版已不再生成这种行，仅历史会话渲染时命中。
   function parseUploadNotice(content) {
     const m = /^【系统通知】用户上传了文件：([^\n]*)(?:\n([\s\S]*))?$/.exec(content || '');
     if (!m) return { text: content || '', files: null };
@@ -1409,7 +1410,11 @@
   async function send() {
     const ta = $('msg-input');
     const content = ta.value.trim();
-    if (!content && !state.attachments.length) return;
+    // 附件仅上传到任务目录，不再随正文拼通知行：没有文字就不发（避免产生空消息）。
+    if (!content) {
+      if (state.attachments.length) toast('附件需随一条文字消息发送');
+      return;
+    }
 
     const pending = state.attachments.slice();
     state.attachments = [];
@@ -1422,7 +1427,6 @@
       let atts = [];
       if (pending.length) atts = await uploadFiles(id, pending);
       const body = { content, deepThink: !!state.deepThink };
-      if (atts.length) body.attachments = atts;
       const sent = await req('POST', '/api/sessions/' + id + '/messages', body);
 
       appendUserMsg(content, atts.map(a => a.name), sent && sent.message_id);

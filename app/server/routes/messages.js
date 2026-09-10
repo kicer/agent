@@ -15,44 +15,18 @@ function wrap(fn) {
   };
 }
 
-// 附件提示词:用户带附件发消息时,服务端在正文前拼一行系统通知,
-// 与消息一并落库(历史重建时 AI 能看到)。格式:
-//   【系统通知】用户上传了文件：a.png（大小 1.2 MB）、b.txt（大小 3 KB）
-//   <用户原文>
-function fmtSize(n) {
-  n = Number(n) || 0;
-  if (n < 1024) return n + ' B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
-  return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
-}
-function composeWithAttachments(content, attachments) {
-  if (!Array.isArray(attachments) || !attachments.length) return content;
-  const list = attachments.slice(0, 20).map(a =>
-    String(a && a.name || 'file').slice(0, 200) + '（大小 ' + fmtSize(a && a.size) + '）'
-  ).join('、');
-  const notice = '【系统通知】用户上传了文件：' + list;
-  return content ? notice + '\n' + content : notice;
-}
-
+// 附件上传只写任务目录文件（见 routes/files.js），消息正文原样入库，不再拼接任何通知行。
 router.post('/:id/messages', wrap((req, res) => {
   const content = String((req.body && req.body.content) || '').trim();
-  // 附件告知：正文前拼【系统通知】行（见 composeWithAttachments 注释）；纯附件消息（无正文）也合法。
-  const attachments = Array.isArray(req.body && req.body.attachments) && (req.body.attachments || []).length
-    ? req.body.attachments : null;
-  const full = composeWithAttachments(content, attachments);
-  if (!full) return res.status(400).json({ error: 'content 与 attachments 不能同时为空' });
+  if (!content) return res.status(400).json({ error: 'content 不能为空' });
   // deepThink：是否启用模型该「深度思考」参数（thinking_params 合并进上游请求体）
   const deepThink = !!(req.body && req.body.deepThink);
-  const r = engine.postUserMessage(req.params.id, full, { deepThink });
+  const r = engine.postUserMessage(req.params.id, content, { deepThink });
   log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
-      full.slice(0, 60).replace(/\s+/g, ' '));
+      content.slice(0, 60).replace(/\s+/g, ' '));
   res.json(r);
 }));
 
-router.post('/:id/start', wrap((req, res) => {
-  res.json(engine.startExecution(req.params.id));
-}));
 
 router.post('/:id/stop', wrap((req, res) => {
   res.json(engine.stop(req.params.id));

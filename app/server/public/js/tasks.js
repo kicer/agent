@@ -979,8 +979,7 @@ const ui = {
     try {
       await req('DELETE', '/api/sessions/' + id + '/messages');
       toast('会话内容已清空，文件已保留');
-      // 服务端已把会话收尾为 completed 并清空消息（不再预置会话上下文）：
-      // 重新拉取详情即为干净起点；选择模型或再次发言后服务端会注入当时的会话上下文
+      // 服务端已把会话收尾为 completed 并清空消息：重新拉取详情即为干净起点
       const detail = await req('GET', '/api/sessions/' + id);
       await renderDetail(detail);
       loadSessions();

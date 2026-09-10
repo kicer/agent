@@ -9,15 +9,6 @@ const log = require('./log');
 
 const TOOL_DEFINITIONS = require('./tools/definitions.json');
 
-const START_EXECUTION_MESSAGE =
-  '我说完了，你可以开始干活了。先把我上面说的需求整理成 task.md 文件写入任务目录，然后按照 task.md 开始执行。';
-
-// 会话上下文消息标记：动态信息（日期/任务目录/模型显示名）不再拼入 system prompt，
-// 而是作为首条 user 消息发给模型，跟着会话走；它不单独触发模型回合。
-// 注入时机 = 模型绑定就绪：手动选择模型后立即注入；自动派发则在首次回复前注入，
-// 避免未绑定模型时产生“尚未绑定/未知”占位（见 ensureSessionContext）。
-const SESSION_CONTEXT_NAME = 'session_context';
-
 let cfg, db, bus;
 const runs = new Map(); // session_id -> {cancelled, procs:Set, abortController, looping:boolean}
 
@@ -185,11 +176,6 @@ function freeModel() {
   return db.prepare('SELECT * FROM model_pool WHERE is_busy = 0 ORDER BY id').get();
 }
 
-function modelDisplayName(modelId) {
-  const row = db.prepare('SELECT display_name FROM model_pool WHERE id = ?').get(modelId);
-  return row ? row.display_name : modelId;
-}
-
 // 会话绑定的模型是否支持 vision（图片回传）；决定 read_file 读图行为（见 tools/executor.js）。
 function modelVision(session) {
   const m = session.model_id && (cfg.models || []).find(x => x.id === session.model_id);
@@ -238,19 +224,16 @@ function bindToSession(sessionId, modelId) {
   const pending = hasPendingUser(sessionId);
   bindModel(s, model, pending ? 'active' : 'held');
   emitStatus(sessionId);
-  // 手动选好模型后立即注入/刷新会话上下文（换绑时更新为当前模型，避免陈旧信息）
-  ensureSessionContext(sessionId);
   log.info('model', sessionId + ' 手动绑定模型 ' + model.id);
   if (pending) runLoop(sessionId);
   return { ok: true, model_id: model.id };
 }
 
 // 是否还有待回应的新用户消息（最后一条非 tool 消息是 user）。
-// 会话上下文消息（role=user 但带 SESSION_CONTEXT_NAME 标记）不算待回应消息。
 function hasPendingUser(sessionId) {
   const rows = loadHistory(sessionId);
   for (let i = rows.length - 1; i >= 0; i--) {
-    if (rows[i].role === 'tool' || rows[i].name === SESSION_CONTEXT_NAME) continue;
+    if (rows[i].role === 'tool') continue;
     return rows[i].role === 'user';
   }
   return false;
@@ -420,8 +403,6 @@ function finalize(sessionId, run) {
 }
 
 async function runLoopInner(sessionId, run) {
-  // 能到这里说明模型已绑定：先注入/刷新会话上下文（内容随当前模型与当天日期更新）
-  ensureSessionContext(sessionId);
   let iter = 0;
   // 已纳入模型请求的最大消息 id；用于判断是否有尚未被回应的新 user 消息
   // （不能用“最后一条非 tool 消息是 user”判断：流式输出期间到达的消息会排在 assistant 之前而被漏掉）
@@ -430,7 +411,7 @@ async function runLoopInner(sessionId, run) {
   while (!run.cancelled && iter < maxIter) {
     const session = getSession(sessionId);
     if (!session || session.status !== 'active' || !session.model_id) break;
-    session.history = loadHistoryForModel(sessionId);
+    session.history = loadHistory(sessionId);
     for (const m of session.history) if (m.id > lastIncludedId) lastIncludedId = m.id;
     // 压缩回合（run.summarizing = 由「压缩」按钮发起、尚未产出摘要）：
     // 只发一条 system（压缩模板，{{conversation}} 占位符已填入完整历史纯文本）
@@ -517,14 +498,13 @@ async function runLoopInner(sessionId, run) {
               //（前端重渲染成摘要卡片；也是模型上下文的起点），并把之前的消息存档：
               //   type='archived' 行 UI 照常展示，但 buildMessages 不再发给模型——
               //   后续对话从这条摘要开始，旧历史不再烧 token。
-              // session_context 行不存档：它是环境信息，始终随新回合发送（loadHistoryForModel 置顶）。
               // 旧摘要行（多轮压缩）一并存档：被新摘要覆盖替代，不再进上下文。
               run.summarizing = null;
               if ((msgRow.content || '').trim()) {
                 db.prepare("UPDATE messages SET type = 'summary' WHERE id = ?").run(assistantId);
                 const n = db.prepare(
                   "UPDATE messages SET type = 'archived' WHERE session_id = ? AND id < ?" +
-                  " AND (type IS NULL OR type != 'archived') AND (name IS NULL OR name != 'session_context')"
+                  " AND (type IS NULL OR type != 'archived')"
                 ).run(sessionId, assistantId).changes;
                 log.info('msg', sessionId + ' 压缩摘要 ' + assistantId + ' 落库，存档之前 ' + n + ' 条消息（不再发给模型）');
               }
@@ -661,8 +641,8 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
 
 function hasUserSince(sessionId, sinceId) {
   const r = db.prepare(
-    "SELECT COUNT(*) AS c FROM messages WHERE session_id = ? AND role = 'user' AND id > ? AND (name IS NULL OR name <> ?)"
-  ).get(sessionId, sinceId, SESSION_CONTEXT_NAME);
+    "SELECT COUNT(*) AS c FROM messages WHERE session_id = ? AND role = 'user' AND id > ?"
+  ).get(sessionId, sinceId);
   return r.c > 0;
 }
 
@@ -728,63 +708,6 @@ function unwrapToolArgs(tools, name, raw) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ---------- 对外 API ----------
-// 会话上下文动态信息：作为首条 user 消息发给模型（同时展示在聊天里），跟会话走；
-// 在模型绑定就绪后注入/刷新（ensureSessionContext），不随未绑定会话提前产生。
-function sessionContextContent(session) {
-  const d = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  const dateStr = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-  const model = session.model_id
-    ? modelDisplayName(session.model_id)
-    : '尚未绑定（排队中，绑定后自动开始处理）';
-  // vision 能力随会话上下文告知 AI：支持时 read_file 读图会回传图片内容，不支持时只能拿到文件信息
-  const bound = session.model_id && cfg.models.find(m => m.id === session.model_id);
-  const visionLine = bound
-    ? (bound.vision ? '支持（read_file 读图会返回压缩后的图片内容）' : '不支持（read_file 读图只能拿到文件信息）')
-    : '未知';
-  return [
-    '【会话上下文】由系统自动注入，无需回复本消息',
-    '- 当前日期：' + dateStr,
-    '- 任务目录：' + taskDirOf(session.id),
-    '- 当前模型：' + model,
-    '- 图片（vision）：' + visionLine,
-  ].join('\n');
-}
-
-// 让会话恰好保有一条反映「当前绑定模型/当天日期」的会话上下文消息：
-// - 未绑定模型时不注入（避免产生“尚未绑定（排队中…）/未知”这类占位信息）；
-// - 已有则就地更新内容（换绑模型或跨天后保持准确，id 与位置不变）；
-// - 没有则补一条（存储位置无严格要求：发给模型前统一置顶，见 loadHistoryForModel）。
-function ensureSessionContext(sessionId) {
-  const s = getSession(sessionId);
-  if (!s || !s.model_id) return;
-  const content = sessionContextContent(s);
-  const rows = loadHistory(sessionId);
-  let ctxIdx = -1;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    if (rows[i].name === SESSION_CONTEXT_NAME) { ctxIdx = i; break; }
-  }
-  if (ctxIdx >= 0) {
-    const row = rows[ctxIdx];
-    if (row.content !== content) {
-      db.prepare('UPDATE messages SET content = ?, created_at = ? WHERE id = ?')
-        .run(content, now(), row.id);
-    }
-    return;
-  }
-  saveMessage(sessionId, { role: 'user', name: SESSION_CONTEXT_NAME, content });
-}
-
-// 加载给模型看的历史：会话上下文消息固定放最前（只保留最新一条），
-// 避免它落在真实用户消息之后、或残留旧上下文时误导模型。
-function loadHistoryForModel(sessionId) {
-  const rows = loadHistory(sessionId);
-  const ctxRows = rows.filter(r => r.name === SESSION_CONTEXT_NAME);
-  if (!ctxRows.length) return rows;
-  return [ctxRows[ctxRows.length - 1]]
-    .concat(rows.filter(r => r.name !== SESSION_CONTEXT_NAME));
-}
-
 function createSession(title, preferModelId, assistantType, user) {
   const id = genTaskId();
   const dir = taskDirOf(id);
@@ -805,10 +728,8 @@ function createSession(title, preferModelId, assistantType, user) {
     enqueue(id);
     dispatchQueued();
   }
-  // 已绑定模型（选中的空闲模型 / 自动派发立即拿到模型）才注入会话上下文；
-  // 仍在排队未绑定时不注入占位消息，等绑定后由 ensureSessionContext 补上。
+  // 已绑定模型（选中的空闲模型 / 自动派发立即拿到模型）时保持 held，等首条消息再开跑。
   const session = getSession(id);
-  ensureSessionContext(id);
   return session;
 }
 
@@ -851,15 +772,6 @@ function postUserMessage(sessionId, content, opts) {
   const after = getSession(sessionId);
   emitStatus(sessionId);
   return { message_id: messageId, delivered: after && after.status === 'active' ? 'live' : 'queued' };
-}
-
-function startExecution(sessionId) {
-  const session = getSession(sessionId);
-  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
-  touch(sessionId, { phase: 'execution' });
-  const ret = postUserMessage(sessionId, START_EXECUTION_MESSAGE);
-  bus.emit(sessionId, 'phase', { phase: 'execution' });
-  return ret;
 }
 
 function stop(sessionId) {
@@ -971,9 +883,6 @@ function summarizeContext(sessionId) {
 // 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件。
 // 状态收尾为 completed（释放模型占用、移出等待队列）；此后再次发言从零开始，
 // 不再携带旧历史。执行中的会话不允许清空，需先「终止」。
-// 清空后不自动重建会话上下文：此时通常未绑定模型，预置只会产生“尚未绑定/未知”占位。
-// 待用户选择模型（bindToSession）或再次发言并自动绑定模型（runLoop 入口）时，
-// 由 ensureSessionContext 注入当时的有效信息。
 function clearSessionMessages(sessionId) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -1060,7 +969,6 @@ module.exports = {
   activeRuns,
   createSession,
   postUserMessage,
-  startExecution,
   stop,
   releaseHold,
   renameSession,
@@ -1074,12 +982,9 @@ module.exports = {
   loadHistory,
   saveMessage,
   queuePosition,
-  modelDisplayName,
-  sessionContextContent,
   recordModelUsage,
   modelUsageStats,
   dispatchQueued,
   bindToSession,
   TOOL_DEFINITIONS,
-  START_EXECUTION_MESSAGE,
 };
