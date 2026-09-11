@@ -1,0 +1,10 @@
+# executor 派生镜像的构建上下文 = 仓库根（compose 里 context: .），
+# 但只需要 executor/ 与 skills/ 两份源码；其余（含 node_modules、任务数据、密钥）全部排除。
+*
+!executor
+!skills
+# 技能目录里运行期生成 / 体积大的部分不进构建上下文
+skills/deps
+skills/*/.deps_installed
+skills/*/fonts
+skills/*/__pycache__

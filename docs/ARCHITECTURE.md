@@ -111,6 +111,8 @@ graph LR
 - nginx-proxy 前置时**必须 `proxy_buffering off`**，否则 SSE 流被缓冲。详见 `docs/DEPLOY.md`。
 - Core 通过环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN` 注入 executor 端点（也可用 `config.yml` 的 `executor` 段覆盖）。**token 从 `.env` 读取**（compose 变量替换 `${EXECUTOR_TOKEN:?...}`，未设置直接报错，杜绝静默无鉴权）；`.env` 已 gitignore，模板见 `.env.example`，生成：`openssl rand -hex 32`。
 - Executor **拒绝来自容器自身（回环/本机网卡）的 `/exec`**：隔离只 unshare mount+pid，命令与 executor 同 net ns，能打到 `127.0.0.1:9000`；据此即使 token 泄漏也无法在会话内调用 `/exec` 越权读他人会话（core 在另一容器，不受影响）。本机集成测试用 `EXECUTOR_ALLOW_LOCAL_ORIGIN=1` 放行，生产不得设置。
+- Executor 镜像分两阶段（`executor/Dockerfile`）：`base` = M（长期不变，仅系统工具 + 预烘 Python 包），`skills` = M' = M + 技能“系统层”依赖。compose 用 `build.target: skills`、上下文为仓库根（`.dockerignore` 只放行 `executor/`、`skills/`）。管理员增删/改动 skills 后 `docker compose build agent-executor` 重建 M'，M 不动。
+- `agent-executor-init` 在 executor 启动前一次性执行（`executor/init-skills.js`）：把各技能 `requirements.txt`（`pip --target` 共享 deps）与 `install.sh` 生成的资产落到宿主 `./skills`，跑完即退出；只挂 `./skills`（不挂 `./tasks`，看不到会话数据）、无特权、`read_only`。executor `depends_on` 其 `service_completed_successfully`。
 - Executor 在 compose 里加了 cgroup/ulimit 护栏（`cpus 2.0` / `mem_limit 2g` / `pids_limit 512` / `ulimits.fsize 2G`）——详见 `executor/server.js` 头注释。
 
 ---
@@ -272,6 +274,7 @@ stateDiagram-v2
 - `runSkill` 流程：`skillDir` 校验 → `absolutizeArgs`（按任务目录 + 启发式判断路径类参数） → `validateArgs`（按 front matter `input_schema.required`） → `ensureDeps` → 选 `python3 run.py '<json>'` 或 `bash run.sh '<json>'` → `runEntry`。
 - **走 executor**：命令拼成 `shq` 转义后的单条 shell 行（`shellLine`），env 只传 `PYTHONPATH=<deps_root>`。
 - **cwd 分两类**：`run_skill` 传会话任务目录（`ctx.taskDir`），命中 executor 的 session 隔离与虚拟视图，技能在 `/workspace/tasks/<sid>` 看到的就是本会话数据，`absolutizeArgs` 产出的绝对路径因此有效；入口脚本一律用绝对路径（cwd 已不是技能目录）。`ensureDeps` 的安装命令仍传技能目录（依赖是技能私有资源，且 skills 为 `:ro`，运行期不应安装）。
+- **依赖就绪时机**：系统层依赖（apt 等，`install.sh` 的副作用）在镜像 `skills` 阶段烘入 M'；pip 依赖与技能资产（如字体提取）在服务启动前由 `agent-executor-init` 落到宿主 `./skills`（hash/marker 与 `ensureDeps` 同格式）。运行期 skills `:ro`，`runSkill` 的 `ensureDeps` 命中 marker 即跳过；若运行期经 UI 改了依赖，需 `docker compose up -d` 重新 init（否则该技能会报依赖安装失败）。
 
 ### 5.6 `remote-exec.js` —— 远端 executor 客户端
 
@@ -328,7 +331,7 @@ stateDiagram-v2
 
 ## 6. agent-executor 容器
 
-单文件 Node HTTP 服务（`executor/server.js`），零依赖。端点：
+单文件 Node HTTP 服务（`executor/server.js`），零依赖。镜像 `executor/Dockerfile` 分两阶段：`base`（M，长期不变）与 `skills`（M' = M + 技能系统层依赖，管理员改 skills 后重建）。端点：
 
 - `GET /health` → `{ok, running:[{id, pid, cwd, started_at}]}`，免鉴权。
 - `POST /exec` body `{command, cwd（必填）, timeout_ms?, max_output_chars?, env?}` → SSE 流：

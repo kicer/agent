@@ -1,4 +1,9 @@
-FROM node:20-slim
+# =============================================================================
+# 基础阶段 M —— 长期不变：node + 系统工具 + 预烘 Python 依赖。
+# 只承载“系统层”，不含任何技能专属依赖。构建上下文为仓库根（compose: context: .），
+# 故 COPY 路径带 executor/ 前缀。
+# =============================================================================
+FROM node:20-slim AS base
 
 # MPLBACKEND=Agg：让 matplotlib 使用非交互式后端，避免缺少显示设备报错。
 # PYTHONUNBUFFERED=1：实时输出日志。
@@ -36,7 +41,9 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 
 # ---- executor 服务（零依赖单文件，仅 Node 内置 http）----
 WORKDIR /app
-COPY server.js ./
+COPY executor/server.js ./
+# 技能依赖准备脚本：由 agent-executor-init 服务在启动前执行（pip/资产，无特权）
+COPY executor/init-skills.js ./
 
 # 隔离用的空挂载点：必须存在且为空。
 #   /workspace/tasks   —— wrapper 用 tmpfs 遮盖它，再 bind 回当前 session（虚拟任务根）
@@ -49,7 +56,7 @@ RUN mkdir -p /workspace/tasks /workspace/scratch \
 
 EXPOSE 9000
 # EXECUTOR_LOG_LEVEL：日志等级 debug|info|warn|error|none（默认 info）。
-# debug 会把与 core 的完整交互逐条打印（请求行、/exec 请求体、每条 SSE 帧、JSON 响应）。
+# debug 会把与 core 的完整交互逐条打印（请求、/exec 请求体、每条 SSE 帧、JSON 响应）。
 # EXECUTOR_ISOLATION_BASE：宿主机 tasks 在本容器内的真实挂载点，必须与 compose 的 volumes 一致。
 ENV PORT=9000 \
     EXECUTOR_ROOTS=/workspace \
@@ -60,3 +67,24 @@ ENV PORT=9000 \
     EXECUTOR_LOG_LEVEL=info
 
 CMD ["node", "server.js"]
+
+# =============================================================================
+# 派生阶段 M' = M + 技能的“系统层”依赖（管理员增删/改动 skills 后重建这一层，M 不动）。
+#
+# 只取 install.sh 对系统层（/usr、/var）的作用——这部分必须烘进镜像才持久、
+# 且对命令只读（会话之间互不影响）。pip 依赖与技能资产（如字体提取）写出的文件
+# 随构建层丢弃，它们由 agent-executor-init 落到宿主 ./skills（重启不丢）。
+#
+# install.sh 属“管理员审核过的资产”；构建期以 root 执行，故仍需保持其最小化。
+# compose 通过 build.target: skills 选用本阶段。
+# =============================================================================
+FROM base AS skills
+ENV DEBIAN_FRONTEND=noninteractive
+COPY skills /tmp/skills
+RUN for d in /tmp/skills/*/; do \
+      if [ -f "$d/install.sh" ]; then \
+        echo "[skills] install.sh: $d"; \
+        ( cd "$d" && bash install.sh ) || echo "[skills][WARN] install.sh 失败（系统依赖可能缺失）：$d"; \
+      fi; \
+    done; \
+    rm -rf /tmp/skills

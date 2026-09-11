@@ -26,10 +26,45 @@ services:
       - my-app-network
       - agent-internal
 
+  # 技能准备（一次性，跑完退出）：把各技能的“运行期可变”依赖落到宿主 ./skills——
+  # requirements.txt → pip --target 共享 deps 目录；install.sh → 技能资产（如字体提取）。
+  # 系统层依赖（apt 等）不在这里做，由镜像的 skills 构建阶段烘进（才持久且对命令只读）。
+  # 只挂 ./skills（不挂 ./tasks），因此看不到任何会话数据；read_only 根 + tmpfs /tmp。
+  agent-executor-init:
+    build:
+      context: .
+      dockerfile: executor/Dockerfile
+      target: skills
+    image: agent-agent-executor-skills
+    container_name: agent-executor-init
+    restart: "no"
+    command: ["node", "init-skills.js"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./skills:/workspace/skills
+    environment:
+      - HOME=/tmp
+      - TMPDIR=/tmp
+      - PYTHONDONTWRITEBYTECODE=1
+      - TZ=Asia/Shanghai
+    networks:
+      - agent-internal
+
   agent-executor:
-    build: ./executor
+    # M' = M + 技能系统层依赖（executor/Dockerfile 的 skills 阶段）。
+    # 管理员增删/改动 skills 后：docker compose build agent-executor 重建这层，M 不动。
+    build:
+      context: .
+      dockerfile: executor/Dockerfile
+      target: skills
+    image: agent-agent-executor-skills
     container_name: agent-executor
     restart: unless-stopped
+    depends_on:
+      agent-executor-init:
+        condition: service_completed_successfully
     expose:
       - "9000"
     volumes:

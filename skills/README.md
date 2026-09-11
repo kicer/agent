@@ -128,7 +128,7 @@ def main():
 
 ### 5.1 Python 依赖
 
-在技能目录下放置 `requirements.txt` 文件，列出所有需要的第三方包。Skill Manager 会**自动安装**这些依赖到共享的 `deps` 目录（位于技能根目录下的 `deps/`），并通过 `PYTHONPATH` 注入运行环境。
+在技能目录下放置 `requirements.txt` 文件，列出所有需要的第三方包。服务启动前，`agent-executor-init`（`executor/init-skills.js`）会**自动安装**这些依赖到共享的 `deps` 目录（技能根目录下的 `deps/`），运行期通过 `PYTHONPATH` 注入；结果按 `requirements.txt` 的 hash 缓存（`.deps_installed`），未变化则跳过。
 
 示例 `requirements.txt`：
 
@@ -139,10 +139,14 @@ beautifulsoup4==4.11.1
 
 - 依赖安装使用 `pip install --target`，不会污染系统全局。
 - 所有技能**共享**同一个 `deps` 目录，请注意版本冲突（后装的覆盖先装的）。建议锁定精确版本。
+- 运行期 skills 目录只读；若上线后经 UI 改了 `requirements.txt`，需重启（`docker compose up -d`）触发重新 init，否则该技能会因依赖未就绪而失败。
 
 ### 5.2 系统级依赖
 
-如果技能需要系统库或字体等，可以提供一个 `install.sh` 脚本。Skill Manager 会在首次运行或脚本内容变化时执行它，并缓存结果。
+如果需要系统库或字体等，提供一个 `install.sh` 脚本。它在两处执行：
+
+- **镜像构建**（`executor/Dockerfile` 的 `skills` 阶段，`build.target: skills`）：此处安装的系统包（`apt-get` 等）会烘进派生镜像 M'，持久且对命令只读——**系统包必须走这里**。
+- **服务启动前的 init**（`executor/init-skills.js`）：用于生成技能自带资产（如从系统字体提取 `fonts/cjk.ttf`）。init 容器根文件系统只读，`apt-get install` 在这里不生效，不要依赖它。
 
 示例 `install.sh`：
 
@@ -154,8 +158,8 @@ apt-get install -y -qq some-package
 ```
 
 - `install.sh` 必须可执行（`chmod +x install.sh`）。
-- 脚本中的操作应尽量幂等，以避免重复执行时出错。
-- 如果安装耗时较长，请耐心等待；Skill Manager 会设置超时（默认 10 分钟）。
+- 请保持幂等：两处都以内容 hash 为缓存，仅在变化时执行。
+- 改动 `install.sh` 后：系统包需 `docker compose build agent-executor`，资产需 `docker compose up -d`（或两者一起 `build && up`）。
 
 ### 5.3 缓存机制
 
