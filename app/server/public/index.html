@@ -182,6 +182,7 @@
               <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
             </label>
           </div>
+          <div class="files-crumbs hidden" id="files-crumbs" aria-label="目录路径"></div>
           <div class="files-list" id="files-list"></div>
                 <div class="files-panel-progress hidden" id="fp-progress" aria-live="polite">
                   <div class="fp-track"><div class="bar" id="fp-progress-bar"></div></div>
@@ -2048,6 +2049,7 @@
   function setFilesPanel(open) {
     const panel = $('files-panel');
     if (open) {
+      filesCurDir = ''; // 每次弹出回到根目录
       loadFiles();
       // 弹出面板时收起软键盘,避免顶起布局
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -2101,7 +2103,8 @@
   const DIR_SEL_PREFIX = 'd:';
   const fileSelected = new Set();
   let filesAllPaths = [];
-  let filesTreeRoot = null; // 最近一次渲染的目录树（供全选折叠/有效性计算）
+  let filesTreeRoot = null; // 最近一次拉取构建的目录树（单层列表渲染与全选/有效性计算都基于它）
+  let filesCurDir = '';     // 当前浏览目录（相对任务根；'' = 根）。面包屑 + 单层列表的游标
 
   const dirSelKey = p => DIR_SEL_PREFIX + p;
   const isDirSelKey = k => k.startsWith(DIR_SEL_PREFIX);
@@ -2156,7 +2159,7 @@
     return dirs.map(path => ({ path, isDir: true })).concat(kept.map(path => ({ path, isDir: false })));
   }
 
-  // 重算面板内（或指定范围内）文件行/目录勾选框的视觉状态：统一按选中集推导，
+  // 重算面板内（或指定范围内）文件行/目录行勾选框的视觉状态：统一按选中集推导，
   // 避免各处手写 DOM 同步漏掉嵌套目录。目录勾选态 = 显式整选，或内部文件全部被覆盖。
   function refreshFileSelStates(scope) {
     scope = scope || $('files-list');
@@ -2167,13 +2170,16 @@
       const ck = r.querySelector('.file-check');
       if (ck) ck.setAttribute('aria-checked', sel ? 'true' : 'false');
     });
-    scope.querySelectorAll('.file-dir').forEach(dEl => {
-      const ck = dEl.querySelector(':scope > .file-dir-head > .file-check');
-      if (!ck) return;
-      if (fileSelected.has(dirSelKey(dEl.dataset.dir))) { ck.setAttribute('aria-checked', 'true'); return; }
-      const rows = Array.prototype.slice.call(dEl.querySelectorAll('.file-row'));
-      ck.setAttribute('aria-checked',
-        (rows.length > 0 && rows.every(r => isFileEffectivelySelected(r.dataset.path || ''))) ? 'true' : 'false');
+    scope.querySelectorAll('.file-dir-head').forEach(h => {
+      const dp = h.dataset.dir;
+      const ck = h.querySelector(':scope > .file-check');
+      if (!dp || !ck) return;
+      const node = filesNodeAt(dp);
+      const under = node ? filesUnderDir(node) : [];
+      const sel = fileSelected.has(dirSelKey(dp)) ||
+        (under.length > 0 && under.every(isFileEffectivelySelected));
+      h.classList.toggle('selected', sel);
+      ck.setAttribute('aria-checked', sel ? 'true' : 'false');
     });
   }
 
@@ -2220,17 +2226,9 @@
     updateFilesFooter();
   }
 
-  // ---------- 目录分组：后端返回扁平列表(路径可含子目录)，前端组树渲染 ----------
-  // 规则：每一级都是目录在上、文件在下；同级目录按名称排序，同级文件按时间倒序(新的在前)。
-  // 顶层包一个虚拟的「/」根目录(depth 0)：默认只展开根目录本身，即只显示工作目录下的直接子项(一级目录/文件)，
-  // 所有子目录一律收起，用户点到哪一层才展开那一层，不自动展开其下所有文件。
-  // filesDirOpen 记住用户手动展开/折叠过的目录(路径 → 是否展开；'' 为顶层「/」)，上传/删除重渲染后仍生效。
-  const filesDirOpen = new Map();
-  function isDirCollapsed(path, depth) {
-    const ov = filesDirOpen.get(path);
-    if (ov !== undefined) return !ov;
-    return depth > 0; // 只有顶层「/」默认展开，其下所有目录默认收起
-  }
+  // ---------- 目录浏览：后端返回扁平列表(路径可含子目录)，前端组树后按「面包屑 + 单层列表」展示 ----------
+  // 规则：主体只渲染当前目录的直接子项，目录在上、文件在下；同级目录按名称排序，同级文件按时间倒序(新的在前)。
+  // filesCurDir 为当前浏览目录('' = 任务根)；顶部面包屑(/ > a > b)点任意节点回跳，点目录行进一层；无折叠态。
 
   function fileTimeOf(f) { return f.ctime || f.mtime || 0; }
   function sortFilesByTime(arr) {
@@ -2270,10 +2268,7 @@
     return n;
   }
 
-  // 缩进：每层加深一点，封顶避免深层目录把文件名挤出屏幕
-  function filesIndent(depth) { return 8 + Math.min(depth, 3) * 14; }
-
-  function fileRowHtml(f, depth, dirSel) {
+  function fileRowHtml(f) {
     // 预览策略：md/txt/html + 图片在 fs-viewer 预览（pdf 不预）
     const low = f.filename.toLowerCase();
     const fsPv = /\.(md|txt|html?|png|jpe?g|gif|webp|svg)$/.test(low);
@@ -2282,8 +2277,8 @@
       : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
     const name = esc(String(f.filename).split('/').pop() || f.filename);
     const ftime = fmtTime(f.ctime || f.mtime);
-    const sel = !!dirSel || isFileEffectivelySelected(f.filename);
-    return '<div class="file-row' + (fsPv ? ' clickable' : '') + (sel ? ' selected' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '" style="padding-left:' + filesIndent(depth) + 'px">' +
+    const sel = isFileEffectivelySelected(f.filename);
+    return '<div class="file-row' + (fsPv ? ' clickable' : '') + (sel ? ' selected' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '">' +
       '<span class="file-check" role="checkbox" aria-checked="' + (sel ? 'true' : 'false') + '" aria-label="选择"></span>' +
       '<div class="file-main">' +
         '<div class="file-name">' + name + '</div>' +
@@ -2293,37 +2288,66 @@
     '</div>';
   }
 
-  // 目录头带勾选框：整个文件夹作为一个选中项（下载时后端打包成 zip）；点其余区域仍为折叠/展开。
-  // dirSel 为真时子孙目录/文件跟随父目录显示选中态。
-  // 顶层「/」是虚拟节点，不渲染勾选框（不可整体选中，全选语义由底部全选按钮承担），
-  // 并补回勾选框占位宽度(16px + 8px gap)保持与子级的缩进节奏。
-  function dirNodeHtml(node, depth, dirSel) {
-    const dirs = sortDirsByName(Array.from(node.dirs.values()));
-    sortFilesByTime(node.files);
-    const isRoot = depth === 0;
-    const collapsed = isDirCollapsed(node.path, depth);
+  // 目录行（带勾选框）：整个文件夹作为一个选中项（下载时后端打包成 zip）；
+  // 点行其余区域进入该目录（单层列表，不再有折叠/展开）。
+  function dirRowHtml(node) {
     const under = filesUnderDir(node);
-    const checked = !!dirSel || fileSelected.has(dirSelKey(node.path)) ||
+    const checked = fileSelected.has(dirSelKey(node.path)) ||
       (under.length > 0 && under.every(isFileEffectivelySelected));
-    const indent = filesIndent(depth) + (isRoot ? 24 : 0);
-    return '<div class="file-dir' + (collapsed ? ' collapsed' : '') + '" data-dir="' + esc(node.path) + '">' +
-      '<div class="file-dir-head" role="button" aria-expanded="' + (collapsed ? 'false' : 'true') + '">' +
-        (isRoot ? '' : '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"></span>') +
-        '<svg class="file-dir-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-        '<svg class="file-dir-ico" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>' +
-        '<span class="file-dir-name">' + esc(node.name || '/') + '</span>' +
-        '<span class="file-dir-count">' + countDirFiles(node) + ' 个文件</span>' +
-      '</div>' +
-      '<div class="file-dir-body">' +
-        dirs.map(function (d) { return dirNodeHtml(d, depth + 1, checked); }).join('') +
-        node.files.map(function (f) { return fileRowHtml(f, depth + 1, checked); }).join('') +
-      '</div>' +
+    return '<div class="file-dir-head' + (checked ? ' selected' : '') + '" data-dir="' + esc(node.path) + '" role="button">' +
+      '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"></span>' +
+      '<svg class="file-dir-ico" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>' +
+      '<span class="file-dir-name">' + esc(node.name) + '</span>' +
+      '<span class="file-dir-count">' + countDirFiles(node) + ' 个文件</span>' +
+      '<svg class="file-dir-go" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
     '</div>';
   }
 
-  // 顶层：整棵树包进虚拟的「/」根目录，目录在上、文件在下（根下的散文件也在该节点内平铺）
-  function filesTreeHtml(root) {
-    return dirNodeHtml(root, 0);
+  // 按相对路径取树节点（'' = 根）；路径不存在（如删除后重拉）返回 null
+  function filesNodeAt(path) {
+    let node = filesTreeRoot;
+    if (!node) return null;
+    if (!path) return node;
+    for (const seg of String(path).split('/')) {
+      node = node.dirs.get(seg);
+      if (!node) return null;
+    }
+    return node;
+  }
+
+  // 渲染当前目录：顶部面包屑（根目录(home) › a › b，点任意节点回跳）+ 单层列表（目录在前、文件在后）。
+  // 面包屑常显：根目录时只亮「根目录」当前层；进入子目录后逐级铺开。
+  function renderFilesDir() {
+    const el = $('files-list');
+    const crumbEl = $('files-crumbs');
+    let node = filesNodeAt(filesCurDir);
+    if (!node) { filesCurDir = ''; node = filesNodeAt(''); } // 当前目录已被删除 → 退回根
+    if (!node) { el.innerHTML = ''; return; }
+    // 根节点：home 图标 + 「根目录」，比一个孤悬的「/」醒目得多；在根时它是当前层，纯文本不可点
+    const homeIc = '<svg class="crumb-ic" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>';
+    let html = filesCurDir
+      ? '<span class="crumb" data-path="">' + homeIc + '根目录</span>'
+      : '<span class="crumb cur">' + homeIc + '根目录</span>';
+    if (filesCurDir) {
+      let acc = '';
+      const segs = filesCurDir.split('/');
+      segs.forEach(function (seg, i) {
+        acc = acc ? acc + '/' + seg : seg;
+        html += '<span class="crumb-sep">›</span>';
+        html += (i === segs.length - 1)
+          ? '<span class="crumb cur">' + esc(seg) + '</span>' // 当前层纯文本不可点
+          : '<span class="crumb" data-path="' + esc(acc) + '">' + esc(seg) + '</span>';
+      });
+    }
+    crumbEl.innerHTML = html;
+    crumbEl.classList.remove('hidden');
+    const dirs = sortDirsByName(Array.from(node.dirs.values()));
+    sortFilesByTime(node.files);
+    if (!dirs.length && !node.files.length) {
+      el.innerHTML = '<div class="empty-tip">' + (filesCurDir ? '该文件夹为空' : '还没有文件,在对话框上传或让 AI 生成') + '</div>';
+      return;
+    }
+    el.innerHTML = dirs.map(dirRowHtml).join('') + node.files.map(fileRowHtml).join('');
   }
 
   async function loadFiles() {
@@ -2335,15 +2359,10 @@
     updateFilesFooter();
     try {
       const files = await req('GET', '/api/sessions/' + state.sessionId + '/files');
-      const el = $('files-list');
-      if (!files.length) {
-        el.innerHTML = '<div class="empty-tip">还没有文件,在对话框上传或让 AI 生成</div>';
-        return;
-      }
       filesAllPaths = files.map(f => f.filename);
-      // 按目录分组渲染(后端已按时间倒序,组内再排一次防旧排序缓存)
+      // 重建目录树后只渲染当前目录这一层(后端已按时间倒序,组内再排一次防旧排序缓存)
       filesTreeRoot = buildFilesTree(files);
-      el.innerHTML = filesTreeHtml(filesTreeRoot);
+      renderFilesDir(); // filesCurDir 失效时自动退回根目录
       // 重新渲染后刷新底部计数与按钮状态
       updateFilesFooter();
     } catch (e) { toast('读取文件失败:' + e.message); }
@@ -2434,26 +2453,20 @@
       loadFiles();
     } catch (e) { toast('删除失败:' + e.message); }
   }
-  // 列表事件委托：
-    //  1) 点击目录头勾选框：整体选中/取消该文件夹（下载时后端打包成 zip）；点目录头其余区域：折叠/展开该目录（记住状态，刷新列表后保持）；
-    //  2) 点击勾选框：仅选中状态，不触发预览/下载；
+  // 列表事件委托（单层列表，目录不再有折叠/展开）：
+    //  1) 目录行勾选框：整体选中/取消该文件夹（下载时后端打包成 zip）；点行其余区域：进入该目录；
+    //  2) 点击文件行勾选框：仅选中状态，不触发预览/下载；
     //  3) 一旦处于多选模式（Set 非空），整行点击仅切换选中状态，不再预览/下载；
     //  4) 未进入多选模式时，点击文件名/图标根据 row.dataset.preview 决定预览或下载。
     $('files-list').addEventListener('click', e => {
-      // 目录头：勾选框切换选中，其余区域切换折叠/展开
+      // 目录行：勾选框切换整选，其余区域进入该目录
       const head = e.target.closest('.file-dir-head');
       if (head) {
-        const dirEl = head.closest('.file-dir');
-        if (!dirEl) return;
-        const dp = dirEl.dataset.dir;
-        if (dp && e.target.closest('.file-check')) {
-          toggleDirSelect(dp, dirEl);
-          return;
-        }
-        const collapsed = dirEl.classList.toggle('collapsed');
-        head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-        if (dp === undefined) return; // 理论上不会发生：所有目录节点都带 data-dir（顶层「/」为空串）
-        filesDirOpen.set(dp, !collapsed);
+        const dp = head.dataset.dir;
+        if (!dp || !state.sessionId) return;
+        if (e.target.closest('.file-check')) { toggleDirSelect(dp); return; }
+        filesCurDir = dp;
+        renderFilesDir();
         return;
       }
       const row = e.target.closest('.file-row');
@@ -2477,9 +2490,9 @@
       else downloadFile(path);
     });
 
-  // 整体选中/取消一个文件夹：目录作为单条选中项（d: 前缀），内部行视觉态由 refreshFileSelStates 重算。
+  // 整体选中/取消一个文件夹：目录作为单条选中项（d: 前缀），行视觉态由 refreshFileSelStates 重算。
   // 整体勾选时取消内部单项/子目录勾选（已被覆盖，避免重复计入）；取消勾选时子项恢复未选。
-  function toggleDirSelect(dirPath, dirEl) {
+  function toggleDirSelect(dirPath) {
     const key = dirSelKey(dirPath);
     const on = !fileSelected.has(key);
     if (on) {
@@ -2494,12 +2507,18 @@
     } else {
       fileSelected.delete(key);
     }
-    const ck = dirEl.querySelector(':scope > .file-dir-head > .file-check');
-    if (ck) ck.setAttribute('aria-checked', on ? 'true' : 'false');
-    // 子孙目录/文件跟随父目录选中态；取消时按“自身被选或被其他祖先目录覆盖”重新计算
-    refreshFileSelStates(dirEl);
+    // 目录行/文件行勾选态统一按选中集重算
+    refreshFileSelStates();
     updateFilesFooter();
   }
+
+  // 面包屑点击：回跳到任意祖先层级（当前层节点无 data-path，不可点）
+  $('files-crumbs').addEventListener('click', e => {
+    const c = e.target.closest('.crumb[data-path]');
+    if (!c) return;
+    filesCurDir = c.dataset.path;
+    renderFilesDir();
+  });
 
     // 批量下载：选中项含文件夹（含全选后整目录被覆盖的情况）时，整个选择交给后端打包成
     // 一个 zip 一次下载；纯文件选择保持逐文件直链下载。zip 同样走签名直链（与单文件同链路）。
