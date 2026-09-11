@@ -860,6 +860,7 @@ function deleteSession(sessionId, deleteDir) {
   db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM wait_queue WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+  autoCompressProposed.delete(sessionId); // 提议闸门随会话销毁
   if (deleteDir) {
     try { fs.rmSync(taskDirOf(sessionId), { recursive: true, force: true }); } catch (_) {}
   }
@@ -922,18 +923,22 @@ function summarizeContext(sessionId) {
 // 自动压缩确认前的宽限期（ms）：超长回合刚结束时，前端还在收尾渲染（最终消息落 DOM、会话列表刷新等），
 // 同一帧立刻弹窗询问会叠加卡顿，且抢先发言/手动压缩/终止都会改状态让提议过期；故满足条件后延迟再推送。
 const AUTO_COMPRESS_GRACE_MS = 1500;
+// 每会话至多弹一次确认框的闸门：无论用户确认还是取消，本会话都不再反复打扰
+//（事件确有 SSE 观看者送达才计数；删会话/重启服务后重置。服务内存态，多实例部署不共享）。
+const autoCompressProposed = new Set();
 
 // 回合结束后的自动压缩「提议」检查（由 runLoop finally 调用，即 AI↔工具循环完全停止、finalize 收尾之后）。
 // 规则：agent.auto_compress_tokens > 0 且本回合 In token 峰值（run.turnMaxPt，各模型轮 prompt_tokens 最大者）
 // ≥ 阈值 → 延迟 AUTO_COMPRESS_GRACE_MS 后发 auto_compress 提议事件；服务端不再自动执行，
 // 由前端弹 modal 询问，用户点「立即压缩」后才 POST /summarize 开启与手动「摘要」完全相同的压缩回合。
-// 忽略/取消则本轮不压缩（下个超长回合结束后会再次提议）。
+// 每会话至多提议一次（autoCompressProposed 闸门）：取消/忽略后不再反复弹窗，想压可手动点「压缩」。
 // 护栏：压缩回合自身不再检查（防递归）；被终止的回合不触发；仅正常收尾进入 held 后触发；
 // 延迟期间用户抢先发言/手动压缩/终止、租约到期释放都会改动 status 或 held_at，回调里校验后放弃推送；
-// 无 SSE 观看者时事件静默丢弃（提议本就是交互式功能，错过不补）。
+// 无 SSE 观看者时事件静默丢弃且不计数（提议本就是交互式功能，下个超长回合还会再试）。
 function maybeAutoCompress(sessionId, run, wasCompressTurn) {
   try {
     if (wasCompressTurn || run.cancelled) return;
+    if (autoCompressProposed.has(sessionId)) return; // 本会话已弹过一次，不再提议
     const th = Math.floor(Number((cfg.agent || {}).auto_compress_tokens) || 0);
     const maxPt = run.turnMaxPt || 0;
     if (th <= 0 || maxPt < th) return;
@@ -943,9 +948,12 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
     const timer = setTimeout(() => {
       try {
         if (run.cancelled) return;
+        if (autoCompressProposed.has(sessionId)) return; // 延迟期间其他回合已弹过（双保险）
         const s2 = getSession(sessionId);
         if (!s2 || s2.status !== 'held' || s2.held_at !== heldAt) return; // 宽限期内会话有变动，撤回本次提议
         bus.emit(sessionId, 'auto_compress', { prompt_tokens: maxPt, threshold: th });
+        // 确有人在看（事件送达）才消耗本会话唯一一次额度；没人看则下个回合结束仍有机会
+        if (bus.clientCount(sessionId) > 0) autoCompressProposed.add(sessionId);
         log.info('msg', sessionId + ' 自动压缩提议已推送（回合 In ' + maxPt + ' ≥ 阈值 ' + th + '），等待用户确认');
       } catch (e) {
         log.warn('msg', sessionId + ' 自动压缩提议推送失败：' + (e && e.message || e));
@@ -976,6 +984,7 @@ function clearSessionMessages(sessionId) {
   dequeue(sessionId);
   releaseModel(sessionId);
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+  autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
   touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null });
   bus.emit(sessionId, 'done', { status: 'completed' });
   emitStatus(sessionId);

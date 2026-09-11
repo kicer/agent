@@ -1435,7 +1435,7 @@
     }
 
     // 自动压缩提议（后端回合结束+宽限期后发 auto_compress 事件，不再自启）：弹 modal 由用户手动确认。
-    // 取消/忽略 = 本轮不压（下个超长回合结束后会再提议）；防重入：确认期间不叠加弹窗。
+    // 取消/忽略 = 本会话不再提议（服务端闸门，想压可手动点「压缩」）；防重入：确认期间不叠加弹窗。
     async function proposeAutoCompress(d) {
       const sid = state.sessionId;
       if (!sid || state.view !== 'chat' || state.status !== 'held') return; // 会话已有新动静，提议过期
@@ -1450,7 +1450,7 @@
       } finally {
         _autoCompressPrompting = false;
       }
-      if (!ok) { toast('已跳过本次自动压缩'); return; }
+      if (!ok) { toast('已跳过，本会话不再自动提议压缩'); return; }
       if (state.sessionId !== sid) return; // 确认期间切了会话，作废
       if (state.status === 'active') { toast('AI 正在输出，本次提议作废，可稍后手动压缩'); return; }
       await startSummary();
