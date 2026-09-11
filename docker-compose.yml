@@ -20,7 +20,7 @@ services:
       # 加入executor独立服务
       - EXECUTOR_URL=http://agent-executor:9000
       # 两侧设成同一个值即启用调用鉴权（内网互访，可选）：
-      - EXECUTOR_TOKEN=whoami
+      - EXECUTOR_TOKEN=b2676884778e373dcd7244c29aadcb82
     networks:
       - my-app-network
       - agent-internal
@@ -32,15 +32,22 @@ services:
     expose:
       - "9000"
     volumes:
-      - ./tasks:/workspace/tasks        # 持久化：任务目录
-      - ./skills:/workspace/skills      # 技能目录：所有任务/会话共享同一份技能
+      # 核心变更：将宿主机 tasks 挂载到非标准路径 /mnt/host-tasks
+      # 目的：wrapper 启动时先 unmount 此路径，确保未经 wrapper 的进程无法访问其他 session 数据
+      - ./tasks:/mnt/host-tasks         # 持久化：任务目录
+      - ./skills:/workspace/skills:ro   # 技能目录：所有任务/会话共享同一份技能
     environment:
       - PORT=9000
       # 与 agent-core 侧设成同一个值即启用调用鉴权（可选）：
-      - EXECUTOR_TOKEN=whoami
+      - EXECUTOR_TOKEN=b2676884778e373dcd7244c29aadcb82
       # 日志等级：debug|info|warn|error|none（默认 info）；
       # debug 会把与 core 的完整交互打印出来（请求、/exec 请求体、每条 SSE 帧、JSON 响应）：
       - EXECUTOR_LOG_LEVEL=info
+      # 防止 Python 在 skills 目录生成 __pycache__
+      - PYTHONDONTWRITEBYTECODE=1
+      # 定义隔离基路径，server.js 需读取此变量以执行 umount 和 bind mount
+      - EXECUTOR_ISOLATION_BASE=/mnt/host-tasks
+
     # 资源限制：兜住 AI 失控命令（烧 CPU / 吃内存 / fork 炸弹 / 写盘撞满宿主机磁盘）。cgroup/ulimit 随 fork 继承。
     # 这些是性能/容量护栏，不限制可调用的 syscall；执行能力由下方 cap_add/security_opt 控制。
     cpus: "2.0"       # 容器整体最多用 2 核（超出限流不杀进程），按宿主机核数调整
@@ -53,15 +60,16 @@ services:
       fsize:
         soft: 2147483648
         hard: 2147483648
-    # per-task 隔离需 unshare(2)/mount(2)：只需 CAP_SYS_ADMIN（cap_add），不必 privileged。
-    # 实测 Docker 29（Ubuntu，AppArmor 启用）：默认 AppArmor profile（docker-default）会拦 mount 系统调用，
-    # 单加 SYS_ADMIN 仍报 Permission denied，需本容器 apparmor unconfined；默认 seccomp profile 对持 CAP_SYS_ADMIN
-    # 的进程本就放行 mount/unshare，无需改动。相比 privileged: true 去掉的是：宿主机设备透传（/dev 裸盘）、
-    # 全套能力集、seccomp 封锁——保留的这三道仍是隔离层。
-    # 安全网：容器仅 expose 9000 + agent-internal 外网不可见；cpus/mem/pids/fsize cgroup 仍受控。
+
+    # 安全加固：显式丢弃所有能力，仅保留必要的 SYS_ADMIN
+    cap_drop:
+      - ALL
     cap_add:
       - SYS_ADMIN
     security_opt:
+      # 禁止提权（SUID/SGID 失效），防止通过二进制漏洞获取更高权限
+      - no-new-privileges:true
+      # 实测 Docker 29 (Ubuntu) 需 unconfined 才能使用 mount/unshare 系统调用
       - apparmor=unconfined
     networks:
       - agent-internal
