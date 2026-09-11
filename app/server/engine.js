@@ -919,16 +919,18 @@ function summarizeContext(sessionId) {
   return { prompt, delivered };
 }
 
-// 自动压缩宽限期（ms）：超长回合刚结束时，前端还在收尾渲染（最终消息落 DOM、会话列表刷新等），
-// 同一帧立刻再开压缩回合会叠加大量重排/重绘，会话页面肉眼可见地卡顿，故满足条件后延迟再启动。
+// 自动压缩确认前的宽限期（ms）：超长回合刚结束时，前端还在收尾渲染（最终消息落 DOM、会话列表刷新等），
+// 同一帧立刻弹窗询问会叠加卡顿，且抢先发言/手动压缩/终止都会改状态让提议过期；故满足条件后延迟再推送。
 const AUTO_COMPRESS_GRACE_MS = 1500;
 
-// 回合结束后的自动压缩检查（由 runLoop finally 调用，即 AI↔工具循环完全停止、finalize 收尾之后）。
+// 回合结束后的自动压缩「提议」检查（由 runLoop finally 调用，即 AI↔工具循环完全停止、finalize 收尾之后）。
 // 规则：agent.auto_compress_tokens > 0 且本回合 In token 峰值（run.turnMaxPt，各模型轮 prompt_tokens 最大者）
-// ≥ 阈值 → 延迟 AUTO_COMPRESS_GRACE_MS 后自动发起一次与手动「摘要」完全相同的压缩回合；阈值 0 = 永不启用。
+// ≥ 阈值 → 延迟 AUTO_COMPRESS_GRACE_MS 后发 auto_compress 提议事件；服务端不再自动执行，
+// 由前端弹 modal 询问，用户点「立即压缩」后才 POST /summarize 开启与手动「摘要」完全相同的压缩回合。
+// 忽略/取消则本轮不压缩（下个超长回合结束后会再次提议）。
 // 护栏：压缩回合自身不再检查（防递归）；被终止的回合不触发；仅正常收尾进入 held 后触发；
-// 延迟期间用户抢先发言/手动压缩/终止、租约到期释放都会改动 status 或 held_at，回调里校验后自动放弃；
-// 先发 auto_compress 事件再启动压缩，前端据此挂上收尾状态（SSE 同连接事件有序，早于任何流式帧）。
+// 延迟期间用户抢先发言/手动压缩/终止、租约到期释放都会改动 status 或 held_at，回调里校验后放弃推送；
+// 无 SSE 观看者时事件静默丢弃（提议本就是交互式功能，错过不补）。
 function maybeAutoCompress(sessionId, run, wasCompressTurn) {
   try {
     if (wasCompressTurn || run.cancelled) return;
@@ -942,17 +944,16 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
       try {
         if (run.cancelled) return;
         const s2 = getSession(sessionId);
-        if (!s2 || s2.status !== 'held' || s2.held_at !== heldAt) return; // 宽限期内会话有变动，放弃本次自动压缩
+        if (!s2 || s2.status !== 'held' || s2.held_at !== heldAt) return; // 宽限期内会话有变动，撤回本次提议
         bus.emit(sessionId, 'auto_compress', { prompt_tokens: maxPt, threshold: th });
-        summarizeContext(sessionId);
-        log.info('msg', sessionId + ' 自动压缩触发：回合 In ' + maxPt + ' ≥ 阈值 ' + th);
+        log.info('msg', sessionId + ' 自动压缩提议已推送（回合 In ' + maxPt + ' ≥ 阈值 ' + th + '），等待用户确认');
       } catch (e) {
-        log.warn('msg', sessionId + ' 自动压缩启动失败：' + (e && e.message || e));
+        log.warn('msg', sessionId + ' 自动压缩提议推送失败：' + (e && e.message || e));
       }
     }, AUTO_COMPRESS_GRACE_MS);
     if (timer.unref) timer.unref(); // 挂起的宽限定时器不应阻止进程退出
   } catch (e) {
-    log.warn('msg', sessionId + ' 自动压缩启动失败：' + (e && e.message || e));
+    log.warn('msg', sessionId + ' 自动压缩提议检查失败：' + (e && e.message || e));
   }
 }
 

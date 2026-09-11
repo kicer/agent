@@ -1410,6 +1410,13 @@
       const choice = await compressModeModal();
       if (!choice) return;
       if (choice === 'clear') { await clearChat(); return; }
+      await startSummary();
+    }
+
+    // 发起摘要压缩回合（手动「压缩→摘要」与自动压缩弹窗确认后共用）：
+    // POST /summarize → 回显指令气泡 + 打字占位；收尾由带 is_summary 的最终答复/done 事件走既有链路。
+    async function startSummary() {
+      if (!state.sessionId || state.pendingSummary) return;
       state.pendingSummary = true;
       const btn = $('compress-btn');
       if (btn) btn.disabled = true;
@@ -1426,6 +1433,31 @@
         toast('压缩失败：' + e.message);
       }
     }
+
+    // 自动压缩提议（后端回合结束+宽限期后发 auto_compress 事件，不再自启）：弹 modal 由用户手动确认。
+    // 取消/忽略 = 本轮不压（下个超长回合结束后会再提议）；防重入：确认期间不叠加弹窗。
+    async function proposeAutoCompress(d) {
+      const sid = state.sessionId;
+      if (!sid || state.view !== 'chat' || state.status !== 'held') return; // 会话已有新动静，提议过期
+      if (_autoCompressPrompting) return;
+      _autoCompressPrompting = true;
+      let ok = false;
+      try {
+        ok = await confirmModal('自动压缩上下文',
+          '本轮输入 ' + fmtTok(d.prompt_tokens) + ' tokens，已达阈值 ' + fmtTok(d.threshold) +
+          '。AI 将生成结构化摘要，摘要之前的旧消息会存档（聊天里仍保留展示）不再发给 AI，后续对话从摘要开始。现在压缩？',
+          '立即压缩');
+      } finally {
+        _autoCompressPrompting = false;
+      }
+      if (!ok) { toast('已跳过本次自动压缩'); return; }
+      if (state.sessionId !== sid) return; // 确认期间切了会话，作废
+      if (state.status === 'active') { toast('AI 正在输出，本次提议作废，可稍后手动压缩'); return; }
+      await startSummary();
+    }
+
+    // 自动压缩确认弹窗防重入标记（见 proposeAutoCompress）
+    let _autoCompressPrompting = false;
 
     // 压缩动作选择弹窗：右上 X 关闭 + 两个动作（摘要 / 清空）。
       // 返回 'generate_only' | 'clear' | null（关闭取消）。
@@ -1801,13 +1833,9 @@
       fillToolResult(d.tool_call_id, d.content, d.is_error, d.image_url, d.msg_id);
       maybeAutoScroll();
     });
-    // 后端回合结束后自动压缩触发：挂上与手动「摘要」同一套收尾链路（摘要卡片 + 旧消息淡出存档）
+    // 后端回合结束+宽限期后的自动压缩提议：不再自动执行，弹 modal 请用户手动确认（见 proposeAutoCompress）
     es.addEventListener('auto_compress', ev => {
-      const d = JSON.parse(ev.data);
-      state.pendingSummary = true;
-      const btn = $('compress-btn');
-      if (btn) btn.disabled = true;
-      toast('本轮 In ' + fmtTok(d.prompt_tokens) + ' 超过阈值 ' + fmtTok(d.threshold) + '，自动压缩上下文中…');
+      proposeAutoCompress(JSON.parse(ev.data));
     });
     es.addEventListener('done', ev => {
       removeTyping(); // 本轮结束,占位亦终止(如模型报错无回复)
