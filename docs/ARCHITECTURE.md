@@ -360,6 +360,8 @@ stateDiagram-v2
 **资源护栏**（compose 层，**不在 server.js**）：
 `cpus 2.0` / `mem_limit 2g` / `pids_limit 512` / `ulimits.fsize 2G` —— 防 AI 失控命令。残余缺口（只限单文件不限总量）在 compose 注释里已标。
 
+**根文件系统只读**（compose 层）：`read_only: true` 挡住 AI 命令往镜像层写文件做持久化/篡改；`tmpfs: /tmp /var/tmp /run` 提供必要可写点。**`/run` 必须给**——隔离 wrapper 要在 `/run/agent-exec` 建私有 anchor/rundir，否则 `read_only` 下 `mkdir` 报 EROFS（`set -e` 直接中断每条命令）；正常写盘另走 `handleExec` 的 `HOME=/tmp`/`TMPDIR=/tmp` 与 bind 卷。
+
 ---
 
 ## 7. HTTP 路由

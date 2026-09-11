@@ -71,6 +71,17 @@ services:
       - no-new-privileges:true
       # 实测 Docker 29 (Ubuntu) 需 unconfined 才能使用 mount/unshare 系统调用
       - apparmor=unconfined
+
+    # 根文件系统只读：AI 命令无法往镜像层（/usr、/root 等）写文件做持久化/篡改；
+    # 合法写盘另走 tmpfs 与 bind 卷（handleExec 已把 HOME/TMPDIR 指向 /tmp）。
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+      # /run 必须可写：隔离 wrapper 要在 /run/agent-exec 下建私有 anchor/rundir，
+      # 否则 read_only 下 mkdir 报 EROFS，每条命令直接中断。
+      - /run
+
     networks:
       - agent-internal
 
