@@ -109,7 +109,8 @@ graph LR
 
 - `agent-core` 与 `agent-executor` 须把**同一份宿主机 `./tasks`、`./skills`**挂到相同的容器路径（默认 `/workspace/tasks`、`/workspace/skills`）。这是文件工具在 Core 本地直接读、命令在远端写，二者能"看到"彼此产物的根本约定。
 - nginx-proxy 前置时**必须 `proxy_buffering off`**，否则 SSE 流被缓冲。详见 `docs/DEPLOY.md`。
-- Core 通过环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN` 注入 executor 端点（compose 已配；也可用 `config.yml` 的 `executor` 段覆盖）。
+- Core 通过环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN` 注入 executor 端点（也可用 `config.yml` 的 `executor` 段覆盖）。**token 从 `.env` 读取**（compose 变量替换 `${EXECUTOR_TOKEN:?...}`，未设置直接报错，杜绝静默无鉴权）；`.env` 已 gitignore，模板见 `.env.example`，生成：`openssl rand -hex 32`。
+- Executor **拒绝来自容器自身（回环/本机网卡）的 `/exec`**：隔离只 unshare mount+pid，命令与 executor 同 net ns，能打到 `127.0.0.1:9000`；据此即使 token 泄漏也无法在会话内调用 `/exec` 越权读他人会话（core 在另一容器，不受影响）。本机集成测试用 `EXECUTOR_ALLOW_LOCAL_ORIGIN=1` 放行，生产不得设置。
 - Executor 在 compose 里加了 cgroup/ulimit 护栏（`cpus 2.0` / `mem_limit 2g` / `pids_limit 512` / `ulimits.fsize 2G`）——详见 `executor/server.js` 头注释。
 
 ---
@@ -337,7 +338,8 @@ stateDiagram-v2
 
 **安全约束**（改 executor 时务必保持）：
 
-- `EXECUTOR_TOKEN` 非空时，除 `/health` 外必须 `Authorization: Bearer`（常时间比较）。
+- `EXECUTOR_TOKEN` 非空时，除 `/health` 外必须 `Authorization: Bearer`（常时间比较）。token 存 `.env`（gitignore），不硬编码进仓库。
+- 拒绝**来自容器自身**（回环/本机网卡）的 `/exec`：隔离未 unshare net ns，命令能打到 `127.0.0.1:9000`；据此即使 token 泄漏，会话内也无法回环调 `/exec` 以他人会话 cwd 起命令（core 在另一容器，源地址非本机，不受影响）。`EXECUTOR_ALLOW_LOCAL_ORIGIN=1` 仅供本机集成测试，生产不得设置。
 - `cwd` 必须落在 `EXECUTOR_ROOTS`（逗号分隔白名单，默认 `/workspace`）realpath 之下，防穿越。
 - `cwd` 不得是任务根本身（realpath 相等即拒）：它是全部会话目录的父目录，在其下执行会暴露所有会话，且隔离 wrapper 在此层无从生效；缺省 cwd 落任务根同样被拒 → 等效必填。
 - `timeout_ms` 夹在 `[1000, EXECUTOR_MAX_TIMEOUT_MS=1800000]`。
@@ -354,6 +356,7 @@ stateDiagram-v2
 | `EXECUTOR_MAX_OUTPUT_CHARS` | 200000 | stdout/stderr 单向截断阈值 |
 | `EXECUTOR_TOKEN` | 空 | 可选 Bearer 鉴权 |
 | `EXECUTOR_LOG_LEVEL` | `info` | 分级日志（debug 打满请求/响应交互） |
+| `EXECUTOR_ALLOW_LOCAL_ORIGIN` | 空 | 仅本机集成测试：`1` 放行回环/本机来源的 /exec（生产勿设） |
 
 **per-task 挂载隔离**（`server.js` 的 `isolatedCommand`）：cwd 在任务根（`EXECUTOR_CWD`）严格之下的命令，spawn 时包一层 wrapper，在新的 mount namespace 里把任务根覆盖为 tmpfs、只把当前会话根（第一层子目录）bind 回原路径——AI 只能看到/改自己的项目，看不到别的会话；cwd 恰为任务根被 /exec 边界直接拒 400（见上）；cwd 在任务根外（如技能依赖安装跑在技能目录）不隔离直接 spawn（/mnt 仍被遮，看不到任何会话数据）。wrapper 同时 `unshare --pid --fork` 进新 pid ns 并重挂 /proc（flags 对齐 docker）：否则 /proc 仍是宿主视图，`nsenter --mount=/proc/1/ns/mnt` 可借 executor 主进程的 ns 句柄逃逸回原始 mount ns（已实测复现过）；重挂后 /proc/1 即命令自身。新 proc 可写会顶掉 docker 防护，wrapper 逐项还原：/proc/sys 只读 bind（防 core_pattern 宿主逃逸）、/dev/null 遮蔽 kcore/keys/sysrq-trigger（echo b 可重启宿主机）。wrapper 还把 server.js 所在目录（镜像 WORKDIR，容器内 `/app`）tmpfs 盖掉（任务根与之嵌套的开发态跳过）；且下发命令的 env 剥掉 `EXECUTOR_TOKEN`——否则 `env` 一 dump 即得 token，可从容器内回环调 `/exec` 以任意会话目录起命令，绕过隔离。需 compose 配 `cap_add: SYS_ADMIN` + `security_opt: apparmor=unconfined`（不用 privileged：实测 Docker 29，默认 AppArmor profile 拦 `mount(2)`，单加 SYS_ADMIN 不够；默认 seccomp 对持 CAP_SYS_ADMIN 的进程放行 `unshare(2)`/`mount(2)`，无需改动）；`unshare`/`mount`/`mktemp` 来自 debian 基础包 util-linux。
 

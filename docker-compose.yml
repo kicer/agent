@@ -19,8 +19,9 @@ services:
       - CERT_NAME=default
       # 加入executor独立服务
       - EXECUTOR_URL=http://agent-executor:9000
-      # 两侧设成同一个值即启用调用鉴权（内网互访，可选）：
-      - EXECUTOR_TOKEN=b2676884778e373dcd7244c29aadcb82
+      # 调用鉴权 token：两侧同一值。从 .env 读取（已 gitignore），不再硬编码进仓库；
+      # 未设置则 compose 直接报错，避免静默无鉴权。生成：openssl rand -hex 32
+      - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - see .env.example}
     networks:
       - my-app-network
       - agent-internal
@@ -38,8 +39,8 @@ services:
       - ./skills:/workspace/skills:ro   # 技能目录：所有任务/会话共享同一份技能
     environment:
       - PORT=9000
-      # 与 agent-core 侧设成同一个值即启用调用鉴权（可选）：
-      - EXECUTOR_TOKEN=b2676884778e373dcd7244c29aadcb82
+      # 与 agent-core 侧同一值，从 .env 读取（见 .env.example）：
+      - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - see .env.example}
       # 日志等级：debug|info|warn|error|none（默认 info）；
       # debug 会把与 core 的完整交互打印出来（请求、/exec 请求体、每条 SSE 帧、JSON 响应）：
       - EXECUTOR_LOG_LEVEL=info

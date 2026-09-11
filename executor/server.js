@@ -27,6 +27,10 @@
 //
 // 约束：
 //   - 设置 EXECUTOR_TOKEN 后除 /health 外必须带 Authorization: Bearer <token>；
+//   - 拒绝“来自容器自身”（回环/本机网卡）的 /exec：隔离只 unshare mount+pid，**没有** unshare
+//     net ns，命令与 executor 同处一个 net ns，能打到 127.0.0.1:9000；只要 token 泄漏，就能
+//     借 /exec 以任意会话 cwd 起命令、绕过隔离。core 在另一个容器（源地址是其 bridge IP），不受影响。
+//     EXECUTOR_ALLOW_LOCAL_ORIGIN=1 仅供本机集成测试，生产不得设置。
 //   - cwd 必须落在 EXECUTOR_ROOTS（逗号分隔白名单）内，且不得是任务根本身；
 //   - session 目录及其链上不得含符号链接（防解析后逃逸）；
 //   - timeout_ms 夹在 [1s, EXECUTOR_MAX_TIMEOUT_MS]；stdout/stderr 各自按 max_output_chars 截断。
@@ -35,6 +39,7 @@
 'use strict';
 
 const http = require('http');
+const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -43,6 +48,19 @@ const { spawn } = require('child_process');
 // ---------- 配置 ----------
 const PORT = parseInt(process.env.PORT, 10) || 9000;
 const TOKEN = process.env.EXECUTOR_TOKEN || '';
+
+// 本容器自身的地址集合（含回环）：用于拒绝“来自容器内部”的 /exec 调用。
+// 测试用 EXECUTOR_ALLOW_LOCAL_ORIGIN=1 可放行；生产必须保持关闭。
+const ALLOW_LOCAL_ORIGIN = process.env.EXECUTOR_ALLOW_LOCAL_ORIGIN === '1';
+function normIp(s) { s = String(s || ''); return s.startsWith('::ffff:') ? s.slice(7) : s; }
+const SELF_IPS = (() => {
+  const set = new Set(['127.0.0.1', '::1']);
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const a of ifaces[name] || []) set.add(normIp(a.address));
+  }
+  return set;
+})();
 
 const ROOTS = (process.env.EXECUTOR_ROOTS || '/workspace')
   .split(',').map(s => s.trim()).filter(Boolean).map(p => path.resolve(p));
@@ -455,6 +473,11 @@ function resolveCwd(raw) {
 }
 
 // ---------- HTTP ----------
+// 请求是否源自本容器（回环/本机网卡）：是则拒绝，防止隔离内的命令回环调 /exec 越权。
+function isSelfOrigin(req) {
+  return SELF_IPS.has(normIp(req.socket && req.socket.remoteAddress));
+}
+
 function tokenOk(req) {
   if (!TOKEN) return true;
   const auth = String(req.headers.authorization || '');
@@ -628,6 +651,12 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/health') return send(res, 200, { ok: true, time: Date.now() });
 
+  // 先于鉴权拒绝“容器自身来源”：即使 token 泄漏，隔离内的命令也无法借回环调用 /exec。
+  if (!ALLOW_LOCAL_ORIGIN && isSelfOrigin(req)) {
+    log.warn('auth', '拒绝容器自身来源', req.method, url.pathname, req.socket.remoteAddress);
+    return send(res, 403, { error: '拒绝来自容器自身的请求' });
+  }
+
   if (!tokenOk(req)) {
     log.warn('auth', '拒绝', req.method, url.pathname);
     return send(res, 401, { error: '鉴权失败' });
@@ -651,6 +680,7 @@ server.listen(PORT, () => {
     '  isolation_base=' + ISOLATION_BASE +
     '  scratch=' + SCRATCH_ROOT +
     '  auth=' + (TOKEN ? 'on' : 'off'));
+  if (ALLOW_LOCAL_ORIGIN) log.warn('EXECUTOR_ALLOW_LOCAL_ORIGIN=1：放行回环/本机来源，仅供本机集成测试，生产不得设置');
   selfCheck();
 });
 

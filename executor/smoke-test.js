@@ -10,6 +10,7 @@ const TASK_ROOT = SELF + '/.taskroot';
 require('fs').mkdirSync(TASK_ROOT, { recursive: true });
 process.env.EXECUTOR_CWD = TASK_ROOT;
 delete process.env.EXECUTOR_TOKEN; // 主实例不带 token，鉴权单独测
+process.env.EXECUTOR_ALLOW_LOCAL_ORIGIN = '1'; // 本机集成测试：连接必为回环，放行自身来源（生产不设）
 
 const { spawn } = require('child_process');
 const path = require('path');

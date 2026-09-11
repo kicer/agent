@@ -42,6 +42,8 @@ process.env.EXECUTOR_ISOLATION_BASE = ISO;
 process.env.EXECUTOR_SKILLS_DIR = SKILLS;
 delete process.env.EXECUTOR_URL; delete process.env.EXECUTOR_TOKEN;
 delete process.env.EXECUTOR_LOG_LEVEL;
+// 本机集成测试：core 与 executor 同机，连接必为回环，需放行容器自身来源（生产不设）。
+process.env.EXECUTOR_ALLOW_LOCAL_ORIGIN = '1';
 require(path.join(ROOT, 'executor/server.js'));
 
 // 2) core 侧模块
