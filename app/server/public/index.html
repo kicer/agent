@@ -2296,18 +2296,24 @@
   }
 
   // 扁平文件列表 → 树节点 { name, path, dirs: Map, files: [] }
+  // 目录标记行（?dirs=1：filename 以 '/' 结尾 + dir:true）只沿途铺设路径节点、不入任何 files[]，
+  // 不含文件的空夹子因此也能渲染；与同名文件路径铺出的节点经 dirs Map 天然去重。
   function buildFilesTree(files) {
     const root = { name: '', path: '', dirs: new Map(), files: [] };
     for (const f of files) {
-      const segs = String(f.filename).split('/');
+      const isDir = f.dir === true || /\/$/.test(String(f.filename));
+      const name = isDir ? String(f.filename).replace(/\/+$/, '') : String(f.filename);
+      if (!name) continue;
+      const segs = name.split('/');
       let node = root, rel = '';
-      for (let i = 0; i < segs.length - 1; i++) {
+      const dirDepth = isDir ? segs.length : segs.length - 1; // 文件：末段是文件名；目录：全是路径段
+      for (let i = 0; i < dirDepth; i++) {
         const seg = segs[i];
         rel = rel ? rel + '/' + seg : seg;
         if (!node.dirs.has(seg)) node.dirs.set(seg, { name: seg, path: rel, dirs: new Map(), files: [] });
         node = node.dirs.get(seg);
       }
-      node.files.push(f);
+      if (!isDir) node.files.push(f);
     }
     return root;
   }
@@ -2409,8 +2415,9 @@
     filesTreeRoot = null;
     updateFilesFooter();
     try {
-      const files = await req('GET', '/api/sessions/' + state.sessionId + '/files');
-      filesAllPaths = files.map(f => f.filename);
+      const files = await req('GET', '/api/sessions/' + state.sessionId + '/files?dirs=1');
+      // 目录标记行不参与选中/全选/计数，只用来铺树（空文件夹可见）
+      filesAllPaths = files.filter(f => !(f.dir === true || /\/$/.test(String(f.filename)))).map(f => f.filename);
       // 重建目录树后只渲染当前目录这一层(后端已按时间倒序,组内再排一次防旧排序缓存)
       filesTreeRoot = buildFilesTree(files);
       renderFilesDir(); // filesCurDir 失效时自动退回根目录

@@ -38,8 +38,10 @@ function getMessage(req, res) {
   res.json(row);
 }
 
-// 递归列出任务目录文件
-function listTaskFiles(dir) {
+// 递归列出任务目录文件。opts.dirs=true 时额外输出目录标记行
+//（filename 以 '/' 结尾 + dir:true），使不含任何文件的空夹子也能被前端展示。
+function listTaskFiles(dir, opts) {
+  const wantDirs = !!(opts && opts.dirs);
   const out = [];
   (function rec(d, rel) {
     let entries;
@@ -47,7 +49,10 @@ function listTaskFiles(dir) {
     for (const e of entries) {
       const abs = path.join(d, e.name);
       const relPath = rel ? rel + '/' + e.name : e.name;
-      if (e.isDirectory()) rec(abs, relPath);
+      if (e.isDirectory()) {
+        if (wantDirs) out.push({ filename: relPath + '/', dir: true });
+        rec(abs, relPath);
+      }
       else if (e.isFile()) {
         let size = null, mtime = null, ctime = null;
         // birthtime 在部分文件系统不可用(返回 0),回退 mtime;新生成/上传的文件两者基本一致

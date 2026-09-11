@@ -79,7 +79,8 @@ router.get('/:id/files', function (req, res) {
   try {
     const session = engine.getSession(req.params.id);
     if (!session) return res.status(404).json({ error: '会话不存在' });
-    res.json(listTaskFiles(engine.taskDirOf(session.id)));
+    // ?dirs=1：附带目录标记行，前端任务文件面板用它展示空文件夹（默认不附，老消费者不受影响）
+    res.json(listTaskFiles(engine.taskDirOf(session.id), { dirs: req.query.dirs === '1' }));
   } catch (err) {
     res.status(500).json({ error: String(err && err.message || err) });
   }
