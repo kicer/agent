@@ -46,13 +46,12 @@ COPY executor/server.js ./
 COPY executor/init-skills.js ./
 
 # 隔离用的空挂载点：必须存在且为空。
-#   /workspace/tasks   —— wrapper 用 tmpfs 遮盖它，再 bind 回当前 session（虚拟任务根）
-#   /workspace/scratch —— wrapper 用私有 tmpfs 遮盖它（不给任何真实数据的临时工作区）
-# 注意：这两个目录【绝不能】被 compose 挂上宿主机数据卷，否则隔离失效。
+#   /workspace/tasks —— wrapper 用 tmpfs 遮盖它，再 bind 回当前 session（虚拟任务根）
+# 注意：该目录【绝不能】被 compose 挂上宿主机数据卷，否则隔离失效。
 # 放在最后一步创建，确保镜像里其它指令不会往这里留文件。
-RUN mkdir -p /workspace/tasks /workspace/scratch \
-    && chmod 755 /workspace/tasks /workspace/scratch \
-    && [ -z "$(ls -A /workspace/tasks)" ] && [ -z "$(ls -A /workspace/scratch)" ]
+RUN mkdir -p /workspace/tasks \
+    && chmod 755 /workspace/tasks \
+    && [ -z "$(ls -A /workspace/tasks)" ]
 
 EXPOSE 9000
 # EXECUTOR_LOG_LEVEL：日志等级 debug|info|warn|error|none（默认 info）。
@@ -61,7 +60,6 @@ EXPOSE 9000
 ENV PORT=9000 \
     EXECUTOR_ROOTS=/workspace \
     EXECUTOR_CWD=/workspace/tasks \
-    EXECUTOR_SCRATCH_ROOT=/workspace/scratch \
     EXECUTOR_SKILLS_DIR=/workspace/skills \
     EXECUTOR_ISOLATION_BASE=/mnt/host-tasks \
     EXECUTOR_LOG_LEVEL=info

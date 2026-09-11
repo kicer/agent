@@ -75,6 +75,7 @@ You are a file / data / information processing assistant. The environment expose
 - OS: linux
 - Shell: POSIX sh (`/bin/sh` is dash) for `terminal` commands. `bash` is available for scripts (`run.sh`); keep `terminal` one-liners POSIX-compatible.
 - Runs in a Docker container. A command can access only the session working directory, a private `/tmp` (fresh for each `terminal` call), read-only `/workspace/skills`, and read-only system paths. It cannot see other sessions.
+- `/tmp` is the ONLY writable temporary location — there is no other scratch area.
 - Python: use `python3` (3.11). The system Python and system packages are fixed at image build time and read-only — you cannot install into them.
 - To add Python packages, create a virtualenv **inside the working directory** and use it:
   `python3 -m venv .venv && .venv/bin/pip install <pkg>`, then run code with `.venv/bin/python`.

@@ -19,11 +19,11 @@
 //        shared，`unshare --propagation private` 并不可靠地阻断 umount 的反向传播，一旦泄漏
 //        父 ns 就永久失去该挂载（只能重启容器恢复）。遮盖(mount over)是本 ns 局部操作，
 //        不改动原挂载条目，ns 销毁即无痕，才是安全做法。
-//   4. /tmp、anchor 目录、scratch 都是 per-session 私有 tmpfs，跨会话不可见，崩溃残留随 ns 消失。
+//   4. /tmp 与 anchor 目录都是 per-session 私有 tmpfs，跨会话不可见，崩溃残留随 ns 消失。
 //   5. 只用 POSIX sh 兼容语法（镜像默认 dash）：不使用 trap ERR、不使用 bash 数组/[[ ]]。
 //      隔离层自身失败以退出码 90-99 回传，便于与 AI 命令的失败区分。
-//   6. DEFAULT_CWD / SCRATCH_ROOT 在父 ns 中必须是【存在的空目录】（由 Dockerfile 预建）：
-//      存在才能当挂载点，为空才不会成为数据旁路。selfCheck 会校验这两点。
+//   6. DEFAULT_CWD 在父 ns 中必须是【存在的空目录】（由 Dockerfile 预建）：
+//      存在才能当挂载点，为空才不会成为数据旁路。selfCheck 会校验。
 //
 // 约束：
 //   - 设置 EXECUTOR_TOKEN 后除 /health 外必须带 Authorization: Bearer <token>；
@@ -69,8 +69,6 @@ const ROOTS = (process.env.EXECUTOR_ROOTS || '/workspace')
 const ISOLATION_BASE = path.resolve(process.env.EXECUTOR_ISOLATION_BASE || '/mnt/host-tasks');
 // 虚拟任务根：AI 看到的 tasks 路径，仅在子 ns 中由 wrapper 构造。
 const DEFAULT_CWD = path.resolve(process.env.EXECUTOR_CWD || path.join(ROOTS[0], 'tasks'));
-// 每个会话私有的空工作区根（不给任何真实数据）。必须与 DEFAULT_CWD 平级，不能在其之下。
-const SCRATCH_ROOT = path.resolve(process.env.EXECUTOR_SCRATCH_ROOT || path.join(ROOTS[0], 'scratch'));
 // 技能目录：期望由 compose 以 :ro 挂载。
 const SKILLS_DIR = path.resolve(process.env.EXECUTOR_SKILLS_DIR || path.join(ROOTS[0], 'skills'));
 
@@ -185,19 +183,7 @@ function selfCheck() {
     problems.push('DEFAULT_CWD=' + DEFAULT_CWD + ' 在父 ns 中非空/异常(' + dcs + ') —— 请确认没有把 ./tasks 挂到该路径');
   }
 
-  const scs = emptyDirState(SCRATCH_ROOT);
-  if (scs === 'missing') {
-    warns.push('SCRATCH_ROOT=' + SCRATCH_ROOT + ' 不存在（wrapper 会自动 mkdir，但建议 Dockerfile 预建）');
-  } else if (scs !== 'empty') {
-    problems.push('SCRATCH_ROOT=' + SCRATCH_ROOT + ' 在父 ns 中非空/异常(' + scs + ')');
-  }
 
-  if (isUnder(SCRATCH_ROOT, DEFAULT_CWD)) {
-    problems.push('SCRATCH_ROOT=' + SCRATCH_ROOT + ' 位于 DEFAULT_CWD 之下，会被 tmpfs 遮盖连带抹掉');
-  }
-  if (isUnder(DEFAULT_CWD, SCRATCH_ROOT)) {
-    problems.push('DEFAULT_CWD=' + DEFAULT_CWD + ' 位于 SCRATCH_ROOT 之下，两者遮盖顺序冲突');
-  }
 
   let ss = null;
   try { ss = fs.statSync(SKILLS_DIR); } catch (_) {}
@@ -272,18 +258,10 @@ function buildIsolation(command, plan) {
     L.push('umount -l "$ANCH" 2>/dev/null || true');
     L.push('rmdir "$ANCH" 2>/dev/null || true');
   } else {
-    // scratch / plain：不需要任何真实数据，直接遮盖基路径即可
+    // plain（任务根之外的命令，典型：技能依赖安装）：无需真实会话数据，遮盖 /mnt 即可
     L.push('MNTROOT=' + shq(path.parse(ISOLATION_BASE).dir || '/'));
     L.push('mkdir -p "$MNTROOT"');
     L.push('mount -t tmpfs -o ro,size=0 tmpfs "$MNTROOT" || { echo "[isolate] mask mnt failed" >&2; exit 98; }');
-
-    if (plan.mode === 'scratch') {
-      L.push('mkdir -p ' + shq(SCRATCH_ROOT));
-      L.push('mount -t tmpfs -o nosuid,nodev tmpfs ' + shq(SCRATCH_ROOT) + ' || { echo "[isolate] scratch failed" >&2; exit 95; }');
-      // 同 session 分支：建到遮盖后的 SCRATCH_ROOT 之下，覆盖 plan.cwd 的全部深度
-      L.push('mkdir -p ' + shq(plan.cwd));
-    }
-    // plain（典型：只读的 skills）：只需上面的 /mnt 遮盖
   }
 
   // --- 进入目标目录并执行 ---
@@ -323,7 +301,7 @@ function resolveCwd(raw) {
   }
 
   // 3) 禁止在根本身执行
-  if (cwd === DEFAULT_CWD || cwd === SCRATCH_ROOT) return { ok: false, reason: 'cwd 不能是任务根本身' };
+  if (cwd === DEFAULT_CWD) return { ok: false, reason: 'cwd 不能是任务根本身' };
 
   // 4) 路径段合法性（统一拦截 .. / 空段 / NUL）
   //    注意：必须在 resolveCwd 入口处对“原始字符串”检查 —— path.resolve 会提前折叠掉 ..，
@@ -418,8 +396,7 @@ function resolveCwd(raw) {
   }
 
   // 6) 以下路径在父 ns 中真实存在，可做完整校验。
-  //    深层缺失目录（典型：scratch/<新会话>/子路径）逐级向上找到第一个存在的祖先校验；
-  //    缺失的尾部由 wrapper 在子 ns 内 mkdir -p（scratch 根已被私有 tmpfs 遮盖，不会落盘）。
+  //    深层缺失目录逐级向上找到第一个存在的祖先校验；尾部缺失则 cd 失败（plain 模式 cwd 恒存在）。
   let st;
   let exist = cwd;
   for (let guard = 0; guard < 32; guard++) {
@@ -461,14 +438,7 @@ function resolveCwd(raw) {
     }
   }
 
-  // 8) scratch：私有 tmpfs，不给任何真实数据
-  if (isUnder(cwd, SCRATCH_ROOT)) {
-    const seg = path.relative(SCRATCH_ROOT, cwd).split(path.sep)[0];
-    if (!seg || seg === '.' || seg === '..') return { ok: false, reason: '非法 scratch 名' };
-    return { ok: true, cwd, plan: { mode: 'scratch', cwd, scratchDir: path.join(SCRATCH_ROOT, seg) } };
-  }
-
-  // 9) 其余（如 /workspace/skills/<name>）→ 只跑公共加固
+  // 8) 其余（如 /workspace/skills/<name>）→ 只跑公共加固
   return { ok: true, cwd, plan: { mode: 'plain', cwd } };
 }
 
@@ -678,7 +648,6 @@ server.listen(PORT, () => {
     '  roots=' + ROOTS.join(', ') +
     '  default_cwd=' + DEFAULT_CWD +
     '  isolation_base=' + ISOLATION_BASE +
-    '  scratch=' + SCRATCH_ROOT +
     '  auth=' + (TOKEN ? 'on' : 'off'));
   if (ALLOW_LOCAL_ORIGIN) log.warn('EXECUTOR_ALLOW_LOCAL_ORIGIN=1：放行回环/本机来源，仅供本机集成测试，生产不得设置');
   selfCheck();
