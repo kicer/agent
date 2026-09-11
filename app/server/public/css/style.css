@@ -422,7 +422,9 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .files-panel {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 45;
   display: flex; flex-direction: column;
-  max-height: 62%;
+  /* 固定高度不随内容变化：切目录/删文件不再跳动，列表内部消化溢出；
+     拖拽手柄可调（JS 写 inline height），min/max 兜底防撑爆/防缩没 */
+  height: 46%; min-height: 240px; max-height: 85%;
   background: var(--page);
   border-radius: 16px 16px 0 0;
   box-shadow: 0 -6px 24px rgba(20, 30, 70, 0.16);
@@ -431,8 +433,20 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   overflow: hidden;
 }
 .files-panel.open { transform: translateY(0); }
+/* 拖拽手柄：与标题/上传钮同行，行内水平居中的透明热区(宽 120px，此区域无其他控件)；
+   上拉放大(封顶 85% 视口)，拉到最低后继续下拉整块下滑 → 收起面板 */
+.files-drag-handle {
+  position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 120px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: ns-resize; touch-action: none; user-select: none;
+}
+.files-drag-handle::before {
+  content: ''; width: 40px; height: 4px; border-radius: 2px; background: var(--gray-light);
+}
 .files-panel-header {
-  flex: none; display: flex; align-items: center; justify-content: space-between;
+  flex: none; position: relative; /* 拖拽手柄绝对定位贴顶，不占额外垂直高度 */
+  display: flex; align-items: center; justify-content: space-between;
   padding: 12px 14px; font-size: 14px; font-weight: 600;
   border-bottom: 1px solid var(--border);
   background: var(--page);

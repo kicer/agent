@@ -176,6 +176,7 @@
     <div id="files-mask" aria-hidden="true"></div>
     <div class="files-panel" id="files-panel" aria-label="任务文件">
           <div class="files-panel-header">
+            <div class="files-drag-handle" id="files-drag-handle" aria-label="拖拽调整高度"></div>
             <span class="files-panel-title">任务文件</span>
             <label class="file-upload" title="上传文件" aria-label="上传文件">
               <input type="file" id="file-input" multiple hidden>
@@ -2050,6 +2051,7 @@
     const panel = $('files-panel');
     if (open) {
       filesCurDir = ''; // 每次弹出回到根目录
+      applyFilesPanelH(); // 沿用上次拖拽高度(会话内)，无则用 CSS 默认
       loadFiles();
       // 弹出面板时收起软键盘,避免顶起布局
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -2097,6 +2099,55 @@
     $('file-input').click();
   });
   $('files-mask').addEventListener('click', () => setFilesPanel(false)); // 点遮罩收起
+
+  // ---------- 面板拖拽调高（底部抽屉）：拽顶部手柄上拉放大、下拉缩高，拉到最低后继续下拉→整块下滑收起 ----------
+  // CSS 默认高 46%(min 240px / max 85% 视口)；拖拽结果记入 filesPanelH 会话内沿用，重新打开即恢复。
+  const FP_MIN_H = 240, FP_MAX_RATIO = 0.85, FP_CLOSE_PULL = 90;
+  let filesPanelH = 0; // 0 = 跟随 CSS 默认高度
+  function filesPanelMaxH() { return Math.round(window.innerHeight * FP_MAX_RATIO); }
+  function applyFilesPanelH() {
+    const panel = $('files-panel');
+    if (filesPanelH) {
+      filesPanelH = Math.min(Math.max(filesPanelH, FP_MIN_H), filesPanelMaxH());
+      panel.style.height = filesPanelH + 'px';
+    } else {
+      panel.style.height = ''; // 回 CSS 默认，切目录高度始终稳定
+    }
+  }
+  (function bindFilesPanelDrag() {
+    const panel = $('files-panel');
+    const handle = $('files-drag-handle');
+    let drag = null; // {startY, startH}
+    function endDrag(close) {
+      if (!drag) return;
+      drag = null;
+      panel.style.transition = ''; // 恢复开合动画
+      panel.style.transform = '';
+      if (close) { filesPanelH = 0; panel.style.height = ''; setFilesPanel(false); }
+    }
+    handle.addEventListener('pointerdown', e => {
+      drag = { startY: e.clientY, startH: panel.offsetHeight };
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      panel.style.transition = 'none'; // 拖拽期间不走 transform 动画，不跟手
+      e.preventDefault();
+    });
+    handle.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const raw = drag.startH + (drag.startY - e.clientY); // 上拉为正 → 变高
+      const h = Math.min(Math.max(raw, FP_MIN_H), filesPanelMaxH());
+      filesPanelH = h;
+      panel.style.height = h + 'px';
+      const over = Math.max(0, FP_MIN_H - raw); // 拉过 minHeight → 整块向下跟随，预告即收起
+      panel.style.transform = over ? 'translateY(' + over + 'px)' : '';
+      if (over > FP_CLOSE_PULL) endDrag(true);
+    });
+    handle.addEventListener('pointerup', () => endDrag(false));
+    handle.addEventListener('pointercancel', () => endDrag(false));
+    // 转屏/窗口变化时按新视口重新限制到 min/max 区间
+    window.addEventListener('resize', () => {
+      if (panel.classList.contains('open')) applyFilesPanelH();
+    });
+  })();
 
   // 任务文件面板多选状态：Set 保留当前选中的文件路径；filesAllPaths 保留当前面板所有路径。
   // 文件夹作为整体选中项存储（键加 d: 前缀），下载时由后端打包成 zip。
