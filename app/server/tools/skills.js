@@ -227,7 +227,8 @@ function validateArgs(fm, inputArgs, skillName) {
 
 // 前台执行技能入口，带超时与取消支持；成功 resolve stdout，失败 reject SkillExecutionError。
 // 配了 executor：入口命令拼成单条 shell 行（参数单引号转义，JSON payload 安全）交远端执行，
-// cwd 指向技能目录、PYTHONPATH 指向共享 deps；core 与 executor 同路径挂载 skills，无需翻译。
+// cwd 由调用方给出（run_skill 传会话目录以命中 session 隔离与虚拟视图；依赖安装仍传技能目录），
+// PYTHONPATH 指向共享 deps；core 与 executor 同路径挂载 skills，无需翻译。
 function runEntry(ctx, entry, args, cwd, timeoutMs) {
   const cfg = ctx.cfg;
   if (cfg && rexec.isRemote(cfg)) {
@@ -314,18 +315,23 @@ async function runSkill(ctx, skillName, inputArgs) {
   const runSh = path.join(dir, 'run.sh');
   if (fs.existsSync(runPy)) {
     // PYTHONPATH 已指向共享 deps，直接走系统 python3。
+    // 入口一律用绝对路径：远端 cwd 是会话目录，相对的 'run.py' 会找不到。
     entry = 'python3';
-    cmdArgs = ['run.py', payload];
+    cmdArgs = [runPy, payload];
   } else if (fs.existsSync(runSh)) {
     entry = 'bash';
-    cmdArgs = ['run.sh', payload];
+    cmdArgs = [runSh, payload];
   } else {
     throw new SkillExecutionError('技能 ' + skillName + ' 缺少入口 run.py 或 run.sh', 1);
   }
 
+  // cwd：远端取会话目录（executor 侧命中 session 隔离，技能看到的 /workspace/tasks/<sid>
+  // 与 core 侧是同一份数据，absolutizeArgs 产出的绝对路径因此有效）；缺 taskDir 时退回
+  // 技能目录（退化为旧行为）。本地无隔离诉求，仍以技能目录为 cwd。
+  const execCwd = rexec.isRemote(ctx.cfg) ? (ctx.taskDir || dir) : dir;
   const timeoutMs = (ctx.cfg && ctx.cfg.skills && ctx.cfg.skills.timeout_ms) || 120000;
-  log.info('skills', '执行 ' + skillName + '：' + entry + ' ' + cmdArgs.join(' '));
-  return runEntry(ctx, entry, cmdArgs, dir, timeoutMs);
+  log.info('skills', '执行 ' + skillName + '：' + entry + ' ' + cmdArgs.join(' ') + '（cwd=' + execCwd + '）');
+  return runEntry(ctx, entry, cmdArgs, execCwd, timeoutMs);
 }
 
 module.exports = { listSkills, getSkillInfo, runSkill, skillsRoot, parseFrontMatter, extractDescription, formatSkillListForPrompt };
