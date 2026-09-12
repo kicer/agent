@@ -1158,11 +1158,36 @@
     });
   }
   setInterval(() => {
+    if (document.hidden) return; // 后台不跑看门狗，免得被系统部分唤醒时空转重渲染耗能耗
     if (state.sessionId && state.view === 'chat' && state.es && Date.now() - state.lastSseAt > 45000) resyncSession();
   }, 5000);
+
+  // ---------- 后台超时挂起 SSE ----------
+  // 长时间在后台就断开 EventSource（否则长连接会阻止 Safari/App Nap 冻结整页，整晚小功耗累积成“大量能耗”被强制重载）；
+  // 回到前台再 resyncSession() 一次性补拉数据 + 重连。
+  const SSE_SUSPEND_HIDDEN_MS = 2 * 60 * 1000;
+  let sseSuspended = false;
+  let sseSuspendTimer = 0;
+  function suspendStream() {
+    if (sseSuspended || !document.hidden) return;
+    if (state.es) closeStream();
+    sseSuspended = true;
+  }
+  function resumeStream() {
+    if (!sseSuspended) return;
+    sseSuspended = false;
+    resyncSession();
+  }
   // 后台标签页里 interval 被限频；切回前台立刻补一次判定，自动覆盖“休眠/切走醒来后页面停在半截”场景
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && state.sessionId && state.view === 'chat' && state.es
+    if (document.hidden) {
+      clearTimeout(sseSuspendTimer);
+      sseSuspendTimer = setTimeout(suspendStream, SSE_SUSPEND_HIDDEN_MS);
+      return;
+    }
+    clearTimeout(sseSuspendTimer);
+    resumeStream();
+    if (state.sessionId && state.view === 'chat' && state.es
         && Date.now() - state.lastSseAt > 45000) resyncSession();
   });
 
