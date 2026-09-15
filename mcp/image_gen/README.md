@@ -21,14 +21,14 @@ cd /root/workspace/tools/mcp
 docker compose up -d --build mcp_image_gen
 ```
 
-服务容器名 `mcp_image_gen`，通过反代暴露为 `https://image-gen.ai.foresh.com/mcp`。
+服务容器名 `mcp_image_gen`，容器内端口 3000，默认映射到宿主机 8082，即 `http://<服务器IP>:8082/mcp`。
 
 直接连容器调试：
 
 ```bash
 docker exec -it mcp_image_gen sh
-# 或本机
-curl http://localhost:3000/health
+# 或本机（宿主机映射端口）
+curl http://localhost:8082/health
 # {"status":"ok","service":"image_gen","sessions":0}
 ```
 
@@ -42,7 +42,7 @@ curl http://localhost:3000/health
 {
   "mcpServers": {
     "image_gen": {
-      "url": "https://image-gen.ai.foresh.com/mcp",
+      "url": "http://<服务器IP>:8082/mcp",
       "headers": {
         "Authorization": "Bearer <your-zhipu-api-key>"
       }
@@ -136,7 +136,7 @@ MCP Streamable HTTP 不是普通 REST，**必须按顺序**：`initialize` → `
 TOKEN="<your-zhipu-api-key>"
 
 # 1. initialize 拿 sessionId
-SESSION=$(curl -s -D - -X POST http://localhost:3000/mcp \
+SESSION=$(curl -s -D - -X POST http://localhost:8082/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
@@ -154,7 +154,7 @@ SESSION=$(curl -s -D - -X POST http://localhost:3000/mcp \
 echo "Session: $SESSION"
 
 # 2. notifications/initialized
-curl -s -X POST http://localhost:3000/mcp \
+curl -s -X POST http://localhost:8082/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
@@ -162,7 +162,7 @@ curl -s -X POST http://localhost:3000/mcp \
   -d '{"jsonrpc": "2.0", "method": "notifications/initialized"}'
 
 # 3. 列出工具（可选验证）
-curl -s -X POST http://localhost:3000/mcp \
+curl -s -X POST http://localhost:8082/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
@@ -170,7 +170,7 @@ curl -s -X POST http://localhost:3000/mcp \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
 
 # 4. 调 image_gen
-curl -s -X POST http://localhost:3000/mcp \
+curl -s -X POST http://localhost:8082/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \

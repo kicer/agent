@@ -22,14 +22,14 @@ cd /root/workspace/tools/mcp
 docker compose up -d --build mcp_video_gen
 ```
 
-服务容器名 `mcp_video_gen`，通过反代暴露为 `https://video-gen.ai.foresh.com/mcp`。
+服务容器名 `mcp_video_gen`，容器内端口 3000，默认映射到宿主机 8083，即 `http://<服务器IP>:8083/mcp`。
 
 直接连容器调试：
 
 ```bash
 docker exec -it mcp_video_gen sh
-# 或本机
-curl http://localhost:3000/health
+# 或本机（宿主机映射端口）
+curl http://localhost:8083/health
 # {"status":"ok","service":"video_gen","sessions":0}
 ```
 
@@ -43,7 +43,7 @@ curl http://localhost:3000/health
 {
   "mcpServers": {
     "video_gen": {
-      "url": "https://video-gen.ai.foresh.com/mcp",
+      "url": "http://<服务器IP>:8083/mcp",
       "headers": {
         "Authorization": "Bearer <your-zhipu-api-key>"
       }
@@ -67,25 +67,26 @@ curl http://localhost:3000/health
 
 ## 上传图片：POST /upload
 
-供 AI 临时上传本地图片、拿到 URL 后喂给 `video_gen.image_url`。**不走 MCP、不走鉴权**，仅依赖内网隔离（`my-app-network`）+ 反代层控制访问。
+供 AI 临时上传本地图片、拿到 URL 后喂给 `video_gen.image_url`。**不走 MCP、不走鉴权**：以前靠反代控制访问，现在端口直连，只能靠宿主机防火墙/安全组控制（做图生视频时 `PUBLIC_BASE_URL` 指向该端口，智谱服务器得能取到图）。不需要图生视频就别对公网放行该端口。
 
 ### 配置
 
 通过环境变量告诉服务端「对外公开的 base URL」，用于拼接返回的 `url` 字段：
 
 ```yaml
-# docker-compose.yml
+# docker-compose.yml（无域名部署：填服务器 IP + 宿主机映射端口）
 environment:
-  - PUBLIC_BASE_URL=https://video-gen.ai.foresh.com
+  - PUBLIC_BASE_URL=http://<服务器IP>:8083
 ```
 
-未设置时 fallback 到 `http://localhost:3000`（本机调试）。
+必须填**外部可达**地址：这个 URL 会交给智谱服务器去下载，填 `localhost` 或内网地址都会拉不到图。
+compose 未提供时的默认值是 `http://localhost:8083`（只适合本机 curl 调试）；代码本身的 fallback 是 `http://localhost:3000`。
 
 可选环境变量：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `PUBLIC_BASE_URL` | `http://localhost:3000` | 返回 `url` 字段里拼接的对外 base URL |
+| `PUBLIC_BASE_URL` | `http://localhost:8083`（compose 提供；代码 fallback `http://localhost:3000`） | 返回 `url` 字段里拼接的对外 base URL |
 | `UPLOAD_DIR` | `/tmp/video_gen_uploads` | 磁盘存储目录（容器内临时） |
 | `UPLOAD_TTL_HOURS` | `24` | 超过该小时数的文件会在启动时和每小时被自动删除 |
 
@@ -113,7 +114,7 @@ file: <二进制图片文件>
 
 ```jsonc
 {
-  "url": "https://video-gen.ai.foresh.com/uploads/abc123.png",
+  "url": "http://<服务器IP>:8083/uploads/abc123.png",
   "filename": "abc123.png",
   "size": 12345,
   "content_type": "image/png",
@@ -123,22 +124,23 @@ file: <二进制图片文件>
 
 返回的 `url` 可直接作为 `video_gen.image_url` 使用。
 
-### 反代路由
+### 端口与路由
 
-反代需要额外暴露两条路由到 `mcp_video_gen:3000`：
+`/upload` 与 `/uploads/*` 由 `mcp_video_gen` 同一进程提供，不需要单独配路由；compose 已把
+容器 3000 映射到宿主机 `VIDEO_GEN_PORT`（默认 8083），两条路径直接可用：
 
-- `POST /upload` → `/upload`
-- `GET  /uploads/*` → `/uploads/*`
+- `POST /upload`
+- `GET  /uploads/*`
 
 ### curl 示例
 
 ```bash
-curl -F "file=@/tmp/cat.png" https://video-gen.ai.foresh.com/upload
-# {"url":"https://video-gen.ai.foresh.com/uploads/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.png", ...}
+curl -F "file=@/tmp/cat.png" http://<服务器IP>:8083/upload
+# {"url":"http://<服务器IP>:8083/uploads/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.png", ...}
 
 # 然后把 url 喂给 MCP：
 # tool: video_gen
-# args: { image_url: "https://video-gen.ai.foresh.com/uploads/xxx.png", prompt: "..." }
+# args: { image_url: "http://<服务器IP>:8083/uploads/xxx.png", prompt: "..." }
 ```
 
 ---
@@ -256,7 +258,7 @@ MCP Streamable HTTP 不是普通 REST，**必须按顺序**：`initialize` → `
 TOKEN="<your-zhipu-api-key>"
 
 # 1. initialize 拿 sessionId
-SESSION=$(curl -s -D - -X POST http://localhost:3000/mcp \
+SESSION=$(curl -s -D - -X POST http://localhost:8083/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
@@ -274,7 +276,7 @@ SESSION=$(curl -s -D - -X POST http://localhost:3000/mcp \
 echo "Session: $SESSION"
 
 # 2. notifications/initialized
-curl -s -X POST http://localhost:3000/mcp \
+curl -s -X POST http://localhost:8083/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
@@ -282,7 +284,7 @@ curl -s -X POST http://localhost:3000/mcp \
   -d '{"jsonrpc": "2.0", "method": "notifications/initialized"}'
 
 # 3. 列出工具（可选验证）
-curl -s -X POST http://localhost:3000/mcp \
+curl -s -X POST http://localhost:8083/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
@@ -290,7 +292,7 @@ curl -s -X POST http://localhost:3000/mcp \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
 
 # 4. 提交文生视频任务
-curl -s -X POST http://localhost:3000/mcp \
+curl -s -X POST http://localhost:8083/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
@@ -310,7 +312,7 @@ curl -s -X POST http://localhost:3000/mcp \
   }'
 
 # 5. 查结果（替换下面的 <task_id>）
-curl -s -X POST http://localhost:3000/mcp \
+curl -s -X POST http://localhost:8083/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
@@ -331,12 +333,12 @@ curl -s -X POST http://localhost:3000/mcp \
 ### 单独调试 `/upload`
 
 ```bash
-# 上传图片，返回 url
-curl -F "file=@/tmp/cat.png" https://video-gen.ai.foresh.com/upload
-# {"url":"https://video-gen.ai.foresh.com/uploads/xxx.png", ...}
+# 上传图片，返回 url（宿主机映射端口）
+curl -F "file=@/tmp/cat.png" http://localhost:8083/upload
+# {"url":"http://localhost:8083/uploads/xxx.png", ...}
 
 # 下载上传过的文件
-curl -o cat.png https://video-gen.ai.foresh.com/uploads/xxx.png
+curl -o cat.png http://localhost:8083/uploads/xxx.png
 ```
 
 ---
@@ -403,4 +405,4 @@ A: 不需要。Model header 在每次 `tools/call` 都从当前请求读取。
 A: 容器重启即丢（本服务不持久化）。请在上传后立刻把返回的 `url` 喂给 `video_gen.image_url`。URL 本身只有可访问性，不受单独 TTL 限制；但容器一旦重启，该文件物理消失，URL 变 404。
 
 **Q: `PUBLIC_BASE_URL` 不设会怎样？**
-A: fallback 到 `http://localhost:3000`，AI 拿到的 curl 是 `http://localhost:3000/upload`。外网访问不到。本机调试无所谓，生产请显式设置。
+A: compose 会给个默认值 `http://localhost:8083`（代码 fallback 是 `http://localhost:3000`），本机 curl 调试没问题，但智谱服务器拉不到图——图生视频会失败。所以无域名部署时要显式设成 `http://<服务器IP>:<宿主机映射端口>`，并确保该端口对公网可达。
