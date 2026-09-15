@@ -72,7 +72,7 @@ agent/
 │   └── smoke-test.js              Executor 自身冒烟（/health / exec 流式 / 鉴权 / 取消）
 │
 └── docs/
-    ├── DEPLOY.md                  部署（nginx-proxy + HTTPS）
+    ├── DEPLOY.md                  部署（Docker，IP:端口直连）
     ├── v2-develop.md              v2 移动端单聊视图开发说明
     └── ARCHITECTURE.md            ← 本文件
 ```
@@ -84,18 +84,18 @@ agent/
 ```mermaid
 graph LR
     Browser((移动端浏览器<br/>WebView/APK))
-    Nginx[nginx-proxy<br/>agent.ai.foresh.com]
-    Core[agent-core<br/>:8080 内网]
+    Core[agent-core<br/>宿主机 8080]
     Exec[agent-executor<br/>:9000 内网]
+    MCP[MCP 服务<br/>my-app-network]
     LLM[LLM 池<br/>OpenAI 兼容]
     Tasks[./tasks<br/>任务目录 bind mount]
     Skills[./skills<br/>技能目录 bind mount]
     DB[(SQLite<br/>.agent.db)]
 
-    Browser -->|HTTPS + Cookie| Nginx
-    Nginx -->|proxy_buffering off| Core
+    Browser -->|HTTP + Cookie| Core
     Core -->|SSE /exec| Exec
     Core -->|POST /chat/completions| LLM
+    Core -->|tools/call| MCP
     Core <-->|读写| Tasks
     Exec <-->|读写| Tasks
     Core <-->|技能 + deps| Skills
@@ -103,7 +103,7 @@ graph LR
     Core --> DB
 ```
 
-两个容器通过 `agent-internal` 内网 bridge 通信；外网只暴露 Core（经 nginx-proxy）。
+两个容器通过 `agent-internal` 内网 bridge 通信；外网只暴露 Core（宿主机端口映射）。
 
 **关键约束**（改 compose 时务必保持）：
 
@@ -659,7 +659,7 @@ sequenceDiagram
 ## 15. 进一步阅读
 
 - `README.md` —— 设计文档（API 设计、SQLite 表结构、任务目录结构、Agent 主循环伪代码、Zed 风格工具定义全集）
-- `docs/DEPLOY.md` —— 部署（nginx-proxy + HTTPS + SSE 缓冲坑）
+- `docs/DEPLOY.md` —— 部署（Docker，IP:端口直连；外部网络、配置绝对路径、SSE 缓冲坑）
 - `docs/v2-develop.md` —— v2 移动单聊视图
 - `app/config.example.yml` —— 配置模板（每个字段的注释很全）
 - `app/server/templates/system-prompt.txt` —— AI system prompt 全文

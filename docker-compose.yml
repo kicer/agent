@@ -3,8 +3,10 @@ services:
     build: ./app
     container_name: agent-core
     restart: unless-stopped
-    expose:
-      - "8080"                          # 仅内网暴露，由 nginx-proxy 对外
+    ports:
+      # 无 nginx-proxy：直接把容器 8080 映射到宿主机端口，用 http://<服务器IP>:<AGENT_PORT> 访问。
+      # 改端口：在仓库顶层 .env 里设 AGENT_PORT（默认 8080）。
+      - "${AGENT_PORT:-8080}:8080"
     volumes:
       - ./tasks:/workspace/tasks        # 持久化：任务目录
       - ./skills:/workspace/skills      # 技能目录：所有任务/会话共享同一份技能
@@ -14,9 +16,6 @@ services:
     environment:
       - PORT=8080
       - AGENT_CONFIG=/app/config.yml
-      - VIRTUAL_HOST=agent.ai.foresh.com
-      - VIRTUAL_PORT=8080
-      - CERT_NAME=default
       # 加入executor独立服务
       - EXECUTOR_URL=http://agent-executor:9000
       # 调用鉴权 token：两侧同一值。从 .env 读取（已 gitignore），不再硬编码进仓库；
@@ -122,6 +121,8 @@ services:
       - agent-internal
 
 networks:
+  # 与 mcp 仓库共用：agent-core 按容器名访问 MCP 服务（如 http://mcp_web_search:3000/）。
+  # 只需创建一次：docker network create my-app-network
   my-app-network:
     external: true
   agent-internal:

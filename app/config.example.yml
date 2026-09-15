@@ -118,9 +118,20 @@ model_hold:
 # 追加到内置工具之后一起发给模型；调用经 tools/call 转发。headers 是任意请求头（如 Authorization）。
 # enable 选填、默认 true；设为 false 时启动不加载该服务的工具（配置保留，改回 true 重启即恢复）。
 # 服务不可用时只在启动日志告警，不影响其他服务与内置工具。
+#
+# 无域名部署：agent-core 与 mcp 仓库的容器共用 my-app-network，这里直接写【容器名:容器内端口】，
+# 别写宿主机映射端口。日后改回域名/反代时，换成对应 https 地址即可。
 mcp_servers:
   - name: web-search                                   # 选填，缺省取主机名首段
-    url: "https://web-search.ai.foresh.com/"
+    url: "http://mcp_web_search:3000/"                 # web_search 无服务端鉴权，不需要 headers
     enable: true                                       # 选填，默认 true；false 时启动不加载
-    headers:
-      Authorization: "Basic a2ljZXI6USF3MmUzcjQ="
+  # 智谱系服务：token 由客户端透传（每次请求都要带），值填你的智谱 API Key。
+  # 路径带 /mcp（web_search 是根路径 /，image/video gen 是 /mcp）。
+  # - name: image-gen
+  #   url: "http://mcp_image_gen:3000/mcp"
+  #   headers:
+  #     Authorization: "Bearer <你的智谱 API Key>"
+  # - name: video-gen
+  #   url: "http://mcp_video_gen:3000/mcp"
+  #   headers:
+  #     Authorization: "Bearer <你的智谱 API Key>"

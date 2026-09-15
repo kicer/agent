@@ -1,59 +1,104 @@
-# 部署说明（Docker + nginx-proxy，域名 agent.ai.foresh.com）
+# 部署说明（Docker，IP:端口直连，无 nginx-proxy）
 
 配置与编排文件都放在**仓库顶层**，方便直接调整：
 
 | 宿主机路径 | 容器内路径 | 说明 |
 |---|---|---|
-| `./docker-compose.yml` | — | 编排（构建 `./app`，仅内网 expose 8080） |
+| `./docker-compose.yml` | — | 编排（构建 `./app`，把容器 8080 映射到宿主机端口） |
 | `./config.yml` | `/app/config.yml` | 运行配置（AGENT_CONFIG 指向它；含密钥，已被 .gitignore 忽略） |
-| `./data/` | `/workspace/tasks` | 任务目录 + SQLite（`.agent.db` 在此目录内） |
+| `./tasks/` | `/workspace/tasks` | 任务目录：AI 的文件工作区（与 executor 必须同路径） |
+| `./data/` | `/workspace/data` | 数据目录 + SQLite（`.agent.db`） |
+| `./skills/` | `/workspace/skills` | 技能目录：所有任务/会话共享 |
+| `./.env` | — | 编排变量（`EXECUTOR_TOKEN` / `AGENT_PORT`），已被 .gitignore 忽略 |
 
-## 1. 准备配置
+> 本仓库不含 `config.yml` 与 `.env`，需自行创建（见第 2 步）。
+
+## 1. 创建外部网络（只需一次）
+
+`agent-core` 与 `mcp` 仓库的服务共用外部网络 `my-app-network`：agent 按容器名访问 MCP
+（如 `http://mcp_web_search:3000/`）。两个 compose 都声明为 `external`，所以必须先建：
+
+```bash
+docker network create my-app-network
+```
+
+`docker network ls` 可确认是否已存在（这台机器上跑过 nginx-proxy 的话可能已经存在，跳过即可）。
+
+## 2. 准备配置
 
 ```bash
 cp app/config.example.yml config.yml
-vi config.yml   # 至少改 models（每个模型独立 url/api_key）
+cp .env.example .env
+vi .env         # 填 EXECUTOR_TOKEN，生成：openssl rand -hex 32
+vi config.yml
 ```
 
-> 容器内运行时 `workspace_root` 写 `/workspace/tasks`（docker-compose.yml 已把 `./data` 挂到这里）。
-> 本仓库 git 只跟踪示例 `app/config.example.yml`，真正的 `config.yml` 在顶层且被忽略，密钥不会进库。
+`config.yml` 至少改这几处。**容器内必须写绝对路径**——core 与 executor 靠同一份
+`/workspace/tasks` 看到彼此的产物，留成示例里的相对路径（`./data/tasks`）会解析到
+`/app/data/tasks`，命令会因为不在 executor 白名单里而失败：
 
-## 2. 构建并启动
+```yaml
+platforms: ...                       # 模型池：每个平台 url + keys.api_key
+workspace_root: /workspace/tasks     # 不能留示例里的 ./data/tasks
+data_root: /workspace/data           # SQLite 与 prompt dump 落在这个挂载卷里
+skills:
+  skills_root: /workspace/skills
+auth:                                # 建议启用，否则谁都能访问
+  secret: "换一个随机串"
+  users:
+    - user: admin
+      password: "换一个密码"
+mcp_servers:                         # 无域名时按容器名访问（模板已写好，按需启用）
+  - name: web-search
+    url: "http://mcp_web_search:3000/"
+```
+
+> ⚠️ 必须先有 `config.yml` 再 `up`：compose 挂载的是 `./config.yml:/app/config.yml`，
+> 文件不存在时 Docker 会在宿主机建一个同名**目录**，容器起来会读不到配置。
+
+## 3. 构建并启动
 
 ```bash
 # 在仓库顶层（含 docker-compose.yml 的位置）执行
 docker compose up -d --build
-docker compose logs -f     # 看到 "Agent server listening on 8080" 即成功
+docker compose logs -f agent-core    # 看到 "Agent server listening on 8080" 即成功
 ```
 
-## 3. nginx-proxy 对外暴露（agent.ai.foresh.com）
+首次启动会先跑一次 `agent-executor-init`（把技能依赖落到宿主机 `./skills`），跑完自动退出，
+属正常现象。
 
-compose 已通过 `VIRTUAL_HOST` / `VIRTUAL_PORT` / `CERT_NAME` 接入 nginx-proxy：
+## 4. 访问
 
-- 前置的 nginx-proxy 容器必须与业务容器共用同一个外部网络 `my-app-network`（compose 声明为 external），并监听 80/443。
-- 域名 `agent.ai.foresh.com` 的 DNS 指向 nginx-proxy 所在宿主机。
-- 若你的 nginx-proxy 未默认关闭代理缓冲，需额外配置 `proxy_buffering off`——**SSE 必须关缓冲**，否则流式输出会被攒住不发。可给 nginx-proxy 挂一个自定义 conf：
-  ```
-  server {
-      listen 80;
-      server_name agent.ai.foresh.com;
-      location / {
-          proxy_pass http://agent:8080;
-          proxy_http_version 1.1;
-          proxy_buffering off;          # SSE 关键
-          proxy_read_timeout 3600s;
-          proxy_set_header Host $host;
-          proxy_set_header X-Real-IP $remote_addr;
-      }
-  }
-  ```
-- 认证建议直接在 `config.yml` 配置多用户登录（`auth.users`，见 config.example.yml 注释）：登录页 `/login`，会话 token 走 HttpOnly cookie。不建议再用 nginx-proxy 的 htpasswd basic auth：手机浏览器原生下载不会携带 Basic 认证头，会导致下载失败；cookie 则会自动携带。若迁移到内置登录，记得去掉 nginx 上对应的 htpasswd 配置。
+浏览器打开 **`http://<服务器IP>:8080`**（端口可用 `.env` 里的 `AGENT_PORT` 改）。
+登录用第 2 步 `auth.users` 里配的账号。
 
-## 4. 升级流程
+对外只需放行这一个端口：`agent-executor`（9000）只在 `agent-internal` 内网，没有映射到宿主机。
+
+## 5. 没有 HTTPS 的影响（可忽略，仅记录）
+
+HTTP 直连时浏览器不认为这是"安全上下文"，以下能力自动降级，不影响主流程：
+
+- PWA / Service Worker 不注册（`http://IP` 不是 secure context），离线缓存与「添加到主屏」不可用。
+- 复制按钮的 `navigator.clipboard` 不可用，前端自动回退到旧 API。
+- 登录 cookie 本身没带 `Secure` 标志，HTTP 下正常签发与携带（`auth.js` 用的是 HttpOnly + SameSite=Lax）。
+
+日后若加回 nginx / HTTPS 反代，注意 **SSE 必须关代理缓冲**，否则流式输出会被攒住不发：
+
+```
+location / {
+    proxy_pass http://agent-core:8080;   # 或宿主机 IP:8080
+    proxy_http_version 1.1;
+    proxy_buffering off;                 # SSE 关键
+    proxy_read_timeout 3600s;
+}
+```
+
+## 6. 升级流程
 
 ```bash
 git pull
 docker compose up -d --build    # 仓库顶层执行
 ```
 
-数据库与任务目录都在 volume 内，升级不丢数据。进程重启时，原 active 会话会自动退回排队队列，待模型空闲后继续。
+数据库与任务目录都在 bind 挂载的 `./data`、`./tasks` 内，升级不丢数据。进程重启时，
+原 active 会话会自动退回排队队列，待模型空闲后继续。

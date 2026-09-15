@@ -781,17 +781,15 @@ services:
   agent:
     build: ./app
     restart: unless-stopped
-    expose:
-      - "8080"                          # 仅内网暴露，由 nginx-proxy 对外
+    ports:
+      - "${AGENT_PORT:-8080}:8080"      # 直接映射宿主机端口，IP:端口 访问
     volumes:
-      - ./data:/workspace/tasks         # 持久化：任务目录 + SQLite
-      - ./config.yml:/app/config.yml:ro
+      - ./tasks:/workspace/tasks        # 持久化：任务目录
+      - ./data:/workspace/data          # 持久化：数据目录 + SQLite
+      - ./config.yml:/app/config.yml
     environment:
       - PORT=8080
       - AGENT_CONFIG=/app/config.yml
-      - VIRTUAL_HOST=agent.ai.foresh.com
-      - VIRTUAL_PORT=8080
-      - CERT_NAME=default
     networks:
       - my-app-network
 
@@ -800,9 +798,11 @@ networks:
     external: true
 ```
 
-### 13.2 nginx-proxy 对外暴露
+### 13.2 对外暴露（IP:端口）
 
-前置的 nginx-proxy 需与业务容器共用外部网络 `my-app-network`。compose 通过 `VIRTUAL_HOST`/`VIRTUAL_PORT`/`CERT_NAME` 接入；域名 `agent.ai.foresh.com` 的 DNS 指向 nginx-proxy 所在宿主机。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），nginx 层不再配 htpasswd；多用户共享同一任务库，不做任务隔离；SSE 需关代理缓冲（`proxy_buffering off`），见 `docs/DEPLOY.md`。
+无域名/反代时，compose 直接把容器 8080 映射到宿主机端口，浏览器访问 `http://<服务器IP>:8080`（端口可用 `.env` 的 `AGENT_PORT` 改）。外部网络 `my-app-network` 与 `mcp` 仓库的服务共用，需先创建一次（`docker network create my-app-network`）：agent 按容器名访问 MCP，如 `http://mcp_web_search:3000/`。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），多用户共享同一任务库，不做任务隔离。
+
+HTTP 直连时浏览器不认为这是“安全上下文”：PWA/Service Worker 不注册、`navigator.clipboard` 降级（前端已有回退），登录 cookie 无 `Secure` 标志可正常工作。日后若加 HTTPS 反代，**SSE 需关代理缓冲**（`proxy_buffering off`），详见 `docs/DEPLOY.md`。
 
 ---
 
