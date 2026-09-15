@@ -14,7 +14,7 @@
 #   ZHIPU_KEY                               image-gen / video-gen 的智谱 key（空 = 这两个服务 enable: false）
 #   AUTH_USER / AUTH_PASSWORD               登录账号（默认 admin / admin，请自行改掉）
 #   PUBLIC_IP / AGENT_PORT                  对外地址与端口（PUBLIC_IP 空则尝试自动探测）
-#   LOG_LEVEL                               日志级别（默认 debug；日常用 info）
+#   LOG_LEVEL                               日志级别（调试 debug；日常用 info）
 #   MCP_DIR                                 mcp 仓库位置（默认本仓库同级 ../mcp；不存在就跳过）
 #   UP                                      1=生成后起服务（默认），0=只生成配置
 #   AUTH_SECRET / EXECUTOR_TOKEN            一般不用给：不给就自动生成并复用（见下）
@@ -40,7 +40,7 @@ AUTH_USER="${AUTH_USER:-admin}"
 AUTH_PASSWORD="${AUTH_PASSWORD:-admin}"
 PUBLIC_IP="${PUBLIC_IP:-}"
 AGENT_PORT="${AGENT_PORT:-8090}"
-LOG_LEVEL="${LOG_LEVEL:-debug}"
+LOG_LEVEL="${LOG_LEVEL:-info}"
 EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-}"
 AUTH_SECRET="${AUTH_SECRET:-}"
 UP="${UP:-1}"
