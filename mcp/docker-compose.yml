@@ -26,22 +26,14 @@ services:
     build: ./video_gen
     container_name: mcp_video_gen
     restart: unless-stopped
-    # 调试用（默认关；这里映的是只读监听 3001，不会暴露 POST /upload）：
+    # 调试用（默认关；这里映的是 MCP 端口，会暴露 /mcp，仅本机短时调试用）：
     # ports:
-    #   - "${VIDEO_GEN_PORT:-8083}:3001"
+    #   - "${VIDEO_GEN_PORT:-8083}:3000"
     environment:
-      # AI 往哪上传（拼进 video_gen 工具的 curl 模板）：走 docker 内网即可，不需要公网。
-      - UPLOAD_BASE_URL=http://mcp_video_gen:3000
-      # 智谱从哪下载（拼进 /upload 返回的 url 字段）：必须【公网可达】。
-      # 无域名时填 http://<服务器IP>:<AGENT_PORT>/mcp-uploads（agent-core 的只读中转，默认端口 8090）。
-      # 填错的现象：图传上去了，但智谱取不到图、图生视频失败；启动日志会打印实际生效的地址便于核对。
-      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8090/mcp-uploads}
-      # 公网只读监听（容器内）：agent 的 MCP_UPLOADS_URL 指向它；也只被上面那个调试端口映射。
-      - PUBLIC_PORT=3001
-      # 上传落宿主 ./uploads（重启不让已发出的 URL 失效），TTL 清理照旧
-      - UPLOAD_DIR=/uploads
-    volumes:
-      - ./uploads:/uploads
+      # 本地图片 -> 公网 URL：agent-core 的【内网】签发入口（agent 侧 public_link 功能），
+      # agent-core:8081 就是它那个不映射宿主机的签发端口（env PUBLIC_LINK_PORT，默认 8081）。
+      # 本服务不搬字节：只把这条命令拼进工具描述，AI 自己在沙箱里 curl，拿回一条短命链接。
+      - PUBLIC_LINK_URL=${PUBLIC_LINK_URL:-http://agent-core:8081/public-link}
     networks:
       - my-app-network
 

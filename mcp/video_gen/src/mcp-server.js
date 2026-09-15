@@ -1,8 +1,5 @@
 #!/usr/bin/env node
 import express from "express";
-import multer from "multer";
-import path from "node:path";
-import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -22,88 +19,13 @@ const DEFAULT_QUALITY = "speed";       // speed | quality
 const DEFAULT_FPS = 30;               // 30 | 60
 const DEFAULT_WATERMARK_ENABLED = true; // 平台政策默认 true
 
-// ===== 上传文件相关 =====
-// 两个地址刻意分开——无域名/无反代部署的关键：
-//   uploadBaseUrl —— 拼进 tool description 里那条 curl，告诉 AI 该往哪里 POST。这跳由 AI 在
-//                    agent-executor 里执行，走 docker 内网即可，不需要公网。
-//   publicBaseUrl —— 拼进 /upload 返回的 url 字段。这跳是【智谱服务器】去 GET，必须公网可达。
-// 都不配时两者退化为 http://localhost:<port>（本机调试）。
-function normalizeBaseUrl(s) {
-  return String(s || "").trim().replace(/\/+$/, "");
-}
-
-function resolveUploadBaseUrl({ port }) {
-  return (
-    normalizeBaseUrl(process.env.UPLOAD_BASE_URL) ||
-    normalizeBaseUrl(process.env.PUBLIC_BASE_URL) ||
-    `http://localhost:${port}`
-  );
-}
-
-function resolvePublicBaseUrl({ port }) {
-  return (
-    normalizeBaseUrl(process.env.PUBLIC_BASE_URL) ||
-    `http://localhost:${port}`
-  );
-}
-
-// 公网只读监听端口（容器内）：>0 时额外起一个只挂 GET /uploads/* 的监听，专门给智谱下载。
-// 0/未设 = 不开（单监听模式，本机开发默认）；等于主端口时也跳过。
-// 主端口（--port，容器内 3000）挂着 /mcp 与 POST /upload，容器外不映射，只在 docker 网络内可达。
-const PUBLIC_PORT = parseInt(process.env.PUBLIC_PORT || "0", 10) || 0;
-
-// 上传文件存储目录：compose 里 bind 到宿主 ./uploads（重启不让已发出的 URL 失效）；本机裸跑默认 /tmp。
-const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/video_gen_uploads";
-const UPLOAD_PATH_PREFIX = "/uploads"; // 对外的 URL 路径前缀
-const UPLOAD_MAX_BYTES = 8 * 1024 * 1024; // 8MB（智谱 image_url 上限 5MB，留余量）
-const UPLOAD_ALLOWED_MIME = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-]);
-
-// 过期清理：UPLOAD_TTL_HOURS 小时之前的文件会被定时删除
-const UPLOAD_TTL_HOURS = (() => {
-  const n = parseInt(process.env.UPLOAD_TTL_HOURS || "24", 10);
-  return Number.isFinite(n) && n > 0 ? n : 24;
-})();
-const UPLOAD_TTL_MS = UPLOAD_TTL_HOURS * 60 * 60 * 1000;
-const UPLOAD_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 每小时一次
-
-// 清理 UPLOAD_DIR 下 mtime 早于 TTL 的文件。返回 {kept, removed, errors}
-async function cleanupUploads({ now = Date.now(), dir = UPLOAD_DIR } = {}) {
-  let entries;
-  try {
-    entries = await fs.promises.readdir(dir);
-  } catch (e) {
-    if (e && e.code === "ENOENT") return { kept: 0, removed: 0, errors: 0 };
-    console.error(`[video_gen] cleanup: readdir failed: ${e.message}`);
-    return { kept: 0, removed: 0, errors: 1 };
-  }
-
-  let kept = 0;
-  let removed = 0;
-  let errors = 0;
-  await Promise.all(
-    entries.map(async (name) => {
-      const full = path.join(dir, name);
-      try {
-        const st = await fs.promises.stat(full);
-        if (!st.isFile()) return;
-        if (now - st.mtimeMs >= UPLOAD_TTL_MS) {
-          await fs.promises.unlink(full);
-          removed++;
-        } else {
-          kept++;
-        }
-      } catch (e) {
-        if (e && e.code === "ENOENT") return;
-        errors++;
-        console.error(`[video_gen] cleanup: ${name}: ${e.message}`);
-      }
-    })
-  );
-  return { kept, removed, errors };
+// ===== 本地图片怎么拿到公网 URL =====
+// 本服务不搬字节：本地文件 -> 公网 URL 这件事由 agent（agent-core）侧完成：
+//   agent-core 在【内网】端口上提供签发入口（GET /public-link?path=<绝对路径>），
+//   沙箱里的 AI 命令 curl 它，换回一条短命的签名下载链接（复用登录下载那套：不可猜/会过期/绑会话）。
+// 这里只把那条命令拼进 tool description 告诉 AI；agent 侧的具体实现见其 routes/public-link.js。
+function resolvePublicLinkUrl() {
+  return String(process.env.PUBLIC_LINK_URL || "").trim().replace(/\/+$/, "");
 }
 
 function parseArgs(argv) {
@@ -251,7 +173,7 @@ async function queryAsyncResult({ token, id }) {
   return data; // { id, request_id, model, task_status, video_result?, ... }
 }
 
-function buildServer({ publicBaseUrl, uploadBaseUrl }) {
+function buildServer({ publicLinkUrl }) {
   const server = new McpServer(
     {
       name: "video_gen",
@@ -264,7 +186,15 @@ function buildServer({ publicBaseUrl, uploadBaseUrl }) {
     }
   );
 
-  const uploadUrl = `${uploadBaseUrl}/upload`;
+  // 本地文件 -> 公网 URL 的那条命令。由 agent-core 的内网签发入口提供（见 resolvePublicLinkUrl 注释）：
+  // 它返回 text/plain，stdout 就是现成 URL，所以 AI 不需要解析 JSON。
+  const localFileHint = publicLinkUrl
+    ? `If you need to use a LOCAL image file as image_url, first mint a temporary public URL for it by running this exact command in the shell (replace the path with the file's absolute path):
+
+    curl -s "${publicLinkUrl}?path=/workspace/tasks/<your-session>/your-image.png"
+
+The command prints ONE URL as plain text — pass that URL directly as the image_url argument below. The link is short-lived (minutes), so mint it right before calling this tool.`
+    : `If you need to use a LOCAL image file as image_url but no public-link minting endpoint is configured, ask the operator to configure it (env PUBLIC_LINK_URL). You cannot upload files from here.`;
 
   // ---------- 工具 1：video_gen ----------
   server.tool(
@@ -273,13 +203,9 @@ function buildServer({ publicBaseUrl, uploadBaseUrl }) {
 Returns the task_id immediately; poll the result later with query_video.
 prompt is required. Must add image_url for image-to-video.
 
-If you need to use a LOCAL image file as image_url, upload it FIRST with this exact command (replace the path):
+${localFileHint}
 
-    curl -F "file=@/path/to/your/image.png" ${uploadUrl}
-
-The response JSON has a "url" field — pass that URL directly as the image_url argument below.
-Supported formats: png, jpeg, jpg. Max 5MB per image.
-Uploaded files are kept on the server temporarily and auto-deleted after a TTL — do not rely on long-term URLs.`,
+Supported formats: png, jpeg, jpg. Max 5MB per image, and the URL must be reachable from the public internet (the upstream fetches it itself).`,
     {
       prompt: z
         .string()
@@ -291,7 +217,7 @@ Uploaded files are kept on the server temporarily and auto-deleted after a TTL �
         .url()
         .optional()
         .describe(
-          "Reference image URL string for image-to-video. Image <= 5MB, .png/.jpeg/.jpg. Use the /upload endpoint to get a URL from a local file."
+          "Reference image URL string for image-to-video. Image <= 5MB, .png/.jpeg/.jpg. For a local file, first mint a temporary public URL with the shell command shown in this tool's description."
         ),
       size: z
         .string()
@@ -471,83 +397,8 @@ async function startHttp({ port, host }) {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
 
-  const publicBaseUrl = resolvePublicBaseUrl({ port });
-  const uploadBaseUrl = resolveUploadBaseUrl({ port });
-  console.log(`[video_gen] UPLOAD_BASE_URL = ${uploadBaseUrl}   (AI 往哪上传，走内网)`);
-  console.log(`[video_gen] PUBLIC_BASE_URL = ${publicBaseUrl}   (返回给智谱的下载地址，须公网可达)`);
-
-  // ===== /upload：接收图片，返回 URL（不走 MCP）=====
-    // 磁盘存储：保证 UPLOAD_DIR 存在（compose 里挂到宿主 ./uploads，重启不失效）
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-    // 过期清理：启动时跑一次，之后每小时一次
-    cleanupUploads()
-      .then((r) =>
-        console.log(
-          `[video_gen] startup cleanup: kept=${r.kept} removed=${r.removed} errors=${r.errors} ttl=${UPLOAD_TTL_HOURS}h`
-        )
-      )
-      .catch((e) => console.error(`[video_gen] startup cleanup failed: ${e.message}`));
-    const cleanupTimer = setInterval(() => {
-      cleanupUploads()
-        .then((r) => {
-          if (r.removed > 0 || r.errors > 0) {
-            console.log(
-              `[video_gen] periodic cleanup: kept=${r.kept} removed=${r.removed} errors=${r.errors}`
-            );
-          }
-        })
-        .catch((e) => console.error(`[video_gen] periodic cleanup failed: ${e.message}`));
-    }, UPLOAD_CLEANUP_INTERVAL_MS);
-    cleanupTimer.unref(); // 不阻止进程退出
-
-  const storage = multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-    filename: (_req, file, cb) => {
-      const ext = (path.extname(file.originalname) || ".bin").toLowerCase();
-      cb(null, `${randomUUID()}${ext}`);
-    },
-  });
-
-  const upload = multer({
-    storage,
-    limits: { fileSize: UPLOAD_MAX_BYTES, files: 1 },
-    fileFilter: (_req, file, cb) => {
-      if (UPLOAD_ALLOWED_MIME.has(file.mimetype)) return cb(null, true);
-      cb(new Error(`Unsupported content-type: ${file.mimetype}. Allowed: ${[...UPLOAD_ALLOWED_MIME].join(", ")}`));
-    },
-  });
-
-  app.post("/upload", (req, res) => {
-    upload.single("file")(req, res, (err) => {
-      if (err) {
-        const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
-        return res.status(status).json({
-          error: err.message || "upload failed",
-        });
-      }
-      if (!req.file) {
-        return res.status(400).json({ error: "Missing form field 'file'" });
-      }
-      const url = `${publicBaseUrl}${UPLOAD_PATH_PREFIX}/${req.file.filename}`;
-      return res.json({
-        url,
-        filename: req.file.filename,
-        size: req.file.size,
-        content_type: req.file.mimetype,
-        original_name: req.file.originalname,
-      });
-    });
-  });
-
-  // 静态下载：只要文件存在于 UPLOAD_DIR 就吐出去（不鉴权、不持久化）
-  app.use(
-    UPLOAD_PATH_PREFIX,
-    express.static(UPLOAD_DIR, {
-      fallthrough: false,
-      maxAge: 0,
-    })
-  );
+  const publicLinkUrl = resolvePublicLinkUrl();
+  console.log(`[video_gen] PUBLIC_LINK_URL = ${publicLinkUrl || "(未配置 -> 工具描述里不会出现本地文件取公网 URL 的命令)"}`);
 
   // session -> { server, transport } 映射
   const sessions = new Map();
@@ -580,7 +431,7 @@ async function startHttp({ port, host }) {
     }
 
     const newId = randomUUID();
-        const server = buildServer({ publicBaseUrl, uploadBaseUrl });
+        const server = buildServer({ publicLinkUrl });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => newId,
       onsessioninitialized: (id) => {
@@ -619,38 +470,11 @@ async function startHttp({ port, host }) {
       `[video_gen] MCP HTTP server listening on http://${host}:${port}/mcp`
     );
   });
-
-  // ===== 公网只读监听（只给智谱下载用）=====
-  // 只挂 GET /uploads/* 与 /health：没有 /mcp、没有 POST /upload —— 写入口物理上不在这个端口上，
-  // 不靠 token，而是压根没监听。这一侧必须【匿名】可达（智谱拉图不带任何 header/凭据）。
-  if (PUBLIC_PORT && PUBLIC_PORT !== port) {
-    const publicApp = express();
-    publicApp.get("/health", (_req, res) => {
-      res.json({ status: "ok", service: "video_gen", scope: "public-read" });
-    });
-    publicApp.use(
-      UPLOAD_PATH_PREFIX,
-      express.static(UPLOAD_DIR, {
-        fallthrough: false,
-        maxAge: 0,
-        index: false,
-      })
-    );
-    publicApp.use((_req, res) => {
-      res.status(404).json({ error: "not found", scope: "public-read" });
-    });
-    publicApp.listen(PUBLIC_PORT, host, () => {
-      console.log(
-        `[video_gen] public read-only server listening on http://${host}:${PUBLIC_PORT}${UPLOAD_PATH_PREFIX}/*`
-      );
-    });
-  }
 }
 
 async function startStdio() {
-  // stdio 模式下上传接口不可用，用 placeholder 避免 description 里出现奇怪的占位
-  const local = "http://localhost:3000";
-  const server = buildServer({ publicBaseUrl: local, uploadBaseUrl: local });
+  // stdio 模式：拿不到 agent 的内网签发入口也没关系，description 里会退化为“请运维配 PUBLIC_LINK_URL”
+  const server = buildServer({ publicLinkUrl: resolvePublicLinkUrl() });
   const { StdioServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/stdio.js"
   );

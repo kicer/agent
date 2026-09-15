@@ -5,9 +5,9 @@
 - 协议：MCP **Streamable HTTP**（单端点 `/mcp`，支持 SSE 流）
 - 上游：[智谱 BigModel 视频生成(异步)](https://docs.bigmodel.cn/api-reference/模型-api/视频生成异步) + [查询异步结果](https://docs.bigmodel.cn/api-reference/模型-api/查询异步结果)
 - 默认模型：`cogvideox-flash`
-- 端口：容器内 `3000`（`/mcp` + `POST /upload` + `GET /uploads/*`，**容器外不映射**）、容器内 `3001`（公网只读的 `GET /uploads/*`）
+- 端口：容器内 `3000`（MCP `/mcp` + `/health`，**容器外不映射**，只在 `my-app-network` 内被 agent 访问）
 - 鉴权：**无服务端密钥**，每次请求必须从 header 携带智谱 token
-- 附带 `/upload`：供 AI 上传本地图片换取 URL（写路径只在 docker 内网可达；落宿主 `./uploads/`，按 TTL 自动清理）
+- 本地文件需要公网 URL 时：不传字节，让 AI 去 agent 的内网签发入口现签一条短命链接（见下节）
 
 ---
 
@@ -24,7 +24,7 @@ docker compose up -d --build mcp_video_gen
 
 服务容器名 `mcp_video_gen`，**默认不占宿主机端口**：由 agent 走 `my-app-network` 按容器名访问
 （`http://mcp_video_gen:3000/mcp`）。需要从宿主机 curl 调试时，去仓库根 `docker-compose.yml`
-把 `mcp_video_gen` 注释掉的 `ports` 两行打开（映的是只读监听 3001）。
+把 `mcp_video_gen` 注释掉的 `ports` 两行打开（映的是 MCP 端口 3000，仅本机短时调试用）。
 
 ```bash
 # 容器内健康检查（无需占端口）
@@ -68,113 +68,23 @@ docker exec mcp_video_gen node -e "fetch('http://localhost:3000/health').then(r=
 
 ---
 
-## 上传图片：POST /upload
 
-供 AI 上传本地图片、拿到 URL 后喂给 `video_gen.image_url`。**不走 MCP、不走鉴权**，但**写路径只在内网**（容器内 3000，容器外不映射），
-所以公网上没有任何写入入口。唯一公网可达的是**只读**的下载路径，而且由 agent-core 代拉：
+## 本地文件 → 公网 URL（本服务不搬字节）
 
-```
-AI（agent-executor 内 curl）
-      │ POST http://mcp_video_gen:3000/upload        ← docker 内网，不经公网
-      ▼
-  ./uploads/<randomUUID>.png     返回 url = PUBLIC_BASE_URL + /uploads/<name>
-      │
-      ▼
-智谱服务器  ──匿名 GET──►  http://<服务器IP>:<AGENT_PORT>/mcp-uploads/uploads/<name>
-                              │ agent-core 只转发 GET/HEAD
-                              ▼
-                         mcp_video_gen:3001（只读监听，那边没有 /upload）
-```
-
-### 配置（两个地址刻意分开）
-
-| 变量 | 作用 | 该填什么 |
-|---|---|---|
-| `UPLOAD_BASE_URL` | 拼进 tool description 里那条 curl，告诉 AI 往哪上传 | 内网地址 `http://mcp_video_gen:3000`（compose 已配好） |
-| `PUBLIC_BASE_URL` | 拼进 `/upload` 返回的 `url` 字段，给**智谱**下载用 | **必须外部可达**：`http://<服务器IP>:<AGENT_PORT>/mcp-uploads` |
-| `PUBLIC_PORT` | 只读监听的容器内端口（agent 的 `MCP_UPLOADS_URL` 指向它） | compose 里是 `3001`；留 `0` 则不开双监听 |
-
-`UPLOAD_BASE_URL` 未设时会退回 `PUBLIC_BASE_URL`，两个都没设则都是 `http://localhost:<port>`（本机调试）。
-启动日志会打印两个实际生效的地址，配错了一看就知道。
-
-其它环境变量：
-
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `UPLOAD_DIR` | `/tmp/video_gen_uploads` | 磁盘存储目录；compose 里指向宿主挂载的 `/uploads` |
-| `UPLOAD_TTL_HOURS` | `24` | 超过该小时数的文件会在启动时和每小时被自动删除 |
-
-### 接口
-
-```
-POST /upload                       （只在容器内 3000，内网可达）
-Content-Type: multipart/form-data
-
-file: <二进制图片文件>
-```
-
-### 限制
-
-| 项 | 值 |
-|---|---|
-| 最大体积 | 8MB（智谱 `image_url` 上限5MB，留余量） |
-| 白名单 content-type | `image/png`、`image/jpeg`、`image/jpg` |
-| 存储位置 | 宿主 `./uploads/`（compose 挂到容器 `/uploads`，`UPLOAD_DIR` 可覆盖） |
-| 持久化 | 落盘，重启不失效；但按 TTL 到期自动删，**不要依赖长期 URL** |
-| 过期清理 | 启动时 + 每小时一次删除 `>UPLOAD_TTL_HOURS` 的文件，默认 24h |
-| 鉴权 | 无（靠“不映射到宿主机”隔离；AI 走内网访问） |
-
-### 返回
-
-```jsonc
-{
-  "url": "http://<服务器IP>:8090/mcp-uploads/uploads/abc123.png",
-  "filename": "abc123.png",
-  "size": 12345,
-  "content_type": "image/png",
-  "original_name": "my-cat.png"
-}
-```
-
-返回的 `url` 可直接作为 `video_gen.image_url` 使用（前缀 = `PUBLIC_BASE_URL`）。
-
-### 端口与路由
-
-| 容器内端口 | 路由 | 容器外 |
-|---|---|---|
-| `3000` | `/mcp` + `POST /upload` + `GET /uploads/*` | 不映射，只在 `my-app-network` 内可达 |
-| `3001`（`PUBLIC_PORT`） | 只有 `GET /uploads/*` + `/health` | 也不映射；由 agent-core 的 `MCP_UPLOADS_URL` 指向它代拉 |
-
-只读监听的意义：公网那条入站链路（智谱拉图）接的是它，所以即使 agent 侧中转有 bug 把写方法转过来，
-这边也没路由可打（纵深防御）。
-
-### curl 示例
-
-默认不占宿主端口。推荐用 `docker exec` 在容器内测（不破坏安全边界）：
+`image_url` 必须是一个**公网可达**的 URL（智谱服务器会自己去拉）。图片在本地盘上时，本服务不负责上传，
+而是让 AI 去 agent 那边现签一条短命的公网链接（实现见 agent 仓库 `app/server/routes/public-link.js`）：
 
 ```bash
-# 上传（走全量监听的 3000）：把 /etc/hostname 当假图片，只为看返回结构
-docker exec mcp_video_gen node -e "
-  const fs=require('fs');
-  const fd=new FormData();
-  fd.append('file',new File([fs.readFileSync('/etc/hostname')],'t.png',{type:'image/png'}));
-  fetch('http://localhost:3000/upload',{method:'POST',body:fd}).then(r=>r.json()).then(j=>console.log(j));
-"
-
-# 只读监听取文件（把 <name> 换成上一步返回的 filename）
-docker exec mcp_video_gen node -e "fetch('http://localhost:3001/uploads/<name>').then(r=>console.log(r.status,r.headers.get('content-type')))"
-
-# 只读监听上试写：应当 404（那边没有 /upload）
-docker exec mcp_video_gen node -e "fetch('http://localhost:3001/upload',{method:'POST'}).then(r=>console.log(r.status))"
+# AI 在 agent 的 executor 沙箱里执行；路径就是它平时看到的那个绝对路径
+curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/foo.png"
+# stdout 就是现成 URL（纯文本，不需要解析 JSON）：
+# http://<服务器IP>:8090/api/sessions/<会话>/files/download-name/foo.png?path=foo.png&expires=…&t=…
 ```
 
-要从宿主机 curl 调试，临时把 compose 里注释的 `ports` 打开（打开的是只读侧 `8083:3001`；
-想试上传就临时改成 `8083:3000`，测完记得改回来）：
-
-```bash
-curl -sI http://localhost:8083/uploads/<name>    # 只读侧取图：200
-curl -s  http://localhost:8083/upload            # 只读侧写：404（本来就没这个路由）
-```
+- 那条链接是 agent 的**签名下载链接**：不可猜（HMAC）、会过期（默认 30 分钟）、绑会话、agent 重启即全部失效。
+- `8081` 是 agent 侧的**内网**签发端口（`PUBLIC_LINK_PORT`），**不映射到宿主机**，所以接它不需要任何凭据；
+  地址由 env `PUBLIC_LINK_URL` 告诉本服务（compose 已默认指向 `http://agent-core:8081/public-link`）。
+- `PUBLIC_LINK_URL` 没配时，工具描述里不会出现这条命令，而是提示“请运维配置”。
 
 ---
 
@@ -187,7 +97,7 @@ curl -s  http://localhost:8083/upload            # 只读侧写：404（本来�
 | 名称 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | string | ✅ | 视频文本描述，最大 512 字符 |
-| `image_url` | string (URL) | ❌ | 参考图 URL（**单张**，不支持数组 / 多张 / 首尾帧）。图片 ≤ 5MB，格式 png/jpeg/jpg。本地文件请走 `/upload` |
+| `image_url` | string (URL) | ❌ | 参考图 URL（**单张**，不支持数组 / 多张 / 首尾帧）。图片 ≤ 5MB，格式 png/jpeg/jpg。本地文件请先用上一节的命令换一条公网链接 |
 | `size` | string | ❌ | 视频尺寸，例如 `1920x1080`、`1080x1920`、`1024x1024`、`1280x960` 等 |
 | `with_audio` | boolean | ❌ | 是否生成 AI 音效，默认 `false` |
 
@@ -269,7 +179,7 @@ Token 仅在每次 tool call 时从 header 读取，不写入任何存储、不�
 ## 推荐用法（AI 视角）
 
 ```
-1. 如果手头是【本地文件】：先调 POST {UPLOAD_BASE_URL}/upload 拿到 url，再进第 2 步
+1. 如果手头是【本地文件】：先 `curl -s "http://agent-core:8081/public-link?path=<绝对路径>"` 拿到一条公网链接（上一节），再进第 2 步
 2. 调用 video_gen({ prompt, image_url?, size?, with_audio? })
 3. 拿到 task_id → 等待若干秒（建议 2~5 秒）
 4. 调用 query_video({ task_id })
@@ -363,19 +273,6 @@ curl -s -X POST http://localhost:8083/mcp \
 
 响应是 SSE 格式（`event: message` + `data: {...}`），用 `grep '^data:'` 抽 JSON 即可。
 
-### 单独调试 `/upload`
-
-```bash
-# 上传（需先在 compose 里临时把 ports 打开成 8083:3000；默认不映射）
-curl -F "file=@/tmp/cat.png" http://localhost:8083/upload
-# {"url":"http://<服务器IP>:8090/mcp-uploads/uploads/xxx.png", ...}   ← 返回的是公网地址（PUBLIC_BASE_URL）
-
-# 直接从只读监听取文件（compose 默认那行就是 8083:3001）
-curl -o cat.png http://localhost:8083/uploads/xxx.png
-```
-
----
-
 ## 架构与文件
 
 ```
@@ -397,8 +294,8 @@ package.json        # @modelcontextprotocol/sdk + express + multer
     - `model / quality / fps / watermark_enabled` 全部由 HTTP header 注入，避免 AI 误传或被诱导调高价档
 - **异步语义暴露给 AI**：服务端不做轮询，`video_gen` 只提交、`query_video` 只查一次。AI 自主决定节奏
 - **服务端自动 `request_id`**：每次提交服务端生成一个 UUID 作为智谱 `request_id`，便于日志关联，但不暴露给 AI
-- **上传接口与 MCP 走同一进程**：额外 `POST /upload` + `GET /uploads/*` 不走 MCP、不鉴权；写路径只在容器内 3000（不外映射），公网只暴露只读监听 3001。写入时的 `UPLOAD_BASE_URL` 与返回给智谱的 `PUBLIC_BASE_URL` **分开配置**（前者内网、后者公网），AI 看到的 tool description 启动时拼接进真实地址，避免 AI 自由发挥
-- **上传过期清理**：启动时 + 每小时一次删除 `mtime > UPLOAD_TTL_HOURS` 的文件，避免磁盘被不消费的上传堆满；清理 timer 用 `unref()` 不阻塞进程退出
+- **不搬字节**：本地文件 -> 公网 URL 完全由 agent 侧完成（`GET /public-link` 现签一条签名下载链接），本服务只把命令拼进工具描述；那只所以能不给本体加任何写入口、不落盘、不需要额外端口
+- **链接短命**：签名链接默认 30 分钟过期、绑会话、agent 重启即全失效；`PUBLIC_LINK_URL` 未配时工具描述退化为“请运维配置”
 
 ### 默认模型
 
@@ -435,7 +332,7 @@ A: 可以。`/async-result/{id}` 是幂等的读接口，并发无副作用。
 A: 不需要。Model header 在每次 `tools/call` 都从当前请求读取。
 
 **Q: 上传的图片多久过期？**
-A: 落宿主 `./uploads/`（重启不失效），但按 `UPLOAD_TTL_HOURS`（默认 24h）自动删除，所以拿到 `url` 后尽快喂给 `video_gen.image_url`。过期后 URL 变 404。
+A: 本服务不存图，不存在“上传的图片”：要用的图在 agent 的任务目录里，AI 现签一条签名链接给智谱拉。链接按 agent 的 `public_link.ttl_ms`（默认 30 分钟）过期，过期后 URL 变 403。
 
-**Q: `PUBLIC_BASE_URL` 不设会怎样？**
-A: compose 给个默认值 `http://localhost:8090/mcp-uploads`（代码 fallback 是 `http://localhost:<port>`）。本机调试无所谓，但智谱服务器拉不到图——图生视频会失败。无域名部署时要显式设成 `http://<服务器IP>:<AGENT_PORT>/mcp-uploads`，并确认 agent-core 那边配了 `MCP_UPLOADS_URL`（否则中转路由不存在）。启动日志会打印两个实际生效的地址，一眼就能看出配对没。
+**Q: `PUBLIC_LINK_URL` 不配会怎样？**
+A: 工具描述里不会出现“怎么把本地文件变成公网 URL”的命令，而是提示让运维配置，AI 就只能用已经是公网 URL 的图片（比如 image_gen 刚生成的图）。配的时候注意：它指向的是 agent 侧的**内网**签发端口（`http://agent-core:8081/public-link`），不是 agent 对外的 8090。

@@ -9,9 +9,8 @@ RUN npm install --omit=dev
 # 复制源码
 COPY . .
 
-EXPOSE 3000 3001
+EXPOSE 3000
 
-# 启用 HTTP/SSE 模式：
-#   3000 = MCP(/mcp) + POST /upload + GET /uploads/*，容器外不映射（只在 docker 网络内可达）
-#   3001 = 公网只读的 GET /uploads/*，由 compose 映射到宿主机给智谱下载（PUBLIC_PORT 开启）
+# HTTP 模式：只提供 MCP（/mcp）与 /health；容器外不映射，只在 my-app-network 内被 agent 访问。
+# 本地图片需要公网 URL 时，AI 去 curl agent 的内网签发入口（env PUBLIC_LINK_URL），本服务不搬字节。
 CMD ["node", "src/mcp-server.js", "--http", "--port", "3000", "--host", "0.0.0.0"]
