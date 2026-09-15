@@ -250,7 +250,7 @@ function buildServer({ publicBaseUrl }) {
     "video_gen",
     `Submit a video generation task (text-to-video or image-to-video).
 Returns the task_id immediately; poll the result later with query_video.
-prompt is required. Add image_url for image-to-video.
+prompt is required. Must add image_url for image-to-video.
 
 If you need to use a LOCAL image file as image_url, upload it FIRST with this exact command (replace the path):
 
