@@ -5,7 +5,7 @@
 - 协议：MCP **Streamable HTTP**（单端点 `/mcp`，支持 SSE 流）
 - 上游：[智谱 BigModel 视频生成(异步)](https://docs.bigmodel.cn/api-reference/模型-api/视频生成异步) + [查询异步结果](https://docs.bigmodel.cn/api-reference/模型-api/查询异步结果)
 - 默认模型：`cogvideox-flash`
-- 端口：容器内 `3000`（MCP `/mcp` + `/health`，**容器外不映射**，只在 `my-app-network` 内被 agent 访问）
+- 端口：容器内 `3000`（MCP `/mcp` + `/health`，**容器外不映射**，只在 `agent-mcp-net` 内被 agent 访问）
 - 鉴权：**无服务端密钥**，每次请求必须从 header 携带智谱 token
 - 本地文件需要公网 URL 时：不传字节，让 AI 去 agent 的内网签发入口现签一条短命链接（见下节）
 
@@ -22,7 +22,7 @@ cd /root/workspace/tools/mcp
 docker compose up -d --build mcp_video_gen
 ```
 
-服务容器名 `mcp_video_gen`，**默认不占宿主机端口**：由 agent 走 `my-app-network` 按容器名访问
+服务容器名 `mcp_video_gen`，**默认不占宿主机端口**：由 agent 走 `agent-mcp-net` 按容器名访问
 （`http://mcp_video_gen:3000/mcp`）。需要从宿主机 curl 调试时，去仓库根 `docker-compose.yml`
 把 `mcp_video_gen` 注释掉的 `ports` 两行打开（映的是 MCP 端口 3000，仅本机短时调试用）。
 

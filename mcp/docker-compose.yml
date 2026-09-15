@@ -1,4 +1,4 @@
-# 无 nginx-proxy 部署：这些服务**默认不占宿主机端口**，只挂在 my-app-network 上被 agent 按容器名访问。
+# 无 nginx-proxy 部署：这些服务**默认不占宿主机端口**，只挂在 agent-mcp-net 上被 agent 按容器名访问。
 # 因此对外只需要开 agent-core 那一个端口（AGENT_PORT，默认 8090）。
 # 需要从宿主机 curl 调试某个服务时，把它下面注释掉的 ports 两行打开。
 services:
@@ -10,7 +10,7 @@ services:
     # ports:
     #   - "${WEB_SEARCH_PORT:-8081}:3000"
     networks:
-      - my-app-network
+      - agent-mcp-net
 
   mcp_image_gen:
     build: ./image_gen
@@ -20,7 +20,7 @@ services:
     # ports:
     #   - "${IMAGE_GEN_PORT:-8082}:3000"
     networks:
-      - my-app-network
+      - agent-mcp-net
 
   mcp_video_gen:
     build: ./video_gen
@@ -35,10 +35,10 @@ services:
       # 本服务不搬字节：只把这条命令拼进工具描述，AI 自己在沙箱里 curl，拿回一条短命链接。
       - PUBLIC_LINK_URL=${PUBLIC_LINK_URL:-http://agent-core:8081/public-link}
     networks:
-      - my-app-network
+      - agent-mcp-net
 
 networks:
   # 与 agent 仓库共用：网络由 agent 的 compose 创建并命名（所以要先起 agent），
   # 这里声明为 external 直接加入。agent-core / agent-executor 按容器名访问这些服务。
-  my-app-network:
+  agent-mcp-net:
     external: true

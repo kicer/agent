@@ -37,7 +37,7 @@ MCP 端点：
 
 `docker-compose.yml` 中的 `mcp_web_search` 服务直接构建本目录，Dockerfile 已改为拷贝源码启动（不再有 `npm install -g`）。
 
-容器内监听 3000，**默认不占宿主端口**：agent 走 `my-app-network` 按容器名访问
+容器内监听 3000，**默认不占宿主端口**：agent 走 `agent-mcp-net` 按容器名访问
 （`http://mcp_web_search:3000/`）。需要从宿主机 curl 调试时，把仓库根 `docker-compose.yml` 里
 `mcp_web_search` 注释掉的 `ports` 两行打开（默认写的是 8081），调试完记得注释回去。
 

@@ -21,7 +21,7 @@ cd /root/workspace/tools/mcp
 docker compose up -d --build mcp_image_gen
 ```
 
-服务容器名 `mcp_image_gen`，容器内端口 3000，**默认不占宿主端口**：agent 走 `my-app-network`
+服务容器名 `mcp_image_gen`，容器内端口 3000，**默认不占宿主端口**：agent 走 `agent-mcp-net`
 按容器名访问（`http://mcp_image_gen:3000/mcp`）。需要从宿主机 curl 调试时，去仓库根
 `docker-compose.yml` 把 `mcp_image_gen` 注释掉的 `ports` 两行打开（默认写的是 8082），调试完记得注释回去。
 

@@ -8,23 +8,23 @@
 | `image_gen/` | `mcp_image_gen` | 智谱 CogView 图片生成 | `3000` | `POST /mcp` |
 | `video_gen/` | `mcp_video_gen` | 智谱 CogVideo 视频生成（异步） | `3000` | `POST /mcp` |
 
-**这些服务一个宿主机端口都不占**——它们只挂在 `my-app-network` 上，由 `agent-core` / `agent-executor`
+**这些服务一个宿主机端口都不占**——它们只挂在 `agent-mcp-net` 上，由 `agent-core` / `agent-executor`
 按容器名访问。所以整台服务器对外只需要开 agent-core 那一个端口（`AGENT_PORT`，默认 8090）。
 （要从宿主机 curl 调试时，把 `docker-compose.yml` 里对应服务注释掉的 `ports` 两行打开。）
 
 ## 部署（无 nginx-proxy）
 
-网络 `my-app-network` 由 **agent 的 compose 创建**，所以全新机器上必须先起一次 agent：
+网络 `agent-mcp-net` 由 **agent 的 compose 创建**，所以全新机器上必须先起一次 agent：
 
 ```bash
-# 1) 先起 agent（它会创建 my-app-network；首次还要先备好 config.yml 与 .env）
+# 1) 先起 agent（它会创建 agent-mcp-net；首次还要先备好 config.yml 与 .env）
 cd /root/workspace/tools/agent && docker compose up -d --build
 
 # 2) 再起 mcp
 cd /root/workspace/tools/mcp && docker compose up -d --build
 ```
 
-> mcp 单独在一个没有该网络的机器上先起会报错（`network my-app-network declared as external, but could not be found`），这是预期行为。
+> mcp 单独在一个没有该网络的机器上先起会报错（`network agent-mcp-net declared as external, but could not be found`），这是预期行为。
 > 拆的时候反着来（先 down mcp 再 down agent）。
 
 `image_gen` / `video_gen` 需要智谱 token，但 token **不由服务端保存**——每个请求从 header 读取
