@@ -43,7 +43,9 @@ agent/
 │   │   │   ├── definitions.json   内置 15 个工具的 OpenAI function 格式定义
 │   │   │   ├── executor.js        工具执行器（文件类 + terminal + skill 委托）
 │   │   │   └── skills.js          Skill Manager（list/info/run + 依赖安装 + 路径预处理）
-│   │   ├── download-token.js      临时链接签名（浏览器下载 / 公网链接共用一套）
+│   │   ├── download-token.js      下载链接签名（浏览器原生下载用；密钥进程内随机）
+│   │   ├── download-send.js       单文件下载响应（Content-Disposition / 缓存策略）
+│   │   ├── public-files.js        公网临时文件短 ID 表（mint/resolve + 过期）
 │   │   ├── routes/
 │   │   │   ├── sessions.js        /api/sessions CRUD + 列表分页
 │   │   │   ├── messages.js        /api/sessions/:id/messages + SSE 流 + stop/release
@@ -51,7 +53,8 @@ agent/
 │   │   │   ├── config.js          /api/config 读写（含 api_key/password 脱敏）
 │   │   │   ├── platforms.js       /api/platforms/balance 余额查询
 │   │   │   ├── skills.js          /api/skills 技能文件管理
-│   │   │   ├── public-link.js     GET /public-link 签发公网临时链接（只挂内网端口）
+│   │   │   ├── public-link.js     GET /public-link 签发公网短链（只挂内网端口）
+│   │   │   ├── public-files.js    GET /p/<id> 公网临时文件取用（匿名）
 │   │   │   └── system.js          /api/system/status + /restart 优雅重启
 │   │   ├── templates/
 │   │   │   └── system-prompt.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
@@ -102,8 +105,8 @@ graph LR
     Core -->|POST /chat/completions| LLM
     Core -->|tools/call| MCP
     MCP -->|提交任务| Zhipu
-    Exec -->|curl /public-link 现签链接| Core
-    Zhipu -->|匿名 GET 签名链接| Core
+    Exec -->|curl /public-link 现签短链| Core
+    Zhipu -->|匿名 GET /p/id| Core
     Core <-->|读写| Tasks
     Exec <-->|读写| Tasks
     Core <-->|技能 + deps| Skills
@@ -113,15 +116,16 @@ graph LR
 
 所有容器都在同一个 `my-app-network` 上（core 与 executor 同时靠它访问 MCP）；外网只暴露 Core
 （宿主机端口映射）。注意其中一条**反向**的入站链路：外部服务（如智谱）来拉文件时，走的是 Core 的
-签名下载链接 `/api/sessions/:id/files/download-name/*?t=…`（链接由内网签发入口 `GET /public-link` 现签）。
+`GET /p/<id>`（匿名，22 字符随机 ID + 服务端过期，见 `routes/public-files.js`）；这个 id 由内网
+签发入口 `GET /public-link` 现签，所以链接里既没有会话名也没有文件名。
 
 **关键约束**（改 compose 时务必保持）：
 
 - 全部容器同一个网络 `my-app-network`（由本仓库 compose 创建，mcp 侧 external 加入）——core 与 executor 都靠它按容器名访问 MCP 服务（executor 还要靠它 curl core 的签发入口）。
 - `agent-core` 与 `agent-executor` 须把**同一份宿主机 `./tasks`、`./skills`**挂到相同的容器路径（默认 `/workspace/tasks`、`/workspace/skills`）。这是文件工具在 Core 本地直接读、命令在远端写，二者能"看到"彼此产物的根本约定。
-- **临时链接签名只有一份**（`download-token.js`）：浏览器下载链接与 `routes/public-link.js` 给外部服务签的公网链接**必须是同一套**（密钥、报文形状、验签都共用）。两边写歪的后果是“签得出来、验不过去”，所以任何一边都不得自己拼 HMAC。
+- **两条公网文件路径分工别搞混**：浏览器原生下载走 `download-token.js` 的签名链接（前端用 `download-token` 接口换 URL，`auth.js` 的 `isSignedDownload` 放行 `?t=`）；外部服务取文件走 `GET /p/<id>` 短 ID。前者需要在 URL 末段带文件名（给安卓下载器猜名），后者刻意不带文件名/会话名。
 - **`routes/public-link.js` 只挂在【不映射宿主机】的内网端口上**（`PUBLIC_LINK_PORT`，默认 8081）：它不需要凭据（沙箱里的 AI 带不了凭据），所以安全性完全依赖“外部连不上这个端口”。**绝不要**把它挂到对外的 8080 上，也不要 publish 该端口。
-- 该路由是 Core 上唯一“匿名可写入口”性质的东西（它能给任意**已知会话**的文件签发链接），所以路径必须经 `workspace_root` 前缀校验 + 会话表校验 + realpath 复核（挡 `ln -s` 外泄）；未配 `public_link.base_url` 则不启动签发端口。
+- `GET /p/<id>` 是 Core 上唯一的匿名读取入口：安全性 = 22 字符随机 ID + 服务端过期（`public-files.js` 的内存表）。它**必须挂在 `auth.middleware` 之前**，未命中/过期一律 404。签发侧仍要做路径校验（`workspace_root` 前缀 + 会话表 + realpath 复核，挡 `ln -s` 外泄）；未配 `public_link.base_url` 则不启动签发端口。
 - nginx-proxy 前置时**必须 `proxy_buffering off`**，否则 SSE 流被缓冲。详见 `docs/DEPLOY.md`。
 - Core 通过环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN` 注入 executor 端点（也可用 `config.yml` 的 `executor` 段覆盖）。**token 从 `.env` 读取**（compose 变量替换 `${EXECUTOR_TOKEN:?...}`，未设置直接报错，杜绝静默无鉴权）；`.env` 已 gitignore，模板见 `.env.example`，生成：`openssl rand -hex 32`。
 - Executor **拒绝来自容器自身（回环/本机网卡）的 `/exec`**：隔离只 unshare mount+pid，命令与 executor 同 net ns，能打到 `127.0.0.1:9000`；据此即使 token 泄漏也无法在会话内调用 `/exec` 越权读他人会话（core 在另一容器，不受影响）。本机集成测试用 `EXECUTOR_ALLOW_LOCAL_ORIGIN=1` 放行，生产不得设置。
@@ -402,6 +406,7 @@ stateDiagram-v2
 | `/api/login` `/api/login_restore` `/api/logout` `/api/password` `/api/me` | `auth.js` | 认证路由（认证前） |
 | `/login` `/logout` | `auth.js` | 登录/登出页 |
 | `/files/download[-name/...]?t=` `/files/zip[-name/...]?t=` | `auth.js` 白名单 | 带签名 token 的下载/打包下载（认证中免 cookie） |
+| `/p/<id>` | `routes/public-files.js` | 公网临时文件取用（匿名，挂认证中间件之前；随机 ID + 过期） |
 
 **SSE 事件**（`/api/sessions/:id/stream`，由 `bus.emit` 触发，前端订阅）：
 

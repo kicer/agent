@@ -130,30 +130,34 @@ docker compose logs -f agent-core    # 看到 "Agent server listening on 8080" �
 ### 4.1 公网临时链接（只有“把本地文件交给外部服务”时才用到）
 
 场景：图生视频时，智谱服务器生成视频前要**自己来拉参考图**，它不带 cookie、不带 `Authorization`，
-所以必须有一条公网匿名可达的 URL。做法是复用登录下载那套签名链接（`app/server/download-token.js`）：
-不可猜（HMAC）、会过期、绑会话、进程重启即全部失效。
+所以必须有一条公网匿名可达的 URL。做法是给一个**不透明短 ID**（`app/server/public-files.js`）：
+22 字符随机串，服务端内存表记着它对应哪个会话的哪个文件、什么时候过期。
 
 AI 拿链接的姿势：core 额外在**内网**监听一个**不映射到宿主机**的端口（`PUBLIC_LINK_PORT`，默认 8081），
 上面只有一条签发接口。因为压根没 publish，外部连不上，所以它**不需要任何凭据**：
 
 ```bash
 # AI 在 executor 沙箱里执行（路径就是它平时看到的那个绝对路径）
-curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/foo.png"
-# → http://<服务器IP>:8090/api/sessions/<会话>/files/download-name/foo.png?path=foo.png&expires=…&t=…
-#   stdout 就是现成 URL，直接当 image_url 用
+curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/_cgi-bin_..._d92292d.jpg"
+# → http://124.221.199.237:8090/p/9fQ2mZ7xK4tR1vBn
+#   stdout 就是现成 URL（约 50 字符、纯 ASCII），直接当 image_url 用
 ```
 
 ```
-智谱  ──匿名 GET──►  /api/sessions/<会话>/files/download-name/…&t=…   （core :8090）
-                          │  验签（会话 + 路径 + 时效）
+智谱  ──匿名 GET──►  /p/9fQ2mZ7xK4tR1vBn        （core :8090）
+                          │  查内存表：未过期？→ 得到（会话, 相对路径）
                           ▼
                      ./tasks/<会话>/foo.png    ← 文件仍在原地，零拷贝
 ```
 
+> 为什么不做成“带签名的 URL”：那样必须把会话名、文件名、过期时间、64 位签名全塞进 URL（数百字符、
+> 满是 `%XX`）。而这条 URL 会被模型抄进工具参数、并且**永久留在会话历史里每轮重发**，
+> 太长又难抄，还白烧 token。短 ID 把三个问题一次解决了。
+
 - 必须在 `config.yml` 配 `public_link.base_url = "http://<服务器IP>:8090"`；不配则不启动签发端口，
   video_gen 的工具描述里也不会出现那条命令（它会退化成“请运维配 PUBLIC_LINK_URL”）。
 - 链接有效期 `public_link.ttl_ms`，默认 30 分钟；签完尽快用掉。
-- 沙箱外的人要用上这条链接，得同时知道 IP、路径和签名；签名猜不出来，过期即废。
+- 沙箱外的人要用上这条链接，得拿到那个 22 字符随机 ID（猜不出来，也不可能枚举），且过期即废。
 - 这条路不搬字节：文件始终在它原本的位置，也不需要 video_gen 参与上传/落盘。
 
 ## 5. 没有 HTTPS 的影响（可忽略，仅记录）

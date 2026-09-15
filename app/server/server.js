@@ -31,6 +31,11 @@ app.use(express.json({ limit: '2mb' }));
 // 相比 nginx htpasswd 的 basic auth，cookie 在手机浏览器原生下载时也会自动携带，下载不再失败。
 const auth = createAuth(cfg);
 app.use(auth.router);      // /login、/logout、/api/login 等免认证端点
+
+// 公网临时文件的取用端点（GET /p/<id>）：匿名可达，必须挂在 auth.middleware 之前。
+// 安全性来自“22 字符随机 ID + 服务端过期”，详见 routes/public-files.js 头注释。
+app.use('/p', require('./routes/public-files'));
+
 app.use(auth.middleware);  // 其余请求需登录态（cookie 或 Basic 头）
 
 app.use(express.static(path.join(__dirname, 'public')));
