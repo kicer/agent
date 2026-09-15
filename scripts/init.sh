@@ -62,7 +62,8 @@ gen_hex() {  # $1 = 字节数（默认 32）
 }
 
 if [ "$UP" = "1" ] && { ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; }; then
-    err "要起服务需要 docker + docker compose；只生成配置请用： UP=0 $0"
+    err "要起服务需要 docker + docker compose。可先跑本仓库的 scripts/init_host.sh（宿主机初始化：装 Docker、swap 等）。"
+    err "只生成配置请用： UP=0 $0"
     exit 1
 fi
 

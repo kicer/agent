@@ -1,0 +1,25 @@
+# 部署配置模板 —— 复制到仓库外再填（里面有密钥，别提交进仓库）
+#
+#   cp scripts/deploy.conf.example ../../deploy.conf   # 推荐：放在两个仓库的父目录
+#   chmod 600 ../../deploy.conf && vi ../../deploy.conf
+#
+# init_repos.sh 会按顺序找第一个存在的：
+#   1) <两个仓库的父目录>/deploy.conf      2) scripts/deploy.conf（已 gitignore）      3) /root/deploy.conf
+# 也可以直接指定：CONF=/path/to/xxx.conf ./scripts/init_repos.sh
+
+# ---------- 模型平台 key（填几个启用几个，可 0~3 个）----------
+BIGMODEL_KEY=
+DEEPSEEK_KEY=
+QWEN_KEY=
+
+# ---------- 智谱 key：image-gen / video-gen 用 ----------
+# 留空 = 这两个服务照常注册但 enable: false（工具不加载，生图/图生视频用不了）
+ZHIPU_KEY=
+
+# ---------- 登录（默认 admin/admin，记得改）----------
+AUTH_USER=admin
+AUTH_PASSWORD=admin
+
+# ---------- 对外地址与端口 ----------
+PUBLIC_IP=                # 留空则自动探测（curl ifconfig.me / api.ipify.org）；探测不到则图生视频不可用
+AGENT_PORT=8090
