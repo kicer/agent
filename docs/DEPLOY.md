@@ -9,9 +9,32 @@
 | `./tasks/` | `/workspace/tasks` | 任务目录：AI 的文件工作区（与 executor 必须同路径） |
 | `./data/` | `/workspace/data` | 数据目录 + SQLite（`.agent.db`） |
 | `./skills/` | `/workspace/skills` | 技能目录：所有任务/会话共享 |
-| `./.env` | — | 编排变量（`EXECUTOR_TOKEN` / `AGENT_PORT`），已被 .gitignore 忽略 |
+| `./.env` | — | 编排变量（`EXECUTOR_TOKEN` / `AGENT_PORT` / `AUTH_SECRET`），已被 .gitignore 忽略 |
+| `./scripts/init.sh` | — | 一键生成上面两个文件并起服务（见第 0 节） |
 
-> 本仓库不含 `config.yml` 与 `.env`，需自行创建（见第 2 步）。
+> `config.yml` 与 `.env` 推荐交给 `scripts/init.sh` 生成（见第 0 节）；不想用脚本的话也可以自己建（见第 2 节）。
+
+## 0. 一键生成配置并启动（推荐）
+
+`scripts/init.sh` 读取一组环境变量（通常由服务器上的 `/root/init_repos.sh` 从 `/root/deploy.conf` 传过来），
+生成 `.env` 与 `config.yml`，然后按顺序起 agent → mcp：
+
+```bash
+# 直接跑（或在仓库根：./scripts/init.sh）
+BIGMODEL_KEY=xxx DEEPSEEK_KEY=yyy PUBLIC_IP=1.2.3.4 ./scripts/init.sh
+```
+
+| 输入变量 | 说明 |
+|---|---|
+| `BIGMODEL_KEY` / `DEEPSEEK_KEY` / `QWEN_KEY` | 模型平台 key，**填几个启用几个**（可 0~3 个） |
+| `ZHIPU_KEY` | image-gen / video-gen 用；**留空则这两个服务 `enable: false`**（工具不加载） |
+| `AUTH_USER` / `AUTH_PASSWORD` | 登录账号（默认 `admin`/`admin`，记得改） |
+| `PUBLIC_IP` / `AGENT_PORT` | 对外地址与端口（`PUBLIC_IP` 空则尝试自动探测） |
+| `MCP_DIR` | mcp 仓库位置（默认 `../mcp`） |
+
+自动处理、不用配：`AUTH_SECRET` / `EXECUTOR_TOKEN`（生成一次后存进 `.env`，**重跑保持不变**，所以不会掉登录态）、`LOG_LEVEL`（脚本顶部默认 `debug`，日常改 `info`）。
+
+⚠️ **`config.yml` 是生成物，不要再手改**：每次生成都会把旧的备份成 `config.yml.bak.<时间戳>`。要改配置请改上游的 `deploy.conf` 后重跑，或者不用脚本、按第 2 节手动维护。
 
 ## 1. 网络（自动创建，无需手动）
 
@@ -32,7 +55,9 @@ cd ../mcp && docker compose up -d --build
 > 拆的时候反着来：先 `down` mcp，再 `down` agent。否则 agent 侧会报
 > `network my-app-network has active endpoints`（容器照删、网络留下，重新 up 就恢复，不损数据）。
 
-## 2. 准备配置
+## 2. 准备配置（手动方式）
+
+不用 `scripts/init.sh` 时，自己建这两个文件：
 
 ```bash
 cp app/config.example.yml config.yml

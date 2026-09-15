@@ -24,6 +24,8 @@ agent/
 │   ├── Dockerfile                 node:20-slim，npm install only prod
 │   ├── package.json               依赖：express / better-sqlite3 / multer / sharp / yaml / minimatch
 │   ├── config.example.yml         配置模板（被复制为顶层 config.yml）
+│   ├── scripts/
+│   │   └── init.sh                部署入口：生成 .env + config.yml → 起 agent/mcp 服务
 │   ├── server/                    后端代码
 │   │   ├── server.js              入口：装配 cfg / db / bus / engine / 路由
 │   │   ├── config.js              YAML 配置加载、迁移、读写、校验、脱敏还原
