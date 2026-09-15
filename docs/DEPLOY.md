@@ -114,6 +114,10 @@ docker compose logs -f agent-core    # 看到 "Agent server listening on 8080" �
 首次启动会先跑一次 `agent-executor-init`（把技能依赖落到宿主机 `./skills`），跑完自动退出，
 属正常现象。
 
+> 镜像构建默认走腾讯云镜像源（apt / pip / npm），否则国内机器上 `apt-get update` 可以卡十几分钟。
+> 境外构建或想换源：`docker compose build --build-arg DEBIAN_MIRROR=deb.debian.org agent-executor`
+> （mcp 仓库同理，参数名是 `NPM_REGISTRY`）。腾讯云 CVM 上还可换成内网镜像 `mirrors.tencentyun.com`。
+
 ## 4. 访问
 
 浏览器打开 **`http://<服务器IP>:8090`**（端口可用 `.env` 里的 `AGENT_PORT` 改）。

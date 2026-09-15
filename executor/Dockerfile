@@ -5,6 +5,23 @@
 # =============================================================================
 FROM node:20-slim AS base
 
+# 国内构建慢：apt/pip 默认源在国外，apt-get update 能卡十几分钟。默认换成腾讯云镜像。
+# 境外构建或想换源：docker compose build --build-arg DEBIAN_MIRROR=deb.debian.org
+# 腾讯云 CVM 上想更快可用内网镜像 mirrors.tencentyun.com（仅腾讯云内网可达）。
+ARG DEBIAN_MIRROR=mirrors.cloud.tencent.com
+ARG PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple
+
+# PIP_INDEX_URL 烘进镜像 env：运行期（如 agent-executor-init 的 pip --target 装技能依赖）也走镜像，不再卡 pypi
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 换 apt 源：bookworm 可能是 /etc/apt/sources.list，也可能是 deb822 的 /etc/apt/sources.list.d/*.sources，
+# 直接用 grep 扫一遍、只替换域名，两种格式都盖住（路径 /debian、/debian-security 保持不变）。
+RUN set -eux; \
+    files="$(grep -rl 'deb.debian.org' /etc/apt/ 2>/dev/null || true)"; \
+    if [ -n "$files" ]; then sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" $files; fi; \
+    grep -rn "${DEBIAN_MIRROR}" /etc/apt/ | head -5 || true
+
 # MPLBACKEND=Agg：让 matplotlib 使用非交互式后端，避免缺少显示设备报错。
 # PYTHONUNBUFFERED=1：实时输出日志。
 # PYTHONPYCACHEPREFIX=/tmp/pycache：把 __pycache__ 统一甩到会话私有 tmpfs，绝不回写 skills（已 :ro）。
@@ -15,6 +32,7 @@ ENV MPLBACKEND=Agg \
     PYTHONPYCACHEPREFIX=/tmp/pycache \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
+    DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai
 
 # 常用命令行工具：Agent 的 terminal 工具经常用到
