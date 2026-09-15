@@ -4267,8 +4267,10 @@
     const off = s.enable === false;
     const stateHtml = off ? '<span class="model-card-state off">已禁用</span>' : '<span class="model-card-state idle">启用</span>';
     const entries = Object.entries(s.headers || {});
+    // header 值等同密码对待:展示时脱敏为 * ,不泄露原文(编辑弹窗内仍用真实值)
+    const maskVal = (v) => { const str = String(v == null ? '' : v); return str ? '*'.repeat(str.length) : '--'; };
     const headersHtml = entries.length
-      ? entries.map(([k, v]) => '<div class="cfg-kv"><label>' + esc(k) + '</label><b>' + esc(v) + '</b></div>').join('')
+      ? entries.map(([k, v]) => '<div class="cfg-kv"><label>' + esc(k) + '</label><b>' + maskVal(v) + '</b></div>').join('')
       : '<div class="cfg-kv"><label>(无)</label><b>--</b></div>';
     return '<div class="model-card" onclick="mcpUI.edit(' + pi + ')">' +
       '<div class="model-card-head">' +
