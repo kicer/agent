@@ -248,7 +248,7 @@ info "配置来源: $CONFIG_SOURCE"
 info "平台: ${enabled_plats[*]:-无}；智谱 MCP: $([ -n "$ZHIPU_KEY" ] && echo 启用 || echo 未配置)"
 
 # ============================================================
-# 3. 起服务（顺序：agent 先起，它创建 my-app-network）
+# 3. 起服务（顺序：agent 先起，它创建 agent-mcp-net）
 # ============================================================
 if [ "$UP" != "1" ]; then
     log "UP=$UP：只生成配置，不起服务"
@@ -261,7 +261,7 @@ else
         ( cd "$MCP_DIR" && docker compose up -d --build )
 
         # MCP 工具只在 agent-core【启动时】发现一次（app/server/mcp.js 的 init，不重试），
-        # 而 agent 必须先起（它创建 my-app-network），所以这里重启一次让 agent 发现已就绪的 mcp 服务。
+        # 而 agent 必须先起（它创建 agent-mcp-net），所以这里重启一次让 agent 发现已就绪的 mcp 服务。
         info "重启 agent-core 以发现 MCP 工具……"
         docker compose restart agent-core >/dev/null
         sleep 3

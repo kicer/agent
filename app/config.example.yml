@@ -129,7 +129,7 @@ model_hold:
 # enable 选填、默认 true；设为 false 时启动不加载该服务的工具（配置保留，改回 true 重启即恢复）。
 # 服务不可用时只在启动日志告警，不影响其他服务与内置工具。
 #
-# 无域名部署：agent-core 与 mcp 仓库的容器共用 my-app-network，这里直接写【容器名:容器内端口】，
+# 无域名部署：agent-core 与 mcp 仓库的容器共用 agent-mcp-net，这里直接写【容器名:容器内端口】，
 # 别写宿主机映射端口。日后改回域名/反代时，换成对应 https 地址即可。
 mcp_servers:
   - name: web-search                                   # 选填，缺省取主机名首段

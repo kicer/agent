@@ -93,7 +93,7 @@ graph LR
     Browser((移动端浏览器<br/>WebView/APK))
     Core[agent-core<br/>宿主机 8090]
     Exec[agent-executor<br/>:9000 内网]
-    MCP[MCP 服务<br/>my-app-network]
+    MCP[MCP 服务<br/>agent-mcp-net]
     Zhipu[智谱服务器]
     LLM[LLM 池<br/>OpenAI 兼容]
     Tasks[./tasks<br/>任务目录 bind mount]
@@ -114,14 +114,14 @@ graph LR
     Core --> DB
 ```
 
-所有容器都在同一个 `my-app-network` 上（core 与 executor 同时靠它访问 MCP）；外网只暴露 Core
+所有容器都在同一个 `agent-mcp-net` 上（core 与 executor 同时靠它访问 MCP）；外网只暴露 Core
 （宿主机端口映射）。注意其中一条**反向**的入站链路：外部服务（如智谱）来拉文件时，走的是 Core 的
 `GET /p/<id>`（匿名，22 字符随机 ID + 服务端过期，见 `routes/public-files.js`）；这个 id 由内网
 签发入口 `GET /public-link` 现签，所以链接里既没有会话名也没有文件名。
 
 **关键约束**（改 compose 时务必保持）：
 
-- 全部容器同一个网络 `my-app-network`（由本仓库 compose 创建，mcp 侧 external 加入）——core 与 executor 都靠它按容器名访问 MCP 服务（executor 还要靠它 curl core 的签发入口）。
+- 全部容器同一个网络 `agent-mcp-net`（由本仓库 compose 创建，mcp 侧 external 加入）——core 与 executor 都靠它按容器名访问 MCP 服务（executor 还要靠它 curl core 的签发入口）。
 - `agent-core` 与 `agent-executor` 须把**同一份宿主机 `./tasks`、`./skills`**挂到相同的容器路径（默认 `/workspace/tasks`、`/workspace/skills`）。这是文件工具在 Core 本地直接读、命令在远端写，二者能"看到"彼此产物的根本约定。
 - **两条公网文件路径分工别搞混**：浏览器原生下载走 `download-token.js` 的签名链接（前端用 `download-token` 接口换 URL，`auth.js` 的 `isSignedDownload` 放行 `?t=`）；外部服务取文件走 `GET /p/<id>` 短 ID。前者需要在 URL 末段带文件名（给安卓下载器猜名），后者刻意不带文件名/会话名。
 - **`routes/public-link.js` 只挂在【不映射宿主机】的内网端口上**（`PUBLIC_LINK_PORT`，默认 8081）：它不需要凭据（沙箱里的 AI 带不了凭据），所以安全性完全依赖“外部连不上这个端口”。**绝不要**把它挂到对外的 8080 上，也不要 publish 该端口。

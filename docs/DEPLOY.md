@@ -50,7 +50,7 @@ MCP_DIR=/path/to/mcp ./scripts/init.sh
 
 ## 1. 网络（自动创建，无需手动）
 
-`agent-core` 与 `mcp` 仓库的服务共用网络 `my-app-network`：agent 按容器名访问 MCP
+`agent-core` 与 `mcp` 仓库的服务共用网络 `agent-mcp-net`：agent 按容器名访问 MCP
 （如 `http://mcp_web_search:3000/`）。该网络由**本仓库的 compose 创建**（固定名字，不带项目名前缀），
 `mcp` 侧声明为 `external` 直接加入。
 
@@ -65,7 +65,7 @@ cd ../mcp && docker compose up -d --build
 ```
 
 > 拆的时候反着来：先 `down` mcp，再 `down` agent。否则 agent 侧会报
-> `network my-app-network has active endpoints`（容器照删、网络留下，重新 up 就恢复，不损数据）。
+> `network agent-mcp-net has active endpoints`（容器照删、网络留下，重新 up 就恢复，不损数据）。
 
 ## 2. 准备配置（手动方式）
 
@@ -123,7 +123,7 @@ docker compose logs -f agent-core    # 看到 "Agent server listening on 8080" �
 浏览器打开 **`http://<服务器IP>:8090`**（端口可用 `.env` 里的 `AGENT_PORT` 改）。
 登录用第 2 步 `auth.users` 里配的账号。
 
-**对外只需要放行这一个端口**：`agent-executor`（9000）和 mcp 的三个服务都只在 `my-app-network`
+**对外只需要放行这一个端口**：`agent-executor`（9000）和 mcp 的三个服务都只在 `agent-mcp-net`
 内网，没有映射到宿主机（需要从宿主机 curl 调试时，去 mcp 仓库的 `docker-compose.yml` 里临时
 把对应服务的 `ports` 两行取消注释）。
 

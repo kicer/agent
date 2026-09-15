@@ -22,7 +22,7 @@ services:
       # 未设置则 compose 直接报错，避免静默无鉴权。生成：openssl rand -hex 32
       - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - see .env.example}
     networks:
-      - my-app-network
+      - agent-mcp-net
 
   # 技能准备（一次性，跑完退出）：把各技能的“运行期可变”依赖落到宿主 ./skills——
   # requirements.txt → pip --target 共享 deps 目录；install.sh → 技能资产（如字体提取）。
@@ -48,7 +48,7 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - TZ=Asia/Shanghai
     networks:
-      - my-app-network
+      - agent-mcp-net
 
   agent-executor:
     # M' = M + 技能系统层依赖（executor/Dockerfile 的 skills 阶段）。
@@ -117,7 +117,7 @@ services:
       - /run
 
     networks:
-      - my-app-network
+      - agent-mcp-net
 
 networks:
   # 全部服务共用一个网络；由本仓库创建（固定名字，避免被加上 compose 项目名前缀），mcp 侧声明为
@@ -125,6 +125,6 @@ networks:
   #   - core 与 executor 靠它按容器名访问 MCP 服务（如 http://mcp_web_search:3000/）
   #   - executor 靠它 curl core 的内网签发入口（http://agent-core:8081/public-link），
   #     把本地图片换成一个短命的公网链接给外部服务用（不经过公网、不搬字节）
-  my-app-network:
-    name: my-app-network
+  agent-mcp-net:
+    name: agent-mcp-net
     driver: bridge

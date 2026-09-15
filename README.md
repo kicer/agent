@@ -791,17 +791,17 @@ services:
       - PORT=8080
       - AGENT_CONFIG=/app/config.yml
     networks:
-      - my-app-network
+      - agent-mcp-net
 
 networks:
-  my-app-network:
-    name: my-app-network      # 由本仓库创建（固定名字）；mcp 侧 external 加入
+  agent-mcp-net:
+    name: agent-mcp-net      # 由本仓库创建（固定名字）；mcp 侧 external 加入
     driver: bridge
 ```
 
 ### 13.2 对外暴露（IP:端口）
 
-无域名/反代时，compose 直接把容器 8080 映射到宿主机 8090，浏览器访问 `http://<服务器IP>:8090`（端口可用 `.env` 的 `AGENT_PORT` 改）。网络 `my-app-network` 与 `mcp` 仓库的服务共用、由本仓库创建（无需手动 `docker network create`，但因此要**先起 agent 再起 mcp**）：core 与 executor 都靠它按容器名访问 MCP。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），多用户共享同一任务库，不做任务隔离。
+无域名/反代时，compose 直接把容器 8080 映射到宿主机 8090，浏览器访问 `http://<服务器IP>:8090`（端口可用 `.env` 的 `AGENT_PORT` 改）。网络 `agent-mcp-net` 与 `mcp` 仓库的服务共用、由本仓库创建（无需手动 `docker network create`，但因此要**先起 agent 再起 mcp**）：core 与 executor 都靠它按容器名访问 MCP。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），多用户共享同一任务库，不做任务隔离。
 
 **对外只开这一个端口**（executor 与 mcp 服务都不映射宿主机）。其中一条是反向入站：外部服务（如智谱）生成视频前要拉参考图，走的是 core 的匿名短链 `GET /p/<id>`——由 AI 在内网 `curl http://agent-core:8081/public-link?path=…` 现签（签发端口不映射宿主机，所以不需要凭据），见 `docs/DEPLOY.md` 第 4.1 节。
 
