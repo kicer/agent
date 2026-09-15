@@ -3,10 +3,10 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-const crypto = require('crypto');
 const engine = require('../engine');
 const { listTaskFiles } = require('./sessions');
 const { resolveInTask } = require('../tools/executor');
+const downloadToken = require('../download-token');
 const log = require('../log');
 
 const router = express.Router();
@@ -90,22 +90,11 @@ router.get('/:id/files', function (req, res) {
 // 移动端浏览器 fetch+blob 下载会丢失文件名（uuid.bin）；改为短时效签名链接，
 // 前端拿到后 window.location.href 导航下载，走原生下载流程。
 // 密钥随进程启动随机生成，重启后旧 token 自动失效。
-const DOWNLOAD_TOKEN_TTL_MS = 5 * 60 * 1000;
-const downloadTokenSecret = crypto.randomBytes(32).toString('hex');
-
-function signDownloadToken(sessionId, rel, expires) {
-  return crypto.createHmac('sha256', downloadTokenSecret)
-    .update(sessionId + '\n' + rel + '\n' + expires).digest('hex');
-}
-
-function validDownloadToken(sessionId, rel, expires, t) {
-  const exp = Number(expires);
-  if (!t || !Number.isFinite(exp) || exp < Date.now()) return false;
-  const expected = signDownloadToken(sessionId, rel, exp);
-  try {
-    return crypto.timingSafeEqual(Buffer.from(String(t), 'utf8'), Buffer.from(expected, 'utf8'));
-  } catch (_) { return false; }
-}
+// 签名实现（密钥、报文形状、验签）统一在 ../download-token.js：
+// routes/public-link.js 给外部服务签的是同一种链接，两边共用一份形状，避免“签得出、验不过”。
+const DOWNLOAD_TOKEN_TTL_MS = downloadToken.BROWSER_TTL_MS;
+const signDownloadToken = downloadToken.signDownload;
+const validDownloadToken = downloadToken.validDownload;
 
 // 签发临时下载链接（需正常认证；拿到的链接 5 分钟内有效）
 router.get('/:id/files/download-token', function (req, res) {
@@ -353,17 +342,15 @@ function zipNameFor(paths) {
     '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '.zip';
 }
 
+// 打包下载的报文形状与单文件下载不同（整串 paths 一起签），其余共用 ../download-token.js
+function zipPayload(sessionId, pathsRaw, expires) {
+  return sessionId + '\nzip\n' + pathsRaw + '\n' + expires;
+}
 function signZipToken(sessionId, pathsRaw, expires) {
-  return crypto.createHmac('sha256', downloadTokenSecret)
-    .update(sessionId + '\nzip\n' + pathsRaw + '\n' + expires).digest('hex');
+  return downloadToken.signPayload(zipPayload(sessionId, pathsRaw, expires));
 }
 function validZipToken(sessionId, pathsRaw, expires, t) {
-  const exp = Number(expires);
-  if (!t || !Number.isFinite(exp) || exp < Date.now()) return false;
-  const expected = signZipToken(sessionId, pathsRaw, exp);
-  try {
-    return crypto.timingSafeEqual(Buffer.from(String(t), 'utf8'), Buffer.from(expected, 'utf8'));
-  } catch (_) { return false; }
+  return downloadToken.validPayload(zipPayload(sessionId, pathsRaw, expires), expires, t);
 }
 
 // 签发打包下载链接（需正常认证；与单文件下载同一条 token 链路）

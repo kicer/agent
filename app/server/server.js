@@ -31,14 +31,6 @@ app.use(express.json({ limit: '2mb' }));
 // 相比 nginx htpasswd 的 basic auth，cookie 在手机浏览器原生下载时也会自动携带，下载不再失败。
 const auth = createAuth(cfg);
 app.use(auth.router);      // /login、/logout、/api/login 等免认证端点
-
-// MCP 上传文件的公网只读中转（为何需要见 routes/mcp-uploads.js 头注释）。
-// 必须挂在 auth.middleware 之前：智谱服务器来拉图时不会带任何凭据。
-// 未配 MCP_UPLOADS_URL 则不挂（此时 /mcp-uploads/* 不存在）。
-if (process.env.MCP_UPLOADS_URL) {
-  app.use('/mcp-uploads', require('./routes/mcp-uploads').createRouter(process.env.MCP_UPLOADS_URL));
-}
-
 app.use(auth.middleware);  // 其余请求需登录态（cookie 或 Basic 头）
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -90,6 +82,24 @@ app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
 const PORT = process.env.PORT || cfg.port;
 
+// 公网临时链接的【签发】端口：只在容器内监听、**不映射到宿主机**（compose 也不 publish），
+// 所以外部连不上，于是这条接口不需要任何凭据 —— executor 里的 AI 命令可以 curl 它换一条
+// 短命的公网链接（见 routes/public-link.js 头注释）。未配 public_link.base_url 则不启动。
+const PUBLIC_LINK_PORT = Number(process.env.PUBLIC_LINK_PORT) || 8081;
+
+function startPublicLinkServer() {
+  const pl = cfg.public_link || {};
+  if (!pl.base_url) {
+    log.info('startup', '  public_link=未配置（public_link.base_url 为空），不启动签发端口');
+    return;
+  }
+  const plApp = express();
+  plApp.use(require('./routes/public-link'));
+  plApp.listen(PUBLIC_LINK_PORT, () => {
+    log.info('startup', '  public_link=' + pl.base_url + ' (签发端口 :' + PUBLIC_LINK_PORT + ' 仅内网，未映射宿主机)');
+  });
+}
+
 // 启动成功后把模型实际收到的各部分 dump 到文件方便人工核对（data_root 默认 ./data，
 // 宿主机对应 <repo>/data/prompt.txt，已被 gitignore）。包含两部分：
 //  1) system 消息：模板 + 可用技能段落 + 语言指令（进程内恒定，仅技能增删时变）；
@@ -120,6 +130,7 @@ mcp.init(cfg).then(async () => {
   }
   server.listen(PORT, () => {
       log.info('startup', 'Agent server listening on ' + PORT);
+      startPublicLinkServer();
       log.info('startup', '  workspace_root=' + cfg.workspace_root);
       log.info('startup', '  data_root=' + cfg.data_root);
       log.info('startup', '  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));

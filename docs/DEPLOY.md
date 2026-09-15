@@ -51,6 +51,8 @@ workspace_root: /workspace/tasks     # 不能留示例里的 ./data/tasks
 data_root: /workspace/data           # SQLite 与 prompt dump 落在这个挂载卷里
 skills:
   skills_root: /workspace/skills
+public_link:                         # 需要给外部服务公网 URL 时才配（图生视频用）；见第 4.1 节
+  base_url: "http://<服务器IP>:8090"
 auth:                                # 建议启用，否则谁都能访问
   secret: "换一个随机串"
   users:
@@ -84,24 +86,34 @@ docker compose logs -f agent-core    # 看到 "Agent server listening on 8080" �
 内网，没有映射到宿主机（需要从宿主机 curl 调试时，去 mcp 仓库的 `docker-compose.yml` 里临时
 把对应服务的 `ports` 两行取消注释）。
 
-### 4.1 图片中转（只有图生视频会用到）
+### 4.1 公网临时链接（只有“把本地文件交给外部服务”时才用到）
 
-智谱服务器生成视频前要回来拉参考图，它不带 cookie、不带 `Authorization`，必须公网匿名可达。
-而 video_gen 不该为此占一个公网端口（那样它的 `POST /upload` 也会一起暴露），所以由 core 代拉：
+场景：图生视频时，智谱服务器生成视频前要**自己来拉参考图**，它不带 cookie、不带 `Authorization`，
+所以必须有一条公网匿名可达的 URL。做法是复用登录下载那套签名链接（`app/server/download-token.js`）：
+不可猜（HMAC）、会过期、绑会话、进程重启即全部失效。
+
+AI 拿链接的姿势：core 额外在**内网**监听一个**不映射到宿主机**的端口（`PUBLIC_LINK_PORT`，默认 8081），
+上面只有一条签发接口。因为压根没 publish，外部连不上，所以它**不需要任何凭据**：
+
+```bash
+# AI 在 executor 沙箱里执行（路径就是它平时看到的那个绝对路径）
+curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/foo.png"
+# → http://<服务器IP>:8090/api/sessions/<会话>/files/download-name/foo.png?path=foo.png&expires=…&t=…
+#   stdout 就是现成 URL，直接当 image_url 用
+```
 
 ```
-智谱  ──匿名 GET──►  http://<服务器IP>:8090/mcp-uploads/uploads/<随机文件名>
-                          │  core 只转发 GET/HEAD
+智谱  ──匿名 GET──►  /api/sessions/<会话>/files/download-name/…&t=…   （core :8090）
+                          │  验签（会话 + 路径 + 时效）
                           ▼
-                     mcp_video_gen:3001   ← video_gen 的只读监听（那边压根没有 /upload）
+                     ./tasks/<会话>/foo.png    ← 文件仍在原地，零拷贝
 ```
 
-- AI 上传图片走的是**内网** `http://mcp_video_gen:3000/upload`，写路径从不经过公网。
-- core 侧由 `MCP_UPLOADS_URL=http://mcp_video_gen:3001` 开启这条中转（compose 已配好）；
-  留空则 `/mcp-uploads/*` 这条路由不存在。
-- mcp 侧必须把 `PUBLIC_BASE_URL` 设成 `http://<服务器IP>:<AGENT_PORT>/mcp-uploads`，
-  否则返回给智谱的地址不对，图生视频会失败（video_gen 启动日志会打印两个实际生效的地址，便于核对）。
-- 这条路径**匿名可读**：内容不可枚举（文件名是 randomUUID）、24h 后自动删除、只读不能写。
+- 必须在 `config.yml` 配 `public_link.base_url = "http://<服务器IP>:8090"`；不配则不启动签发端口，
+  video_gen 的工具描述里也不会出现那条命令（它会退化成“请运维配 PUBLIC_LINK_URL”）。
+- 链接有效期 `public_link.ttl_ms`，默认 30 分钟；签完尽快用掉。
+- 沙箱外的人要用上这条链接，得同时知道 IP、路径和签名；签名猜不出来，过期即废。
+- 这条路不搬字节：文件始终在它原本的位置，也不需要 video_gen 参与上传/落盘。
 
 ## 5. 没有 HTTPS 的影响（可忽略，仅记录）
 

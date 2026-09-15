@@ -41,6 +41,7 @@ agent/
 │   │   │   ├── definitions.json   内置 15 个工具的 OpenAI function 格式定义
 │   │   │   ├── executor.js        工具执行器（文件类 + terminal + skill 委托）
 │   │   │   └── skills.js          Skill Manager（list/info/run + 依赖安装 + 路径预处理）
+│   │   ├── download-token.js      临时链接签名（浏览器下载 / 公网链接共用一套）
 │   │   ├── routes/
 │   │   │   ├── sessions.js        /api/sessions CRUD + 列表分页
 │   │   │   ├── messages.js        /api/sessions/:id/messages + SSE 流 + stop/release
@@ -48,7 +49,7 @@ agent/
 │   │   │   ├── config.js          /api/config 读写（含 api_key/password 脱敏）
 │   │   │   ├── platforms.js       /api/platforms/balance 余额查询
 │   │   │   ├── skills.js          /api/skills 技能文件管理
-│   │   │   ├── mcp-uploads.js     /mcp-uploads/uploads/* 公网只读中转（智能服务器拉图用）
+│   │   │   ├── public-link.js     GET /public-link 签发公网临时链接（只挂内网端口）
 │   │   │   └── system.js          /api/system/status + /restart 优雅重启
 │   │   ├── templates/
 │   │   │   └── system-prompt.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
@@ -99,8 +100,8 @@ graph LR
     Core -->|POST /chat/completions| LLM
     Core -->|tools/call| MCP
     MCP -->|提交任务| Zhipu
-    Zhipu -->|匿名 GET 拉参考图| Core
-    Core -->|只读转发 GET /uploads/*| MCP
+    Exec -->|curl /public-link 现签链接| Core
+    Zhipu -->|匿名 GET 签名链接| Core
     Core <-->|读写| Tasks
     Exec <-->|读写| Tasks
     Core <-->|技能 + deps| Skills
@@ -109,14 +110,16 @@ graph LR
 ```
 
 所有容器都在同一个 `my-app-network` 上（core 与 executor 同时靠它访问 MCP）；外网只暴露 Core
-（宿主机端口映射）。注意其中一条**反向**的入站链路：智谱服务器来拉参考图时，走的是 Core 的
-`/mcp-uploads/uploads/*` 只读中转（详见下面约束）。
+（宿主机端口映射）。注意其中一条**反向**的入站链路：外部服务（如智谱）来拉文件时，走的是 Core 的
+签名下载链接 `/api/sessions/:id/files/download-name/*?t=…`（链接由内网签发入口 `GET /public-link` 现签）。
 
 **关键约束**（改 compose 时务必保持）：
 
-- 全部容器同一个网络 `my-app-network`（由本仓库 compose 创建，mcp 侧 external 加入）——core 靠它访问 MCP 服务，executor 靠它把本地图片上传给 video_gen。
+- 全部容器同一个网络 `my-app-network`（由本仓库 compose 创建，mcp 侧 external 加入）——core 与 executor 都靠它按容器名访问 MCP 服务（executor 还要靠它 curl core 的签发入口）。
 - `agent-core` 与 `agent-executor` 须把**同一份宿主机 `./tasks`、`./skills`**挂到相同的容器路径（默认 `/workspace/tasks`、`/workspace/skills`）。这是文件工具在 Core 本地直接读、命令在远端写，二者能"看到"彼此产物的根本约定。
-- **`/mcp-uploads/*` 是 Core 上唯一匿名可读的路由**（`routes/mcp-uploads.js`），只为让智谱服务器拉到参考图而存在：必须挂在 `auth.middleware` **之前**，且只转发 GET/HEAD 到 video_gen 的**只读监听**（不转写路径）。该路由本身就是“随机文件名 + TTL”的能力链接，往里加任何敏感/可枚举的东西都是错。未配 `MCP_UPLOADS_URL` 则不挂该路由。
+- **临时链接签名只有一份**（`download-token.js`）：浏览器下载链接与 `routes/public-link.js` 给外部服务签的公网链接**必须是同一套**（密钥、报文形状、验签都共用）。两边写歪的后果是“签得出来、验不过去”，所以任何一边都不得自己拼 HMAC。
+- **`routes/public-link.js` 只挂在【不映射宿主机】的内网端口上**（`PUBLIC_LINK_PORT`，默认 8081）：它不需要凭据（沙箱里的 AI 带不了凭据），所以安全性完全依赖“外部连不上这个端口”。**绝不要**把它挂到对外的 8080 上，也不要 publish 该端口。
+- 该路由是 Core 上唯一“匿名可写入口”性质的东西（它能给任意**已知会话**的文件签发链接），所以路径必须经 `workspace_root` 前缀校验 + 会话表校验 + realpath 复核（挡 `ln -s` 外泄）；未配 `public_link.base_url` 则不启动签发端口。
 - nginx-proxy 前置时**必须 `proxy_buffering off`**，否则 SSE 流被缓冲。详见 `docs/DEPLOY.md`。
 - Core 通过环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN` 注入 executor 端点（也可用 `config.yml` 的 `executor` 段覆盖）。**token 从 `.env` 读取**（compose 变量替换 `${EXECUTOR_TOKEN:?...}`，未设置直接报错，杜绝静默无鉴权）；`.env` 已 gitignore，模板见 `.env.example`，生成：`openssl rand -hex 32`。
 - Executor **拒绝来自容器自身（回环/本机网卡）的 `/exec`**：隔离只 unshare mount+pid，命令与 executor 同 net ns，能打到 `127.0.0.1:9000`；据此即使 token 泄漏也无法在会话内调用 `/exec` 越权读他人会话（core 在另一容器，不受影响）。本机集成测试用 `EXECUTOR_ALLOW_LOCAL_ORIGIN=1` 放行，生产不得设置。

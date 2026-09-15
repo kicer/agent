@@ -43,6 +43,10 @@ const DEFAULTS = {
   // MCP 服务列表：每项 {name?, url, headers?, enable?（默认 true，false 时启动不加载）}；启动时发现其工具并追加到内置工具之后。
   // 注意与内置工具（definitions.json）严格分离：这里只配外部 MCP 服务。
   mcp_servers: [],
+  // 公网临时链接：base_url 非空时，core 额外在内网监听一个**不映射宿主机**的端口（PUBLIC_LINK_PORT，
+  // 默认 8081），上面只挂 GET /public-link：沙箱里的 AI 命令 curl 它，换一条短命的公网下载链接
+  // （给智谱那类"自己来拉文件"的外部服务用）。base_url = 本服务的对外地址（如 http://1.2.3.4:8090）。
+  public_link: { base_url: '', ttl_ms: 1800000 },
 };
 
 function deepMerge(base, extra) {
@@ -236,7 +240,23 @@ function parseAndValidate(rawText, configPath) {
     s.headers = headers;
   }
 
+  normalizePublicLink(cfg);
+
   cfg.config_path = configPath || '';
+  return cfg;
+}
+
+// 公网临时链接（public_link）规范化：base_url 去尾斜杠；ttl_ms 夹在 [1min, 24h]——
+// 公网链接宁可短不可长（“永久公开”正是这套机制要避免的东西）。
+function normalizePublicLink(cfg) {
+  const pl = cfg.public_link || {};
+  cfg.public_link = {
+    base_url: String(pl.base_url || '').trim().replace(/\/+$/, ''),
+    ttl_ms: Math.min(Math.max(Number(pl.ttl_ms) || 1800000, 60 * 1000), 24 * 3600 * 1000),
+  };
+  if (cfg.public_link.base_url && !/^https?:\/\//i.test(cfg.public_link.base_url)) {
+    log.warn('config', 'public_link.base_url 看起来不是 http(s) 地址：' + cfg.public_link.base_url);
+  }
   return cfg;
 }
 

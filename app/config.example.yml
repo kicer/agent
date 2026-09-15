@@ -56,6 +56,16 @@ data_root: "./data"
 #   url: "http://agent-executor:9000"
 #   token: "change-me"   # 选填；executor 侧配同值才校验
 
+# 公网临时链接（给"自己来拉文件"的外部服务用：例如智谱视频生成前要下载参考图）。
+# 配了 base_url 后，core 会额外在**内网**监听一个不映射宿主机的端口（env PUBLIC_LINK_PORT，默认 8081），
+# 上面只挂一条 GET /public-link?path=<文件的绝对路径>；沙箱里的 AI 命令 curl 它，即可换回一条
+# 短命的公网下载链接（复用登录下载那套签名：不可猜 / 会过期 / 绑会话 / 重启即全部失效）。
+# base_url 填本服务的对外地址（就是浏览器访问的 http://<服务器IP>:<AGENT_PORT>），只用于拼绝对地址；
+# 留空 = 该功能整体关闭（对应 MCP 服务里需要公网 URL 的那部分就用不了）。
+public_link:
+  base_url: ""            # 例："http://1.2.3.4:8090"
+  ttl_ms: 1800000         # 选填：链接有效期，默认 30 分钟（代码里夹在 1 分钟 ~ 24 小时）
+
 # 日志等级（改后重启生效）：debug < info < warn < error < none，只输出 ≥ 该等级的日志；none=全部静默。
 # info（默认）=关键动作概述；debug 另加用户/AI 消息全文、工具调用参数/结果等排查细节。
 log_level: info
