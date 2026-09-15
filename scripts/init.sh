@@ -258,6 +258,14 @@ else
     if [ -d "$MCP_DIR" ]; then
         log "启动 mcp（$MCP_DIR）"
         ( cd "$MCP_DIR" && docker compose up -d --build )
+
+        # MCP 工具只在 agent-core【启动时】发现一次（app/server/mcp.js 的 init，不重试），
+        # 而 agent 必须先起（它创建 my-app-network），所以这里重启一次让 agent 发现已就绪的 mcp 服务。
+        info "重启 agent-core 以发现 MCP 工具……"
+        docker compose restart agent-core >/dev/null
+        sleep 3
+        info "本次 MCP 工具发现结果："
+        docker compose logs --tail=80 agent-core | grep -E '\[mcp\]|\[startup\].*public_link' || true
     else
         warn "没找到 mcp 仓库（$MCP_DIR），跳过。可用 MCP_DIR=<路径> 指定。"
     fi
