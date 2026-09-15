@@ -156,6 +156,8 @@ curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/_cgi-
 
 - 必须在 `config.yml` 配 `public_link.base_url = "http://<服务器IP>:8090"`；不配则不启动签发端口，
   video_gen 的工具描述里也不会出现那条命令（它会退化成“请运维配 PUBLIC_LINK_URL”）。
+  例外：容器 env 里配了 `VIRTUAL_HOST`（nginx-proxy 域名 + HTTPS 那套）时，前缀自动用 `https://<域名>`，
+  不用改 `config.yml`（改也盖不住它）。
 - 链接有效期 `public_link.ttl_ms`，默认 30 分钟；签完尽快用掉。
 - 沙箱外的人要用上这条链接，得拿到那个 22 字符随机 ID（猜不出来，也不可能枚举），且过期即废。
 - 这条路不搬字节：文件始终在它原本的位置，也不需要 video_gen 参与上传/落盘。

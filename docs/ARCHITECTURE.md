@@ -125,7 +125,7 @@ graph LR
 - `agent-core` 与 `agent-executor` 须把**同一份宿主机 `./tasks`、`./skills`**挂到相同的容器路径（默认 `/workspace/tasks`、`/workspace/skills`）。这是文件工具在 Core 本地直接读、命令在远端写，二者能"看到"彼此产物的根本约定。
 - **两条公网文件路径分工别搞混**：浏览器原生下载走 `download-token.js` 的签名链接（前端用 `download-token` 接口换 URL，`auth.js` 的 `isSignedDownload` 放行 `?t=`）；外部服务取文件走 `GET /p/<id>` 短 ID。前者需要在 URL 末段带文件名（给安卓下载器猜名），后者刻意不带文件名/会话名。
 - **`routes/public-link.js` 只挂在【不映射宿主机】的内网端口上**（`PUBLIC_LINK_PORT`，默认 8081）：它不需要凭据（沙箱里的 AI 带不了凭据），所以安全性完全依赖“外部连不上这个端口”。**绝不要**把它挂到对外的 8090 上，也不要 publish 该端口。
-- `GET /p/<id>` 是 Core 上唯一的匿名读取入口：安全性 = 22 字符随机 ID + 服务端过期（`public-files.js` 的内存表）。它**必须挂在 `auth.middleware` 之前**，未命中/过期一律 404。签发侧仍要做路径校验（`workspace_root` 前缀 + 会话表 + realpath 复核，挡 `ln -s` 外泄）；未配 `public_link.base_url` 则不启动签发端口。
+- `GET /p/<id>` 是 Core 上唯一的匿名读取入口：安全性 = 22 字符随机 ID + 服务端过期（`public-files.js` 的内存表）。它**必须挂在 `auth.middleware` 之前**，未命中/过期一律 404。签发侧仍要做路径校验（`workspace_root` 前缀 + 会话表 + realpath 复核，挡 `ln -s` 外泄）；未配 `public_link.base_url`（且容器 env 没给 `VIRTUAL_HOST`）则不启动签发端口：配了 `VIRTUAL_HOST`（nginx-proxy 域名 + HTTPS）时，前缀自动用 `https://<第一个域名>`，env 优先于 config.yml。
 - nginx-proxy 前置时**必须 `proxy_buffering off`**，否则 SSE 流被缓冲。详见 `docs/DEPLOY.md`。
 - Core 通过环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN` 注入 executor 端点（也可用 `config.yml` 的 `executor` 段覆盖）。**token 从 `.env` 读取**（compose 变量替换 `${EXECUTOR_TOKEN:?...}`，未设置直接报错，杜绝静默无鉴权）；`.env` 已 gitignore，模板见 `.env.example`，生成：`openssl rand -hex 32`。
 - Executor **拒绝来自容器自身（回环/本机网卡）的 `/exec`**：隔离只 unshare mount+pid，命令与 executor 同 net ns，能打到 `127.0.0.1:9000`；据此即使 token 泄漏也无法在会话内调用 `/exec` 越权读他人会话（core 在另一容器，不受影响）。本机集成测试用 `EXECUTOR_ALLOW_LOCAL_ORIGIN=1` 放行，生产不得设置。

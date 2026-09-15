@@ -248,10 +248,20 @@ function parseAndValidate(rawText, configPath) {
 
 // 公网临时链接（public_link）规范化：base_url 去尾斜杠；ttl_ms 夹在 [1min, 24h]——
 // 公网链接宁可短不可长（“永久公开”正是这套机制要避免的东西）。
+//
+// 对外前缀的取值优先级：
+//   1) 容器 env 的 VIRTUAL_HOST 非空 → https://<第一个域名>
+//      （nginx-proxy 的写法，逗号分隔多域名时取第一个）。只要配了域名 + HTTPS 这一层，
+//      返回给外部服务（video_gen 取参考图）的链接就必须走域名，所以 env 优先；
+//      反之 config.yml 里那个 init 脚本生成的 http://<IP>:8090 会把这个开关盖住。
+//      协议写死 https：前置了 nginx-proxy 一定是 HTTPS（证书由 acme-companion 签）。
+//   2) 否则用 config.yml 的 public_link.base_url（纯 IP:端口部署，init 脚本写 http://<IP>:8090）。
 function normalizePublicLink(cfg) {
   const pl = cfg.public_link || {};
+  const vhost = String(process.env.VIRTUAL_HOST || '').split(',')[0].trim();
+  const baseUrl = vhost ? 'https://' + vhost : pl.base_url;
   cfg.public_link = {
-    base_url: String(pl.base_url || '').trim().replace(/\/+$/, ''),
+    base_url: String(baseUrl || '').trim().replace(/\/+$/, ''),
     ttl_ms: Math.min(Math.max(Number(pl.ttl_ms) || 1800000, 60 * 1000), 24 * 3600 * 1000),
   };
   if (cfg.public_link.base_url && !/^https?:\/\//i.test(cfg.public_link.base_url)) {
