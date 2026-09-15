@@ -22,8 +22,9 @@ const DEFAULT_WATERMARK_ENABLED = true; // 平台政策默认 true
 // ===== 本地图片怎么拿到公网 URL =====
 // 本服务不搬字节：本地文件 -> 公网 URL 这件事由 agent（agent-core）侧完成：
 //   agent-core 在【内网】端口上提供签发入口（GET /public-link?path=<绝对路径>），
-//   沙箱里的 AI 命令 curl 它，换回一条短命的签名下载链接（复用登录下载那套：不可猜/会过期/绑会话）。
-// 这里只把那条命令拼进 tool description 告诉 AI；agent 侧的具体实现见其 routes/public-link.js。
+//   沙箱里的 AI 命令 curl 它，换回一个约 50 字符的短链（http://<IP>:8090/p/<22 字符随机 ID>，
+//   不可猜 / 会过期 / 不带文件名与签名 —— 因为这个 URL 会进会话历史每轮重发）。
+// 这里只把那条命令拼进 tool description 告诉 AI；agent 侧实现见其 routes/public-link.js。
 function resolvePublicLinkUrl() {
   return String(process.env.PUBLIC_LINK_URL || "").trim().replace(/\/+$/, "");
 }

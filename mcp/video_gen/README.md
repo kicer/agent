@@ -78,10 +78,13 @@ docker exec mcp_video_gen node -e "fetch('http://localhost:3000/health').then(r=
 # AI 在 agent 的 executor 沙箱里执行；路径就是它平时看到的那个绝对路径
 curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/foo.png"
 # stdout 就是现成 URL（纯文本，不需要解析 JSON）：
-# http://<服务器IP>:8090/api/sessions/<会话>/files/download-name/foo.png?path=foo.png&expires=…&t=…
+# http://124.221.199.237:8090/p/9fQ2mZ7xK4tR1vBn
 ```
 
-- 那条链接是 agent 的**签名下载链接**：不可猜（HMAC）、会过期（默认 30 分钟）、绑会话、agent 重启即全部失效。
+- 那条链接是不透明短 ID：22 字符随机、纯 ASCII、不带文件名/会话名/签名，约 50 字符
+  （签完由 agent 的 `public_files` 内存表记住“哪个文件 + 何时过期”）。刻意做短是因为它会被模型
+  抄进 `image_url` 参数、并永久留在会话历史里每轮重发。
+- 不可猜、会过期（默认 30 分钟）、agent 重启即全失效。
 - `8081` 是 agent 侧的**内网**签发端口（`PUBLIC_LINK_PORT`），**不映射到宿主机**，所以接它不需要任何凭据；
   地址由 env `PUBLIC_LINK_URL` 告诉本服务（compose 已默认指向 `http://agent-core:8081/public-link`）。
 - `PUBLIC_LINK_URL` 没配时，工具描述里不会出现这条命令，而是提示“请运维配置”。
@@ -294,8 +297,8 @@ package.json        # @modelcontextprotocol/sdk + express + multer
     - `model / quality / fps / watermark_enabled` 全部由 HTTP header 注入，避免 AI 误传或被诱导调高价档
 - **异步语义暴露给 AI**：服务端不做轮询，`video_gen` 只提交、`query_video` 只查一次。AI 自主决定节奏
 - **服务端自动 `request_id`**：每次提交服务端生成一个 UUID 作为智谱 `request_id`，便于日志关联，但不暴露给 AI
-- **不搬字节**：本地文件 -> 公网 URL 完全由 agent 侧完成（`GET /public-link` 现签一条签名下载链接），本服务只把命令拼进工具描述；那只所以能不给本体加任何写入口、不落盘、不需要额外端口
-- **链接短命**：签名链接默认 30 分钟过期、绑会话、agent 重启即全失效；`PUBLIC_LINK_URL` 未配时工具描述退化为“请运维配置”
+- **不搬字节**：本地文件 -> 公网 URL 完全由 agent 侧完成（`GET /public-link` 现签一个 22 字符随机短 ID），本服务只把命令拼进工具描述；所以能给本体不加任何写入口、不落盘、不需要额外端口
+- **链接短命且极短**：默认 30 分钟过期、agent 重启即全失效；`PUBLIC_LINK_URL` 未配时工具描述退化为“请运维配置”
 
 ### 默认模型
 
@@ -332,7 +335,7 @@ A: 可以。`/async-result/{id}` 是幂等的读接口，并发无副作用。
 A: 不需要。Model header 在每次 `tools/call` 都从当前请求读取。
 
 **Q: 上传的图片多久过期？**
-A: 本服务不存图，不存在“上传的图片”：要用的图在 agent 的任务目录里，AI 现签一条签名链接给智谱拉。链接按 agent 的 `public_link.ttl_ms`（默认 30 分钟）过期，过期后 URL 变 403。
+A: 本服务不存图，不存在“上传的图片”：要用的图在 agent 的任务目录里，AI 现签一个短 ID 给智谱拉。链接按 agent 的 `public_link.ttl_ms`（默认 30 分钟）过期，过期或 agent 重启后该 URL 变 404。
 
 **Q: `PUBLIC_LINK_URL` 不配会怎样？**
 A: 工具描述里不会出现“怎么把本地文件变成公网 URL”的命令，而是提示让运维配置，AI 就只能用已经是公网 URL 的图片（比如 image_gen 刚生成的图）。配的时候注意：它指向的是 agent 侧的**内网**签发端口（`http://agent-core:8081/public-link`），不是 agent 对外的 8090。

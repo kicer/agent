@@ -50,16 +50,18 @@ AI（agent 的 executor 沙箱里）
       │ curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/foo.png"
       ▼
 agent-core :8081（内网、不映射宿主机 -> 无需凭据）
-      │ 现签一条签名下载链接（HMAC，含会话/路径/过期时间）
+      │ 现签一个不透明短 ID（22 字符随机），内存表记着“哪个会话的哪个文件 + 何时过期”
       ▼
 AI 把拿到的 URL 当 image_url 交给 video_gen:3000/mcp
       │
       ▼
-智谱  ──匿名 GET──►  http://<服务器IP>:8090/api/sessions/<会话>/files/download-name/…&t=…
+智谱  ──匿名 GET──►  http://<服务器IP>:8090/p/9fQ2mZ7xK4tR1vBn
                         那个文件始终躺在 agent 的任务目录里，零拷贝
 ```
 
-- 链接：不可猜（HMAC）、会过期（默认 30 分钟）、绑会话、agent 重启即全部失效。
+- 链接：`/p/<22 字符随机 ID>`，约 50 字符、纯 ASCII（不带文件名/会话名/签名）——因为这条 URL 会被模型
+  抄进工具参数、并永久留在会话历史里每轮重发，越短越安全也越省 token。
+- 过期：agent 侧 `public_link.ttl_ms`（默认 30 分钟）；agent 重启或过期后该 ID 立即失效（内存表）。
 - 前提：agent 侧 `config.yml` 配了 `public_link.base_url`（就是那个对外地址），否则签发端口不启动。
 - 唯一公网可达的东西是 agent 的 8090，以及那条**签名**下载路径；mcp 这三家一个端口都不露。
 
@@ -69,7 +71,7 @@ AI 把拿到的 URL 当 image_url 交给 video_gen:3000/mcp
 |---|---|---|
 | `mcp_web_search` | 无 | 服务端无鉴权，**永远不要映射出去**（会被白嫖搜索额度）；agent 走内网访问 |
 | `mcp_image_gen` | 无 | token 由调用方自带，暴露后可被拿去消耗你的智谱额度 |
-| `mcp_video_gen` | 无 | 它需要的公网下载路径由 agent 的签名链接提供，自己不占端口 |
+| `mcp_video_gen` | 无 | 它需要的公网下载路径由 agent 现签的匿名短链（`/p/<id>`）提供，自己不占端口 |
 
 ## 单独调试
 
