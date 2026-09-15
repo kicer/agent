@@ -4,7 +4,7 @@
 
 | 宿主机路径 | 容器内路径 | 说明 |
 |---|---|---|
-| `./docker-compose.yml` | — | 编排（构建 `./app`，把容器 8080 映射到宿主机 8090） |
+| `./docker-compose.yml` | — | 编排（构建 `./app`，把容器 8090 映射到宿主机 8090） |
 | `./config.yml` | `/app/config.yml` | 运行配置（AGENT_CONFIG 指向它；含密钥，已被 .gitignore 忽略） |
 | `./tasks/` | `/workspace/tasks` | 任务目录：AI 的文件工作区（与 executor 必须同路径） |
 | `./data/` | `/workspace/data` | 数据目录 + SQLite（`.agent.db`） |
@@ -108,7 +108,7 @@ mcp_servers:                         # 无域名时按容器名访问（模板�
 ```bash
 # 在仓库顶层（含 docker-compose.yml 的位置）执行
 docker compose up -d --build
-docker compose logs -f agent-core    # 看到 "Agent server listening on 8080" 即成功
+docker compose logs -f agent-core    # 看到 "Agent server listening on 8090" 即成功
 ```
 
 首次启动会先跑一次 `agent-executor-init`（把技能依赖落到宿主机 `./skills`），跑完自动退出，
@@ -172,7 +172,7 @@ HTTP 直连时浏览器不认为这是"安全上下文"，以下能力自动降�
 
 ```
 location / {
-    proxy_pass http://agent-core:8080;   # 或宿主机 IP:8090
+    proxy_pass http://agent-core:8090;   # 或宿主机 IP:8090
     proxy_http_version 1.1;
     proxy_buffering off;                 # SSE 关键
     proxy_read_timeout 3600s;

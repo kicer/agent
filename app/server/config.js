@@ -5,7 +5,7 @@ const YAML = require('yaml');
 const log = require('./log');
 
 const DEFAULTS = {
-  port: 8080,
+  port: 8090,
   // 数据根目录：db、prompt dump 等运行时产物默认放这里（容器内挂 ./data → /workspace/data）。
   data_root: './data',
   workspace_root: './data/tasks',

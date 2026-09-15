@@ -15,7 +15,7 @@ RUN npm config set registry "$NPM_REGISTRY" \
 COPY server ./server
 COPY config.example.yml ./
 
-EXPOSE 8080
+EXPOSE 8090
 ENV AGENT_CONFIG=/app/config.yml
 
 CMD ["node", "server/server.js"]
