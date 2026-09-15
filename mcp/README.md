@@ -10,12 +10,19 @@
 
 ## 部署（无 nginx-proxy，IP:端口直连）
 
-这些服务与 `agent` 仓库的 `agent-core` 共用外部网络 `my-app-network`（agent 按**容器名**访问，
-如 `http://mcp_web_search:3000/`），所以该网络要先创建一次：
+这些服务与 `agent` 仓库的 `agent-core` 共用网络 `my-app-network`（agent 按**容器名**访问，
+如 `http://mcp_web_search:3000/`）。该网络由 **agent 的 compose 创建**，所以全新机器上必须先起一次 agent：
 
 ```bash
-docker network create my-app-network
+# 1) 先起 agent（它会创建 my-app-network；首次还要先备好 config.yml 与 .env）
+cd /root/workspace/tools/agent && docker compose up -d --build
+
+# 2) 再起 mcp
+cd /root/workspace/tools/mcp && docker compose up -d --build
 ```
+
+> mcp 单独在一个没有该网络的机器上先起会报错（`network my-app-network declared as external, but could not be found`），这是预期行为。
+> 拆的时候反着来（先 down mcp 再 down agent）。
 
 `image_gen` / `video_gen` 需要智谱 token，但 token **不由服务端保存**——每个请求从 header 读取
 （agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。所以这里不用配任何密钥，直接起：

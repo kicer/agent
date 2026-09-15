@@ -34,7 +34,7 @@ services:
       - my-app-network
 
 networks:
-  # 与 agent 仓库共用：agent-core 按容器名访问这些服务（如 http://mcp_web_search:3000/）。
-  # 只需创建一次：docker network create my-app-network
+  # 与 agent 仓库共用：网络由 agent 的 compose 创建并命名（所以要先起 agent），
+  # 这里声明为 external 直接加入。agent-core 按容器名访问这些服务，如 http://mcp_web_search:3000/。
   my-app-network:
     external: true
