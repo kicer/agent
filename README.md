@@ -801,7 +801,9 @@ networks:
 
 ### 13.2 对外暴露（IP:端口）
 
-无域名/反代时，compose 直接把容器 8080 映射到宿主机 8090，浏览器访问 `http://<服务器IP>:8090`（端口可用 `.env` 的 `AGENT_PORT` 改）。外部网络 `my-app-network` 与 `mcp` 仓库的服务共用、由本仓库创建（无需手动 `docker network create`，但因此要**先起 agent 再起 mcp**）：agent 按容器名访问 MCP，如 `http://mcp_web_search:3000/`。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），多用户共享同一任务库，不做任务隔离。
+无域名/反代时，compose 直接把容器 8080 映射到宿主机 8090，浏览器访问 `http://<服务器IP>:8090`（端口可用 `.env` 的 `AGENT_PORT` 改）。网络 `my-app-network` 与 `mcp` 仓库的服务共用、由本仓库创建（无需手动 `docker network create`，但因此要**先起 agent 再起 mcp**）：core 与 executor 都靠它按容器名访问 MCP。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），多用户共享同一任务库，不做任务隔离。
+
+**对外只开这一个端口**（executor 与 mcp 服务都不映射宿主机）。其中一条是反向入站：智谱服务器生成视频前要拉参考图，走的是 core 的只读中转 `GET /mcp-uploads/uploads/*`（只转发 GET/HEAD，写路径不经公网），见 `docs/DEPLOY.md` 第 4.1 节。
 
 HTTP 直连时浏览器不认为这是“安全上下文”：PWA/Service Worker 不注册、`navigator.clipboard` 降级（前端已有回退），登录 cookie 无 `Secure` 标志可正常工作。日后若加 HTTPS 反代，**SSE 需关代理缓冲**（`proxy_buffering off`），详见 `docs/DEPLOY.md`。
 

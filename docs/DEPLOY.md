@@ -80,7 +80,28 @@ docker compose logs -f agent-core    # 看到 "Agent server listening on 8080" �
 浏览器打开 **`http://<服务器IP>:8090`**（端口可用 `.env` 里的 `AGENT_PORT` 改）。
 登录用第 2 步 `auth.users` 里配的账号。
 
-对外只需放行这一个端口：`agent-executor`（9000）只在 `agent-internal` 内网，没有映射到宿主机。
+**对外只需要放行这一个端口**：`agent-executor`（9000）和 mcp 的三个服务都只在 `my-app-network`
+内网，没有映射到宿主机（需要从宿主机 curl 调试时，去 mcp 仓库的 `docker-compose.yml` 里临时
+把对应服务的 `ports` 两行取消注释）。
+
+### 4.1 图片中转（只有图生视频会用到）
+
+智谱服务器生成视频前要回来拉参考图，它不带 cookie、不带 `Authorization`，必须公网匿名可达。
+而 video_gen 不该为此占一个公网端口（那样它的 `POST /upload` 也会一起暴露），所以由 core 代拉：
+
+```
+智谱  ──匿名 GET──►  http://<服务器IP>:8090/mcp-uploads/uploads/<随机文件名>
+                          │  core 只转发 GET/HEAD
+                          ▼
+                     mcp_video_gen:3001   ← video_gen 的只读监听（那边压根没有 /upload）
+```
+
+- AI 上传图片走的是**内网** `http://mcp_video_gen:3000/upload`，写路径从不经过公网。
+- core 侧由 `MCP_UPLOADS_URL=http://mcp_video_gen:3001` 开启这条中转（compose 已配好）；
+  留空则 `/mcp-uploads/*` 这条路由不存在。
+- mcp 侧必须把 `PUBLIC_BASE_URL` 设成 `http://<服务器IP>:<AGENT_PORT>/mcp-uploads`，
+  否则返回给智谱的地址不对，图生视频会失败（video_gen 启动日志会打印两个实际生效的地址，便于核对）。
+- 这条路径**匿名可读**：内容不可枚举（文件名是 randomUUID）、24h 后自动删除、只读不能写。
 
 ## 5. 没有 HTTPS 的影响（可忽略，仅记录）
 

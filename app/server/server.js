@@ -31,6 +31,14 @@ app.use(express.json({ limit: '2mb' }));
 // 相比 nginx htpasswd 的 basic auth，cookie 在手机浏览器原生下载时也会自动携带，下载不再失败。
 const auth = createAuth(cfg);
 app.use(auth.router);      // /login、/logout、/api/login 等免认证端点
+
+// MCP 上传文件的公网只读中转（为何需要见 routes/mcp-uploads.js 头注释）。
+// 必须挂在 auth.middleware 之前：智谱服务器来拉图时不会带任何凭据。
+// 未配 MCP_UPLOADS_URL 则不挂（此时 /mcp-uploads/* 不存在）。
+if (process.env.MCP_UPLOADS_URL) {
+  app.use('/mcp-uploads', require('./routes/mcp-uploads').createRouter(process.env.MCP_UPLOADS_URL));
+}
+
 app.use(auth.middleware);  // 其余请求需登录态（cookie 或 Basic 头）
 
 app.use(express.static(path.join(__dirname, 'public')));

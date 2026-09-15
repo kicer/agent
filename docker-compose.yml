@@ -21,9 +21,11 @@ services:
       # 调用鉴权 token：两侧同一值。从 .env 读取（已 gitignore），不再硬编码进仓库；
       # 未设置则 compose 直接报错，避免静默无鉴权。生成：openssl rand -hex 32
       - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - see .env.example}
+      # MCP 上传文件的公网只读中转目标（video_gen 的【只读监听】，容器内 3001）。
+      # 智谱拉图→core→此地址；只转 GET/HEAD，写路径（POST /upload）不经公网。
+      - MCP_UPLOADS_URL=http://mcp_video_gen:3001
     networks:
       - my-app-network
-      - agent-internal
 
   # 技能准备（一次性，跑完退出）：把各技能的“运行期可变”依赖落到宿主 ./skills——
   # requirements.txt → pip --target 共享 deps 目录；install.sh → 技能资产（如字体提取）。
@@ -49,7 +51,7 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - TZ=Asia/Shanghai
     networks:
-      - agent-internal
+      - my-app-network
 
   agent-executor:
     # M' = M + 技能系统层依赖（executor/Dockerfile 的 skills 阶段）。
@@ -118,14 +120,13 @@ services:
       - /run
 
     networks:
-      - agent-internal
+      - my-app-network
 
 networks:
-  # 与 mcp 仓库共用：agent-core 按容器名访问 MCP 服务（如 http://mcp_web_search:3000/）。
-  # 网络由本仓库创建（固定名字，避免被加上 compose 项目名前缀）；mcp 侧声明为 external 直接加入，
-  # 所以全新机器上要【先起 agent，再起 mcp】。
+  # 全部服务共用一个网络；由本仓库创建（固定名字，避免被加上 compose 项目名前缀），mcp 侧声明为
+  # external 直接加入 —— 所以全新机器上要【先起 agent，再起 mcp】。
+  #   - core / executor 靠它按容器名访问 MCP 服务（如 http://mcp_web_search:3000/）
+  #   - executor 靠它把本地图片上传给 video_gen（http://mcp_video_gen:3000/upload，不经公网）
   my-app-network:
     name: my-app-network
-    driver: bridge
-  agent-internal:
     driver: bridge
