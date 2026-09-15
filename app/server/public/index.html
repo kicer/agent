@@ -4230,7 +4230,8 @@
   //   · 删 = delete mcp_servers[pi];
   //   · 改 = setIn mcp_servers[pi].(name|url|enable);headers 是普通键值对象,整体 setIn 一次到位。
   // 运行配置(cg.effective.mcp_servers)即文件刚解析后的视图,按 pi 直接定位;重启后才会重新发现工具。
-  let mcpEdit = null; // 工作态:{ idx, headers:[{key, value}] };idx=-1 为新增
+  let mcpEdit = null; // 工作态:{ idx, headers:[{key, value, masked}] };idx=-1 为新增
+  const MCP_HEADER_MASK = '*****'; // 与后端 routes/config.js 的掩码保持一致
   async function setPageMcp(ctx) {
     setTitle('MCP 服务');
     setActions('<button class="icon-btn" title="添加 MCP 服务" onclick="mcpUI.add()">' +
@@ -4267,8 +4268,8 @@
     const off = s.enable === false;
     const stateHtml = off ? '<span class="model-card-state off">已禁用</span>' : '<span class="model-card-state idle">启用</span>';
     const entries = Object.entries(s.headers || {});
-    // header 值等同密码对待:展示时脱敏为 * ,不泄露原文(编辑弹窗内仍用真实值)
-    const maskVal = (v) => { const str = String(v == null ? '' : v); return str ? '*'.repeat(str.length) : '--'; };
+    // header 值等同密码对待:后端 effective 已脱敏为固定短掩码,这里透传展示;若收到未脱敏原文也一律替换,不外显
+    const maskVal = (v) => { const str = String(v == null ? '' : v); if (!str) return '--'; return str.includes('*') ? esc(str) : MCP_HEADER_MASK; };
     const headersHtml = entries.length
       ? entries.map(([k, v]) => '<div class="cfg-kv"><label>' + esc(k) + '</label><b>' + maskVal(v) + '</b></div>').join('')
       : '<div class="cfg-kv"><label>(无)</label><b>--</b></div>';
@@ -4286,10 +4287,11 @@
     const s = add ? {} : (SET.cfgMcp[idx] || {});
     mcpEdit = {
       idx: add ? -1 : Number(idx),
-      // headers 数组:每个 {key, value} 均为编辑行;空行也保留(用户可能想填)
+      // headers 数组:每个 {key, value, masked} 为一条编辑行。已有行 value 置空、masked 存当前脱敏值仅做提示
+      // (同平台 Key 的留空=保持原值);新行 masked=null,必须手输真值。空 key 行保存时丢弃。
       headers: add
-        ? [{ key: '', value: '' }]
-        : Object.entries(s.headers || {}).map(([k, v]) => ({ key: k, value: String(v) })),
+        ? [{ key: '', value: '', masked: null }]
+        : Object.entries(s.headers || {}).map(([k, v]) => ({ key: k, value: '', masked: String(v) })),
     };
     $('mce-title').textContent = add ? '添加 MCP 服务' : '编辑 MCP 服务';
     $('mce-name').value = add ? '' : (s.name || '');
@@ -4302,9 +4304,11 @@
   function closeMcpEditor() { $('mcp-edit-modal').classList.add('hidden'); }
   // header 行:id 由 JS 运行时下标 i 拼接,避免与服务端 path 冲突
   function mcpHeaderRowHtml(r, i) {
+    // 已有行:输入框置空,placeholder 提示当前脱敏值;留空=保持原值,输入新值=替换
+    const ph = r.masked != null ? '当前: ' + r.masked + '（留空保持不变）' : '值';
     return '<div class="mpe-row">' +
       '<input class="mpe-grow" type="text" placeholder="Header 名(如 Authorization)" value="' + esc(r.key) + '" oninput="mcpUI.setHeader(' + i + ',\'key\',this.value)">' +
-      '<input class="mpe-grow" type="text" placeholder="值" value="' + esc(r.value) + '" oninput="mcpUI.setHeader(' + i + ',\'value\',this.value)">' +
+      '<input class="mpe-grow" type="text" placeholder="' + esc(ph) + '" value="' + esc(r.value) + '" oninput="mcpUI.setHeader(' + i + ',\'value\',this.value)">' +
       '<button class="mpe-del" title="删除此 header" onclick="mcpUI.delHeader(' + i + ')">×</button>' +
     '</div>';
   }
@@ -4316,7 +4320,7 @@
   }
   function addMcpHeader() {
     if (!mcpEdit) return;
-    mcpEdit.headers.push({ key: '', value: '' });
+    mcpEdit.headers.push({ key: '', value: '', masked: null });
     renderMcpHeaders();
   }
   function delMcpHeader(i) {
@@ -4357,7 +4361,8 @@
       const newH = {};
       for (const r of mcpEdit.headers) {
         const k = String(r.key || '').trim();
-        const v = String(r.value || '').trim();
+        // 已有行留空 = 保持原值:把脱敏占位原样发回,由后端按键名还原真值(前端不持有真值)
+        const v = String(r.value || '').trim() || (r.masked != null ? r.masked : '');
         if (k) newH[k] = v;
       }
       const curH = cur.headers || {};

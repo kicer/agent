@@ -1,6 +1,6 @@
 // 配置读写 API(2.0 阶段 2):设置页管理 config.yml。
 // 语义:写 = 校验 → 覆盖文件(无热重载);POST /api/system/restart 后生效。
-// 注意:GET 返回的原文已对 api_key / auth password 脱敏,避免明文外显;PUT/validate 时按顺序还原。
+// 注意:GET 返回的原文已对 api_key / auth password / mcp headers 值脱敏,避免明文外显;PUT/validate 时按顺序还原。
 const express = require('express');
 const engine = require('../engine');
 const { loadConfigFromText, readConfigText, applyEditsToText, writeConfigText } = require('../config');
@@ -112,12 +112,83 @@ function restorePasswords(submitted, orig) {
   }).join('\n');
 }
 
-// 生效配置的脱敏副本:api_key/password 在前端仅展示用(模型卡片/Key 下拉标签等),真值不会回写文件。
+// MCP header 值脱敏(等同密码):统一固定短掩码 *****(不泄露长度),原文编辑器与 effective 视图共用。
+// headers 行 = `headers:` 块内比它更深缩进的键值行(如 `      Authorization: Bearer sk-xxx`,引号可选)。
+// 局限:块标量(|/>)续行内容无法逐行识别,与 api_key/password 的行级掩码同一量级的取舍。
+const MCP_HEADER_MASK = '*****';
+const HEADERS_BLOCK_LINE = /^(\s*)headers:\s*(?:#.*)?$/;
+const MCP_HEADER_LINE = /^(\s*(?:-\s+)?[\w.-]+:\s*)(["']?)(.*)\2\s*$/;
+function maskHeaderValue(v) { return v ? MCP_HEADER_MASK : ''; }
+// 遍历 headers 块内的键值行,fn(line, match) 返回替换后的行;块边界按缩进判定。
+function mapMcpHeaderLines(text, fn) {
+  if (!text) return text;
+  let blockIndent = -1;
+  return text.split('\n').map(function (line) {
+    if (!line.trim()) return line; // 空行不改变块归属
+    const indent = (line.match(/^\s*/)[0] || '').length;
+    if (blockIndent >= 0 && indent <= blockIndent) blockIndent = -1; // 缩进回收 → 离开块(本行可能是下一项)
+    if (blockIndent < 0) {
+      const hb = line.match(HEADERS_BLOCK_LINE);
+      if (hb) blockIndent = hb[1].length;
+      return line;
+    }
+    const m = line.match(MCP_HEADER_LINE);
+    return m ? fn(line, m) : line;
+  }).join('\n');
+}
+function maskMcpHeaders(text) {
+  return mapMcpHeaderLines(text, function (line, m) {
+    return m[1] + m[2] + maskHeaderValue(m[3]) + m[2];
+  });
+}
+// 还原:提交原文中值恰为 ***** 的 header 行 = 用户未改动,按出现顺序从原文件取回原值;其他值原样保留。
+function restoreMcpHeaders(submitted, orig) {
+  if (!submitted) return submitted;
+  const origVals = [];
+  mapMcpHeaderLines(orig || '', function (line, m) { origVals.push(m[3]); return line; });
+  let i = 0;
+  return mapMcpHeaderLines(submitted, function (line, m) {
+    if (m[3] !== MCP_HEADER_MASK) return line; // 用户改过,保留手输新值
+    const ov = i < origVals.length ? origVals[i] : '';
+    i++;
+    return m[1] + m[2] + ov + m[2];
+  });
+}
+// PATCH 细粒度编辑的 headers 还原:值=掩码占位时按键名找回原值(前端只持有脱敏视图,改不动真值)。
+// 找不到可还原的原值(新增服务/用户改了 header 名)则报错,绝不把占位符写进配置。
+function restoreHeaderMasks(headers, origHeaders) {
+  for (const k of Object.keys(headers || {})) {
+    if (headers[k] !== MCP_HEADER_MASK) continue;
+    const ov = origHeaders && origHeaders[k];
+    if (ov === undefined || ov === '') throw new Error('Header「' + k + '」的值为脱敏占位且找不到原值,请填写真实值');
+    headers[k] = ov;
+  }
+}
+function restoreMaskedHeaderEdit(e, curCfg) {
+  if (e.delete) return;
+  const p = e.path;
+  if (p[0] !== 'mcp_servers') return;
+  if (e.append) { // 新增服务没有“原值”可言,出现占位即拒绝
+    if (e.value && e.value.headers) restoreHeaderMasks(e.value.headers, null);
+    return;
+  }
+  if (p.length === 3 && p[2] === 'headers' && e.value && typeof e.value === 'object') {
+    const orig = (((curCfg || {}).mcp_servers || [])[Number(p[1])] || {}).headers || {};
+    restoreHeaderMasks(e.value, orig);
+  }
+}
+
+// 生效配置的脱敏副本:api_key/password/mcp headers 在前端仅展示用(模型卡片/Key 下拉标签等),真值不会回写文件。
 function maskEffective(cfg) {
   const c = Object.assign({}, cfg);
   c.platforms = (cfg.platforms || []).map(p => Object.assign({}, p, {
     keys: (p.keys || []).map(k => Object.assign({}, k, { api_key: maskKey(k.api_key) })),
   }));
+  c.mcp_servers = (cfg.mcp_servers || []).map(s => {
+    const headers = {};
+    for (const [k, v] of Object.entries(s.headers || {})) headers[k] = maskHeaderValue(v);
+    return Object.assign({}, s, { headers });
+  });
   c.models = (cfg.models || []).map(m => Object.assign({}, m, { api_key: maskKey(m.api_key) }));
   if (c.auth && Array.isArray(c.auth.users)) {
     c.auth = Object.assign({}, c.auth, {
@@ -135,7 +206,7 @@ function maskEffective(cfg) {
 router.get('/', wrap((req, res) => {
   const cfg = cfgOf();
   const text = readConfigText(cfg);
-  const shown = text === null ? '' : maskPasswords(maskApiKeys(text));
+  const shown = text === null ? '' : maskMcpHeaders(maskPasswords(maskApiKeys(text)));
   let eff = maskEffective(cfg);
   if (text !== null) {
     try { eff = maskEffective(loadConfigFromText(text, cfg.config_path)); } catch (_) { /* 保持运行态兑底 */ }
@@ -150,7 +221,7 @@ router.post('/validate', wrap((req, res) => {
   const text = req.body && req.body.text;
   if (typeof text !== 'string') return badRequest(res, new Error('body.text 必须是字符串'));
   const origText = readConfigText(cfgOf()) || '';
-  const restored = restoreApiKeys(restorePasswords(text, origText), origText);
+  const restored = restoreApiKeys(restorePasswords(restoreMcpHeaders(text, origText), origText), origText);
   try {
     const next = loadConfigFromText(restored, '');
     res.json({ ok: true, changed: diffTop(cfgOf(), next) });
@@ -166,7 +237,7 @@ router.put('/', wrap((req, res) => {
   const text = req.body && req.body.text;
   if (typeof text !== 'string') return badRequest(res, new Error('body.text 必须是字符串'));
   const origText = readConfigText(cfg) || '';
-  const restored = restoreApiKeys(restorePasswords(text, origText), origText);
+  const restored = restoreApiKeys(restorePasswords(restoreMcpHeaders(text, origText), origText), origText);
   let next;
   try { next = loadConfigFromText(restored, cfg.config_path); } catch (e) { return badRequest(res, e); }
   writeConfigText(cfg, restored);
@@ -198,6 +269,12 @@ router.patch('/', wrap((req, res) => {
     if (Array.isArray(body.edits) && body.edits.length) edits = body.edits.map(normEdit);
     else if (body.path != null) edits = [normEdit(body)];
     else return badRequest(res, new Error('body.path 或 body.edits 必填'));
+  } catch (e) { return badRequest(res, e); }
+  // headers 编辑里的掩码占位先按键名还原为原值(以文件当前内容为准,而非运行态,与 GET 视图对齐)
+  try {
+    let curCfg = null;
+    try { curCfg = loadConfigFromText(text, cfg.config_path); } catch (_) { /* 原文已损坏时交给后续统一校验报错 */ }
+    edits.forEach(e => restoreMaskedHeaderEdit(e, curCfg));
   } catch (e) { return badRequest(res, e); }
   let nextText;
   try {
