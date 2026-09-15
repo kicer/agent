@@ -1,12 +1,14 @@
-# 无 nginx-proxy 部署：每个服务把容器 3000 映射到各自宿主机端口，用 http://<服务器IP>:<端口>/mcp 访问。
-# 端口可用 .env / 环境变量覆盖（WEB_SEARCH_PORT / IMAGE_GEN_PORT / VIDEO_GEN_PORT）。
+# 无 nginx-proxy 部署：这些服务**默认不占宿主机端口**，只挂在 my-app-network 上被 agent 按容器名访问。
+# 因此对外只需要开 agent-core 那一个端口（AGENT_PORT，默认 8090）。
+# 需要从宿主机 curl 调试某个服务时，把它下面注释掉的 ports 两行打开。
 services:
   mcp_web_search:
     build: ./web_search
     container_name: mcp_web_search
     restart: unless-stopped
-    ports:
-      - "${WEB_SEARCH_PORT:-8081}:3000"
+    # 调试用（默认关）：
+    # ports:
+    #   - "${WEB_SEARCH_PORT:-8081}:3000"
     networks:
       - my-app-network
 
@@ -14,8 +16,9 @@ services:
     build: ./image_gen
     container_name: mcp_image_gen
     restart: unless-stopped
-    ports:
-      - "${IMAGE_GEN_PORT:-8082}:3000"
+    # 调试用（默认关）：
+    # ports:
+    #   - "${IMAGE_GEN_PORT:-8082}:3000"
     networks:
       - my-app-network
 
@@ -23,18 +26,27 @@ services:
     build: ./video_gen
     container_name: mcp_video_gen
     restart: unless-stopped
-    ports:
-      - "${VIDEO_GEN_PORT:-8083}:3000"
+    # 调试用（默认关；这里映的是只读监听 3001，不会暴露 POST /upload）：
+    # ports:
+    #   - "${VIDEO_GEN_PORT:-8083}:3001"
     environment:
-      # /upload 返回给浏览器/AI 的 URL 前缀，必须是【外部可达】地址：
-      # 无域名时填 http://<服务器IP>:<VIDEO_GEN_PORT>，否则智谱取不到图，图生视频会失败。
-      # 不设则退化为 http://localhost:8083（只在本机 curl 调试时可用）。
-      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8083}
+      # AI 往哪上传（拼进 video_gen 工具的 curl 模板）：走 docker 内网即可，不需要公网。
+      - UPLOAD_BASE_URL=http://mcp_video_gen:3000
+      # 智谱从哪下载（拼进 /upload 返回的 url 字段）：必须【公网可达】。
+      # 无域名时填 http://<服务器IP>:<AGENT_PORT>/mcp-uploads（agent-core 的只读中转，默认端口 8090）。
+      # 填错的现象：图传上去了，但智谱取不到图、图生视频失败；启动日志会打印实际生效的地址便于核对。
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8090/mcp-uploads}
+      # 公网只读监听（容器内）：agent 的 MCP_UPLOADS_URL 指向它；也只被上面那个调试端口映射。
+      - PUBLIC_PORT=3001
+      # 上传落宿主 ./uploads（重启不让已发出的 URL 失效），TTL 清理照旧
+      - UPLOAD_DIR=/uploads
+    volumes:
+      - ./uploads:/uploads
     networks:
       - my-app-network
 
 networks:
   # 与 agent 仓库共用：网络由 agent 的 compose 创建并命名（所以要先起 agent），
-  # 这里声明为 external 直接加入。agent-core 按容器名访问这些服务，如 http://mcp_web_search:3000/。
+  # 这里声明为 external 直接加入。agent-core / agent-executor 按容器名访问这些服务。
   my-app-network:
     external: true

@@ -23,15 +23,36 @@ const DEFAULT_FPS = 30;               // 30 | 60
 const DEFAULT_WATERMARK_ENABLED = true; // 平台政策默认 true
 
 // ===== 上传文件相关 =====
-// 公开的 base URL：拼接进 tool description，告诉 AI 该往哪里 POST 上传
-// 优先级：环境变量 > 默认 http://localhost:<port>
-function resolvePublicBaseUrl({ port, host }) {
-  const env = (process.env.PUBLIC_BASE_URL || "").trim();
-  if (env) return env.replace(/\/+$/, "");
-  return `http://localhost:${port}`;
+// 两个地址刻意分开——无域名/无反代部署的关键：
+//   uploadBaseUrl —— 拼进 tool description 里那条 curl，告诉 AI 该往哪里 POST。这跳由 AI 在
+//                    agent-executor 里执行，走 docker 内网即可，不需要公网。
+//   publicBaseUrl —— 拼进 /upload 返回的 url 字段。这跳是【智谱服务器】去 GET，必须公网可达。
+// 都不配时两者退化为 http://localhost:<port>（本机调试）。
+function normalizeBaseUrl(s) {
+  return String(s || "").trim().replace(/\/+$/, "");
 }
 
-// 上传文件存储目录：容器内临时目录，服务重启即丢（你明确要求）
+function resolveUploadBaseUrl({ port }) {
+  return (
+    normalizeBaseUrl(process.env.UPLOAD_BASE_URL) ||
+    normalizeBaseUrl(process.env.PUBLIC_BASE_URL) ||
+    `http://localhost:${port}`
+  );
+}
+
+function resolvePublicBaseUrl({ port }) {
+  return (
+    normalizeBaseUrl(process.env.PUBLIC_BASE_URL) ||
+    `http://localhost:${port}`
+  );
+}
+
+// 公网只读监听端口（容器内）：>0 时额外起一个只挂 GET /uploads/* 的监听，专门给智谱下载。
+// 0/未设 = 不开（单监听模式，本机开发默认）；等于主端口时也跳过。
+// 主端口（--port，容器内 3000）挂着 /mcp 与 POST /upload，容器外不映射，只在 docker 网络内可达。
+const PUBLIC_PORT = parseInt(process.env.PUBLIC_PORT || "0", 10) || 0;
+
+// 上传文件存储目录：compose 里 bind 到宿主 ./uploads（重启不让已发出的 URL 失效）；本机裸跑默认 /tmp。
 const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/video_gen_uploads";
 const UPLOAD_PATH_PREFIX = "/uploads"; // 对外的 URL 路径前缀
 const UPLOAD_MAX_BYTES = 8 * 1024 * 1024; // 8MB（智谱 image_url 上限 5MB，留余量）
@@ -230,7 +251,7 @@ async function queryAsyncResult({ token, id }) {
   return data; // { id, request_id, model, task_status, video_result?, ... }
 }
 
-function buildServer({ publicBaseUrl }) {
+function buildServer({ publicBaseUrl, uploadBaseUrl }) {
   const server = new McpServer(
     {
       name: "video_gen",
@@ -243,7 +264,7 @@ function buildServer({ publicBaseUrl }) {
     }
   );
 
-  const uploadUrl = `${publicBaseUrl}/upload`;
+  const uploadUrl = `${uploadBaseUrl}/upload`;
 
   // ---------- 工具 1：video_gen ----------
   server.tool(
@@ -258,7 +279,7 @@ If you need to use a LOCAL image file as image_url, upload it FIRST with this ex
 
 The response JSON has a "url" field — pass that URL directly as the image_url argument below.
 Supported formats: png, jpeg, jpg. Max 5MB per image.
-Uploaded files live in container temp storage and are discarded on restart — do not rely on long-term URLs.`,
+Uploaded files are kept on the server temporarily and auto-deleted after a TTL — do not rely on long-term URLs.`,
     {
       prompt: z
         .string()
@@ -450,11 +471,13 @@ async function startHttp({ port, host }) {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
 
-  const publicBaseUrl = resolvePublicBaseUrl({ port, host });
-  console.log(`[video_gen] PUBLIC_BASE_URL = ${publicBaseUrl}`);
+  const publicBaseUrl = resolvePublicBaseUrl({ port });
+  const uploadBaseUrl = resolveUploadBaseUrl({ port });
+  console.log(`[video_gen] UPLOAD_BASE_URL = ${uploadBaseUrl}   (AI 往哪上传，走内网)`);
+  console.log(`[video_gen] PUBLIC_BASE_URL = ${publicBaseUrl}   (返回给智谱的下载地址，须公网可达)`);
 
   // ===== /upload：接收图片，返回 URL（不走 MCP）=====
-    // 磁盘存储：保证 UPLOAD_DIR 存在（容器内临时，重启即丢）
+    // 磁盘存储：保证 UPLOAD_DIR 存在（compose 里挂到宿主 ./uploads，重启不失效）
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
     // 过期清理：启动时跑一次，之后每小时一次
@@ -557,7 +580,7 @@ async function startHttp({ port, host }) {
     }
 
     const newId = randomUUID();
-        const server = buildServer({ publicBaseUrl });
+        const server = buildServer({ publicBaseUrl, uploadBaseUrl });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => newId,
       onsessioninitialized: (id) => {
@@ -596,11 +619,38 @@ async function startHttp({ port, host }) {
       `[video_gen] MCP HTTP server listening on http://${host}:${port}/mcp`
     );
   });
+
+  // ===== 公网只读监听（只给智谱下载用）=====
+  // 只挂 GET /uploads/* 与 /health：没有 /mcp、没有 POST /upload —— 写入口物理上不在这个端口上，
+  // 不靠 token，而是压根没监听。这一侧必须【匿名】可达（智谱拉图不带任何 header/凭据）。
+  if (PUBLIC_PORT && PUBLIC_PORT !== port) {
+    const publicApp = express();
+    publicApp.get("/health", (_req, res) => {
+      res.json({ status: "ok", service: "video_gen", scope: "public-read" });
+    });
+    publicApp.use(
+      UPLOAD_PATH_PREFIX,
+      express.static(UPLOAD_DIR, {
+        fallthrough: false,
+        maxAge: 0,
+        index: false,
+      })
+    );
+    publicApp.use((_req, res) => {
+      res.status(404).json({ error: "not found", scope: "public-read" });
+    });
+    publicApp.listen(PUBLIC_PORT, host, () => {
+      console.log(
+        `[video_gen] public read-only server listening on http://${host}:${PUBLIC_PORT}${UPLOAD_PATH_PREFIX}/*`
+      );
+    });
+  }
 }
 
 async function startStdio() {
   // stdio 模式下上传接口不可用，用 placeholder 避免 description 里出现奇怪的占位
-  const server = buildServer({ publicBaseUrl: "http://localhost:3000" });
+  const local = "http://localhost:3000";
+  const server = buildServer({ publicBaseUrl: local, uploadBaseUrl: local });
   const { StdioServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/stdio.js"
   );

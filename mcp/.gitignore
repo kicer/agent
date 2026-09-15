@@ -1,0 +1,5 @@
+node_modules/
+# video_gen 的上传目录（compose bind 到宿主机，运行时产物，不进库）
+uploads/
+# 编排变量（PUBLIC_BASE_URL 等），含部署相关的地址，不进库
+.env

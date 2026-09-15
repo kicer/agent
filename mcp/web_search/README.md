@@ -37,13 +37,15 @@ MCP 端点：
 
 `docker-compose.yml` 中的 `mcp_web_search` 服务直接构建本目录，Dockerfile 已改为拷贝源码启动（不再有 `npm install -g`）。
 
-容器内监听 3000，默认映射到宿主机 `8081`（可用 `WEB_SEARCH_PORT` 覆盖）：
+容器内监听 3000，**默认不占宿主端口**：agent 走 `my-app-network` 按容器名访问
+（`http://mcp_web_search:3000/`）。需要从宿主机 curl 调试时，把仓库根 `docker-compose.yml` 里
+`mcp_web_search` 注释掉的 `ports` 两行打开（默认写的是 8081），调试完记得注释回去。
 
 ```bash
 docker compose build mcp_web_search && docker compose up -d mcp_web_search
-curl http://localhost:8081/health
+# 不占端口的健康检查
+docker exec mcp_web_search node -e "fetch('http://localhost:3000/health').then(r=>r.text()).then(console.log)"
 # {"name":"web_search","version":"...","transport":"http/sse","port":3000}
 ```
 
-agent 侧走 `my-app-network` 用容器名访问（`http://mcp_web_search:3000/`），不依赖宿主机端口；
-该服务**无服务端鉴权**，暴露到公网会被白嫆（消耗上游免费额度），建议不对公网放行 8081。
+该服务**无服务端鉴权**（上游是免费端点），**永远不要**对外映射端口——会被白嫆搜索额度。

@@ -21,14 +21,13 @@ cd /root/workspace/tools/mcp
 docker compose up -d --build mcp_image_gen
 ```
 
-服务容器名 `mcp_image_gen`，容器内端口 3000，默认映射到宿主机 8082，即 `http://<服务器IP>:8082/mcp`。
-
-直接连容器调试：
+服务容器名 `mcp_image_gen`，容器内端口 3000，**默认不占宿主端口**：agent 走 `my-app-network`
+按容器名访问（`http://mcp_image_gen:3000/mcp`）。需要从宿主机 curl 调试时，去仓库根
+`docker-compose.yml` 把 `mcp_image_gen` 注释掉的 `ports` 两行打开（默认写的是 8082），调试完记得注释回去。
 
 ```bash
-docker exec -it mcp_image_gen sh
-# 或本机（宿主机映射端口）
-curl http://localhost:8082/health
+# 不占端口的健康检查
+docker exec mcp_image_gen node -e "fetch('http://localhost:3000/health').then(r=>r.text()).then(console.log)"
 # {"status":"ok","service":"image_gen","sessions":0}
 ```
 
@@ -42,7 +41,7 @@ curl http://localhost:8082/health
 {
   "mcpServers": {
     "image_gen": {
-      "url": "http://<服务器IP>:8082/mcp",
+      "url": "http://localhost:8082/mcp",
       "headers": {
         "Authorization": "Bearer <your-zhipu-api-key>"
       }
@@ -50,6 +49,8 @@ curl http://localhost:8082/health
   }
 }
 ```
+
+> 上面 `url` 里的端口 `8082` 需要先把 compose 里注释的 `ports` 打开（默认不占宿主端口）。
 
 > **重要**：客户端必须在 **每一个 HTTP 请求**（`initialize` / `notifications/initialized` / `tools/call`）都带上 `Authorization` header。配置在 `headers` 里、由客户端自动重发即可。直连模式下 token 不在 session 间共享。
 
