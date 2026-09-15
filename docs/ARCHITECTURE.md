@@ -84,7 +84,7 @@ agent/
 ```mermaid
 graph LR
     Browser((移动端浏览器<br/>WebView/APK))
-    Core[agent-core<br/>宿主机 8080]
+    Core[agent-core<br/>宿主机 8090]
     Exec[agent-executor<br/>:9000 内网]
     MCP[MCP 服务<br/>my-app-network]
     LLM[LLM 池<br/>OpenAI 兼容]

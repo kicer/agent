@@ -782,7 +782,7 @@ services:
     build: ./app
     restart: unless-stopped
     ports:
-      - "${AGENT_PORT:-8080}:8080"      # 直接映射宿主机端口，IP:端口 访问
+      - "${AGENT_PORT:-8090}:8080"      # 直接映射宿主机端口，IP:端口 访问
     volumes:
       - ./tasks:/workspace/tasks        # 持久化：任务目录
       - ./data:/workspace/data          # 持久化：数据目录 + SQLite
@@ -795,12 +795,13 @@ services:
 
 networks:
   my-app-network:
-    external: true
+    name: my-app-network      # 由本仓库创建（固定名字）；mcp 侧 external 加入
+    driver: bridge
 ```
 
 ### 13.2 对外暴露（IP:端口）
 
-无域名/反代时，compose 直接把容器 8080 映射到宿主机端口，浏览器访问 `http://<服务器IP>:8080`（端口可用 `.env` 的 `AGENT_PORT` 改）。外部网络 `my-app-network` 与 `mcp` 仓库的服务共用，需先创建一次（`docker network create my-app-network`）：agent 按容器名访问 MCP，如 `http://mcp_web_search:3000/`。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），多用户共享同一任务库，不做任务隔离。
+无域名/反代时，compose 直接把容器 8080 映射到宿主机 8090，浏览器访问 `http://<服务器IP>:8090`（端口可用 `.env` 的 `AGENT_PORT` 改）。外部网络 `my-app-network` 与 `mcp` 仓库的服务共用、由本仓库创建（无需手动 `docker network create`，但因此要**先起 agent 再起 mcp**）：agent 按容器名访问 MCP，如 `http://mcp_web_search:3000/`。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），多用户共享同一任务库，不做任务隔离。
 
 HTTP 直连时浏览器不认为这是“安全上下文”：PWA/Service Worker 不注册、`navigator.clipboard` 降级（前端已有回退），登录 cookie 无 `Secure` 标志可正常工作。日后若加 HTTPS 反代，**SSE 需关代理缓冲**（`proxy_buffering off`），详见 `docs/DEPLOY.md`。
 

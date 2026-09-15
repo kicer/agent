@@ -5,8 +5,8 @@ services:
     restart: unless-stopped
     ports:
       # 无 nginx-proxy：直接把容器 8080 映射到宿主机端口，用 http://<服务器IP>:<AGENT_PORT> 访问。
-      # 改端口：在仓库顶层 .env 里设 AGENT_PORT（默认 8080）。
-      - "${AGENT_PORT:-8080}:8080"
+      # 改端口：在仓库顶层 .env 里设 AGENT_PORT（默认 8090）。
+      - "${AGENT_PORT:-8090}:8080"
     volumes:
       - ./tasks:/workspace/tasks        # 持久化：任务目录
       - ./skills:/workspace/skills      # 技能目录：所有任务/会话共享同一份技能
@@ -122,8 +122,10 @@ services:
 
 networks:
   # 与 mcp 仓库共用：agent-core 按容器名访问 MCP 服务（如 http://mcp_web_search:3000/）。
-  # 只需创建一次：docker network create my-app-network
+  # 网络由本仓库创建（固定名字，避免被加上 compose 项目名前缀）；mcp 侧声明为 external 直接加入，
+  # 所以全新机器上要【先起 agent，再起 mcp】。
   my-app-network:
-    external: true
+    name: my-app-network
+    driver: bridge
   agent-internal:
     driver: bridge

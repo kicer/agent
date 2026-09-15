@@ -4,7 +4,7 @@
 
 | 宿主机路径 | 容器内路径 | 说明 |
 |---|---|---|
-| `./docker-compose.yml` | — | 编排（构建 `./app`，把容器 8080 映射到宿主机端口） |
+| `./docker-compose.yml` | — | 编排（构建 `./app`，把容器 8080 映射到宿主机 8090） |
 | `./config.yml` | `/app/config.yml` | 运行配置（AGENT_CONFIG 指向它；含密钥，已被 .gitignore 忽略） |
 | `./tasks/` | `/workspace/tasks` | 任务目录：AI 的文件工作区（与 executor 必须同路径） |
 | `./data/` | `/workspace/data` | 数据目录 + SQLite（`.agent.db`） |
@@ -13,16 +13,24 @@
 
 > 本仓库不含 `config.yml` 与 `.env`，需自行创建（见第 2 步）。
 
-## 1. 创建外部网络（只需一次）
+## 1. 网络（自动创建，无需手动）
 
-`agent-core` 与 `mcp` 仓库的服务共用外部网络 `my-app-network`：agent 按容器名访问 MCP
-（如 `http://mcp_web_search:3000/`）。两个 compose 都声明为 `external`，所以必须先建：
+`agent-core` 与 `mcp` 仓库的服务共用网络 `my-app-network`：agent 按容器名访问 MCP
+（如 `http://mcp_web_search:3000/`）。该网络由**本仓库的 compose 创建**（固定名字，不带项目名前缀），
+`mcp` 侧声明为 `external` 直接加入。
+
+所以全新机器上有**先后顺序**：先起 agent（创建网络），再起 mcp（mcp 单独先起会因为网络不存在而报错）。
 
 ```bash
-docker network create my-app-network
+# 1) 先 agent，创建网络
+docker compose up -d --build
+
+# 2) 再 mcp
+cd ../mcp && docker compose up -d --build
 ```
 
-`docker network ls` 可确认是否已存在（这台机器上跑过 nginx-proxy 的话可能已经存在，跳过即可）。
+> 拆的时候反着来：先 `down` mcp，再 `down` agent。否则 agent 侧会报
+> `network my-app-network has active endpoints`（容器照删、网络留下，重新 up 就恢复，不损数据）。
 
 ## 2. 准备配置
 
@@ -69,7 +77,7 @@ docker compose logs -f agent-core    # 看到 "Agent server listening on 8080" �
 
 ## 4. 访问
 
-浏览器打开 **`http://<服务器IP>:8080`**（端口可用 `.env` 里的 `AGENT_PORT` 改）。
+浏览器打开 **`http://<服务器IP>:8090`**（端口可用 `.env` 里的 `AGENT_PORT` 改）。
 登录用第 2 步 `auth.users` 里配的账号。
 
 对外只需放行这一个端口：`agent-executor`（9000）只在 `agent-internal` 内网，没有映射到宿主机。
@@ -86,7 +94,7 @@ HTTP 直连时浏览器不认为这是"安全上下文"，以下能力自动降�
 
 ```
 location / {
-    proxy_pass http://agent-core:8080;   # 或宿主机 IP:8080
+    proxy_pass http://agent-core:8080;   # 或宿主机 IP:8090
     proxy_http_version 1.1;
     proxy_buffering off;                 # SSE 关键
     proxy_read_timeout 3600s;
