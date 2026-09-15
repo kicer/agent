@@ -16,25 +16,37 @@
 
 ## 0. 一键生成配置并启动（推荐）
 
-`scripts/init.sh` 读取一组环境变量（通常由服务器上的 `/root/init_repos.sh` 从 `/root/deploy.conf` 传过来），
-生成 `.env` 与 `config.yml`，然后按顺序起 agent → mcp：
+`scripts/init.sh` 只读环境变量（不依赖任何外部文件），生成 `.env` 与 `config.yml`，
+然后按顺序起 agent → mcp：
 
 ```bash
-# 直接跑（或在仓库根：./scripts/init.sh）
+# 什么都不给也能跑：用默认账号 admin/admin、自动探测公网 IP、无模型（platforms: []）
+./scripts/init.sh
+
+# 给几个变量
 BIGMODEL_KEY=xxx DEEPSEEK_KEY=yyy PUBLIC_IP=1.2.3.4 ./scripts/init.sh
+
+# 只生成 .env / config.yml，不起容器（不装 Docker 的机器也能用）
+UP=0 ./scripts/init.sh
+
+# mcp 仓库不在 ../mcp 时指定
+MCP_DIR=/path/to/mcp ./scripts/init.sh
 ```
 
-| 输入变量 | 说明 |
+| 输入变量（均可选） | 说明 |
 |---|---|
-| `BIGMODEL_KEY` / `DEEPSEEK_KEY` / `QWEN_KEY` | 模型平台 key，**填几个启用几个**（可 0~3 个） |
+| `BIGMODEL_KEY` / `DEEPSEEK_KEY` / `QWEN_KEY` | 模型平台 key，**填几个启用几个**（0~3 个） |
 | `ZHIPU_KEY` | image-gen / video-gen 用；**留空则这两个服务 `enable: false`**（工具不加载） |
 | `AUTH_USER` / `AUTH_PASSWORD` | 登录账号（默认 `admin`/`admin`，记得改） |
 | `PUBLIC_IP` / `AGENT_PORT` | 对外地址与端口（`PUBLIC_IP` 空则尝试自动探测） |
-| `MCP_DIR` | mcp 仓库位置（默认 `../mcp`） |
+| `LOG_LEVEL` | 日志级别（默认 `debug`；日常用 `info`） |
+| `MCP_DIR` / `UP` | mcp 仓库位置（默认 `../mcp`）/ `UP=0` 只生成配置 |
+| `AUTH_SECRET` / `EXECUTOR_TOKEN` | 一般不用给：不给就自动生成，并**存在 `.env` 里复用**（所以重跑不会掉登录态） |
 
-自动处理、不用配：`AUTH_SECRET` / `EXECUTOR_TOKEN`（生成一次后存进 `.env`，**重跑保持不变**，所以不会掉登录态）、`LOG_LEVEL`（脚本顶部默认 `debug`，日常改 `info`）。
+⚠️ **`config.yml` 是生成物，不要再手改**：每次生成都会把旧的备份成 `config.yml.bak.<时间戳>`。
+要改配置请带环境变量重跑该脚本，或者不用脚本、按第 2 节手动维护。
 
-⚠️ **`config.yml` 是生成物，不要再手改**：每次生成都会把旧的备份成 `config.yml.bak.<时间戳>`。要改配置请改上游的 `deploy.conf` 后重跑，或者不用脚本、按第 2 节手动维护。
+> 本机现成的一键流程（仓库外）：`/root/deploy.conf` 放变量 → `/root/init_repos.sh`（拉仓库 → 把变量 export 出去 → 调本脚本）。
 
 ## 1. 网络（自动创建，无需手动）
 
