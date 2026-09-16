@@ -1,11 +1,12 @@
-// Skill Manager：发现、查看与执行技能，并在执行前自动检查与安装依赖。
+// Skill Manager：发现、查看与执行技能。
+// 依赖不由 core 安装：requirements.txt 与技能资产（install.sh）在 executor 启动前由 agent-executor-init
+// 一次性处理——镜像已带的包跳过，缺的装进 skills/deps，运行期经 executor 容器 env 的 PYTHONPATH 可见。
 // 技能统一存放于技能根目录（cfg.skills_root，所有任务/会话共享；容器内挂 ./skills → /workspace/skills），每个技能一个子目录：
 //   <skill>/SKILL.md（必须）、run.py | run.sh（入口）、requirements.txt、install.sh（可选）。
 // 入口脚本约定接收一个 JSON 字符串作为唯一命令行参数（含全部 input_args）。
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
-const crypto = require('crypto');
 const { spawn } = require('child_process');
 const YAML = require('yaml');
 const log = require('../log');
@@ -16,9 +17,6 @@ class SkillNotFoundError extends Error {
 }
 class SkillExecutionError extends Error {
   constructor(msg, code) { super(msg); this.name = 'SkillExecutionError'; this.code = code; }
-}
-class DependencyInstallError extends Error {
-  constructor(msg, code) { super(msg); this.name = 'DependencyInstallError'; this.code = code; }
 }
 
 // 技能根目录：优先 cfg.skills_root（config.yml 配置，所有任务共享）；缺省取 workspace_root 的同级 skills 目录。
@@ -92,105 +90,6 @@ async function getSkillInfo(ctx, skillName) {
   return fsp.readFile(mdPath, 'utf8');
 }
 
-// ---------- 依赖安装 ----------
-// 不用虚拟环境（每个技能一份 .venv 太占空间，且容器重建后全丢）：
-// pip install --target 装到技能根目录下的共享 deps 目录（容器内 /workspace/skills/deps，
-// 随挂载卷持久化，重建镜像不丢）；运行时通过 PYTHONPATH 让 Python 找到它们。
-function depsRoot(ctx) {
-  return path.join(skillsRoot(ctx), 'deps');
-}
-
-// 技能子进程环境：PYTHONPATH 追加共享依赖目录（sys.path 的搜索路径，非标准库覆盖）。
-function skillEnv(ctx) {
-  const deps = depsRoot(ctx);
-  const existing = process.env.PYTHONPATH;
-  return Object.assign({}, process.env, { PYTHONPATH: existing ? deps + ':' + existing : deps });
-}
-
-function hashFile(p) {
-  try { return crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex'); } catch (_) { return ''; }
-}
-
-// 在技能目录下执行一个前台命令，返回 stdout+stderr；非零退出抛 DependencyInstallError。
-// 安装命令兼有硬超时（默认 10 分钟），防 pip/apt 挂死阻塞会话。
-// 配了 executor：命令拼成单条 shell 行交远端执行（core 镜像已不带 python/pip）。
-// 注意传 PYTHONPATH=共享 deps：远端进程原有 PYTHONPATH 会被覆盖（executor 容器不预装到 site-packages，仅影响技能依赖可见性）。
-function execSyncCapture(ctx, cmd, args, cwd, timeoutMs) {
-  const limit = timeoutMs || 600000;
-  const cfg = ctx && ctx.cfg;
-  if (cfg && rexec.isRemote(cfg)) {
-    return rexec.run(cfg, { command: rexec.shellLine(cmd, args), cwd, timeout_ms: limit, env: { PYTHONPATH: depsRoot(ctx) } })
-      .then(r => {
-        if (r.killed_by === 'timeout') throw new DependencyInstallError('依赖安装超时（' + limit + 'ms）已终止：\n' + r.out.trim(), -1);
-        if (r.code === 0) return r.out.trim();
-        throw new DependencyInstallError((r.out.trim() || ('依赖命令退出码 ' + r.code)) + ' [exit: ' + r.code + ']', r.code);
-      }, e => {
-        if (e instanceof DependencyInstallError) throw e;
-        throw new DependencyInstallError('依赖命令远程执行失败：' + e.message, -1);
-      });
-  }
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, env: process.env, detached: true });
-    let out = '';
-    let settled = false;
-    const onData = d => { out += d.toString(); };
-    child.stdout.on('data', onData);
-    child.stderr.on('data', onData);
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { process.kill(-child.pid, 'SIGKILL'); } catch (_) { try { child.kill('SIGKILL'); } catch (__) {} }
-      reject(new DependencyInstallError('依赖安装超时（' + limit + 'ms）已终止：\n' + out.trim(), -1));
-    }, limit);
-    child.on('error', err => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      reject(new DependencyInstallError('依赖命令启动失败：' + err.message, -1));
-    });
-    child.on('close', code => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      if (code === 0) resolve(out.trim());
-      else reject(new DependencyInstallError((out.trim() || ('依赖命令退出码 ' + code)) + ' [exit: ' + code + ']', code));
-    });
-  });
-}
-
-// 安装依赖并写缓存标记 .deps_installed（内容为依赖文件 hash，变化则重装）。
-// Python 依赖装进共享 deps 目录；install.sh 用于系统级依赖，直接执行。
-async function ensureDeps(ctx, dir, skillName) {
-  const reqPath = path.join(dir, 'requirements.txt');
-  const installPath = path.join(dir, 'install.sh');
-  const hasReq = fs.existsSync(reqPath);
-  const hasInstall = fs.existsSync(installPath);
-  if (!hasReq && !hasInstall) return;
-
-  const need = 'req:' + hashFile(reqPath) + '|install:' + hashFile(installPath);
-  const markerPath = path.join(dir, '.deps_installed');
-  if (fs.existsSync(markerPath) && fs.readFileSync(markerPath, 'utf8') === need) {
-    log.debug('skills', skillName + ' 依赖已安装（命中缓存）');
-    return;
-  }
-
-  try {
-    if (hasReq) {
-      const target = depsRoot(ctx);
-      fs.mkdirSync(target, { recursive: true });
-      log.debug('skills', skillName + '：pip install --target ' + target);
-      await execSyncCapture(ctx, 'python3', ['-m', 'pip', 'install', '--target', target, '-r', reqPath], dir);
-    }
-    if (hasInstall) {
-      log.debug('skills', skillName + '：执行 install.sh');
-      await execSyncCapture(ctx, 'bash', ['install.sh'], dir);
-    }
-  } catch (e) {
-    if (e instanceof DependencyInstallError) throw e;
-    throw new DependencyInstallError('依赖安装失败：' + e.message, -1);
-  }
-  fs.writeFileSync(markerPath, need, 'utf8');
-  log.debug('skills', skillName + '：依赖安装完成');
-}
-
 // ---------- 参数路径预处理 ----------
 // 技能进程的工作目录是技能目录，而 Agent 习惯传相对会话任务目录的路径；
 // 执行前统一把路径样式的相对参数转成绝对路径，技能脚本无感知。
@@ -227,14 +126,13 @@ function validateArgs(fm, inputArgs, skillName) {
 
 // 前台执行技能入口，带超时与取消支持；成功 resolve stdout，失败 reject SkillExecutionError。
 // 配了 executor：入口命令拼成单条 shell 行（参数单引号转义，JSON payload 安全）交远端执行，
-// cwd 由调用方给出（run_skill 传会话目录以命中 session 隔离与虚拟视图；依赖安装仍传技能目录），
-// PYTHONPATH 指向共享 deps；core 与 executor 同路径挂载 skills，无需翻译。
+// cwd 由调用方给出（run_skill 传会话目录以命中 session 隔离与虚拟视图）；
+// 技能依赖的 PYTHONPATH 由 executor 容器 env 提供，core 不感知依赖层。
 function runEntry(ctx, entry, args, cwd, timeoutMs) {
   const cfg = ctx.cfg;
   if (cfg && rexec.isRemote(cfg)) {
     return rexec.run(cfg, {
-      command: rexec.shellLine(entry, args), cwd, timeout_ms: timeoutMs,
-      env: { PYTHONPATH: depsRoot(ctx) }, run: ctx.run,
+      command: rexec.shellLine(entry, args), cwd, timeout_ms: timeoutMs, run: ctx.run,
     }).then(r => {
       const trimmed = r.out.replace(/\n+$/, '').trim();
       if (r.killed_by === 'timeout') throw new SkillExecutionError('技能执行超时（' + timeoutMs + 'ms）已终止：\n' + trimmed, -1);
@@ -244,7 +142,7 @@ function runEntry(ctx, entry, args, cwd, timeoutMs) {
     });
   }
   return new Promise((resolve, reject) => {
-    const child = spawn(entry, args, { cwd, env: skillEnv(ctx), detached: true });
+    const child = spawn(entry, args, { cwd, env: process.env, detached: true });
     if (ctx.run && ctx.run.procs) ctx.run.procs.add(child);
     let out = '';
     let settled = false;
@@ -308,13 +206,11 @@ async function runSkill(ctx, skillName, inputArgs) {
   try { fm = parseFrontMatter(await fsp.readFile(mdPath, 'utf8')); } catch (_) {}
   validateArgs(fm, args, skillName);
 
-  await ensureDeps(ctx, dir, skillName);
-
   let entry, cmdArgs;
   const runPy = path.join(dir, 'run.py');
   const runSh = path.join(dir, 'run.sh');
   if (fs.existsSync(runPy)) {
-    // PYTHONPATH 已指向共享 deps，直接走系统 python3。
+    // 直接走系统 python3（技能依赖由 executor 容器 env 的 PYTHONPATH 提供）。
     // 入口一律用绝对路径：远端 cwd 是会话目录，相对的 'run.py' 会找不到。
     entry = 'python3';
     cmdArgs = [runPy, payload];

@@ -128,7 +128,7 @@ def main():
 
 ### 5.1 Python 依赖
 
-在技能目录下放置 `requirements.txt` 文件，列出所有需要的第三方包。服务启动前，`agent-executor-init`（`executor/init-skills.js`）会**自动安装**这些依赖到共享的 `deps` 目录（技能根目录下的 `deps/`），运行期通过 `PYTHONPATH` 注入；结果按 `requirements.txt` 的 hash 缓存（`.deps_installed`），未变化则跳过。
+在技能目录下放置 `requirements.txt` 文件，列出所有需要的第三方包。服务启动前，`agent-executor-init`（`executor/init-skills.js`）会逐行**离线探测**：镜像已预烘的包（见 `executor/Dockerfile`）直接跳过，只把缺的装到共享 `deps` 目录（技能根目录下的 `deps/`），运行期由 executor 容器 env 的 `PYTHONPATH` 可见（技能脚本与 AI 终端命令都能 import，无需 rebuild 镜像）；结果按 `requirements.txt` 的 hash 缓存（`.deps_installed`），未变化则整个技能跳过。
 
 示例 `requirements.txt`：
 
@@ -137,7 +137,7 @@ requests==2.28.1
 beautifulsoup4==4.11.1
 ```
 
-- 依赖安装使用 `pip install --target`，不会污染系统全局。
+- 依赖安装使用 `pip install --target`，不会污染系统全局；镜像已带的包不会重复装。
 - 所有技能**共享**同一个 `deps` 目录，请注意版本冲突（后装的覆盖先装的）。建议锁定精确版本。
 - 运行期 skills 目录只读；若上线后经 UI 改了 `requirements.txt`，需重启（`docker compose up -d`）触发重新 init，否则该技能会因依赖未就绪而失败。
 
@@ -158,12 +158,13 @@ apt-get install -y -qq some-package
 ```
 
 - `install.sh` 必须可执行（`chmod +x install.sh`）。
-- 请保持幂等：两处都以内容 hash 为缓存，仅在变化时执行。
+- 请保持幂等：init 侧以内容 hash 缓存（`.deps_installed`），构建侧靠 Docker 层缓存；脚本应在“依赖已就绪”时快速跳过。
+- 想两处都跑不报错：apt 类语句加 `|| true` 容错，并在脚本末尾自行校验“要的东西是否就绪”，就绪则 exit 0、否则 exit 1（参考 `md2pdf/install.sh`）。否则 init 阶段（根文件系统只读）的 apt 失败会让整个技能被标记为“未就绪”。
 - 改动 `install.sh` 后：系统包需 `docker compose build agent-executor`，资产需 `docker compose up -d`（或两者一起 `build && up`）。
 
 ### 5.3 缓存机制
 
-Skill Manager 会为每个技能生成一个 `.deps_installed` 标记文件，记录依赖文件的哈希值。只有当 `requirements.txt` 或 `install.sh` 内容改变时，才会重新安装。手动删除该文件可强制重装。
+`agent-executor-init` 会为每个技能生成一个 `.deps_installed` 标记文件，记录依赖文件的哈希值。只有当 `requirements.txt` 或 `install.sh` 内容改变时，才会重新安装/重新生成资产。手动删除该文件可强制重跑（core 运行期不再读写依赖，标记只由 init 维护）。
 
 ---
 

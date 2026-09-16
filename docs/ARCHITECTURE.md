@@ -42,7 +42,7 @@ agent/
 │   │   ├── tools/
 │   │   │   ├── definitions.json   内置 15 个工具的 OpenAI function 格式定义
 │   │   │   ├── executor.js        工具执行器（文件类 + terminal + skill 委托）
-│   │   │   └── skills.js          Skill Manager（list/info/run + 依赖安装 + 路径预处理）
+│   │   │   └── skills.js          Skill Manager（list/info/run + 路径预处理）
 │   │   ├── download-token.js      下载链接签名（浏览器原生下载用；密钥进程内随机）
 │   │   ├── download-send.js       单文件下载响应（Content-Disposition / 缓存策略）
 │   │   ├── public-files.js        公网临时文件短 ID 表（mint/resolve + 过期）
@@ -109,7 +109,7 @@ graph LR
     Zhipu -->|匿名 GET /p/id| Core
     Core <-->|读写| Tasks
     Exec <-->|读写| Tasks
-    Core <-->|技能 + deps| Skills
+    Core <-->|技能| Skills
     Exec <-->|技能 + deps| Skills
     Core --> DB
 ```
@@ -130,7 +130,7 @@ graph LR
 - Core 通过环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN` 注入 executor 端点（也可用 `config.yml` 的 `executor` 段覆盖）。**token 从 `.env` 读取**（compose 变量替换 `${EXECUTOR_TOKEN:?...}`，未设置直接报错，杜绝静默无鉴权）；`.env` 已 gitignore，模板见 `.env.example`，生成：`openssl rand -hex 32`。
 - Executor **拒绝来自容器自身（回环/本机网卡）的 `/exec`**：隔离只 unshare mount+pid，命令与 executor 同 net ns，能打到 `127.0.0.1:9000`；据此即使 token 泄漏也无法在会话内调用 `/exec` 越权读他人会话（core 在另一容器，不受影响）。本机集成测试用 `EXECUTOR_ALLOW_LOCAL_ORIGIN=1` 放行，生产不得设置。
 - Executor 镜像分两阶段（`executor/Dockerfile`）：`base` = M（长期不变，仅系统工具 + 预烘 Python 包），`skills` = M' = M + 技能“系统层”依赖。compose 用 `build.target: skills`、上下文为仓库根（`.dockerignore` 只放行 `executor/`、`skills/`）。管理员增删/改动 skills 后 `docker compose build agent-executor` 重建 M'，M 不动。
-- `agent-executor-init` 在 executor 启动前一次性执行（`executor/init-skills.js`）：把各技能 `requirements.txt`（`pip --target` 共享 deps）与 `install.sh` 生成的资产落到宿主 `./skills`，跑完即退出；只挂 `./skills`（不挂 `./tasks`，看不到会话数据）、无特权、`read_only`。executor `depends_on` 其 `service_completed_successfully`。
+- `agent-executor-init` 在 executor 启动前一次性执行（`executor/init-skills.js`）：逐行离线探测各技能 `requirements.txt`，只把镜像缺的包 `pip --target` 装进共享 `deps/`，并执行 `install.sh` 生成技能资产，全部落到宿主 `./skills`，跑完即退出；只挂 `./skills`（不挂 `./tasks`，看不到会话数据）、无特权、`read_only`（系统层写不进去，只能写挂载卷）。executor `depends_on` 其 `service_completed_successfully`。
 - Executor 在 compose 里加了 cgroup/ulimit 护栏（`cpus 2.0` / `mem_limit 2g` / `pids_limit 512` / `ulimits.fsize 2G`）——详见 `executor/server.js` 头注释。
 
 ---
@@ -210,7 +210,7 @@ stateDiagram-v2
 
 **任务目录**（`cfg.workspace_root/<session-id>/`）：每个会话一个目录；Core 与 Executor 都可读写；sh 命令默认 cwd 即此目录。
 
-**技能目录**（`cfg.skills_root/<skill-name>/`）：所有会话共享；`deps/` 子目录是 pip `--target` 共享的 Python 依赖，**与技能目录同级**（不是技能子目录）。`RESERVED_DIRS = {deps}` 在 `routes/skills.js` 里被排除以免被当成技能。
+**技能目录**（`cfg.skills_root/<skill-name>/`）：所有会话共享；`deps/` 子目录是 pip `--target` 共享的 Python 依赖（只放镜像缺失的包，镜像已带的不重复装），**与技能目录同级**（不是技能子目录）。`RESERVED_DIRS = {deps}` 在 `routes/skills.js` 里被排除以免被当成技能。
 
 **版本与提交号**：git short hash 来自 `version.json`（post-commit 钩子自动写）→ 容器通过 bind mount 读到；无 `version.json` 时回退 `git rev-parse`；都没有则只显示 package.json 版本。
 
@@ -286,13 +286,12 @@ stateDiagram-v2
 ### 5.5 `tools/skills.js` —— Skill Manager
 
 - 技能 = 单层子目录，含 `SKILL.md`（YAML front matter 可选，含 `description` / `input_schema`）+ `run.py` 或 `run.sh` 入口（接收 JSON 字符串作为唯一 argv）。
-- 依赖：
-  - `requirements.txt` → `pip install --target <skills_root>/deps`（共享 `deps/`，`PYTHONPATH` 追加）；`install.sh` → bash 执行。
-  - `.deps_installed` 标记文件记录两份 hash，变化才重装。
-- `runSkill` 流程：`skillDir` 校验 → `absolutizeArgs`（按任务目录 + 启发式判断路径类参数） → `validateArgs`（按 front matter `input_schema.required`） → `ensureDeps` → 选 `python3 run.py '<json>'` 或 `bash run.sh '<json>'` → `runEntry`。
-- **走 executor**：命令拼成 `shq` 转义后的单条 shell 行（`shellLine`），env 只传 `PYTHONPATH=<deps_root>`。
-- **cwd 分两类**：`run_skill` 传会话任务目录（`ctx.taskDir`），命中 executor 的 session 隔离与虚拟视图，技能在 `/workspace/tasks/<sid>` 看到的就是本会话数据，`absolutizeArgs` 产出的绝对路径因此有效；入口脚本一律用绝对路径（cwd 已不是技能目录）。`ensureDeps` 的安装命令仍传技能目录（依赖是技能私有资源，且 skills 为 `:ro`，运行期不应安装）。
-- **依赖就绪时机**：系统层依赖（apt 等，`install.sh` 的副作用）在镜像 `skills` 阶段烘入 M'；pip 依赖与技能资产（如字体提取）在服务启动前由 `agent-executor-init` 落到宿主 `./skills`（hash/marker 与 `ensureDeps` 同格式）。运行期 skills `:ro`，`runSkill` 的 `ensureDeps` 命中 marker 即跳过；若运行期经 UI 改了依赖，需 `docker compose up -d` 重新 init（否则该技能会报依赖安装失败）。
+- 依赖不由 core 安装（core 只发现与执行）：系统层依赖（apt 等，`install.sh` 的副作用）在镜像 `skills` 阶段烘入 M'（需重建镜像）；pip 依赖与技能资产（如字体提取）在服务启动前由 `agent-executor-init` 一次性落到宿主 `./skills`。
+  - init 的 pip 步骤先离线探测（`pip install --no-index --dry-run <逐行>`，不联网）：镜像已带的包直接跳过，只把缺的装进 `deps/`；`.deps_installed` marker（requirements/install.sh 两份 hash）也在那里维护。
+  - 外挂层可见性：`skills/deps` 由 compose 放进 executor 容器 env 的 `PYTHONPATH`（`server.js` 白名单同步放行），技能入口与 AI 终端命令都能 import；运行期 skills 与 deps 均 `:ro`，**加包只需改 `requirements.txt` 后 `docker compose up -d`（重跑 init），不需重建镜像**。
+- `runSkill` 流程：`skillDir` 校验 → `absolutizeArgs`（按任务目录 + 启发式判断路径类参数） → `validateArgs`（按 front matter `input_schema.required`） → 选 `python3 run.py '<json>'` 或 `bash run.sh '<json>'` → `runEntry`。
+- **走 executor**：命令拼成 `shq` 转义后的单条 shell 行（`shellLine`）；env 不额外传，依赖层由容器 env 提供。
+- **cwd 分两类**：`run_skill` 传会话任务目录（`ctx.taskDir`），命中 executor 的 session 隔离与虚拟视图，技能在 `/workspace/tasks/<sid>` 看到的就是本会话数据，`absolutizeArgs` 产出的绝对路径因此有效；入口脚本一律用绝对路径（cwd 已不是技能目录）。
 
 ### 5.6 `remote-exec.js` —— 远端 executor 客户端
 
@@ -563,7 +562,7 @@ sequenceDiagram
 1. 在 `skills/<name>/` 建目录，写 `SKILL.md`（含 YAML front matter `name`/`description`/`input_schema`）+ `run.py` 或 `run.sh`。
 2. 入口脚本约定：唯一 argv = `'<JSON 字符串>'`（含全部 `input_args`）。
 3. 路径类参数会被 `absolutizeArgs` 自动按任务目录转绝对；如需输出到特定位置，传 `output` / `dest` / `target` 之类的 key 名触发"目录型参数"启发。
-4. 依赖：`requirements.txt`（pip）或 `install.sh`（系统级）放同目录；`.deps_installed` 由 `ensureDeps` 自动维护。
+4. 依赖：`requirements.txt`（pip）或 `install.sh`（系统级）放同目录；镜像缺的包在启动时由 `agent-executor-init` 装进 `deps/`（改完依赖跑 `docker compose up -d`，不用重建镜像），`install.sh` 与 `.deps_installed` marker 也在那里维护。
 5. 改完文件后 **无需重启**——`routes/skills.js` 的 `refreshSkillPrompt()` 会重建 system prompt 段落。
 
 ### 11.3 加一个 MCP 服务

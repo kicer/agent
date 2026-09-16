@@ -515,9 +515,9 @@ async function handleExec(req, res) {
   if (!isFinite(maxChars) || maxChars <= 0) maxChars = DEFAULT_MAX_OUT;
   maxChars = Math.min(maxChars, DEFAULT_MAX_OUT);
 
-  // 环境变量白名单
+  // 环境变量白名单（AI 命令与技能子进程共用；PYTHONPATH 用于技能依赖外挂层）
   const env = {};
-  for (const key of ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TZ', 'PYTHONUNBUFFERED',
+  for (const key of ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TZ', 'PYTHONUNBUFFERED', 'PYTHONPATH',
                      'PYTHONDONTWRITEBYTECODE', 'PYTHONPYCACHEPREFIX', 'MPLBACKEND']) {
     if (process.env[key]) env[key] = process.env[key];
   }

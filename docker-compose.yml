@@ -25,7 +25,8 @@ services:
       - agent-mcp-net
 
   # 技能准备（一次性，跑完退出）：把各技能的“运行期可变”依赖落到宿主 ./skills——
-  # requirements.txt → pip --target 共享 deps 目录；install.sh → 技能资产（如字体提取）。
+  # requirements.txt → 先离线探测，只把镜像缺的包装进共享 deps 目录（镜像已带的不重复装）；
+  # install.sh → 技能资产（如字体提取）。deps 由 executor 容器 env 的 PYTHONPATH 可见。
   # 系统层依赖（apt 等）不在这里做，由镜像的 skills 构建阶段烘进（才持久且对命令只读）。
   # 只挂 ./skills（不挂 ./tasks），因此看不到任何会话数据；read_only 根 + tmpfs /tmp。
   agent-executor-init:
@@ -79,6 +80,9 @@ services:
       - EXECUTOR_LOG_LEVEL=info
       # 防止 Python 在 skills 目录生成 __pycache__
       - PYTHONDONTWRITEBYTECODE=1
+      # 技能依赖外挂层：镜像缺的包由 agent-executor-init 装进挂载卷 skills/deps，
+      # 由此处进容器 env（server.js 白名单同步放行），使技能与 AI 终端命令都能 import 到。
+      - PYTHONPATH=/workspace/skills/deps
       # 定义隔离基路径，server.js 需读取此变量以执行 umount 和 bind mount
       - EXECUTOR_ISOLATION_BASE=/mnt/host-tasks
 
