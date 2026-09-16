@@ -20,9 +20,13 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem, HRFlowable, Image,
+    SimpleDocTemplate, Paragraph, Preformatted, Spacer, ListFlowable, ListItem, HRFlowable, Image,
     Table, TableStyle
 )
+
+# 当前正文体名字（注册成功为中文字体，失败退回 Helvetica）：
+# 行内代码/代码段含中文时用它渲染——Courier 没有中文字形，会变方块。
+_CJK_FONT = 'Helvetica'
 
 # ---------- 字体注册 ----------
 def register_font():
@@ -135,9 +139,11 @@ def parse_inline(text):
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     # 斜体 *text*(避免匹配加粗中的单个星号)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
-    # 还原行内代码
+    # 还原行内代码：含中文时用正文字体（Courier 无中文字形），纯西文用 Courier 保证等宽
     def _restore(m):
-        return '<font face="Courier">' + code_spans[int(m.group(1))] + '</font>'
+        code = code_spans[int(m.group(1))]
+        face = 'Courier' if code.isascii() else _CJK_FONT
+        return '<font face="' + face + '">' + code + '</font>'
     text = re.sub(r'\x00(\d+)\x00', _restore, text)
     return text
 
@@ -234,7 +240,8 @@ def table_flowable(rows, max_width, styles):
             Paragraph(render_inline(c), header_style if ri == 0 else cell_style)
             for c in row
         ])
-    t = Table(data, colWidths=[colw] * ncols)
+    # splitInRow=1：单行超页高时也能跨页（否则极长的单元格会让整个转换报 Flowable too large）
+    t = Table(data, colWidths=[colw] * ncols, splitInRow=1)
     t.setStyle(TableStyle([
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#c9d4e4')),
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
@@ -248,37 +255,147 @@ def table_flowable(rows, max_width, styles):
     t.hAlign = 'CENTER'
     return t
 
+# ---------- 代码段 ----------
+# 围栏：``` 或 ~~~（可带语言标记）；围栏内原样输出、不解析 Markdown
+FENCE_OPEN_RE = re.compile(r'^(```|~~~)\s*\S*\s*$')
+FENCE_CLOSE_RE = re.compile(r'^(```|~~~)\s*$')
+
+# setext 标题下划线（普通段落下一行是 ===/--- 时升级为标题）
+SETEXT_H1_RE = re.compile(r'^=+\s*$')
+SETEXT_H2_RE = re.compile(r'^-+\s*$')
+
+def code_block_flowable(code_text, styles, max_width):
+    """代码段 → 等宽 Preformatted，外套 Table 提供浅灰底/细边框与内边距。
+    Preformatted 用 textLine 原样绘制、不解析标记，故代码里的 < & 无需转义。
+    字体：含中文时用正文字体（Courier 无中文字形），纯西文用 Courier 保证等宽对齐。"""
+    has_cjk = any(ord(ch) > 0x2E80 for ch in code_text)
+    style = ParagraphStyle(
+        name='CodeBlock',
+        fontName=styles['body'].fontName if has_cjk else 'Courier',
+        fontSize=8.5,
+        leading=12.5,
+        textColor=colors.HexColor('#24292f'),
+    )
+    # splitInRow=1：单元格内容（Preformatted）可跨页分裂。默认 0 时超页高的代码块会让整个转换
+    # 报 "Flowable too large on page" 而失败。
+    box = Table([[Preformatted(code_text, style)]], colWidths=[max_width], splitInRow=1)
+    box.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f6f8fa')),
+        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#d8dee6')),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
+    box.hAlign = 'LEFT'
+    box.spaceBefore = 6
+    box.spaceAfter = 6
+    return box
+
+# ---------- 列表 ----------
+def indent_width(raw):
+    """行首缩进宽度（tab 按 4 列计）——用于判定列表嵌套层级"""
+    expanded = raw.expandtabs(4)
+    return len(expanded) - len(expanded.lstrip(' '))
+
+def _normalize_levels(items):
+    """按缩进宽度归一化嵌套层级：[(缩进, kind, text, num)] → [(depth, ...)]（首项为第 0 层）"""
+    out, stack = [], []
+    for indent, kind, text, num in items:
+        while len(stack) > 1 and indent < stack[-1]:
+            stack.pop()
+        if not stack or indent > stack[-1]:
+            stack.append(indent)
+        out.append((len(stack) - 1, kind, text, num))
+    return out
+
+def _make_list(children, kind, start):
+    if kind == 'ol':
+        return ListFlowable(children, bulletType='1', start=start, leftIndent=18)
+    return ListFlowable(children, bulletType='bullet', start='circle', leftIndent=18)
+
+def _one_list(items, pos, depth, kind, styles):
+    """消费连续的同层同类型条目；更深缩进的条目作为子列表挂到上一个条目下"""
+    children, start = [], '1'
+    while pos < len(items) and items[pos][0] == depth and items[pos][1] == kind:
+        _, _, text, num = items[pos]
+        if not children:
+            start = num or '1'   # 有序列表只认首项编号
+        pos += 1
+        body = [Paragraph(text, styles['list_item'])]
+        if pos < len(items) and items[pos][0] > depth:
+            subs, pos = _sub_lists(items, pos, styles)
+            body.extend(subs)
+        children.append(ListItem(body, leftIndent=18))
+    return _make_list(children, kind, start), pos
+
+def _sub_lists(items, pos, styles):
+    """一个条目下的全部子列表（可能跨类型、多层）"""
+    out = []
+    child = items[pos][0]
+    while pos < len(items) and items[pos][0] >= child:
+        flowable, pos = _one_list(items, pos, items[pos][0], items[pos][1], styles)
+        out.append(flowable)
+    return out, pos
+
+def build_lists(items, styles):
+    """列表条目 → [flowable]（顶层；同层类型切换会产生多个列表）"""
+    items = _normalize_levels(items)
+    out, pos = [], 0
+    while pos < len(items):
+        flowable, pos = _one_list(items, pos, items[pos][0], items[pos][1], styles)
+        out.append(flowable)
+    return out
+
+def strip_front_matter(md_text):
+    """去掉文件开头的 YAML front matter（--- ... ---）：属元数据，不该渲染进 PDF。
+    仅当第一行就是 --- 且能找到收尾 --- 时生效，避免误删以分隔线开头的正文。"""
+    lines = md_text.split('\n')
+    if not lines or lines[0].strip() != '---':
+        return md_text
+    for j in range(1, len(lines)):
+        if lines[j].strip() == '---':
+            return '\n'.join(lines[j + 1:])
+    return md_text
+
 # ---------- Markdown 解析主函数 ----------
 def parse_markdown(md_text, styles, md_dir=None, max_width=170 * mm):
     """解析 Markdown 文本，返回 platypus 故事列表"""
     md_dir = md_dir or Path.cwd()
     story = []
     lines = md_text.split('\n')
-    current_list = []          # 当前列表项
-    current_list_type = None   # 'ul' 或 'ol'
+    current_list = []          # 当前列表条目：[(缩进宽度, 'ul'|'ol', 已渲染文本, 首项编号)]
 
     def flush_list():
-        nonlocal current_list, current_list_type
+        nonlocal current_list
         if current_list:
-            items = [
-                ListItem(Paragraph(item, styles["list_item"]), leftIndent=18)
-                for item in current_list
-            ]
-            if current_list_type == 'ol':
-                flowable = ListFlowable(items, bulletType='1', start='1', leftIndent=18)
-            else:
-                flowable = ListFlowable(items, bulletType='bullet', start='circle', leftIndent=18)
-            story.append(flowable)
+            for flowable in build_lists(current_list, styles):
+                story.append(flowable)
             current_list = []
-            current_list_type = None
 
     i = 0
     n = len(lines)
     while i < n:
-        line = lines[i].strip()
+        raw = lines[i]
+        line = raw.strip()
         i += 1
         if not line:
+            # 空行不打断列表：Markdown 允许条目间空行（松散列表），
+            # 否则 1./2./3. 会各自成为独立 ListFlowable，编号全部重置为 1。
+            # 列表遇非列表行时，由各分支自己的 flush_list() 收尾。
+            continue
+
+        # 代码段围栏：``` 或 ~~~（可带语言标记），围栏内原样输出、不解析 Markdown
+        if FENCE_OPEN_RE.match(line):
             flush_list()
+            code_lines = []
+            while i < n and not FENCE_CLOSE_RE.match(lines[i].strip()):
+                code_lines.append(lines[i])  # 保留原始缩进
+                i += 1
+            if i < n:
+                i += 1  # 跳过收尾围栏
+            story.append(code_block_flowable('\n'.join(code_lines), styles, max_width))
             continue
 
         # 分隔线
@@ -318,17 +435,11 @@ def parse_markdown(md_text, styles, md_dir=None, max_width=170 * mm):
             story.append(Paragraph(render_inline(line[5:]), styles["h3"]))
         # 无序列表
         elif line.startswith(('- ', '* ')):
-            if current_list_type != 'ul':
-                flush_list()
-                current_list_type = 'ul'
-            current_list.append(render_inline(line[2:]))
+            current_list.append((indent_width(raw), 'ul', render_inline(line[2:]), None))
         # 有序列表
         elif is_ordered_list(line):
-            if current_list_type != 'ol':
-                flush_list()
-                current_list_type = 'ol'
-            text = re.sub(r'^\d+\.\s+', '', line)
-            current_list.append(render_inline(text))
+            m = re.match(r'^(\d+)\.\s+', line)
+            current_list.append((indent_width(raw), 'ol', render_inline(line[m.end():]), m.group(1)))
         # 引用
         elif line.startswith('> '):
             flush_list()
@@ -342,10 +453,17 @@ def parse_markdown(md_text, styles, md_dir=None, max_width=170 * mm):
                 rows.append(split_row(lines[i].strip()))
                 i += 1
             story.append(table_flowable(rows, max_width, styles))
-        # 普通段落
+        # 普通段落（下一行是 ===/--- 下划线时按 setext 标题处理）
         else:
             flush_list()
-            story.append(Paragraph(render_inline(line), styles["body"]))
+            if i < n and SETEXT_H1_RE.match(lines[i].strip()):
+                i += 1
+                story.append(Paragraph(render_inline(line), styles["title"]))
+            elif i < n and SETEXT_H2_RE.match(lines[i].strip()):
+                i += 1
+                story.append(Paragraph(render_inline(line), styles["h1"]))
+            else:
+                story.append(Paragraph(render_inline(line), styles["body"]))
 
     flush_list()
     return story
@@ -353,7 +471,7 @@ def parse_markdown(md_text, styles, md_dir=None, max_width=170 * mm):
 # ---------- 主转换函数 ----------
 def markdown_to_pdf(md_path, pdf_path):
     """读取 Markdown 文件并转换为 PDF"""
-    md_text = Path(md_path).read_text(encoding="utf-8")
+    md_text = strip_front_matter(Path(md_path).read_text(encoding="utf-8"))
 
     # 注册字体
     font_pair = register_font()
@@ -363,6 +481,8 @@ def markdown_to_pdf(md_path, pdf_path):
     else:
         normal_font, bold_font = "Helvetica", "Helvetica-Bold"
         print("使用 Helvetica（中文可能显示为方块）")
+    global _CJK_FONT
+    _CJK_FONT = normal_font
 
     # 构建样式
     styles = build_styles(normal_font, bold_font)
