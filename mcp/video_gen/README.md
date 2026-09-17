@@ -7,7 +7,7 @@
 - 默认模型：`cogvideox-flash`
 - 端口：容器内 `3000`（MCP `/mcp` + `/health`，**容器外不映射**，只在 `agent-mcp-net` 内被 agent 访问）
 - 鉴权：**无服务端密钥**，每次请求必须从 header 携带智谱 token
-- 本地文件需要公网 URL 时：不传字节，让 AI 去 agent 的内网签发入口现签一条短命链接（见下节）
+- 本地文件需要公网 URL 时：不传字节，AI 直接调用 agent 内置的「公开临时 URL」工具拿到短命链接（见下节）
 
 ---
 
@@ -71,23 +71,12 @@ docker exec mcp_video_gen node -e "fetch('http://localhost:3000/health').then(r=
 
 ## 本地文件 → 公网 URL（本服务不搬字节）
 
-`image_url` 必须是一个**公网可达**的 URL（智谱服务器会自己去拉）。图片在本地盘上时，本服务不负责上传，
-而是让 AI 去 agent 那边现签一条短命的公网链接（实现见 agent 仓库 `app/server/routes/public-link.js`）：
+`image_url` 必须是一个**公网可达**的 URL（智谱服务器会自己去拉）。图片在本地盘上时，本服务不负责上传：
+agent 侧已集成为一个 **tool**，AI 直接传文件路径就能拿到一条公开临时 URL，拿来填 `image_url` 即可，
+不需要 curl 任何地址、不需要任何配置。
 
-```bash
-# AI 在 agent 的 executor 沙箱里执行；路径就是它平时看到的那个绝对路径
-curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/foo.png"
-# stdout 就是现成 URL（纯文本，不需要解析 JSON）：
-# http://124.221.199.237:8090/p/9fQ2mZ7xK4tR1vBn
-```
-
-- 那条链接是不透明短 ID：22 字符随机、纯 ASCII、不带文件名/会话名/签名，约 50 字符
-  （签完由 agent 的 `public_files` 内存表记住“哪个文件 + 何时过期”）。刻意做短是因为它会被模型
-  抄进 `image_url` 参数、并永久留在会话历史里每轮重发。
-- 不可猜、会过期（默认 30 分钟）、agent 重启即全失效。
-- `8081` 是 agent 侧的**内网**签发端口（`PUBLIC_LINK_PORT`），**不映射到宿主机**，所以接它不需要任何凭据；
-  地址由 env `PUBLIC_LINK_URL` 告诉本服务（compose 已默认指向 `http://agent-core:8081/public-link`）。
-- `PUBLIC_LINK_URL` 没配时，工具描述里不会出现这条命令，而是提示“请运维配置”。
+- 文件始终躺在 agent 的任务目录里，零拷贝；链接短命、到期或 agent 重启后失效。
+- 智谱只在提交任务那一刻拉一次图，短命链接完全够用。
 
 ---
 
@@ -100,8 +89,7 @@ curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/foo.p
 | 名称 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | string | ✅ | 视频文本描述，最大 512 字符 |
-| `image_url` | string (URL) | ❌ | 参考图 URL（**单张**，不支持数组 / 多张 / 首尾帧）。图片 ≤ 5MB，格式 png/jpeg/jpg。本地文件请先用上一节的命令换一条公网链接 |
-| `size` | string | ❌ | 视频尺寸，例如 `1920x1080`、`1080x1920`、`1024x1024`、`1280x960` 等 |
+| `image_url` | string (URL) | ❌ | 参考图 URL（**单张**，不支持数组 / 多张 / 首尾帧）。图片 ≤ 5MB，格式 png/jpeg/jpg。本地文件请先用 agent 内置的公开临时 URL 工具换成公网链接（上一节） |
 | `with_audio` | boolean | ❌ | 是否生成 AI 音效，默认 `false` |
 
 ### 服务端 Header 覆盖项（AI 看不到）
@@ -182,8 +170,8 @@ Token 仅在每次 tool call 时从 header 读取，不写入任何存储、不�
 ## 推荐用法（AI 视角）
 
 ```
-1. 如果手头是【本地文件】：先 `curl -s "http://agent-core:8081/public-link?path=<绝对路径>"` 拿到一条公网链接（上一节），再进第 2 步
-2. 调用 video_gen({ prompt, image_url?, size?, with_audio? })
+1. 如果手头是【本地文件】：先调用 agent 内置的「公开临时 URL」工具拿到一条公网链接（上一节），再进第 2 步
+2. 调用 video_gen({ prompt, image_url?, with_audio? })
 3. 拿到 task_id → 等待若干秒（建议 2~5 秒）
 4. 调用 query_video({ task_id })
    - 若 PROCESSING → 等一会再调
@@ -191,7 +179,7 @@ Token 仅在每次 tool call 时从 header 读取，不写入任何存储、不�
    - 若 FAIL → 展示错误信息，结束
 ```
 
-> `video_gen` 的 tool description 里已经嵌入了完整 curl 上传命令，AI 一看就知道怎么传本地图片。
+> `image_url` 必须是公网可达 URL；本地文件走 agent 内置工具，本服务不参与上传。
 
 ---
 
@@ -251,7 +239,6 @@ curl -s -X POST http://localhost:8083/mcp \
       "name": "video_gen",
       "arguments": {
         "prompt": "A cat is playing with a ball.",
-        "size": "1920x1080",
         "with_audio": true
       }
     }
@@ -293,12 +280,12 @@ package.json        # @modelcontextprotocol/sdk + express + multer
 - **每 session 一个 transport + server**：通过 `Mcp-Session-Id` 复用，避免每请求重建
 - **Token 闭包注入**：在 Express 入口处从 header 提取 token，闭包传给 tool 回调；不依赖 SDK 内部字段
 - **AI 可见 vs AI 不可见**：
-  - AI 只看到 `prompt / image_url / size / with_audio`
+  - AI 只看到 `prompt / image_url / with_audio`
     - `model / quality / fps / watermark_enabled` 全部由 HTTP header 注入，避免 AI 误传或被诱导调高价档
 - **异步语义暴露给 AI**：服务端不做轮询，`video_gen` 只提交、`query_video` 只查一次。AI 自主决定节奏
 - **服务端自动 `request_id`**：每次提交服务端生成一个 UUID 作为智谱 `request_id`，便于日志关联，但不暴露给 AI
-- **不搬字节**：本地文件 -> 公网 URL 完全由 agent 侧完成（`GET /public-link` 现签一个 22 字符随机短 ID），本服务只把命令拼进工具描述；所以能给本体不加任何写入口、不落盘、不需要额外端口
-- **链接短命且极短**：默认 30 分钟过期、agent 重启即全失效；`PUBLIC_LINK_URL` 未配时工具描述退化为“请运维配置”
+- **不搬字节**：本地文件 -> 公网 URL 完全由 agent 侧集成的「公开临时 URL」工具完成，本服务不参与；所以本体不加任何写入口、不落盘、不需要额外端口
+- **链接短命**：公开临时 URL 到期或 agent 重启后失效；智谱只需在提交任务那一刻拉一次图
 
 ### 默认模型
 
@@ -322,9 +309,6 @@ A: 智谱签发 URL 默认 24h 左右。需要在收到后及时转存到自己�
 **Q: 为什么 quality / fps 不让 AI 直接传？**
 A: 这些是技术档位，与成本/单价挂钩。让 AI 自主挑 `quality=quality + fps=60` 会爆账号预算。改成 header 由部署方注入更可控。
 
-**Q: 能否限制 `size` 白名单？**
-A: 当前透传给智谱 API，不做强制校验。如需加白名单，修改 `src/mcp-server.js` 中 `video_gen` 的 `size` schema 即可。
-
 **Q: 报错 `Missing valid Mcp-Session-Id`？**
 A: 漏发了 `Mcp-Session-Id` header，或调 `tools/call` 前没先 `initialize`。
 
@@ -335,7 +319,4 @@ A: 可以。`/async-result/{id}` 是幂等的读接口，并发无副作用。
 A: 不需要。Model header 在每次 `tools/call` 都从当前请求读取。
 
 **Q: 上传的图片多久过期？**
-A: 本服务不存图，不存在“上传的图片”：要用的图在 agent 的任务目录里，AI 现签一个短 ID 给智谱拉。链接按 agent 的 `public_link.ttl_ms`（默认 30 分钟）过期，过期或 agent 重启后该 URL 变 404。
-
-**Q: `PUBLIC_LINK_URL` 不配会怎样？**
-A: 工具描述里不会出现“怎么把本地文件变成公网 URL”的命令，而是提示让运维配置，AI 就只能用已经是公网 URL 的图片（比如 image_gen 刚生成的图）。配的时候注意：它指向的是 agent 侧的**内网**签发端口（`http://agent-core:8081/public-link`），不是 agent 对外的 8090。
+A: 本服务不存图，不存在“上传的图片”：要用的图在 agent 的任务目录里，AI 用 agent 内置的公开临时 URL 工具现取一条短命链接给智谱拉。链接过期或 agent 重启后该 URL 失效，但智谱只在提交任务时拉一次，不受影响。

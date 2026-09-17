@@ -19,16 +19,6 @@ const DEFAULT_QUALITY = "speed";       // speed | quality
 const DEFAULT_FPS = 30;               // 30 | 60
 const DEFAULT_WATERMARK_ENABLED = true; // 平台政策默认 true
 
-// ===== 本地图片怎么拿到公网 URL =====
-// 本服务不搬字节：本地文件 -> 公网 URL 这件事由 agent（agent-core）侧完成：
-//   agent-core 在【内网】端口上提供签发入口（GET /public-link?path=<绝对路径>），
-//   沙箱里的 AI 命令 curl 它，换回一个约 50 字符的短链（http://<IP>:8090/p/<22 字符随机 ID>，
-//   不可猜 / 会过期 / 不带文件名与签名 —— 因为这个 URL 会进会话历史每轮重发）。
-// 这里只把那条命令拼进 tool description 告诉 AI；agent 侧实现见其 routes/public-link.js。
-function resolvePublicLinkUrl() {
-  return String(process.env.PUBLIC_LINK_URL || "").trim().replace(/\/+$/, "");
-}
-
 function parseArgs(argv) {
   const args = {
     http: false,
@@ -136,7 +126,6 @@ async function submitVideo({
   model,
   prompt,
   image_url,
-  size,
   quality,
   with_audio,
   fps,
@@ -154,7 +143,6 @@ async function submitVideo({
   };
   if (prompt) body.prompt = prompt;
   if (image_url) body.image_url = image_url;
-  if (size) body.size = size;
 
   const data = await callZhipu({
     url: ZHIPU_SUBMIT_URL,
@@ -174,7 +162,7 @@ async function queryAsyncResult({ token, id }) {
   return data; // { id, request_id, model, task_status, video_result?, ... }
 }
 
-function buildServer({ publicLinkUrl }) {
+function buildServer() {
   const server = new McpServer(
     {
       name: "video_gen",
@@ -187,26 +175,13 @@ function buildServer({ publicLinkUrl }) {
     }
   );
 
-  // 本地文件 -> 公网 URL 的那条命令。由 agent-core 的内网签发入口提供（见 resolvePublicLinkUrl 注释）：
-  // 它返回 text/plain，stdout 就是现成 URL，所以 AI 不需要解析 JSON。
-  const localFileHint = publicLinkUrl
-    ? `If you need to use a LOCAL image file as image_url, first mint a temporary public URL for it by running this exact command in the shell (replace the path with the file's absolute path):
-
-    curl -s "${publicLinkUrl}?path=/workspace/tasks/<your-session>/your-image.png"
-
-The command prints ONE URL as plain text — pass that URL directly as the image_url argument below. The link is short-lived (minutes), so mint it right before calling this tool.`
-    : `If you need to use a LOCAL image file as image_url but no public-link minting endpoint is configured, ask the operator to configure it (env PUBLIC_LINK_URL). You cannot upload files from here.`;
-
   // ---------- 工具 1：video_gen ----------
   server.tool(
     "video_gen",
-    `Submit a video generation task (text-to-video or image-to-video).
-Returns the task_id immediately; poll the result later with query_video.
-prompt is required. Must add image_url for image-to-video.
+    `Submit an async video generation task. Returns a task_id; poll with query_video.
 
-${localFileHint}
-
-Supported formats: png, jpeg, jpg. Max 5MB per image, and the URL must be reachable from the public internet (the upstream fetches it itself).`,
+- text-to-video: provide prompt only.
+- image-to-video: also provide image_url.`,
     {
       prompt: z
         .string()
@@ -218,13 +193,7 @@ Supported formats: png, jpeg, jpg. Max 5MB per image, and the URL must be reacha
         .url()
         .optional()
         .describe(
-          "Reference image URL string for image-to-video. Image <= 5MB, .png/.jpeg/.jpg. For a local file, first mint a temporary public URL with the shell command shown in this tool's description."
-        ),
-      size: z
-        .string()
-        .optional()
-        .describe(
-          "Video size, e.g. 1920x1080, 1080x1920, 1024x1024, 1280x720, etc."
+          "Reference image for image-to-video. Must be a publicly reachable URL to a png/jpeg/jpg <= 5MB (for local files, first use the agent's built-in tool to mint a public temporary URL)."
         ),
       with_audio: z
         .boolean()
@@ -265,16 +234,15 @@ Supported formats: png, jpeg, jpg. Max 5MB per image, and the URL must be reacha
 
       try {
         const data = await submitVideo({
-                  token,
-                  model,
-                  prompt: args.prompt,
-                  image_url: args.image_url,
-                  size: args.size,
-                  quality,
-                  with_audio: args.with_audio ?? false,
-                  fps,
-                  watermark_enabled,
-                });
+          token,
+          model,
+          prompt: args.prompt,
+          image_url: args.image_url,
+          quality,
+          with_audio: args.with_audio ?? false,
+          fps,
+          watermark_enabled,
+        });
 
         const summary =
           `Model: ${model}\n` +
@@ -312,7 +280,7 @@ Supported formats: png, jpeg, jpg. Max 5MB per image, and the URL must be reacha
       task_id: z
         .string()
         .min(1)
-        .describe("The task id returned by video_gen."),
+        .describe("task_id returned by video_gen."),
     },
     async (args, extra) => {
       const headers = extra?.requestInfo?.headers;
@@ -398,9 +366,6 @@ async function startHttp({ port, host }) {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
 
-  const publicLinkUrl = resolvePublicLinkUrl();
-  console.log(`[video_gen] PUBLIC_LINK_URL = ${publicLinkUrl || "(未配置 -> 工具描述里不会出现本地文件取公网 URL 的命令)"}`);
-
   // session -> { server, transport } 映射
   const sessions = new Map();
 
@@ -432,7 +397,7 @@ async function startHttp({ port, host }) {
     }
 
     const newId = randomUUID();
-        const server = buildServer({ publicLinkUrl });
+    const server = buildServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => newId,
       onsessioninitialized: (id) => {
@@ -474,8 +439,7 @@ async function startHttp({ port, host }) {
 }
 
 async function startStdio() {
-  // stdio 模式：拿不到 agent 的内网签发入口也没关系，description 里会退化为“请运维配 PUBLIC_LINK_URL”
-  const server = buildServer({ publicLinkUrl: resolvePublicLinkUrl() });
+  const server = buildServer();
   const { StdioServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/stdio.js"
   );

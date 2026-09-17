@@ -36,7 +36,6 @@ cd /root/workspace/tools/mcp && docker compose up -d --build
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `PUBLIC_LINK_URL` | `http://agent-core:8081/public-link` | video_gen 用：告诉 AI「本地图片怎么换成公网 URL」的 agent 内网签发入口 |
 | `WEB_SEARCH_PORT` | `8081` | 只在临时打开 web_search 调试端口时用 |
 | `IMAGE_GEN_PORT` | `8082` | 只在临时打开 image_gen 调试端口时用 |
 | `VIDEO_GEN_PORT` | `8083` | 只在临时打开 video_gen 调试端口（MCP 口，仅本机短时调试）时用 |
@@ -46,24 +45,19 @@ cd /root/workspace/tools/mcp && docker compose up -d --build
 智谱服务器生成视频前要**自己来拉参考图**，它不带 cookie、不带 `Authorization`。这套链路里**没有任何人上传文件**：
 
 ```
-AI（agent 的 executor 沙箱里）
-      │ curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/foo.png"
-      ▼
-agent-core :8081（内网、不映射宿主机 -> 无需凭据）
-      │ 现签一个不透明短 ID（22 字符随机），内存表记着“哪个会话的哪个文件 + 何时过期”
+AI ──调用 agent 内置的「公开临时 URL」工具（直接传文件路径）──► 拿到一条短命公网 URL
+      │
       ▼
 AI 把拿到的 URL 当 image_url 交给 video_gen:3000/mcp
       │
       ▼
-智谱  ──匿名 GET──►  http://<服务器IP>:8090/p/9fQ2mZ7xK4tR1vBn
+智谱  ──匿名 GET──►  agent 侧提供的公开临时 URL
                         那个文件始终躺在 agent 的任务目录里，零拷贝
 ```
 
-- 链接：`/p/<22 字符随机 ID>`，约 50 字符、纯 ASCII（不带文件名/会话名/签名）——因为这条 URL 会被模型
-  抄进工具参数、并永久留在会话历史里每轮重发，越短越安全也越省 token。
-- 过期：agent 侧 `public_link.ttl_ms`（默认 30 分钟）；agent 重启或过期后该 ID 立即失效（内存表）。
-- 前提：agent 侧 `config.yml` 配了 `public_link.base_url`（就是那个对外地址），否则签发端口不启动。
-- 唯一公网可达的东西是 agent 的 8090，以及那条**签名**下载路径；mcp 这三家一个端口都不露。
+- 签发与托管全在 agent 侧（它已集成为一个 tool，AI 直接调用即可，不需要 curl 任何内网入口）。
+- 链接短命：到期或 agent 重启后失效；智谱只在提交任务那一刻拉一次图，完全够用。
+- mcp 这三家一个端口都不露，唯一公网可达的东西只有 agent 自己。
 
 ## 端口与安全
 
@@ -71,7 +65,7 @@ AI 把拿到的 URL 当 image_url 交给 video_gen:3000/mcp
 |---|---|---|
 | `mcp_web_search` | 无 | 服务端无鉴权，**永远不要映射出去**（会被白嫖搜索额度）；agent 走内网访问 |
 | `mcp_image_gen` | 无 | token 由调用方自带，暴露后可被拿去消耗你的智谱额度 |
-| `mcp_video_gen` | 无 | 它需要的公网下载路径由 agent 现签的匿名短链（`/p/<id>`）提供，自己不占端口 |
+| `mcp_video_gen` | 无 | 它需要的公开临时 URL 由 agent 侧集成的工具提供，自己不占端口 |
 
 ## 单独调试
 

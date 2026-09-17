@@ -29,11 +29,6 @@ services:
     # 调试用（默认关；这里映的是 MCP 端口，会暴露 /mcp，仅本机短时调试用）：
     # ports:
     #   - "${VIDEO_GEN_PORT:-8083}:3000"
-    environment:
-      # 本地图片 -> 公网 URL：agent-core 的【内网】签发入口（agent 侧 public_link 功能），
-      # agent-core:8081 就是它那个不映射宿主机的签发端口（env PUBLIC_LINK_PORT，默认 8081）。
-      # 本服务不搬字节：只把这条命令拼进工具描述，AI 自己在沙箱里 curl，拿回一条短命链接。
-      - PUBLIC_LINK_URL=${PUBLIC_LINK_URL:-http://agent-core:8081/public-link}
     networks:
       - agent-mcp-net
 
