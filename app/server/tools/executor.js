@@ -419,22 +419,35 @@ async function toolEditFile(ctx, args) {
   return '已成功应用 ' + applied + ' 处编辑到 ' + relOf(ctx.taskDir, abs);
 }
 
+// 对齐 Zed list_directory 的输出格式：
+//   # Folders:
+//   <dir>/<name>
+//
+//   # Files:
+//   <dir>/<name>
+// 条目为相对任务目录的完整路径（不带尾部斜杠），目录/文件分节、各自排序，空节省略。
 async function toolListDirectory(ctx, args) {
   // 对齐 ls 语义：path 缺省或为空字符串时等同于当前目录（任务目录）。
   const p = typeof args.path === 'string' && args.path.trim() ? args.path : '.';
   const abs = resolveInTask(ctx.taskDir, p);
   const entries = await fsp.readdir(abs, { withFileTypes: true });
+  const rel = relOf(ctx.taskDir, abs);
   const dirs = []; const files = [];
   for (const e of entries) {
-    if (e.isDirectory()) dirs.push(e.name + '/');
-    else files.push(e.name);
+    const full = rel === '.' ? e.name : rel + '/' + e.name;
+    if (e.isDirectory()) dirs.push(full);
+    else files.push(full);
   }
   dirs.sort(); files.sort();
-  const all = dirs.concat(files);
-  const shown = all.slice(0, 500);
-  let out = '目录 ' + relOf(ctx.taskDir, abs) + ' 下的文件与子目录：\n' + shown.join('\n');
-  if (all.length > shown.length) out += '\n...（共 ' + all.length + ' 项，已截断）';
-  if (all.length === 0) out = '（目录为空）';
+  const total = dirs.length + files.length;
+  if (total === 0) return 'Directory is empty';
+  const shownDirs = dirs.slice(0, 500);
+  const shownFiles = files.slice(0, 500 - shownDirs.length);
+  const sections = [];
+  if (shownDirs.length) sections.push('# Folders:\n' + shownDirs.join('\n'));
+  if (shownFiles.length) sections.push('# Files:\n' + shownFiles.join('\n'));
+  let out = sections.join('\n\n');
+  if (shownDirs.length + shownFiles.length < total) out += '\n\n...(' + total + ' entries total, truncated)';
   return out;
 }
 
