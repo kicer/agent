@@ -129,6 +129,8 @@ model_hold:
 # MCP 服务（可配多个；与内置工具分开）。启动时对每个服务调 tools/list 发现工具，
 # 追加到内置工具之后一起发给模型；调用经 tools/call 转发。headers 是任意请求头（如 Authorization）。
 # enable 选填、默认 true；设为 false 时启动不加载该服务的工具（配置保留，改回 true 重启即恢复）。
+# timeout_ms 选填、默认 60000：该服务单次工具调用的最大等待（毫秒，有 1s~10min 夹限），
+# 像视频生成这类上游就是慢的服务可以调大；握手/工具发现阶段用固定的 15s，不受本项影响。
 # 服务不可用时只在启动日志告警，不影响其他服务与内置工具。
 #
 # 无域名部署：agent-core 与 mcp 仓库的容器共用 agent-mcp-net，这里直接写【容器名:容器内端口】，
@@ -137,6 +139,7 @@ mcp_servers:
   - name: web-search                                   # 选填，缺省取主机名首段
     url: "http://mcp_web_search:3000/"                 # web_search 无服务端鉴权，不需要 headers
     enable: true                                       # 选填，默认 true；false 时启动不加载
+    # timeout_ms: 60000                                # 选填，单次工具调用最大等待（毫秒），默认 60s
   # 智谱系服务：token 由客户端透传（每次请求都要带），值填你的智谱 API Key。
   # 路径带 /mcp（web_search 是根路径 /，image/video gen 是 /mcp）。
   # - name: image-gen

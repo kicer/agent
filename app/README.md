@@ -55,6 +55,6 @@ System prompt 完全静态（所有会话共用，利于上游前缀缓存），
 - 规划阶段点「开始执行」：追加固定模板消息并切 execution。
 - 终止：置位标志 + kill 进程组 + 中止模型流，不再发新请求。
 - 所有文件路径解析到任务目录内，拒绝越界。
-- MCP 服务在 config.yml 的 `mcp_servers` 配置（可多个，每项 name?/url/headers/enable?，enable 默认 true、false 时启动不加载其工具）；启动时发现其工具，追加在内置工具之后与 system prompt 一起发给模型；服务不可用仅启动日志告警，工具名重名时加「服务名__」前缀。
+- MCP 服务在 config.yml 的 `mcp_servers` 配置（可多个，每项 name?/url/headers/enable?/timeout_ms?，enable 默认 true、false 时启动不加载其工具；timeout_ms 为该服务单次工具调用最大等待，默认 60s）；启动时发现其工具，追加在内置工具之后与 system prompt 一起发给模型；服务不可用仅启动日志告警，工具名重名时加「服务名__」前缀。
 
 部署见 `../docs/DEPLOY.md`。

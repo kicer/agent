@@ -1,5 +1,5 @@
 // 极简 MCP 客户端（Streamable HTTP：JSON-RPC over HTTP，无状态，响应可能是 SSE 帧包裹的 JSON）。
-// MCP 服务在 config.yml 的 mcp_servers 中配置（可多个）：{name?, url, headers?, enable?}。
+// MCP 服务在 config.yml 的 mcp_servers 中配置（可多个）：{name?, url, headers?, enable?, timeout_ms?}。
 // 启动时 init() 对每个服务调 tools/list 发现工具（enable: false 的服务跳过加载），转成 OpenAI function 格式，
 // 追加在内置工具（definitions.json）之后一起随 system prompt 发给模型；
 // 工具调用经 tools/call 转发给对应服务。
@@ -7,6 +7,10 @@
 // 仅当与内置工具或其他 MCP 工具重名时加「服务名__」前缀。
 
 const log = require('./log');
+
+// 单次 tools/call 的缺省最大等待；服务配了 timeout_ms 就用服务的（config.js 已归一化）。
+// 与 config.js 的 MCP_CALL_TIMEOUT_MS 保持一致。
+const CALL_TIMEOUT_MS = 60000;
 
 let toolDefs = [];                    // OpenAI function 格式（所有 MCP 工具）
 const toolIndex = new Map();          // 发送名 -> { server, tool }（服务配置 + 原始工具名）
@@ -18,8 +22,12 @@ let builtinNames = new Set();
 // session 过期补偿：非 initialize 请求若 400 且错误信息含 session，清掉旧 id 并重新 initialize 后重试一次。
 async function rpc(server, method, params, timeoutMs) {
   const callId = Date.now();
+  const ms = timeoutMs || 30000;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs || 30000);
+  // timedOut 用于把 AbortError（原生信息只说 "This operation was aborted"）翻成带秒数的超时信息：
+  // 超时现在是可配的，不印出来的话排查时看不出当时配了多少。
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, ms);
   try {
     const headers = Object.assign({
       'Content-Type': 'application/json',
@@ -58,7 +66,7 @@ async function rpc(server, method, params, timeoutMs) {
           if (!/Method not found/i.test(String(e && e.message || e))) throw e;
         }
         // 重试原请求（新一次 fetch + 新 AbortController）
-        return await rpc(server, method, params, timeoutMs);
+        return await rpc(server, method, params, ms);
       }
       throw new Error('HTTP ' + res.status + ': ' + raw.slice(0, 300));
     }
@@ -79,6 +87,11 @@ async function rpc(server, method, params, timeoutMs) {
     if (!payload) throw new Error('响应无法解析：' + raw.slice(0, 300));
     if (payload.error) throw new Error('MCP 错误：' + JSON.stringify(payload.error).slice(0, 500));
     return payload.result;
+  } catch (err) {
+    // 只有定时器真的触发才改写；其余错误（HTTP 非 2xx、解析失败等）原样上抛。
+    // 注意 session 重试分支已先 clearTimeout，不会误报成超时。
+    if (timedOut) throw new Error('MCP 请求超时（' + ms + 'ms）：' + method + ' @ ' + server.url);
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -148,12 +161,15 @@ function toolDefinitions() { return toolDefs; }
 function hasTool(name) { return toolIndex.has(name); }
 
 // 把工具调用转发给对应 MCP 服务，返回给模型的文本结果。
+// 超时取该服务的 timeout_ms（config.js 里归一化 + 夹过区间）；这里再兜一次底，
+// 兼容没走配置加载的调用方（如测试里手搓的 cfg）。
 async function callTool(name, args) {
   const entry = toolIndex.get(name);
   if (!entry) return 'Error: 未知 MCP 工具 ' + name;
   let result;
   try {
-    result = await rpc(entry.server, 'tools/call', { name: entry.tool, arguments: args || {} }, 60000);
+    result = await rpc(entry.server, 'tools/call', { name: entry.tool, arguments: args || {} },
+      Number(entry.server.timeout_ms) || CALL_TIMEOUT_MS);
   } catch (err) {
     return 'MCP ' + entry.server.name + '/' + entry.tool + ' 调用失败: ' + (err && err.message || err);
   }

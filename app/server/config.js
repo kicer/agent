@@ -4,6 +4,9 @@ const path = require('path');
 const YAML = require('yaml');
 const log = require('./log');
 
+// MCP 单次工具调用（tools/call）的缺省最大等待，与 mcp.js 的 CALL_TIMEOUT_MS 保持一致。
+const MCP_CALL_TIMEOUT_MS = 60000;
+
 const DEFAULTS = {
   port: 8090,
   // 数据根目录：db、prompt dump 等运行时产物默认放这里（容器内挂 ./data → /workspace/data）。
@@ -40,7 +43,8 @@ const DEFAULTS = {
   // 登录认证：{ users: [{user, password}], secret?, ttl_ms? }，密码明文存配置（自用场景）。
   // users 为空则不启用认证（可交给前置 nginx-proxy，但手机浏览器原生下载不带 Basic 头，不推荐）。
   auth: null,
-  // MCP 服务列表：每项 {name?, url, headers?, enable?（默认 true，false 时启动不加载）}；启动时发现其工具并追加到内置工具之后。
+  // MCP 服务列表：每项 {name?, url, headers?, enable?（默认 true，false 时启动不加载）,
+  // timeout_ms?（单次工具调用最大等待，默认 60s）}；启动时发现其工具并追加到内置工具之后。
   // 注意与内置工具（definitions.json）严格分离：这里只配外部 MCP 服务。
   mcp_servers: [],
   // 公网临时链接：内置工具 mint_public_link 的唯一开关。base_url 非空时，工具会把会话目录里的
@@ -226,7 +230,8 @@ function parseAndValidate(rawText, configPath) {
   }
 
   // MCP 服务规范化：url 必填；name 缺省取主机名首段；headers 为普通键值对象（如 Authorization）；
-  // enable 缺省 true，显式 false 时启动不加载该服务的工具（见 mcp.init）。
+  // enable 缺省 true，显式 false 时启动不加载该服务的工具（见 mcp.init）；
+  // timeout_ms 为该服务单次 tools/call 的最大等待，缺省 60s（长任务服务如视频生成可调大）。
   if (!Array.isArray(cfg.mcp_servers)) cfg.mcp_servers = [];
   for (const s of cfg.mcp_servers) {
     if (!s || !s.url) throw new Error('mcp_servers 每项必须有 url（MCP 服务的 JSON-RPC 端点）');
@@ -238,6 +243,9 @@ function parseAndValidate(rawText, configPath) {
     const headers = {};
     for (const [k, v] of Object.entries(s.headers || {})) headers[k] = String(v);
     s.headers = headers;
+    // 单次工具调用的超时上限：缺省 60s，夹在 [1s, 10min]（一次调用长期占着模型槽位，不允许无限等）。
+    // YAML 里写成字符串或写了非法值都回落到缺省。
+    s.timeout_ms = Math.min(Math.max(Number(s.timeout_ms) || MCP_CALL_TIMEOUT_MS, 1000), 600000);
   }
 
   normalizePublicLink(cfg);

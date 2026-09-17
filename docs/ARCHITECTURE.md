@@ -449,6 +449,7 @@ stateDiagram-v2
 - 上下文压缩 —— 无配置项：压缩回合的 system prompt 整体替换为固定模板 `server/templates/compress-prompt.txt`，该回合不传 tools；调整压缩策略直接改该文件。
 - `auth.users` —— 明文密码配在配置里（自用场景）；`secret` 留空则随机生成（重启掉登录态，建议固定随机串）。
 - `mcp_servers[].enable: false` —— 启动不加载该服务（配置保留），其余工具不受影响。
+- `mcp_servers[].timeout_ms` —— 该服务单次 `tools/call` 的最大等待，默认 60000（夹在 1s~10min）；工具发现/握手用固定 15s，不受本项影响。
 - `executor.url` / `executor.token` —— 留空走环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN`（compose 默认注入）。
 
 ---
@@ -565,7 +566,7 @@ sequenceDiagram
 
 ### 11.3 加一个 MCP 服务
 
-直接改 `config.yml` 的 `mcp_servers` 数组加一项 `{name, url, headers, enable?}`。重启生效。`enable: false` 的服务不加载工具（配置保留），单服务失败只 warn 不影响其他。
+直接改 `config.yml` 的 `mcp_servers` 数组加一项 `{name, url, headers, enable?, timeout_ms?}`。重启生效。`enable: false` 的服务不加载工具（配置保留），单服务失败只 warn 不影响其他。`timeout_ms`（默认 60000，夹在 1s~10min）是该服务单次 `tools/call` 的最大等待。
 
 ### 11.4 加一个模型 / 平台
 
