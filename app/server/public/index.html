@@ -261,7 +261,7 @@
       </div>
     </div>
 
-    <!-- MCP 服务编辑/新增弹窗:配置 name / url / 多条 headers / 启用开关;保存后写入 config.yml,重启生效 -->
+    <!-- MCP 服务编辑/新增弹窗:配置 name / url / 多条 headers / 单次调用超时 / 启用开关;保存后写入 config.yml,重启生效 -->
     <div id="mcp-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)mcpUI.close()">
       <div class="modal modal-wide">
         <button class="modal-close-btn" onclick="mcpUI.close()">
@@ -275,6 +275,7 @@
           <div id="mce-headers"></div>
         </div>
         <div class="mpe-cks" style="margin-top:14px">
+          <label class="mpe-num">单次调用超时<input type="number" id="mce-timeout" min="1000" max="600000" step="1000" placeholder="默认 60000">ms</label>
           <label class="mpe-ck"><input type="checkbox" id="mce-enable" checked>启用</label>
         </div>
         <div class="btn-row mpe-foot">
@@ -4224,11 +4225,11 @@
     } catch (e) { toast('删除失败:' + e.message); }
   }
 
-  // ---------- 页:MCP 服务(增/改/删;name / url / 多 headers / enable) ----------
+  // ---------- 页:MCP 服务(增/改/删;name / url / 多 headers / timeout_ms / enable) ----------
   // 与模型池共用 PATCH /api/config 的细粒度 edit 接口:
   //   · 新增 = append 到 mcp_servers;
   //   · 删 = delete mcp_servers[pi];
-  //   · 改 = setIn mcp_servers[pi].(name|url|enable);headers 是普通键值对象,整体 setIn 一次到位。
+  //   · 改 = setIn mcp_servers[pi].(name|url|timeout_ms|enable);headers 是普通键值对象,整体 setIn 一次到位。
   // 运行配置(cg.effective.mcp_servers)即文件刚解析后的视图,按 pi 直接定位;重启后才会重新发现工具。
   let mcpEdit = null; // 工作态:{ idx, headers:[{key, value, masked}] };idx=-1 为新增
   const MCP_HEADER_MASK = '*****'; // 与后端 routes/config.js 的掩码保持一致
@@ -4296,6 +4297,8 @@
     $('mce-title').textContent = add ? '添加 MCP 服务' : '编辑 MCP 服务';
     $('mce-name').value = add ? '' : (s.name || '');
     $('mce-url').value = add ? '' : (s.url || '');
+    // 运行配置里的 timeout_ms 已被 config.js 填上缺省值,所以这里显示的就是当前生效值(没配则为 60000)。
+    $('mce-timeout').value = add || s.timeout_ms == null ? '' : String(s.timeout_ms);
     $('mce-enable').checked = add ? true : (s.enable !== false);
     $('mce-del-btn').classList.toggle('hidden', add);
     renderMcpHeaders();
@@ -4337,12 +4340,22 @@
     const name = $('mce-name').value.trim();
     const url = $('mce-url').value.trim();
     const enable = $('mce-enable').checked;
+    // 超时:留空 = 不写入该项（沿用缺省 60s）。区间在 UI 先把一道,
+    // 比写进 YAML 再被 config.js 静默夹掉好排查（两边上限保持 600000 一致）。
+    const tmoRaw = $('mce-timeout').value.trim();
+    let tmo = null;
+    if (tmoRaw !== '') {
+      tmo = Number(tmoRaw);
+      if (!Number.isFinite(tmo) || tmo < 1000 || tmo > 600000) throw new Error('超时要填 1000 ~ 600000 毫秒（留空 = 默认 60s）');
+      tmo = Math.round(tmo);
+    }
     const add = mcpEdit.idx < 0;
     if (add) {
       if (!url) throw new Error('请填写 url');
       const obj = { url };
       if (name) obj.name = name;
       if (!enable) obj.enable = false;
+      if (tmo != null) obj.timeout_ms = tmo;
       const headers = {};
       for (const r of mcpEdit.headers) {
         const k = String(r.key || '').trim();
@@ -4357,6 +4370,11 @@
       if (name !== (cur.name || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'name'], value: name });
       if (url !== (cur.url || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'url'], value: url });
       if (!!cur.enable !== enable) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'enable'], value: enable });
+      // 超时:清空 = 删掉该键（回落到缺省）;后端 deleteIn 支持嵌套键,无键时是空操作。
+      const curTmo = cur.timeout_ms == null ? null : Number(cur.timeout_ms);
+      if (tmo !== curTmo) edits.push(tmo == null
+        ? { path: ['mcp_servers', mcpEdit.idx, 'timeout_ms'], op: 'delete' }
+        : { path: ['mcp_servers', mcpEdit.idx, 'timeout_ms'], value: tmo });
       // headers 仅在内容变更时整体 setIn;避免无意义重写(顺序可能不同)
       const newH = {};
       for (const r of mcpEdit.headers) {

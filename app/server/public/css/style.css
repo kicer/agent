@@ -1096,6 +1096,11 @@ label.icon-btn { cursor: pointer; }
 .modal .mpe-mcard { border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; margin-bottom: 8px; background: #fafbfd; }
 .modal .mpe-mcard .mpe-row { margin-bottom: 0; }
 .modal .mpe-cks { display: flex; align-items: center; gap: 16px; margin-top: 8px; }
+/* 超时(ms)与「启用」同排。数字框单独成类，不吃 .mpe-ck input 那套 15px 无边框样式（那是给 checkbox 的）；
+   选择器带 .modal 前缀是为了压过 .modal input{width:100%}，否则会被撑满整行。 */
+.modal .mpe-num { display: flex; align-items: center; gap: 5px; flex: none; font-size: 12.5px; color: var(--gray); }
+.modal .mpe-num input { width: 92px; padding: 5px 8px; margin: 0; font-size: 13px; border: 1px solid #dde1ea; border-radius: 8px; background: #fff; color: var(--ink); }
+.modal .mpe-num input:focus { border-color: var(--active); }
 .modal .mpe-ck { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--gray); }
 .modal .mpe-ck input { width: 15px; height: 15px; padding: 0; margin: 0; border: none; background: none; accent-color: var(--active); cursor: pointer; }
 .modal .mpe-del { flex: none; border: none; background: none; margin: 0; padding: 2px 7px; cursor: pointer; color: var(--gray-light); font-size: 18px; line-height: 1.2; }
