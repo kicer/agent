@@ -294,11 +294,6 @@ if [ "$UP" = "1" ]; then
     fi
     echo
     info "看日志： docker compose logs -f agent-core"
-    if [ -d "$MCP_DIR" ]; then
-        info "自检（期望 404，说明公网取用入口 /p/<id> 已挂上）："
-        info "  docker exec mcp_video_gen node -e \"fetch('http://agent-core:8090/p/selfcheck').then(async r=>console.log(r.status, await r.text()))\""
-        info "签发本身已内置为工具 mint_public_link（AI 传文件名即可拿链接），不再需要 curl 内网端口。"
-    fi
     info "注意：安全组/防火墙需放行 ${AGENT_PORT}（mcp 各服务都不映射宿主机端口）"
 fi
 log "完成 ✅"
