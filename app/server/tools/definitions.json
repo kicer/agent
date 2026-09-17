@@ -169,11 +169,10 @@
       "description": "Lists files and directories in a given path.\n\nUse this to see the contents of a directory. For searching by name or content, prefer `find_path` or `grep`.",
       "parameters": {
         "type": "object",
-        "required": ["path"],
         "properties": {
           "path": {
             "type": "string",
-            "description": "Path of the directory to list, relative to the session working directory. Absolute paths are also accepted."
+            "description": "Path of the directory to list, relative to the session working directory. Absolute paths are also accepted. If empty or omitted, lists the current working directory (like `ls` with no argument)."
           }
         }
       }

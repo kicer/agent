@@ -420,7 +420,9 @@ async function toolEditFile(ctx, args) {
 }
 
 async function toolListDirectory(ctx, args) {
-  const abs = resolveInTask(ctx.taskDir, args.path);
+  // 对齐 ls 语义：path 缺省或为空字符串时等同于当前目录（任务目录）。
+  const p = typeof args.path === 'string' && args.path.trim() ? args.path : '.';
+  const abs = resolveInTask(ctx.taskDir, p);
   const entries = await fsp.readdir(abs, { withFileTypes: true });
   const dirs = []; const files = [];
   for (const e of entries) {
