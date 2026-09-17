@@ -19,7 +19,7 @@ app/
 │   │   ├── messages.js      # 消息/SSE/start/stop（10.2）
 │   │   └── files.js         # 文件上传/列表/下载/删除（10.3）
 │   ├── tools/
-│   │   ├── definitions.json # 内置 12 个工具的 JSON Schema
+│   │   ├── definitions.json # 内置 16 个工具的 JSON Schema
 │   │   └── executor.js      # 内置工具执行器（任务目录沙箱；未知工具名转 MCP）
 │   ├── templates/system-prompt.txt  # System prompt 模板（直接编辑）
 │   └── public/              # H5 前端（Vanilla JS + SSE）

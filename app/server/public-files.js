@@ -8,7 +8,8 @@
 // 状态放本进程内存：重启即全部失效 —— 与签名方案语义一致（签名密钥本来就是进程内随机的），
 // 所以不是退步，而是把「不可猜」从 HMAC 换成了随机 ID 本身。
 //
-// 边界：只有内网签发入口（routes/public-link.js，不映射宿主机）能 mint；
+// 边界：mint 只有一个入口 —— 内置工具 mint_public_link（tools/executor.js，与 core 同进程），
+//       它先做“沙箱内 + 已存在且是文件 + realpath 未跳出任务目录”的校验；
 //       取用侧（routes/public-files.js）只按 ID 查表，查不到/过期一律 404。
 'use strict';
 

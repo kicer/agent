@@ -1,10 +1,10 @@
-// 临时链接签名（files.js 的浏览器下载链接、routes/public-link.js 的公网链接共用同一套）。
+// 临时链接签名（files.js 的浏览器下载链接用）。
 //
 // 设计要点：
 //   - 密钥进程内随机：重启后所有旧链接自动失效。公网链接本来就该短命，这是免费拿到的性质。
 //   - 签名覆盖「会话 + 路径 + 过期时间」三项，任何一项被改都会验签失败；
 //     验签用 timingSafeEqual，不做按字节比较的旁路。
-//   - 这里只提供"怎么签"；"给谁签、能签什么"由调用方决定（见 routes/public-link.js 的边界校验）。
+//   - 这里只提供"怎么签"；"给谁签、能签什么"由调用方决定（见 routes/files.js 的校验）。
 'use strict';
 
 const crypto = require('crypto');
@@ -30,7 +30,7 @@ function validPayload(payload, expires, t) {
   return sameHex(signPayload(payload), t);
 }
 
-// 下载链接的报文形状（唯一一份；files.js 验签、public-link.js 签发都走它，避免两边写歪）
+// 下载链接的报文形状（唯一一份；files.js 签发与验签都走它，避免两边写歪）
 function downloadPayload(sessionId, rel, expires) {
   return sessionId + '\n' + rel + '\n' + expires;
 }

@@ -87,24 +87,6 @@ app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
 const PORT = process.env.PORT || cfg.port;
 
-// 公网临时链接的【签发】端口：只在容器内监听、**不映射到宿主机**（compose 也不 publish），
-// 所以外部连不上，于是这条接口不需要任何凭据 —— executor 里的 AI 命令可以 curl 它换一条
-// 短命的公网链接（见 routes/public-link.js 头注释）。未配 public_link.base_url 则不启动。
-const PUBLIC_LINK_PORT = Number(process.env.PUBLIC_LINK_PORT) || 8081;
-
-function startPublicLinkServer() {
-  const pl = cfg.public_link || {};
-  if (!pl.base_url) {
-    log.info('startup', '  public_link=未配置（public_link.base_url 为空），不启动签发端口');
-    return;
-  }
-  const plApp = express();
-  plApp.use(require('./routes/public-link'));
-  plApp.listen(PUBLIC_LINK_PORT, () => {
-    log.info('startup', '  public_link=' + pl.base_url + ' (签发端口 :' + PUBLIC_LINK_PORT + ' 仅内网，未映射宿主机)');
-  });
-}
-
 // 启动成功后把模型实际收到的各部分 dump 到文件方便人工核对（data_root 默认 ./data，
 // 宿主机对应 <repo>/data/prompt.txt，已被 gitignore）。包含两部分：
 //  1) system 消息：模板 + 可用技能段落 + 语言指令（进程内恒定，仅技能增删时变）；
@@ -135,7 +117,7 @@ mcp.init(cfg).then(async () => {
   }
   server.listen(PORT, () => {
       log.info('startup', 'Agent server listening on ' + PORT);
-      startPublicLinkServer();
+      log.info('startup', '  public_link=' + ((cfg.public_link || {}).base_url || '未配置（mint_public_link 不可用）'));
       log.info('startup', '  workspace_root=' + cfg.workspace_root);
       log.info('startup', '  data_root=' + cfg.data_root);
       log.info('startup', '  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));

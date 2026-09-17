@@ -1,4 +1,4 @@
-// 公网临时文件的取用端点：GET /p/<id>（id 由 routes/public-link.js 在内网现签）。
+// 公网临时文件的取用端点：GET /p/<id>（id 由内置工具 mint_public_link 在 core 进程内现签）。
 //
 // 这一跳的访问者是**外部服务**（如智谱服务器来拉参考图），它不带 cookie、不带 Authorization，
 // 所以必须匿名可达。安全性完全来自：

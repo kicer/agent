@@ -40,7 +40,7 @@ agent/
 │   │   ├── balance.js             余额查询适配器（按 platform.type 分发）
 │   │   ├── version.js             版本信息（package.json + git 短提交号）
 │   │   ├── tools/
-│   │   │   ├── definitions.json   内置 15 个工具的 OpenAI function 格式定义
+│   │   │   ├── definitions.json   内置 16 个工具的 OpenAI function 格式定义
 │   │   │   ├── executor.js        工具执行器（文件类 + terminal + skill 委托）
 │   │   │   └── skills.js          Skill Manager（list/info/run + 路径预处理）
 │   │   ├── download-token.js      下载链接签名（浏览器原生下载用；密钥进程内随机）
@@ -53,7 +53,6 @@ agent/
 │   │   │   ├── config.js          /api/config 读写（含 api_key/password 脱敏）
 │   │   │   ├── platforms.js       /api/platforms/balance 余额查询
 │   │   │   ├── skills.js          /api/skills 技能文件管理
-│   │   │   ├── public-link.js     GET /public-link 签发公网短链（只挂内网端口）
 │   │   │   ├── public-files.js    GET /p/<id> 公网临时文件取用（匿名）
 │   │   │   └── system.js          /api/system/status + /restart 优雅重启
 │   │   ├── templates/
@@ -105,7 +104,6 @@ graph LR
     Core -->|POST /chat/completions| LLM
     Core -->|tools/call| MCP
     MCP -->|提交任务| Zhipu
-    Exec -->|curl /public-link 现签短链| Core
     Zhipu -->|匿名 GET /p/id| Core
     Core <-->|读写| Tasks
     Exec <-->|读写| Tasks
@@ -116,16 +114,15 @@ graph LR
 
 所有容器都在同一个 `agent-mcp-net` 上（core 与 executor 同时靠它访问 MCP）；外网只暴露 Core
 （宿主机端口映射）。注意其中一条**反向**的入站链路：外部服务（如智谱）来拉文件时，走的是 Core 的
-`GET /p/<id>`（匿名，22 字符随机 ID + 服务端过期，见 `routes/public-files.js`）；这个 id 由内网
-签发入口 `GET /public-link` 现签，所以链接里既没有会话名也没有文件名。
+`GET /p/<id>`（匿名，22 字符随机 ID + 服务端过期，见 `routes/public-files.js`）；这个 id 由内置工具
+`mint_public_link` 在 core 进程内现签（AI 只传文件名，不走任何 HTTP），所以链接里既没有会话名也没有文件名。
 
 **关键约束**（改 compose 时务必保持）：
 
-- 全部容器同一个网络 `agent-mcp-net`（由本仓库 compose 创建，mcp 侧 external 加入）——core 与 executor 都靠它按容器名访问 MCP 服务（executor 还要靠它 curl core 的签发入口）。
+- 全部容器同一个网络 `agent-mcp-net`（由本仓库 compose 创建，mcp 侧 external 加入）——core 与 executor 都靠它按容器名访问 MCP 服务。
 - `agent-core` 与 `agent-executor` 须把**同一份宿主机 `./tasks`、`./skills`**挂到相同的容器路径（默认 `/workspace/tasks`、`/workspace/skills`）。这是文件工具在 Core 本地直接读、命令在远端写，二者能"看到"彼此产物的根本约定。
 - **两条公网文件路径分工别搞混**：浏览器原生下载走 `download-token.js` 的签名链接（前端用 `download-token` 接口换 URL，`auth.js` 的 `isSignedDownload` 放行 `?t=`）；外部服务取文件走 `GET /p/<id>` 短 ID。前者需要在 URL 末段带文件名（给安卓下载器猜名），后者刻意不带文件名/会话名。
-- **`routes/public-link.js` 只挂在【不映射宿主机】的内网端口上**（`PUBLIC_LINK_PORT`，默认 8081）：它不需要凭据（沙箱里的 AI 带不了凭据），所以安全性完全依赖“外部连不上这个端口”。**绝不要**把它挂到对外的 8090 上，也不要 publish 该端口。
-- `GET /p/<id>` 是 Core 上唯一的匿名读取入口：安全性 = 22 字符随机 ID + 服务端过期（`public-files.js` 的内存表）。它**必须挂在 `auth.middleware` 之前**，未命中/过期一律 404。签发侧仍要做路径校验（`workspace_root` 前缀 + 会话表 + realpath 复核，挡 `ln -s` 外泄）；未配 `public_link.base_url`（且容器 env 没给 `VIRTUAL_HOST`）则不启动签发端口：配了 `VIRTUAL_HOST`（nginx-proxy 域名 + HTTPS）时，前缀自动用 `https://<第一个域名>`，env 优先于 config.yml。
+- `GET /p/<id>` 是 Core 上唯一的匿名入口（只有读、必须挂在 `auth.middleware` 之前，未命中/过期一律 404）：安全性 = 22 字符随机 ID + 服务端过期（`public-files.js` 的内存表）。**唯一的签发入口是内置工具 `mint_public_link`**（在 core 进程内，与 Core 同属一个信任边界，不再额外监听端口），它自己做路径校验（`resolveInTask` 沙箱 + 会话表 + realpath 复核，挡 `ln -s` 外泄）；未配 `public_link.base_url`（且容器 env 没给 `VIRTUAL_HOST`）时工具直接报错：配了 `VIRTUAL_HOST`（nginx-proxy 域名 + HTTPS）时，前缀自动用 `https://<第一个域名>`，env 优先于 config.yml。
 - nginx-proxy 前置时**必须 `proxy_buffering off`**，否则 SSE 流被缓冲。详见 `docs/DEPLOY.md`。
 - Core 通过环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN` 注入 executor 端点（也可用 `config.yml` 的 `executor` 段覆盖）。**token 从 `.env` 读取**（compose 变量替换 `${EXECUTOR_TOKEN:?...}`，未设置直接报错，杜绝静默无鉴权）；`.env` 已 gitignore，模板见 `.env.example`，生成：`openssl rand -hex 32`。
 - Executor **拒绝来自容器自身（回环/本机网卡）的 `/exec`**：隔离只 unshare mount+pid，命令与 executor 同 net ns，能打到 `127.0.0.1:9000`；据此即使 token 泄漏也无法在会话内调用 `/exec` 越权读他人会话（core 在另一容器，不受影响）。本机集成测试用 `EXECUTOR_ALLOW_LOCAL_ORIGIN=1` 放行，生产不得设置。
@@ -268,7 +265,7 @@ stateDiagram-v2
 - session 补偿：MCP 规范的 `Mcp-Session-Id` 缓存在 `server.sessionId`；过期（400 + 含 "session" 字样）自动重 initialize 后重试一次。
 - 某些老服务无 `initialize` → catch `Method not found` 不阻断。
 
-### 5.4 `tools/executor.js` —— 内置 15 工具的派发器
+### 5.4 `tools/executor.js` —— 内置 16 工具的派发器
 
 `HANDLERS` 是 `name → async(ctx, args) → result` 的表；`executeTool(ctx, name, args)` 按 `name` 派发；**未知名直接转发给 MCP**（若 `mcp.hasTool(name)`，调 `mcp.callTool`）。
 
@@ -279,6 +276,7 @@ stateDiagram-v2
 | `list_directory` / `create_directory` / `delete_path` / `move_path` / `copy_path` / `find_path` / `grep` | 标准文件操作，全部 `resolveInTask` 约束；`grep` 走 `ripgrep`（`rg`）优先 |
 | `terminal` | **唯一一个走 executor 的内置工具**（当 `rexec.isRemote(cfg)`）；本地分支用 `spawn` + `detached` + 进程组 kill；远端分支 `rexec.run` SSE 收流，结果套上超时/截断/取消注解后 `truncate(text, cfg.terminal.max_output_chars)` 返回 |
 | `fetch` | `AbortController` + UA + redirect + content-type 简单判断；HTML 用 `htmlToMarkdown` 转 |
+| `mint_public_link` | **唯一的 mint 入口**：与 core 同进程，直接 `publicFiles.mint()`，不绕任何 HTTP；`ctx.taskDir` 就是会话目录，`relOf` 的结果正是取用侧要的 `rel`。校验：`public_link.base_url` 已配 + `resolveInTask` 沙箱 + 确认是文件 + `realpath` 未沿符号链接跳出任务目录；返回单行 URL |
 | `list_skills` / `get_skill_info` / `run_skill` | 委托 `tools/skills.js` |
 
 `resolveInTask(taskDir, relOrAbs)`：把相对路径或绝对路径解析为绝对路径并校验落在 `taskDir` 之内（含根），防穿越。

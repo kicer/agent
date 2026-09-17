@@ -181,6 +181,23 @@
   {
     "type": "function",
     "function": {
+      "name": "mint_public_link",
+      "description": "Create a short-lived, publicly reachable URL for a local file, so an external service that cannot authenticate can download it.\nUse this when another tool or API needs to fetch a local file by URL. Returns the URL as plain text on a single line.",
+      "parameters": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path of the file to publish, relative to the session working directory. Absolute paths inside the session working directory are also accepted."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "move_path",
       "description": "Moves or renames a file or directory, and returns confirmation that the move succeeded. If source and destination are in the same directory but with different names, this acts as a rename.",
       "parameters": {

@@ -90,8 +90,8 @@ router.get('/:id/files', function (req, res) {
 // 移动端浏览器 fetch+blob 下载会丢失文件名（uuid.bin）；改为短时效签名链接，
 // 前端拿到后 window.location.href 导航下载，走原生下载流程。
 // 密钥随进程启动随机生成，重启后旧 token 自动失效。
-// 签名实现（密钥、报文形状、验签）统一在 ../download-token.js：
-// routes/public-link.js 给外部服务签的是同一种链接，两边共用一份形状，避免“签得出、验不过”。
+// 签名实现（密钥、报文形状、验签）统一在 ../download-token.js。
+// （外部服务取文件的 GET /p/<id> 是另一套机制：短 ID + 内存表，见 ../public-files.js。）
 const DOWNLOAD_TOKEN_TTL_MS = downloadToken.BROWSER_TTL_MS;
 const signDownloadToken = downloadToken.signDownload;
 const validDownloadToken = downloadToken.validDownload;

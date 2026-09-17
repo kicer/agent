@@ -133,14 +133,13 @@ docker compose logs -f agent-core    # 看到 "Agent server listening on 8090" �
 所以必须有一条公网匿名可达的 URL。做法是给一个**不透明短 ID**（`app/server/public-files.js`）：
 22 字符随机串，服务端内存表记着它对应哪个会话的哪个文件、什么时候过期。
 
-AI 拿链接的姿势：core 额外在**内网**监听一个**不映射到宿主机**的端口（`PUBLIC_LINK_PORT`，默认 8081），
-上面只有一条签发接口。因为压根没 publish，外部连不上，所以它**不需要任何凭据**：
+AI 拿链接的姿势：直接调内置工具 `mint_public_link`（只传文件名），core 在进程内签好并把 URL 当
+工具结果返回。没有任何额外的 HTTP 签发端口，也不存在“AI 的命令带不了凭据”这个问题：
 
-```bash
-# AI 在 executor 沙箱里执行（路径就是它平时看到的那个绝对路径）
-curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/_cgi-bin_..._d92292d.jpg"
-# → http://124.221.199.237:8090/p/9fQ2mZ7xK4tR1vBn
-#   stdout 就是现成 URL（约 50 字符、纯 ASCII），直接当 image_url 用
+```
+mint_public_link({ path: "_cgi-bin_..._d92292d.jpg" })
+→ http://124.221.199.237:8090/p/9fQ2mZ7xK4tR1vBn
+   返回的就是现成 URL（约 50 字符、纯 ASCII），直接当 image_url 用
 ```
 
 ```
@@ -154,8 +153,8 @@ curl -s "http://agent-core:8081/public-link?path=/workspace/tasks/<会话>/_cgi-
 > 满是 `%XX`）。而这条 URL 会被模型抄进工具参数、并且**永久留在会话历史里每轮重发**，
 > 太长又难抄，还白烧 token。短 ID 把三个问题一次解决了。
 
-- 必须在 `config.yml` 配 `public_link.base_url = "http://<服务器IP>:8090"`；不配则不启动签发端口，
-  video_gen 的工具描述里也不会出现那条命令（它会退化成“请运维配 PUBLIC_LINK_URL”）。
+- 必须在 `config.yml` 配 `public_link.base_url = "http://<服务器IP>:8090"`；不配则 `mint_public_link` 直接报错
+  （需要公网 URL 的那部分功能就用不了，例如 video_gen 拉不到参考图）。
   例外：容器 env 里配了 `VIRTUAL_HOST`（nginx-proxy 域名 + HTTPS 那套）时，前缀自动用 `https://<域名>`，
   不用改 `config.yml`（改也盖不住它）。
 - 链接有效期 `public_link.ttl_ms`，默认 30 分钟；签完尽快用掉。

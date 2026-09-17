@@ -8,6 +8,7 @@ const { Minimatch } = require('minimatch');
 const mcp = require('../mcp');
 const skills = require('./skills');
 const rexec = require('../remote-exec');
+const publicFiles = require('../public-files');
 
 function makeMatcher(pattern, opts) {
   const mm = new Minimatch(pattern, opts || {});
@@ -695,11 +696,34 @@ function recordFile(ctx, abs) {
   } catch (_) { /* 文件表仅用于展示，失败不影响主流程 */ }
 }
 
+// mint_public_link：把当前会话目录里的文件签成一条短命公网链接（由 GET /p/<id> 取用）。
+// 这是唯一的签发入口：与 core 同进程，直接调 publicFiles.mint，不必绕任何 HTTP；
+// 而 ctx.taskDir 就是会话目录，relOf 的结果正是取用侧（routes/public-files.js）要的 rel。
+async function toolMintPublicLink(ctx, args) {
+  const pl = (ctx.cfg && ctx.cfg.public_link) || {};
+  if (!pl.base_url) throw new Error('public_link.base_url 未配置，无法签发公网链接');
+  const abs = resolveInTask(ctx.taskDir, args.path);
+  const rel = relOf(ctx.taskDir, abs);
+  if (rel === '.') throw new Error('path 要指向一个文件，不能是任务目录本身');
+  let st;
+  try { st = fs.statSync(abs); } catch (_) { throw new Error('文件不存在：' + rel); }
+  if (!st.isFile()) throw new Error('不是文件：' + rel);
+  // 符号链接外泄防护：签出去的链接是公网可拉的，realpath 必须仍在任务目录内。
+  const real = fs.realpathSync(abs);
+  const rootReal = fs.realpathSync(ctx.taskDir);
+  if (!real.startsWith(rootReal + path.sep)) {
+    throw new Error('path 经符号链接指向了任务目录之外，拒绍签发');
+  }
+  const id = publicFiles.mint({ sessionId: ctx.sessionId, rel, ttlMs: pl.ttl_ms });
+  return pl.base_url + '/p/' + id;
+}
+
 const HANDLERS = {
   read_file: toolReadFile,
   write_file: toolWriteFile,
   edit_file: toolEditFile,
   list_directory: toolListDirectory,
+  mint_public_link: toolMintPublicLink,
   create_directory: toolCreateDirectory,
   delete_path: toolDeletePath,
   move_path: toolMovePath,

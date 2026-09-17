@@ -43,9 +43,9 @@ const DEFAULTS = {
   // MCP 服务列表：每项 {name?, url, headers?, enable?（默认 true，false 时启动不加载）}；启动时发现其工具并追加到内置工具之后。
   // 注意与内置工具（definitions.json）严格分离：这里只配外部 MCP 服务。
   mcp_servers: [],
-  // 公网临时链接：base_url 非空时，core 额外在内网监听一个**不映射宿主机**的端口（PUBLIC_LINK_PORT，
-  // 默认 8081），上面只挂 GET /public-link：沙箱里的 AI 命令 curl 它，换一条短命的公网下载链接
-  // （给智谱那类"自己来拉文件"的外部服务用）。base_url = 本服务的对外地址（如 http://1.2.3.4:8090）。
+  // 公网临时链接：内置工具 mint_public_link 的唯一开关。base_url 非空时，工具会把会话目录里的
+  // 文件签成一条短命的公网下载链接（给智谱那类"自己来拉文件"的外部服务用）；留空则工具报错。
+  // base_url = 本服务的对外地址（如 http://1.2.3.4:8090），只用于拼绝对地址；不监听任何额外端口。
   public_link: { base_url: '', ttl_ms: 1800000 },
 };
 
