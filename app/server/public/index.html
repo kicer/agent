@@ -2335,7 +2335,7 @@
   // 规则：主体只渲染当前目录的直接子项，目录在上、文件在下；同级目录按名称排序，同级文件按时间倒序(新的在前)。
   // filesCurDir 为当前浏览目录('' = 任务根)；顶部面包屑(/ > a > b)点任意节点回跳，点目录行进一层；无折叠态。
 
-  function fileTimeOf(f) { return f.ctime || f.mtime || 0; }
+  function fileTimeOf(f) { return f.mtime || f.ctime || 0; }
   function sortFilesByTime(arr) {
     arr.sort(function (a, b) {
       const d = fileTimeOf(b) - fileTimeOf(a); // 时间缺失的排最后，与原逻辑一致
@@ -2387,7 +2387,7 @@
       ? '<svg class="file-ico eye" viewBox="0 0 24 24" aria-label="可预览"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
       : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
     const name = esc(String(f.filename).split('/').pop() || f.filename);
-    const ftime = fmtTime(f.ctime || f.mtime);
+    const ftime = fmtTime(f.mtime || f.ctime);
     const sel = isFileEffectivelySelected(f.filename);
     return '<div class="file-row' + (fsPv ? ' clickable' : '') + (sel ? ' selected' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '">' +
       '<span class="file-check" role="checkbox" aria-checked="' + (sel ? 'true' : 'false') + '" aria-label="选择"></span>' +
