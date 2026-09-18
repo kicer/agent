@@ -227,10 +227,18 @@ function buildIsolation(command, plan) {
   L.push('mount -t tmpfs -o nosuid,nodev,mode=1777,size=256m tmpfs /dev/shm || { echo "[isolate] /dev/shm failed" >&2; exit 100; }');
   L.push('mkdir -p /var/tmp');
   L.push('mount -t tmpfs -o nosuid,nodev,mode=1777,size=256m tmpfs /var/tmp || { echo "[isolate] /var/tmp failed" >&2; exit 101; }');
+  // POSIX 消息队列：mqueue 每个新挂载是独立 superblock，重挂即拿到全新空视图；
+  // 挂不上（内核裁剪等）则退而用 tmpfs 遮盖：队列不可用，但父 ns 视图已不可见。
+  L.push('mkdir -p /dev/mqueue');
+  L.push('mount -t mqueue -o nosuid,nodev,noexec mqueue /dev/mqueue 2>/dev/null || mount -t tmpfs -o nosuid,nodev,noexec,mode=1777 tmpfs /dev/mqueue || true');
 
   // --- 本次执行私有 tmpfs：/tmp（session 模式下随后被会话 .tmp 的 bind 覆盖）与 anchor 目录 ---
   L.push('mkdir -p /tmp');
   L.push('mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs /tmp || { echo "[isolate] /tmp failed" >&2; exit 92; }');
+  // /run 整体私有化：父容器（compose tmpfs）的运行时状态是跨 exec 共享的，一律不进子 ns；
+  // $RUNDIR 随后在这块新 tmpfs 上再叠一层，anchor 逻辑不变。
+  L.push('mkdir -p /run');
+  L.push('mount -t tmpfs -o nosuid,nodev,mode=755,size=64m tmpfs /run || { echo "[isolate] /run failed" >&2; exit 102; }');
   L.push('RUNDIR=/run/agent-exec');
   L.push('mkdir -p "$RUNDIR"');
   L.push('mount -t tmpfs -o nosuid,nodev,mode=700 tmpfs "$RUNDIR" || { echo "[isolate] rundir failed" >&2; exit 93; }');
