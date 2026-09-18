@@ -43,7 +43,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 // ---------- 配置 ----------
 const PORT = parseInt(process.env.PORT, 10) || 9000;
@@ -189,6 +189,16 @@ function selfCheck() {
   try { ss = fs.statSync(SKILLS_DIR); } catch (_) {}
   if (!ss) warns.push('SKILLS_DIR=' + SKILLS_DIR + ' 不存在（若不使用技能可忽略）');
 
+  // 行为验证：实际跑一次带挂载的 unshare，确认隔离层在当前 seccomp/apparmor/caps 组合下真的可用；
+  // 哪天部署配置回归（如 v4 类事故）会在这里立刻暴露，而不是等 AI 会话失败才发现。
+  try {
+    execFileSync('unshare', ['--mount', '--pid', '--ipc', '--fork', '--propagation', 'private',
+      '/bin/sh', '-c', 'mount -t tmpfs -o nosuid,nodev tmpfs /tmp && true'],
+      { stdio: 'pipe', timeout: 10000 });
+  } catch (e) {
+    problems.push('unshare 隔离探针失败 —— 检查 cap_add SYS_ADMIN / apparmor=unconfined / seccomp：' + (e.stderr && String(e.stderr) || e.message));
+  }
+
   if (problems.length) log.error('启动自检失败：\n  - ' + problems.join('\n  - '));
   else if (warns.length) log.warn('启动自检通过（有提示）：\n  - ' + warns.join('\n  - '));
   else log.info('启动自检通过');
@@ -234,14 +244,14 @@ function buildIsolation(command, plan) {
 
   // --- 本次执行私有 tmpfs：/tmp（session 模式下随后被会话 .tmp 的 bind 覆盖）与 anchor 目录 ---
   L.push('mkdir -p /tmp');
-  L.push('mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs /tmp || { echo "[isolate] /tmp failed" >&2; exit 92; }');
+  L.push('mount -t tmpfs -o nosuid,nodev,mode=1777,size=256m tmpfs /tmp || { echo "[isolate] /tmp failed" >&2; exit 92; }');
   // /run 整体私有化：父容器（compose tmpfs）的运行时状态是跨 exec 共享的，一律不进子 ns；
   // $RUNDIR 随后在这块新 tmpfs 上再叠一层，anchor 逻辑不变。
   L.push('mkdir -p /run');
-  L.push('mount -t tmpfs -o nosuid,nodev,mode=755,size=64m tmpfs /run || { echo "[isolate] /run failed" >&2; exit 102; }');
+  L.push('mount -t tmpfs -o nosuid,nodev,noexec,mode=755,size=64m tmpfs /run || { echo "[isolate] /run failed" >&2; exit 102; }');
   L.push('RUNDIR=/run/agent-exec');
   L.push('mkdir -p "$RUNDIR"');
-  L.push('mount -t tmpfs -o nosuid,nodev,mode=700 tmpfs "$RUNDIR" || { echo "[isolate] rundir failed" >&2; exit 93; }');
+  L.push('mount -t tmpfs -o nosuid,nodev,mode=700,size=16m tmpfs "$RUNDIR" || { echo "[isolate] rundir failed" >&2; exit 93; }');
 
   // --- 数据面 ---
   if (plan.mode === 'session') {
@@ -571,6 +581,7 @@ async function handleExec(req, res) {
   if (!env.PATH) env.PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
   env.HOME = '/tmp';   // plain 模式指向 per-exec tmpfs；session 模式指向会话共享 .tmp，均不污染镜像层
   env.TMPDIR = '/tmp';
+  env.SHELL = '/bin/sh';  // 白名单不含 SHELL，不设则子进程里 $SHELL 为空，部分工具的 shell=$SHELL 会拿空值
   env.PYTHONDONTWRITEBYTECODE = '1';
   env.PYTHONPYCACHEPREFIX = '/tmp/pycache';
 
