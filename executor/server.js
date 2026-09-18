@@ -221,7 +221,7 @@ function buildIsolation(command, plan) {
     L.push('mount -t tmpfs tmpfs ' + shq(APP_DIR) + ' || { echo "[isolate] hide appdir failed" >&2; exit 91; }');
   }
 
-  // --- 本会话私有 tmpfs：/tmp 与 anchor 目录 ---
+  // --- 本次执行私有 tmpfs：/tmp（session 模式下随后被会话 .tmp 的 bind 覆盖）与 anchor 目录 ---
   L.push('mkdir -p /tmp');
   L.push('mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs /tmp || { echo "[isolate] /tmp failed" >&2; exit 92; }');
   L.push('RUNDIR=/run/agent-exec');
@@ -251,6 +251,9 @@ function buildIsolation(command, plan) {
     // 必须先 bind 再建：深层目录建在 tmpfs 遮盖层上会在 rebind 时被本会话数据盖掉；
     // 而 mkdir 在已 bind 的 virtSession 下建新子目录只发生在本 ns，不会写穿到宿主盘。
     L.push('mount --bind "$ANCH" ' + shq(plan.virtSession) + ' || { echo "[isolate] rebind failed" >&2; exit 96; }');
+    // 会话共享 /tmp：rebind 之后 <virtSession>/.tmp 已指向父 ns 里 executor 建好的会话 .tmp，
+    // 再叠一层 bind 覆盖上面 per-exec 的 tmpfs，实现同会话跨 /exec 调用共享 /tmp。
+    L.push('mount --bind ' + shq(path.join(plan.virtSession, '.tmp')) + ' /tmp || { echo "[isolate] bind session tmp failed" >&2; exit 99; }');
     L.push('mkdir -p ' + shq(plan.cwd));
 
     // 4) 释放锚点目录项（仅本 ns 私有的 $RUNDIR 内，可安全卸载）
@@ -386,11 +389,32 @@ function resolveCwd(raw) {
       }
     }
 
+    // 会话级 /tmp 共享目录：跨 /exec 调用保留，会话删除时随会话目录一起消失。
+    // 在父 ns 里建并做完整校验（符号链接/类型/可写）；wrapper 只负责把它 bind 到 /tmp。
+    // 路径来源已由上方的 realSession lstat 与 realpath 边界校验覆盖，.tmp 自身单独 lstat。
+    const shmTmp = path.join(realFull, '.tmp');
+    let ts;
+    try { ts = fs.lstatSync(shmTmp); } catch (_) { ts = null; }
+    if (ts) {
+      if (ts.isSymbolicLink()) return { ok: false, reason: 'session .tmp 不得是符号链接' };
+      if (!ts.isDirectory()) return { ok: false, reason: 'session .tmp 不是目录' };
+      try { fs.accessSync(shmTmp, fs.constants.W_OK); }
+      catch (e) { return { ok: false, reason: 'session .tmp 不可写：' + e.message }; }
+    } else {
+      try {
+        fs.mkdirSync(shmTmp, { recursive: true });
+        fs.chmodSync(shmTmp, 0o1777);
+      } catch (e) {
+        return { ok: false, reason: '创建 session .tmp 失败：' + e.message };
+      }
+    }
+
     return {
       ok: true, cwd,
       plan: {
         mode: 'session', sessionName, cwd, realSession: realFull,
         virtSession: path.join(DEFAULT_CWD, sessionName),
+        sessionTmp: shmTmp,
       },
     };
   }
@@ -530,7 +554,7 @@ async function handleExec(req, res) {
     }
   }
   if (!env.PATH) env.PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-  env.HOME = '/tmp';   // 指向会话私有 tmpfs，不污染镜像层
+  env.HOME = '/tmp';   // plain 模式指向 per-exec tmpfs；session 模式指向会话共享 .tmp，均不污染镜像层
   env.TMPDIR = '/tmp';
   env.PYTHONDONTWRITEBYTECODE = '1';
   env.PYTHONPYCACHEPREFIX = '/tmp/pycache';
