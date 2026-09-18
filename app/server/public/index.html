@@ -178,6 +178,7 @@
           <div class="files-panel-header">
             <div class="files-drag-handle" id="files-drag-handle" aria-label="拖拽调整高度"></div>
             <span class="files-panel-title">任务文件</span>
+            <span class="files-panel-size" id="files-panel-size" title="当前目录下全部文件总大小（含隐藏的 .tmp）"></span>
             <label class="file-upload" title="上传文件" aria-label="上传文件">
               <input type="file" id="file-input" multiple hidden>
               <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
@@ -2209,6 +2210,7 @@
   const fileSelected = new Set();
   let filesAllPaths = [];
   let filesTreeRoot = null; // 最近一次拉取构建的目录树（单层列表渲染与全选/有效性计算都基于它）
+  let filesDirSizes = new Map(); // 目录路径('' = 根) → 其下文件递归总字节；按未过滤原始列表聚合（含隐藏的 .tmp）
   let filesCurDir = '';     // 当前浏览目录（相对任务根；'' = 根）。面包屑 + 单层列表的游标
 
   const dirSelKey = p => DIR_SEL_PREFIX + p;
@@ -2433,7 +2435,13 @@
     const crumbEl = $('files-crumbs');
     let node = filesNodeAt(filesCurDir);
     if (!node) { filesCurDir = ''; node = filesNodeAt(''); } // 当前目录已被删除 → 退回根
-    if (!node) { el.innerHTML = ''; return; }
+    const sizeEl = $('files-panel-size');
+    if (!node) { el.innerHTML = ''; if (sizeEl) sizeEl.textContent = ''; return; }
+    // 标题旁总大小：按未过滤的聚合表取当前目录递归总量（.tmp 隐藏但计数）
+    if (sizeEl) {
+      const total = filesDirSizes.get(filesCurDir) || 0;
+      sizeEl.textContent = total > 0 ? fmtSize(total) : '';
+    }
     // 根节点：home 图标 + 「根目录」，比一个孤悬的「/」醒目得多；在根时它是当前层，纯文本不可点
     const homeIc = '<svg class="crumb-ic" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>';
     let html = filesCurDir
@@ -2470,10 +2478,27 @@
     updateFilesFooter();
     try {
       const files = await req('GET', '/api/sessions/' + state.sessionId + '/files?dirs=1');
+      // 会话级 .tmp（executor 的共享 /tmp 落盘处）不属于任务产物：列表/选中/下载里隐藏，但计入总大小
+      const shown = files.filter(f => !/^\.tmp(\/|$)/.test(String(f.filename)));
       // 目录标记行不参与选中/全选/计数，只用来铺树（空文件夹可见）
-      filesAllPaths = files.filter(f => !(f.dir === true || /\/$/.test(String(f.filename)))).map(f => f.filename);
+      filesAllPaths = shown.filter(f => !(f.dir === true || /\/$/.test(String(f.filename)))).map(f => f.filename);
       // 重建目录树后只渲染当前目录这一层(后端已按时间倒序,组内再排一次防旧排序缓存)
-      filesTreeRoot = buildFilesTree(files);
+      filesTreeRoot = buildFilesTree(shown);
+      // 总大小按原始列表（含 .tmp）聚合：目录标记行无字节量跳过；文件把 size 记到每一级祖先目录（根 = ''）
+      filesDirSizes = new Map([['', 0]]);
+      for (const f of files) {
+        if (f.dir === true || /\/$/.test(String(f.filename))) continue;
+        const sz = Number(f.size) || 0;
+        if (!sz) continue;
+        filesDirSizes.set('', (filesDirSizes.get('') || 0) + sz);
+        const segs = String(f.filename).split('/');
+        segs.pop(); // 末段是文件名，其余是祖先目录
+        let acc = '';
+        for (const seg of segs) {
+          acc = acc ? acc + '/' + seg : seg;
+          filesDirSizes.set(acc, (filesDirSizes.get(acc) || 0) + sz);
+        }
+      }
       renderFilesDir(); // filesCurDir 失效时自动退回根目录
       // 重新渲染后刷新底部计数与按钮状态
       updateFilesFooter();

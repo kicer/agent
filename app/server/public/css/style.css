@@ -454,6 +454,11 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .files-panel-header .files-panel-title {
   flex: 1; min-width: 0;
 }
+/* 标题旁当前目录总大小（含隐藏的 .tmp）；无内容时置空不占位 */
+.files-panel-header .files-panel-size {
+  flex: none; margin-left: 6px;
+  font-size: 12px; font-weight: 400; color: var(--gray);
+}
 /* 上传总进度条(.files-panel-header 中间，上传中显示)：[轨道 | 百分比] 横排，
    百分比走正常文档流，不再悬浮在 6px 高的轨道里，避免各种裁剪/像素取整导致文字显示不全 */
 .files-panel-progress {
