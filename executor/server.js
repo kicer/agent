@@ -196,9 +196,10 @@ function selfCheck() {
 }
 
 // ---------- 隔离脚本生成 ----------
-// 全部为 POSIX sh 兼容语句；任一步失败由显式退出码标注（90-99 = 隔离层故障）。
+// 全部为 POSIX sh 兼容语句；任一步失败由显式退出码标注（≥90 = 隔离层故障）。
 // 铁律：本函数内不得出现任何对 ISOLATION_BASE / MNTROOT 的 umount。只允许 mount(遮盖)。
 // 诊断原则：成功路径零输出；只在失败分支里附带最小现场信息（不报 session 名、不报内容）。
+// 退出码约定：90 及以上 = 隔离层故障（各失败点用不同码区分，99 已被会话 /tmp bind 占用）。
 function buildIsolation(command, plan) {
   const L = [];
 
@@ -220,6 +221,12 @@ function buildIsolation(command, plan) {
   if (!(isUnder(DEFAULT_CWD, APP_DIR) || isUnder(APP_DIR, DEFAULT_CWD))) {
     L.push('mount -t tmpfs tmpfs ' + shq(APP_DIR) + ' || { echo "[isolate] hide appdir failed" >&2; exit 91; }');
   }
+
+  // --- 私有化跨会话共享的全局 tmpfs，防止跨 /exec 泄漏（/dev/shm 与 /var/tmp 默认继承父 ns）---
+  L.push('mkdir -p /dev/shm');
+  L.push('mount -t tmpfs -o nosuid,nodev,mode=1777,size=256m tmpfs /dev/shm || { echo "[isolate] /dev/shm failed" >&2; exit 100; }');
+  L.push('mkdir -p /var/tmp');
+  L.push('mount -t tmpfs -o nosuid,nodev,mode=1777,size=256m tmpfs /var/tmp || { echo "[isolate] /var/tmp failed" >&2; exit 101; }');
 
   // --- 本次执行私有 tmpfs：/tmp（session 模式下随后被会话 .tmp 的 bind 覆盖）与 anchor 目录 ---
   L.push('mkdir -p /tmp');
@@ -566,7 +573,8 @@ async function handleExec(req, res) {
   try {
     // spawn 的 cwd 用父 ns 下确实存在的 ROOTS[0]；真正的目标目录由 wrapper 内部 cd 完成
     //（session 的虚拟视图只存在于子 ns）。--propagation private 防止 bind 反向传播回宿主 ns。
-    child = spawn('unshare', ['--mount', '--pid', '--fork', '--propagation', 'private', '/bin/sh', '-c', script],
+    // --ipc 隔离 System V 共享内存/信号量/消息队列（与 /dev/shm 的 tmpfs 遮盖是不同层面，两者都要）。
+    child = spawn('unshare', ['--mount', '--pid', '--ipc', '--fork', '--propagation', 'private', '/bin/sh', '-c', script],
       { cwd: ROOTS[0], env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     log.error('spawn 失败', e.message);
