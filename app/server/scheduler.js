@@ -30,10 +30,10 @@ function computeNext(cronExpr) {
 }
 
 // ---------- schedule_task 工具实现（tools/executor.js 调） ----------
-// sessionId 由调用方从工具 ctx 取（AI 无法指定别的会话）。校验顺序：
-// cron 可解析 → 连续两次 next() 间隔 ≥ 1h → 本会话尚无任务 → INSERT（主键冲突兜底）。
-// 失败抛中文 Error，由 engine 工具执行路径转成 'Error: ...' 回执原样回给 AI。
-function createTask(db, sessionId, cronExpr, prompt) {
+// cron 校验：可解析 + 连续两次 next() 间隔 ≥ 1h（防分钟级任务反复烧模型池）；
+// 返回下次到期时间（以 now 为基准）。创建（createTask）与会话详情弹窗改频次（PATCH /:id/schedule）共用。
+// 失败抛中文 Error：工具路径由 engine 转 'Error: ...' 回给 AI，HTTP 路径由 wrap 转 4xx/500 给前端 toast。
+function validateCron(cronExpr) {
   let first;
   let second;
   try {
@@ -44,6 +44,13 @@ function createTask(db, sessionId, cronExpr, prompt) {
     throw new Error('cron 表达式无效: ' + (e && e.message || e));
   }
   if (second - first < MIN_INTERVAL_MS) throw new Error('定时任务间隔不能小于 1 小时');
+  return first;
+}
+
+// sessionId 由调用方从工具 ctx 取（AI 无法指定别的会话）。校验顺序：
+// validateCron → 本会话尚无任务 → INSERT（主键冲突兜底）。
+function createTask(db, sessionId, cronExpr, prompt) {
+  const first = validateCron(cronExpr);
   const exist = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
   if (exist) throw new Error('本会话已有定时任务（' + exist.cron_expr + '），请先在会话页删除');
   try {
@@ -143,4 +150,4 @@ function start(engine) {
   if (timer.unref) timer.unref(); // 不阻止进程退出
 }
 
-module.exports = { start, createTask, computeNext };
+module.exports = { start, createTask, computeNext, validateCron };

@@ -56,16 +56,29 @@
       .stop-link.icon-only.icon-primary:hover { color: #2854d6; }
       /* 推到 phase-bar 最右侧（独立动作，与左侧状态/选择模型区分） */
       .phase-bar .phase-bar-right { margin-left: auto; }
-      /* 定时任务状态条：整条可点，弹详情窗（看/改提示词、删除；创建走 AI 的 schedule_task 工具），淡黄底区别于状态栏 */
+      /* 定时任务状态条：整条可点，弹详情窗（改频次/提示词、删除；创建走 AI 的 schedule_task 工具），淡黄底区别于状态栏。
+         高度与 phase-bar 对齐：同 6px 上下内边距，sched-text 用与 stop-link 同构的 12px 字 + 4px 上下 padding（天然同 line-box），eye 同 icon-only 钮 */
       .schedule-bar {
         flex: none; display: flex; align-items: center; gap: 8px;
-        padding: 5px 12px; font-size: 12px; color: #8a6400; cursor: pointer;
+        padding: 6px 12px; font-size: 12px; color: #8a6400; cursor: pointer;
         background: #fffdf2; border-bottom: 1px solid #f0e6c8;
       }
       .schedule-bar:active { opacity: 0.75; }
-      .schedule-bar .sched-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .schedule-bar .sched-eye { margin-left: auto; flex: none; display: inline-flex; align-items: center; }
-      .schedule-bar .sched-eye svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .schedule-bar .sched-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 0; }
+      /* eye 图标与 phase-bar 右侧 icon-only 钮垂直对齐：同 6px 上下内边距、同 0 8px 水平、同 18px 图标 */
+      .schedule-bar .sched-eye { margin-left: auto; flex: none; padding: 0 8px; line-height: 0; }
+      .schedule-bar .sched-eye .ic { width: 18px; height: 18px; vertical-align: middle; }
+      /* schedule 弹窗控件（.modal select/input 的 100% 宽会撑满整行，这里收窄成本行内样式） */
+      #schedule-modal .sched-row { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; font-size: 14px; color: var(--ink); flex-wrap: wrap; }
+      #schedule-modal .sched-row select,
+      #schedule-modal .sched-row input {
+        width: auto; margin: 0; padding: 7px 8px; font-size: 14px;
+        border: 1px solid #dde1ea; border-radius: 8px; background: #fff; color: var(--ink);
+      }
+      #schedule-modal .sched-row select { appearance: none; -webkit-appearance: none; }
+      #schedule-modal .sched-row .sched-num { width: 52px; text-align: center; }
+      #schedule-modal .sched-row .sched-grow { flex: 1; min-width: 130px; font-family: monospace; }
+      #schedule-modal .sched-meta { font-size: 12.5px; color: var(--gray); margin-bottom: 10px; white-space: pre-wrap; }
       /* schedule 弹窗内的提示词编辑区（.modal input 不覆盖 textarea，单独给样式） */
       #schedule-modal textarea {
         width: 100%; box-sizing: border-box; display: block;
@@ -307,7 +320,7 @@
       </div>
     </div>
 
-    <!-- 定时任务详情弹窗：展示定时时间 + 提示词（可改），动作：更新/删除。
+    <!-- 定时任务详情弹窗：频次（预设控件组合 cron，无法识别的既有表达式落入自定义）+ 提示词（可改），动作：更新/删除。
          必须在 confirm-modal 之前：同为 z-index:100，DOM 靠后者叠在上，删除二次确认要盖住本窗 -->
     <div id="schedule-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeScheduleModal()">
       <div class="modal">
@@ -315,11 +328,28 @@
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         <h3>定时任务</h3>
-        <div class="modal-text" id="sched-modal-time"></div>
+        <div class="sched-row">
+          <select id="sched-freq" onchange="schedFreqUi()">
+            <option value="daily">每天</option>
+            <option value="weekly">每周</option>
+            <option value="everyN">每隔</option>
+            <option value="custom">自定义</option>
+          </select>
+          <select id="sched-dow" class="hidden">
+            <option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="0">周日</option>
+          </select>
+          <input id="sched-hh" class="sched-num hidden" type="number" min="0" max="23" placeholder="时">
+          <span id="sched-colon" class="hidden">:</span>
+          <input id="sched-mm" class="sched-num hidden" type="number" min="0" max="59" placeholder="分">
+          <input id="sched-nh" class="sched-num hidden" type="number" min="1" max="23">
+          <span id="sched-nh-unit" class="hidden">小时</span>
+          <input id="sched-cron" class="sched-grow hidden" type="text" placeholder="分 时 日 月 周（5 段 cron）">
+        </div>
+        <div class="sched-meta" id="sched-modal-meta"></div>
         <textarea id="sched-modal-prompt" rows="6" placeholder="每次触发时投递给本会话的提示词"></textarea>
         <div class="btn-row">
           <button class="ghost-btn danger" onclick="deleteSchedule()">删除</button>
-          <button class="primary-btn" onclick="saveSchedulePrompt()">更新</button>
+          <button class="primary-btn" onclick="saveSchedule()">更新</button>
         </div>
       </div>
     </div>
@@ -1398,7 +1428,7 @@
         }
       }
 
-  // ---------- 定时任务状态条（整条可点→详情弹窗；创建只走 AI 工具，频次暂不可改，提示词可在弹窗内更新） ----------
+  // ---------- 定时任务状态条（整条可点→详情弹窗；创建只走 AI 工具，频次/提示词可在弹窗内改） ----------
   const CRON_DOW = ['日', '一', '二', '三', '四', '五', '六'];
   // cron 人类可读化：只覆盖常见形态（每天/每周几几点、每 N 小时），其余原样显示表达式
   function cronText(expr) {
@@ -1427,37 +1457,88 @@
     else if (sc.last_status === 'error') last = '上次 error' + (sc.last_note ? ': ' + sc.last_note : '');
     else if (sc.last_status === 'skipped') last = '上次 跳过' + (sc.last_note ? '：' + sc.last_note : '');
     else last = '下次 ' + fmtTime(sc.next_run_at);
-    bar.innerHTML = '<span class="sched-text">⏰ ' + esc(cronText(sc.cron_expr)) + ' · ' + esc(last) + '</span>'
-      + '<span class="sched-eye"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></span>';
+    bar.innerHTML = '<span class="sched-text">' + esc(cronText(sc.cron_expr)) + ' · ' + esc(last) + '</span>'
+      + '<span class="sched-eye"><svg class="ic" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></span>';
     bar.classList.remove('hidden');
+  }
+  // 频次控件显隐：每天=[时分] 每周=[天][时分] 每隔=[N][小时] 自定义=[cron 文本框]
+  function schedFreqUi() {
+    const f = $('sched-freq').value;
+    const hm = f === 'daily' || f === 'weekly';
+    $('sched-dow').classList.toggle('hidden', f !== 'weekly');
+    $('sched-hh').classList.toggle('hidden', !hm);
+    $('sched-colon').classList.toggle('hidden', !hm);
+    $('sched-mm').classList.toggle('hidden', !hm);
+    $('sched-nh').classList.toggle('hidden', f !== 'everyN');
+    $('sched-nh-unit').classList.toggle('hidden', f !== 'everyN');
+    $('sched-cron').classList.toggle('hidden', f !== 'custom');
+  }
+  // 既有 cron → 控件：只认每天/每周几/每 N 小时三形态（与 cronText 覆盖一致），其余落入自定义
+  function schedFillFromCron(expr) {
+    const f = $('sched-freq');
+    const p = String(expr || '').trim().split(/\s+/);
+    f.value = 'custom';
+    if (p.length === 5 && p[2] === '*' && p[3] === '*' && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1])) {
+      if (p[4] === '*') f.value = 'daily';
+      else if (/^[0-6]$/.test(p[4])) { f.value = 'weekly'; $('sched-dow').value = p[4]; }
+      if (f.value !== 'custom') { $('sched-hh').value = +p[1]; $('sched-mm').value = +p[0]; }
+    } else if (p.length === 5 && p[0] === '0' && /^\*\/\d+$/.test(p[1]) && p[2] === '*' && p[3] === '*' && p[4] === '*') {
+      f.value = 'everyN';
+      $('sched-nh').value = p[1].slice(2);
+    }
+    if (f.value === 'custom') $('sched-cron').value = String(expr || '');
+    schedFreqUi();
+  }
+  // 控件 → cron 表达式；非法输入抛中文 Error（后端 validateCron 再兜底：可解析 + 间隔 ≥1h）
+  function schedComposeCron() {
+    const f = $('sched-freq').value;
+    if (f === 'custom') {
+      const c = $('sched-cron').value.trim();
+      if (!c) throw new Error('请输入 cron 表达式');
+      return c;
+    }
+    if (f === 'everyN') {
+      const n = parseInt($('sched-nh').value, 10);
+      if (!(n >= 1 && n <= 23)) throw new Error('间隔需为 1-23 的整小时数');
+      return '0 */' + n + ' * * *';
+    }
+    const hh = parseInt($('sched-hh').value, 10);
+    const mm = parseInt($('sched-mm').value, 10);
+    if (!(hh >= 0 && hh <= 23)) throw new Error('小时需为 0-23');
+    if (!(mm >= 0 && mm <= 59)) throw new Error('分钟需为 0-59');
+    return mm + ' ' + hh + ' * * ' + (f === 'weekly' ? $('sched-dow').value : '*');
   }
   function openScheduleModal() {
     const sc = state.schedule;
     if (!sc || state.view !== 'chat') return;
-    let time = '⏰ ' + cronText(sc.cron_expr) + '（' + sc.cron_expr + '）';
-    if (sc.next_run_at) time += '\n下次执行 ' + fmtTime(sc.next_run_at);
-    if (sc.last_run_at) time += '\n上次执行 ' + fmtTime(sc.last_run_at) + (sc.last_status ? ' · ' + sc.last_status : '');
-    $('sched-modal-time').textContent = time;
+    schedFillFromCron(sc.cron_expr);
+    let meta = sc.next_run_at ? '下次执行 ' + fmtTime(sc.next_run_at) : '';
+    if (sc.last_run_at) meta += (meta ? '\n' : '') + '上次执行 ' + fmtTime(sc.last_run_at) + (sc.last_status ? ' · ' + sc.last_status : '');
+    $('sched-modal-meta').textContent = meta;
     $('sched-modal-prompt').value = sc.prompt || '';
     $('schedule-modal').classList.remove('hidden');
   }
   function closeScheduleModal() { $('schedule-modal').classList.add('hidden'); }
-  async function saveSchedulePrompt() {
+  async function saveSchedule() {
     const id = state.sessionId;
     if (!id || !state.schedule) return;
     const prompt = $('sched-modal-prompt').value.trim();
     if (!prompt) { toast('提示词不能为空'); return; }
+    let cron;
+    try { cron = schedComposeCron(); } catch (e) { toast(e.message); return; }
     try {
-      await req('PATCH', '/api/sessions/' + id + '/schedule', { prompt });
-      state.schedule.prompt = prompt;   // 本地同步，免重拉详情
+      await req('PATCH', '/api/sessions/' + id + '/schedule', { prompt: prompt, cron_expr: cron });
       toast('定时任务已更新');
       closeScheduleModal();
+      // 频次变了 next_run_at 由后端重算，重拉详情同步状态条（与删除后同一套刷新路径）
+      const detail = await req('GET', '/api/sessions/' + id + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount));
+      if (state.sessionId === id) { renderDetail(detail); connectStream(); }
     } catch (e) { toast('更新失败:' + e.message); }
   }
   async function deleteSchedule() {
     if (!state.sessionId) return;
     const id = state.sessionId;
-    if (!await confirmModal('删除定时任务', '删除后本会话不再定时执行。要改频次，先删除再让 AI 重新创建。', '删除', true)) return;
+    if (!await confirmModal('删除定时任务', '删除后本会话不再定时执行。', '删除', true)) return;
     try {
       await req('DELETE', '/api/sessions/' + id + '/schedule');
       toast('定时任务已删除');

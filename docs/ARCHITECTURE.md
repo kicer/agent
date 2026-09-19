@@ -191,8 +191,8 @@ scheduled_tasks   session_id PK (FK sessions, ON DELETE CASCADE) / cron_expr /
                   prompt / next_run_at / last_run_at / last_status (ok|error|skipped|running) /
                   last_note (给人看的中文说明，UI 原样展示) / created_at
                   # 定时任务：每会话至多一个（session_id 主键兼防重），按 next_run_at 索引；
-                  # 创建只经 AI 工具 schedule_task；提示词可在会话详情弹窗改（PATCH /:id/schedule），
-                  # cron 暂不可改（改=删后让 AI 重建）；删除走 CASCADE 或 DELETE /:id/schedule（见 §5.12）
+                  # 创建只经 AI 工具 schedule_task；频次/提示词可在会话详情弹窗改（PATCH /:id/schedule，
+                  # 改频次后端重校验并重算 next_run_at）；删除走 CASCADE 或 DELETE /:id/schedule（见 §5.12）
 ```
 
 **session.status 状态机**（`engine.js`）：
@@ -415,7 +415,7 @@ AI 通过 `schedule_task` 工具为所在会话建周期性任务（`scheduled_t
 
 | 路径前缀 | 文件 | 主要端点 |
 |---|---|---|
-| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI）、`PATCH /:id/schedule`（改提示词，不动 cron/next_run_at） |
+| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI）、`PATCH /:id/schedule`（改提示词/频次，cron 经 validateCron 重校验并重算 next_run_at） |
 | `/api/sessions/:id/messages` | `routes/messages.js` | `POST /` 发消息（`delivered:'live'\|'queued'`）、`POST /start` "开始执行" 模板消息、`POST /stop`、`POST /release`（held→completed）、`DELETE /messages`（清空 + ?keep=summary）、`POST /summarize`（压缩）、`DELETE /messages/:mid`、`GET /stream` SSE 事件流 |
 | `/api/sessions/:id/files` | `routes/files.js` | `POST /` 上传（multer，50MB/文件，文件名清洗 sanitizeName）、`GET /` 列表（递归）、`GET /download[-name/...]` 签名下载（5 分钟 TTL）、`GET /zip-token` + `GET /zip[-name/...]` 选中项（含文件夹）打包 zip 流式下载（纯 Node STORE，两遍读：先 CRC 后磁盘流发送）、`DELETE /` 删文件（目录递归删） |
 | `/api/skills` | `routes/skills.js` | 技能列表/创建/重命名/删除 + 技能内文件 CRUD + 上传（`?overwrite=true` 覆盖） |

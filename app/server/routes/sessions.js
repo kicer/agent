@@ -3,6 +3,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const engine = require('../engine');
+const scheduler = require('../scheduler'); // 复用 validateCron（cron 可解析 + 间隔 ≥1h）；scheduler 顶层不 require 路由，无循环引用
 const log = require('../log');
 
 const router = express.Router();
@@ -235,21 +236,36 @@ router.delete('/:id', wrap((req, res) => {
   res.json(engine.deleteSession(req.params.id, delDir));
 }));
 
-// 手动修改定时任务提示词（会话详情 schedule 弹窗入口）。
-// 只改 prompt，不动 next_run_at/cron；不插通知消息——每次触发前历史会被存档，
+// 手动修改定时任务（会话详情 schedule 弹窗入口）：提示词 + 频次（前端预设控件组合出的 cron，兼容自定义表达式）。
+// cron 变化才重算 next_run_at（同样以 now 为基准）；不插通知消息——每次触发前历史会被存档，
 // AI 只看到投递的 prompt 本身，改完下次触发自然生效。
 router.patch('/:id/schedule', wrap((req, res) => {
   const db = engine.getDb();
-  const prompt = String((req.body && req.body.prompt) || '').trim();
+  const body = req.body || {};
+  const prompt = String(body.prompt || '').trim();
   if (!prompt) throw Object.assign(new Error('提示词不能为空'), { status_code: 400 });
   if (prompt.length > 20000) throw Object.assign(new Error('提示词过长（上限 20000 字符）'), { status_code: 400 });
-  const r = db.prepare('UPDATE scheduled_tasks SET prompt = ? WHERE session_id = ?').run(prompt, req.params.id);
-  if (!r.changes) throw Object.assign(new Error('本会话没有定时任务'), { status_code: 404 });
-  log.info('scheduler', req.params.id + ' 更新定时任务提示词');
+  const t = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(req.params.id);
+  if (!t) throw Object.assign(new Error('本会话没有定时任务'), { status_code: 404 });
+  const cron = String(body.cron_expr || '').trim();
+  if (cron && cron !== t.cron_expr) {
+    let nextAt;
+    try {
+      nextAt = scheduler.validateCron(cron);
+    } catch (e) {
+      throw Object.assign(new Error(e.message), { status_code: 400 });
+    }
+    db.prepare('UPDATE scheduled_tasks SET prompt = ?, cron_expr = ?, next_run_at = ? WHERE session_id = ?')
+      .run(prompt, cron, nextAt, req.params.id);
+    log.info('scheduler', req.params.id + ' 定时任务改为 ' + cron + '（原 ' + t.cron_expr + '）');
+  } else {
+    db.prepare('UPDATE scheduled_tasks SET prompt = ? WHERE session_id = ?').run(prompt, req.params.id);
+    log.info('scheduler', req.params.id + ' 更新定时任务提示词');
+  }
   res.json({ ok: true });
 }));
 
-// 手动删除定时任务（创建只经 AI 工具；频次暂不可改，内容可在弹窗内更新）。
+// 手动删除定时任务（创建只经 AI 工具；频次/提示词可在弹窗内改）。
 // 通知消息只 saveMessage 落库，不走 postUserMessage：不触发 AI 运行。
 // 删会话无需此处：scheduled_tasks 随 sessions 行 ON DELETE CASCADE 自动清理。
 router.delete('/:id/schedule', wrap((req, res) => {
