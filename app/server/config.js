@@ -7,6 +7,14 @@ const log = require('./log');
 // MCP 单次工具调用（tools/call）的缺省最大等待，与 mcp.js 的 CALL_TIMEOUT_MS 保持一致。
 const MCP_CALL_TIMEOUT_MS = 60000;
 
+// MCP 工具名单（tools_allow/tools_deny）归一化：只接受数组，项统一转字符串去空白、丢空项；
+// 空数组/非数组视作未配置（返回 undefined），避免「allow: [] 是不是全禁」这种歧义。
+function normToolNames(v) {
+  if (!Array.isArray(v)) return undefined;
+  const out = v.map(x => String(x).trim()).filter(Boolean);
+  return out.length ? out : undefined;
+}
+
 const DEFAULTS = {
   port: 8090,
   // 数据根目录：db、prompt dump 等运行时产物默认放这里（容器内挂 ./data → /workspace/data）。
@@ -246,6 +254,9 @@ function parseAndValidate(rawText, configPath) {
     // 单次工具调用的超时上限：缺省 60s，夹在 [1s, 10min]（一次调用长期占着模型槽位，不允许无限等）。
     // YAML 里写成字符串或写了非法值都回落到缺省。
     s.timeout_ms = Math.min(Math.max(Number(s.timeout_ms) || MCP_CALL_TIMEOUT_MS, 1000), 600000);
+    // 工具名单（发现阶段生效，见 mcp.init）：allow 为白名单，deny 在其后叠加生效（deny 优先）。
+    s.tools_allow = normToolNames(s.tools_allow);
+    s.tools_deny = normToolNames(s.tools_deny);
   }
 
   normalizePublicLink(cfg);

@@ -261,6 +261,7 @@ stateDiagram-v2
 
 - 协议：Streamable HTTP（JSON-RPC over HTTP，响应可能 SSE 包裹）。
 - 启动 `init(cfg)` 对每个服务 initialize → notifications/initialized → tools/list；单个服务失败只 warn，不影响其他。
+- **工具名单过滤**：服务配 `tools_allow`（白名单）/ `tools_deny`（黑名单，allow 之后叠加生效）时，在 tools/list 后按服务端**原始工具名**过滤（重命名之前）；两者都在 `config.js` 归一化（非数组/空数组视作未配）。过滤后剩 0 个会 warn（多半是名字写错）。
 - 工具名冲突时重命名：`内置名` 或 `其他MCP名` 已占 → 加 `服务名__` 前缀（`toolIndex` 索引走重命名后的名，调用时按索引还原成原始名调 `tools/call`）。
 - session 补偿：MCP 规范的 `Mcp-Session-Id` 缓存在 `server.sessionId`；过期（400 + 含 "session" 字样）自动重 initialize 后重试一次。
 - 某些老服务无 `initialize` → catch `Method not found` 不阻断。
@@ -450,6 +451,7 @@ stateDiagram-v2
 - `auth.users` —— 明文密码配在配置里（自用场景）；`secret` 留空则随机生成（重启掉登录态，建议固定随机串）。
 - `mcp_servers[].enable: false` —— 启动不加载该服务（配置保留），其余工具不受影响。
 - `mcp_servers[].timeout_ms` —— 该服务单次 `tools/call` 的最大等待，默认 60000（夹在 1s~10min）；工具发现/握手用固定 15s，不受本项影响。
+- `mcp_servers[].tools_allow` / `tools_deny` —— 发现阶段的工具名单（字符串数组，按服务端原始名）：allow 白名单，deny 在其后叠加（deny 优先）；用于压低发给模型的工具数（如浏览器类服务）。
 - `executor.url` / `executor.token` —— 留空走环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN`（compose 默认注入）。
 
 ---
@@ -566,7 +568,7 @@ sequenceDiagram
 
 ### 11.3 加一个 MCP 服务
 
-直接改 `config.yml` 的 `mcp_servers` 数组加一项 `{name, url, headers, enable?, timeout_ms?}`。重启生效。`enable: false` 的服务不加载工具（配置保留），单服务失败只 warn 不影响其他。`timeout_ms`（默认 60000，夹在 1s~10min）是该服务单次 `tools/call` 的最大等待。
+直接改 `config.yml` 的 `mcp_servers` 数组加一项 `{name, url, headers, enable?, timeout_ms?, tools_allow?, tools_deny?}`。重启生效。`enable: false` 的服务不加载工具（配置保留），单服务失败只 warn 不影响其他。`timeout_ms`（默认 60000，夹在 1s~10min）是该服务单次 `tools/call` 的最大等待。`tools_allow`/`tools_deny` 可按原始工具名只放行要用的那几个（见 §5.3）。
 
 ### 11.4 加一个模型 / 平台
 

@@ -1,6 +1,7 @@
 // 极简 MCP 客户端（Streamable HTTP：JSON-RPC over HTTP，无状态，响应可能是 SSE 帧包裹的 JSON）。
-// MCP 服务在 config.yml 的 mcp_servers 中配置（可多个）：{name?, url, headers?, enable?, timeout_ms?}。
-// 启动时 init() 对每个服务调 tools/list 发现工具（enable: false 的服务跳过加载），转成 OpenAI function 格式，
+// MCP 服务在 config.yml 的 mcp_servers 中配置（可多个）：{name?, url, headers?, enable?, timeout_ms?, tools_allow?, tools_deny?}。
+// 启动时 init() 对每个服务调 tools/list 发现工具（enable: false 的服务跳过加载；配了 tools_allow/tools_deny
+// 时按名单过滤），转成 OpenAI function 格式，
 // 追加在内置工具（definitions.json）之后一起随 system prompt 发给模型；
 // 工具调用经 tools/call 转发给对应服务。
 // 与内置工具严格分离：本模块不碰内置定义；MCP 工具默认沿用原始名，
@@ -133,7 +134,13 @@ async function init(cfg) {
         if (!/Method not found/i.test(String(e && e.message || e))) throw e;
       }
       const result = await rpc(s, 'tools/list', {}, 15000);
-      const tools = (result && result.tools) || [];
+      const all = (result && result.tools) || [];
+      // 工具名单过滤（发生在重命名之前，按服务端的【原始工具名】匹配）：
+      // allow 是白名单（配了就只保留名单内），deny 在其后叠加生效（deny 优先）。
+      // 动机：单服务动辄二三十个工具全塞进每次模型请求（如浏览器类），只放行主循环用得上的。
+      let tools = all;
+      if (Array.isArray(s.tools_allow)) tools = tools.filter(t => s.tools_allow.includes(t && t.name));
+      if (Array.isArray(s.tools_deny)) tools = tools.filter(t => !s.tools_deny.includes(t && t.name));
       for (const t of tools) {
         if (!t || !t.name) continue;
         let name = t.name;
@@ -148,7 +155,15 @@ async function init(cfg) {
           },
         });
       }
-      log.info('mcp', s.name + ': 发现 ' + tools.length + ' 个工具' + (s.sessionId ? ' (session)' : ''));
+      let msg = s.name + ': 发现 ' + tools.length + ' 个工具' + (s.sessionId ? ' (session)' : '');
+      if (tools.length !== all.length) msg += '（服务端共 ' + all.length + ' 个，已按 tools_allow/tools_deny 过滤）';
+      log.info('mcp', msg);
+      // 配了名单却一个都没过滤中，十有八九是名单里的名字跟 tools/list 返回不一致；
+      // 不 warn 的话排查时只能对着「发现 0 个工具」干瞪眼。
+      if (all.length && !tools.length && (s.tools_allow || s.tools_deny)) {
+        log.warn('mcp', s.name + ': 名单过滤后剩 0 个工具，请核对 tools_allow/tools_deny 与 ' +
+          '服务端实际工具名（如 ' + all.slice(0, 3).map(t => t.name).join(', ') + ' …）');
+      }
     } catch (err) {
       log.warn('mcp', s.name + ' 工具发现失败（本轮运行该服务不可用）: ' + (err && err.message || err));
     }

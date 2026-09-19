@@ -131,6 +131,9 @@ model_hold:
 # enable 选填、默认 true；设为 false 时启动不加载该服务的工具（配置保留，改回 true 重启即恢复）。
 # timeout_ms 选填、默认 60000：该服务单次工具调用的最大等待（毫秒，有 1s~10min 夹限），
 # 像视频生成这类上游就是慢的服务可以调大；握手/工具发现阶段用固定的 15s，不受本项影响。
+# tools_allow / tools_deny 选填：工具名单（字符串数组，按服务端的原始工具名在发现阶段过滤）。
+# allow 是白名单（配了就只保留名单内的），deny 在其后叠加生效（deny 优先）；空名单视作未配。
+# 用于控制发给模型的工具数：单服务动辄二三十个工具（如浏览器类），只放行主循环用得上的。
 # 服务不可用时只在启动日志告警，不影响其他服务与内置工具。
 #
 # 无域名部署：agent-core 与 mcp 仓库的容器共用 agent-mcp-net，这里直接写【容器名:容器内端口】，
@@ -150,3 +153,21 @@ mcp_servers:
   #   url: "http://mcp_video_gen:3000/mcp"
   #   headers:
   #     Authorization: "Bearer <你的智谱 API Key>"
+  # 浏览器（Playwright MCP，需自行起 agent-browser 容器）：工具多、单次操作比普通 MCP 慢，
+  # 典型用法就是白名单只放行要用的那几个 + 调大 timeout。
+  # - name: browser
+  #   url: "http://agent-browser:8931/mcp"
+  #   enable: true
+  #   timeout_ms: 120000
+  #   tools_allow:
+  #     - browser_navigate
+  #     - browser_snapshot
+  #     - browser_click
+  #     - browser_fill_form
+  #     - browser_type
+  #     - browser_press_key
+  #     - browser_select_option
+  #     - browser_wait_for
+  #     - browser_tabs
+  #     - browser_handle_dialog
+  #     - browser_take_screenshot
