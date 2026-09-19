@@ -9,6 +9,7 @@ const { initDb } = require('./db');
 const { createBus } = require('./sse');
 const { createAuth } = require('./auth');
 const engine = require('./engine');
+const scheduler = require('./scheduler');
 const llm = require('./llm');
 const mcp = require('./mcp');
 const skills = require('./tools/skills');
@@ -21,6 +22,9 @@ const bus = createBus();
 
 engine.setModelPool(cfg, db, bus);
 engine.init();
+// 定时任务调度器（scheduler.js）：必须在 engine.init() 之后启动——init 先把 active
+// 退回队列 / held 结版归位，首轮 tick 才不会看到脏状态。
+scheduler.start(engine);
 
 const app = express();
 const server = http.createServer(app);

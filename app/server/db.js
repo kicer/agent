@@ -80,6 +80,24 @@ function initDb(dbPath) {
       value TEXT
     );
 
+    -- 定时任务：AI 通过 schedule_task 工具为会话创建周期任务（每会话至多一个），
+    -- 由 scheduler.js 轮询投递。session_id 作主键：一行代码同时实现「1 会话 1 任务」
+    -- 与「防重复插入」（重复 INSERT 直接撞主键）；REFERENCES ... ON DELETE CASCADE
+    -- 让删会话时任务自动消失（db 已开 foreign_keys）。next_run_at 创建时即算好，
+    -- 调度器只做 <= now 比较；last_note 存给人看的中文说明，UI 原样展示。
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      session_id  TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      cron_expr   TEXT    NOT NULL,
+      prompt      TEXT    NOT NULL,
+      next_run_at INTEGER NOT NULL,
+      last_run_at INTEGER,
+      last_status TEXT,             -- ok | error | skipped | running
+      last_note   TEXT,
+      created_at  INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sched_next ON scheduled_tasks(next_run_at);
+
     -- 模型 token 用量流水（每次模型回合一条）。故意不建会话外键：
     -- 删会话后累计统计仍需保留
     CREATE TABLE IF NOT EXISTS model_usage (
