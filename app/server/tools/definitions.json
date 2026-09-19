@@ -250,6 +250,27 @@
   {
     "type": "function",
     "function": {
+      "name": "schedule_task",
+      "description": "Create a recurring scheduled task for the CURRENT session. At each trigger, the given prompt is sent to this session as a new user message. Only one task per session is allowed; if one already exists the call fails and the user must delete it first in the session view. Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.",
+      "parameters": {
+        "type": "object",
+        "required": ["cron_expr", "prompt"],
+        "properties": {
+          "cron_expr": {
+            "type": "string",
+            "description": "Standard 5-field cron expression, e.g. '0 9 * * *' for 09:00 every day. Minimum interval is 1 hour."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The message to send to this session at each trigger. Write it as a self-contained instruction, because previous conversation history is archived before each run."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "terminal",
       "description": "Executes a shell one-liner and returns combined stdout/stderr output.\n\n- Run commands relative to the session working directory. Use the `cd` parameter to specify a different directory if needed.\n- Do not use shell substitutions or interpolations (e.g., `$VAR`, `${VAR}`, `$(...)`, backticks). Resolve values yourself first.\n- Do not pipe output to `head` or `tail`; use the `head_lines` and `tail_lines` parameters to limit what is returned while keeping full output visible to the user.\n- Avoid commands that run indefinitely (servers, watchers). For long-running commands, set `timeout_ms`.\n- Each invocation starts a new shell; do not rely on state from previous calls.\n- If a command may open a pager or editor, disable it using environment variables (e.g., `GIT_PAGER=cat`, `EDITOR=true`).",
       "parameters": {

@@ -9,6 +9,7 @@ const mcp = require('../mcp');
 const skills = require('./skills');
 const rexec = require('../remote-exec');
 const publicFiles = require('../public-files');
+const scheduler = require('../scheduler'); // 只依赖 log/cron-parser，不成环（engine→executor→scheduler 单向）
 
 function makeMatcher(pattern, opts) {
   const mm = new Minimatch(pattern, opts || {});
@@ -718,6 +719,20 @@ async function toolMintPublicLink(ctx, args) {
   return pl.base_url + '/p/' + id;
 }
 
+// schedule_task：为当前会话创建定时任务。sessionId 取自 ctx（AI 无法指定别的会话）；
+// 参数与会话唯一性校验均在 scheduler.createTask，失败抛中文 Error 回给 AI 自行纠正。
+// 生命周期：只能由 AI 创建，用户端只读 + 删除（改 = 删后让 AI 重建），故无修改/删除入口。
+function toolScheduleTask(ctx, args) {
+  const cronExpr = String(args.cron_expr || '').trim();
+  const prompt = String(args.prompt || '').trim();
+  if (!cronExpr) throw new Error('cron_expr 不能为空');
+  if (!prompt) throw new Error('prompt 不能为空');
+  const t = scheduler.createTask(ctx.db, ctx.sessionId, cronExpr, prompt);
+  return '定时任务已创建：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。' +
+    '注意：每次触发前本会话的历史消息会被存档（AI 只看到任务 prompt），因此 prompt 需自包含；' +
+    '如需修改或删除，请让用户在会话页操作。';
+}
+
 const HANDLERS = {
   read_file: toolReadFile,
   write_file: toolWriteFile,
@@ -732,6 +747,7 @@ const HANDLERS = {
   grep: toolGrep,
   terminal: toolTerminal,
   fetch: toolFetch,
+  schedule_task: toolScheduleTask,
   list_skills: async (ctx, args) => JSON.stringify(await skills.listSkills(ctx), null, 2),
   get_skill_info: (ctx, args) => skills.getSkillInfo(ctx, args.skill_name),
   run_skill: (ctx, args) => skills.runSkill(ctx, args.skill_name, args.input_args),

@@ -201,10 +201,16 @@ router.get('/:id', wrap((req, res) => {
   }
 
   const taskDir = engine.taskDirOf(session.id);
+  // 定时任务状态（scheduler.js / schedule_task 工具；每会话至多一行，无则 null）。
+  // 列表接口故意不带此字段，避免 N+1；前端进会话详情时才拉。
+  const schedule = db.prepare(
+    'SELECT cron_expr, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
+  ).get(session.id) || null;
   res.json({
     session,
     messages,
     files: listTaskFiles(taskDir),
+    schedule,
     queue_pos: session.status === 'queued' ? engine.queuePosition(session.id) : null,
     running: !!(engine.getRun(session.id) || {}).looping,
     has_more: hasMore, // 分页模式下：是否还有更早的历史
@@ -227,6 +233,24 @@ router.delete('/:id', wrap((req, res) => {
   const delDir = req.query.delete_dir === 'true' || req.query.delete_dir === '';
   log.info('task', (req.user || '-') + ' 删除任务 ' + req.params.id + (delDir ? '（含任务目录）' : ''));
   res.json(engine.deleteSession(req.params.id, delDir));
+}));
+
+// 手动删除定时任务（用户端唯一入口；创建只经 AI 工具，改 = 删后让 AI 重建）。
+// 通知消息只 saveMessage 落库，不走 postUserMessage：不触发 AI 运行，
+// 下一次自然对话时 AI 自会看到（type='scheduler_note' 对 buildMessages 是未知型，按普通 user 消息发）。
+// 删会话无需此处：scheduled_tasks 随 sessions 行 ON DELETE CASCADE 自动清理。
+router.delete('/:id/schedule', wrap((req, res) => {
+  const db = engine.getDb();
+  const t = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(req.params.id);
+  if (!t) throw Object.assign(new Error('本会话没有定时任务'), { status_code: 404 });
+  db.prepare('DELETE FROM scheduled_tasks WHERE session_id = ?').run(req.params.id);
+  engine.saveMessage(req.params.id, {
+    role: 'user',
+    content: '[系统] 定时任务已删除（原定 ' + t.cron_expr + '）',
+    type: 'scheduler_note',
+  });
+  log.info('scheduler', req.params.id + ' 删除定时任务 ' + t.cron_expr);
+  res.json({ ok: true });
 }));
 
 module.exports = router;
