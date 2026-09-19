@@ -22,7 +22,7 @@ agent/
 │
 ├── app/                           ── Core 服务容器 ──
 │   ├── Dockerfile                 node:20-slim，npm install only prod
-│   ├── package.json               依赖：express / better-sqlite3 / multer / sharp / yaml / minimatch
+│   │   ├── package.json               依赖：express / better-sqlite3 / multer / sharp / yaml / minimatch / cron-parser
 │   ├── config.example.yml         配置模板（被复制为顶层 config.yml）
 │   ├── scripts/
 │   │   └── init.sh                部署入口：生成 .env + config.yml → 起 agent/mcp 服务
@@ -34,13 +34,14 @@ agent/
 │   │   ├── db.js                  SQLite 初始化 + 表结构 + 增量迁移
 │   │   ├── sse.js                 按会话分组的 SSE 事件总线
 │   │   ├── engine.js              会话/模型池/Agent 主循环/任务目录（核心调度器）
+│   │   ├── scheduler.js           定时任务调度器（30s 轮询到期任务，存档历史后投递；需 engine.init() 后启动）
 │   │   ├── llm.js                 上游 OpenAI 兼容 /chat/completions 流式调用 + 消息组装
 │   │   ├── mcp.js                 极简 MCP 客户端（Streamable HTTP，init→tools/list→tools/call）
 │   │   ├── remote-exec.js         agent-executor 远端执行客户端（SSE 收流）
 │   │   ├── balance.js             余额查询适配器（按 platform.type 分发）
 │   │   ├── version.js             版本信息（package.json + git 短提交号）
 │   │   ├── tools/
-│   │   │   ├── definitions.json   内置 16 个工具的 OpenAI function 格式定义
+│   │   │   ├── definitions.json   内置 17 个工具的 OpenAI function 格式定义
 │   │   │   ├── executor.js        工具执行器（文件类 + terminal + skill 委托）
 │   │   │   └── skills.js          Skill Manager（list/info/run + 路径预处理）
 │   │   ├── download-token.js      下载链接签名（浏览器原生下载用；密钥进程内随机）
@@ -141,12 +142,13 @@ graph LR
 3. `initDb(cfg.db_path)` 建表 + 增量迁移（`db.js`，含 `held_at` / `last_model_id` / `assistant_type` / `user` 等历史升级）。
 4. `createBus()` 建 SSE 事件总线（`sse.js`）。
 5. `engine.setModelPool(cfg, db, bus); engine.init()`：清空 model_pool busy 状态、把所有 active 会话退回队列、held 会话直接结版、启动 `holdSweeper` 定时器。
-6. `createAuth(cfg)` 装配登录中间件；未配 `auth.users` 则认证关闭（可交给前置 nginx-proxy basic auth）。
-7. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`）。
-8. `mcp.init(cfg).then(...)`：对每个 MCP 服务 initialize → tools/list，发现的工具存在 `mcp` 模块内。
-9. `skills.listSkills(...)` → `llm.setSkillListText(...)` 快照注入 system prompt（`llm.js`）。
-10. `server.listen(PORT)`，打 startup 行：workspace_root / data_root / models / mcp_servers / auth / log_level。
-11. `dumpPromptBundle()` 把"system prompt + tools 列表 + 示例会话上下文"写进 `data_root/prompt.txt`（仅供人核对，失败不阻塞）。
+6. `scheduler.start(engine)`：启动定时任务轮询（30s 一次，`unref`）。**必须在 engine.init() 之后**——先让会话状态归位，首轮 tick 才看不到脏状态（见 §5.12）。
+7. `createAuth(cfg)` 装配登录中间件；未配 `auth.users` 则认证关闭（可交给前置 nginx-proxy basic auth）。
+8. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`）。
+9. `mcp.init(cfg).then(...)`：对每个 MCP 服务 initialize → tools/list，发现的工具存在 `mcp` 模块内。
+10. `skills.listSkills(...)` → `llm.setSkillListText(...)` 快照注入 system prompt（`llm.js`）。
+11. `server.listen(PORT)`，打 startup 行：workspace_root / data_root / models / mcp_servers / auth / log_level。
+12. `dumpPromptBundle()` 把"system prompt + tools 列表 + 示例会话上下文"写进 `data_root/prompt.txt`（仅供人核对，失败不阻塞）。
 
 > ⚠️ 配置是**冷加载**：改 `config.yml` 需重启生效，**没有热重载**。设置页修改后必须调 `POST /api/system/restart`（路由层 409 防有活跃回合的强杀，`force=true` 可打断）。
 
@@ -165,7 +167,8 @@ messages          id PK / session_id FK / role (system|user|assistant|tool) /
                   content (TEXT, 含 __blocks__ 哨兵 JSON 多模态) / reasoning /
                   tool_calls (JSON) / tool_call_id / name / type /
                   is_error / created_at
-                  # type 取值: summary / archived / errAck / session_context (name 列 = SESSION_CONTEXT_NAME)
+                  # type 取值: summary / archived / errAck / session_context (name 列 = SESSION_CONTEXT_NAME) /
+                  #   scheduler_note（定时任务删除通知，未知 type 按普通 user 消息发模型）
                   # 旧版遗留: summarize_request（压缩指令 user 消息，已废弃，仅 buildMessages 兼容旧库）
 
 files             id PK / session_id / filename / size / created_at
@@ -183,6 +186,12 @@ meta              key PK / value
 model_usage       id PK / session_id / model_id /
                   prompt_tokens / completion_tokens / total_tokens / created_at
                   # 故意不建会话外键，删会话后累计统计仍保留
+
+scheduled_tasks   session_id PK (FK sessions, ON DELETE CASCADE) / cron_expr /
+                  prompt / next_run_at / last_run_at / last_status (ok|error|skipped|running) /
+                  last_note (给人看的中文说明，UI 原样展示) / created_at
+                  # 定时任务：每会话至多一个（session_id 主键兼防重），按 next_run_at 索引；
+                  # 创建只经 AI 工具 schedule_task，删除走 CASCADE 或 DELETE /:id/schedule（见 §5.12）
 ```
 
 **session.status 状态机**（`engine.js`）：
@@ -266,7 +275,7 @@ stateDiagram-v2
 - session 补偿：MCP 规范的 `Mcp-Session-Id` 缓存在 `server.sessionId`；过期（400 + 含 "session" 字样）自动重 initialize 后重试一次。
 - 某些老服务无 `initialize` → catch `Method not found` 不阻断。
 
-### 5.4 `tools/executor.js` —— 内置 16 工具的派发器
+### 5.4 `tools/executor.js` —— 内置 17 工具的派发器
 
 `HANDLERS` 是 `name → async(ctx, args) → result` 的表；`executeTool(ctx, name, args)` 按 `name` 派发；**未知名直接转发给 MCP**（若 `mcp.hasTool(name)`，调 `mcp.callTool`）。
 
@@ -279,6 +288,7 @@ stateDiagram-v2
 | `fetch` | `AbortController` + UA + redirect + content-type 简单判断；HTML 用 `htmlToMarkdown` 转 |
 | `mint_public_link` | **唯一的 mint 入口**：与 core 同进程，直接 `publicFiles.mint()`，不绕任何 HTTP；`ctx.taskDir` 就是会话目录，`relOf` 的结果正是取用侧要的 `rel`。校验：`public_link.base_url` 已配 + `resolveInTask` 沙箱 + 确认是文件 + `realpath` 未沿符号链接跳出任务目录；返回单行 URL |
 | `list_skills` / `get_skill_info` / `run_skill` | 委托 `tools/skills.js` |
+| `schedule_task` | 为**当前会话**（`ctx.sessionId`，AI 不可指定他会话）建定时任务；校验/写入全在 `scheduler.createTask`（cron 可解析 → 连续两次 `next()` 间隔 ≥ 1h → 查重 → INSERT 主键兑底），失败抛中文 Error 回给 AI；描述里限定「仅用户明确要求时调用」（安全缓解，见 §5.12） |
 
 `resolveInTask(taskDir, relOrAbs)`：把相对路径或绝对路径解析为绝对路径并校验落在 `taskDir` 之内（含根），防穿越。
 
@@ -343,6 +353,18 @@ stateDiagram-v2
 - 上游根地址 = `cfg.platforms[i].url` 去掉尾部 `/` 与 `/v1`（余额端点在站点根）。
 - `types()` 返回已接入类型列表，前端设置页据此决定要不要展示余额行。
 
+### 5.12 `scheduler.js` —— 定时任务调度器
+
+AI 通过 `schedule_task` 工具为所在会话建周期性任务（`scheduled_tasks` 表，生命周期绑定会话），无人值守时（典型是半夜）自动执行，结果留在会话里供用户次日查看。
+
+- **形态**照抄 `startHoldSweeper`：`start(engine)` 注入 engine（避免 engine→executor→scheduler 顶层循环 require），`setInterval` 30s + `unref`，单次异常只 `log.error` 不中断定时器。周期/最小间隔是模块常量，不进 config.yml。
+- **cron**：`cron-parser@5.10.1`（锁版；v5 API 是 `CronExpressionParser.parse`，与 v4 的 `parseExpression` 不兼容），显式 `tz: 'Asia/Shanghai'`（与容器 TZ 一致，不靠隐式时区）。最小间隔 1h 在创建时校验。
+- **tick 两阶段**：A 收尾上一轮 `running`（runLoop 无结束回调，轮询推断：会话转非 active 即标 ok）；B 取到期任务投递——`next_run_at <= now` 且非 running；**防堆积以会话状态为准**：active 直接标 `skipped` 不投递（比 DB 标记时序可靠）。
+- **投递 = 存档 + postUserMessage**（顺序不可换）：先把会话全部消息标 `type='archived'`（`buildMessages` 跳过 → AI 只看到本次 prompt，等价全新会话，上下文不随触发次数增长；UI 照常展示全量），再 `engine.postUserMessage`——它自带复活语义：held 立即开跑（**会抢占保持中的模型**，自用可接受）；queued/completed/cancelled 重新入队尝试派发，无空闲模型则排队等 `dispatchQueued`（正常的夜间排队场景，非异常）。
+- **补跑语义**：`computeNext` 一律以 `now` 为基准，停机跨过多个触发点后重启只算未来一次，天然不补跑；重启后任务从库自动恢复。
+- **安全**：本功能等价给 AI 开持久化后门（prompt injection 可诱使建任务定时执行任意指令）。缓解三件：工具描述限定「仅用户明确要求时调用」+ 会话页常驻状态条（用户可见 AI 排了什么、一键删）+ 创建/触发/跳过/删除全打 `scheduler` info 日志。无权限分级/审批/配额。
+- **边界**：两次触发之间的用户对话也会被下次触发一并存档（UI 可见、AI 下次看不到，符合设计意图）；多用户：调度器全局遍历不按 user 过滤（投递目标是会话本身，隔离在建任务时的 ctx.sessionId 已有）；`last_status='running'` 的收尾不精确（异常结束的回合也会被标 ok）。
+
 ---
 
 ## 6. agent-executor 容器
@@ -392,7 +414,7 @@ stateDiagram-v2
 
 | 路径前缀 | 文件 | 主要端点 |
 |---|---|---|
-| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind` |
+| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI） |
 | `/api/sessions/:id/messages` | `routes/messages.js` | `POST /` 发消息（`delivered:'live'\|'queued'`）、`POST /start` "开始执行" 模板消息、`POST /stop`、`POST /release`（held→completed）、`DELETE /messages`（清空 + ?keep=summary）、`POST /summarize`（压缩）、`DELETE /messages/:mid`、`GET /stream` SSE 事件流 |
 | `/api/sessions/:id/files` | `routes/files.js` | `POST /` 上传（multer，50MB/文件，文件名清洗 sanitizeName）、`GET /` 列表（递归）、`GET /download[-name/...]` 签名下载（5 分钟 TTL）、`GET /zip-token` + `GET /zip[-name/...]` 选中项（含文件夹）打包 zip 流式下载（纯 Node STORE，两遍读：先 CRC 后磁盘流发送）、`DELETE /` 删文件（目录递归删） |
 | `/api/skills` | `routes/skills.js` | 技能列表/创建/重命名/删除 + 技能内文件 CRUD + 上传（`?overwrite=true` 覆盖） |
@@ -586,7 +608,7 @@ sequenceDiagram
 
 ### 11.7 加一个"用户进入"/"AI 动作"日志
 
-统一走 `log.info(category, message)`，category 用短标识（`task`/`msg`/`model`/`file`/`sse`/`config`/`auth`/`mcp`/`skills`/`tool`/`startup`/`system`/`engine`）。`log.setLevel(cfg.log_level)` 控制阈值；debug 级别会被多打几项（如 SSE 帧、tool 参数/结果）。
+统一走 `log.info(category, message)`，category 用短标识（`task`/`msg`/`model`/`file`/`sse`/`config`/`auth`/`mcp`/`skills`/`tool`/`startup`/`system`/`engine`/`scheduler`）。`log.setLevel(cfg.log_level)` 控制阈值；debug 级别会被多打几项（如 SSE 帧、tool 参数/结果）。
 
 ---
 
