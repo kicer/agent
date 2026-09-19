@@ -56,6 +56,14 @@
       .stop-link.icon-only.icon-primary:hover { color: #2854d6; }
       /* 推到 phase-bar 最右侧（独立动作，与左侧状态/选择模型区分） */
       .phase-bar .phase-bar-right { margin-left: auto; }
+      /* 定时任务状态条：仅展示 + 删除（创建走 AI 的 schedule_task 工具；改=删后让 AI 重建），淡黄底区别于状态栏 */
+      .schedule-bar {
+        flex: none; display: flex; align-items: center; gap: 8px;
+        padding: 5px 12px; font-size: 12px; color: #8a6400;
+        background: #fffdf2; border-bottom: 1px solid #f0e6c8;
+      }
+      .schedule-bar .sched-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .schedule-bar .sched-del { margin-left: auto; flex: none; }
     </style>
   <script>
     // 注册 Service Worker（PWA / 离线缓存）
@@ -91,6 +99,9 @@
         <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path></svg>
       </button>
     </div>
+
+    <!-- ================= 定时任务状态栏(有任务才显示;数据随会话详情下发,见 routes/sessions.js GET /:id) ================= -->
+    <div id="schedule-bar" class="schedule-bar hidden"></div>
 
     <main>
       <!-- ================= 未对话状态:模式切换区 ================= -->
@@ -509,6 +520,7 @@
     sessionId: null,            // 当前会话
     sessionTitle: '',           // 当前会话标题
     status: '',                 // 当前会话状态(SSE 更新)
+    schedule: null,             // 当前会话定时任务（详情 schedule 字段，null=无）
     sessions: [],               // 抽屉列表缓存
     attachments: [],            // 待发送附件 {file, name, size}
     lastImgBlobUrl: null,       // 任务文件图片预览的 blob URL，下次预览或开新图时回收
@@ -867,6 +879,7 @@
     state.sessionTitle = (s && s.title) || '';
     state.sessionType = (s && s.assistant_type) || 'secretary'; // 顶部 icon 跟随会话类型
     state.status = (s && s.status) || '';
+    state.schedule = detail.schedule || null; // 定时任务状态条数据（随 updatePhaseBar 一并渲染）
     state.toolCards = {};
     state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
     state.toolCallMsgIds = {}; // tool_call.id → tool 消息行 id（展开时懒加载用）
@@ -1198,6 +1211,7 @@
       setFilesPanel(false); // 会话切换,收起文件面板防旧列表残留
       state.sessionId = id;
       state.status = '';
+      state.schedule = null; // 防详情返回前残留上一会话的任务状态条
       // 先从抽屉列表缓存取会话类型，让顶部 icon 立即正确；详情回来后由 renderDetail 纠正
       const cached = (state.sessions || []).find(x => x.id === id);
       state.sessionType = (cached && cached.assistant_type) || 'secretary';
@@ -1250,6 +1264,7 @@
     state.sessionTitle = '';
     state.sessionType = 'secretary';
     state.status = '';
+    state.schedule = null;
     state.attachments = [];
     state.streamEl = null;
     state.streamText = '';
@@ -1288,6 +1303,8 @@
   function updatePhaseBar(d) {
     const bar = $('phase-bar');
     if (!bar) return;
+    // 定时任务状态条与会话状态栏同刷新入口（其内部自判视图/有无任务，早退路径也要走到）
+    updateScheduleBar();
     if (!(state.view === 'chat' && state.sessionId)) { bar.classList.add('hidden'); return; }
     bar.classList.remove('hidden');
     const pill = $('status-pill');
@@ -1321,6 +1338,52 @@
           if (!state.pendingSummary) cpBtn.disabled = state.status === 'active';
         }
       }
+
+  // ---------- 定时任务状态条（仅展示 + 删除；不提供增/改/停：创建走 AI 工具，改=删后让 AI 重建） ----------
+  const CRON_DOW = ['日', '一', '二', '三', '四', '五', '六'];
+  // cron 人类可读化：只覆盖常见形态（每天/每周几几点、每 N 小时），其余原样显示表达式
+  function cronText(expr) {
+    const p = String(expr || '').trim().split(/\s+/);
+    if (p.length !== 5) return String(expr || '');
+    const min = p[0], hour = p[1], dom = p[2], mon = p[3], dow = p[4];
+    const hm = /^\d+$/.test(min) && /^\d+$/.test(hour)
+      ? hour.padStart(2, '0') + ':' + min.padStart(2, '0') : '';
+    if (dom === '*' && mon === '*') {
+      const everyH = hour.match(/^\*\/(\d+)$/);
+      if (dow === '*' && min === '0' && everyH) return '每 ' + everyH[1] + ' 小时';
+      if (dow === '*' && hm) return '每天 ' + hm;
+      if (/^\d$/.test(dow) && hm) return '每周' + CRON_DOW[+dow] + ' ' + hm;
+    }
+    return String(expr);
+  }
+  function updateScheduleBar() {
+    const bar = $('schedule-bar');
+    if (!bar) return;
+    const sc = state.schedule;
+    if (!(state.view === 'chat' && state.sessionId && sc)) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+    let last;
+    // running 不精确（AI 跑完到下次 tick 间仍显示），对 UI 够用；无专用轮询，重进会话时刷新
+    if (sc.last_status === 'running') last = '执行中…';
+    else if (sc.last_status === 'ok') last = '上次 ok';
+    else if (sc.last_status === 'error') last = '上次 error' + (sc.last_note ? ': ' + sc.last_note : '');
+    else if (sc.last_status === 'skipped') last = '上次 跳过' + (sc.last_note ? '：' + sc.last_note : '');
+    else last = '下次 ' + fmtTime(sc.next_run_at);
+    bar.innerHTML = '<span class="sched-text">⏰ ' + esc(cronText(sc.cron_expr)) + ' · ' + esc(last) + '</span>'
+      + '<button class="stop-link sched-del" onclick="deleteSchedule()">删除</button>';
+    bar.classList.remove('hidden');
+  }
+  async function deleteSchedule() {
+    if (!state.sessionId) return;
+    const id = state.sessionId;
+    if (!await confirmModal('删除定时任务', '删除后本会话不再定时执行。要改频次/内容，先删除再让 AI 重新创建。', '删除', true)) return;
+    try {
+      await req('DELETE', '/api/sessions/' + id + '/schedule');
+      toast('定时任务已删除');
+      // 重载详情：状态行消失，会话内多出一条 scheduler_note 通知（AI 未被触发）
+      const detail = await req('GET', '/api/sessions/' + id + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount));
+      if (state.sessionId === id) { renderDetail(detail); connectStream(); }
+    } catch (e) { toast('删除失败:' + e.message); }
+  }
   async function stopSession() {
     if (!state.sessionId) return;
     const held = state.status === 'held';
