@@ -56,14 +56,24 @@
       .stop-link.icon-only.icon-primary:hover { color: #2854d6; }
       /* 推到 phase-bar 最右侧（独立动作，与左侧状态/选择模型区分） */
       .phase-bar .phase-bar-right { margin-left: auto; }
-      /* 定时任务状态条：仅展示 + 删除（创建走 AI 的 schedule_task 工具；改=删后让 AI 重建），淡黄底区别于状态栏 */
+      /* 定时任务状态条：整条可点，弹详情窗（看/改提示词、删除；创建走 AI 的 schedule_task 工具），淡黄底区别于状态栏 */
       .schedule-bar {
         flex: none; display: flex; align-items: center; gap: 8px;
-        padding: 5px 12px; font-size: 12px; color: #8a6400;
+        padding: 5px 12px; font-size: 12px; color: #8a6400; cursor: pointer;
         background: #fffdf2; border-bottom: 1px solid #f0e6c8;
       }
+      .schedule-bar:active { opacity: 0.75; }
       .schedule-bar .sched-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .schedule-bar .sched-del { margin-left: auto; flex: none; }
+      .schedule-bar .sched-eye { margin-left: auto; flex: none; display: inline-flex; align-items: center; }
+      .schedule-bar .sched-eye svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      /* schedule 弹窗内的提示词编辑区（.modal input 不覆盖 textarea，单独给样式） */
+      #schedule-modal textarea {
+        width: 100%; box-sizing: border-box; display: block;
+        border: 1px solid #dde1ea; border-radius: 10px;
+        padding: 10px 12px; font-size: 14px; line-height: 1.5;
+        margin-bottom: 10px; background: #fff; color: var(--ink); resize: vertical;
+      }
+      #schedule-modal textarea:focus { border-color: var(--active); }
     </style>
   <script>
     // 注册 Service Worker（PWA / 离线缓存）
@@ -101,7 +111,7 @@
     </div>
 
     <!-- ================= 定时任务状态栏(有任务才显示;数据随会话详情下发,见 routes/sessions.js GET /:id) ================= -->
-    <div id="schedule-bar" class="schedule-bar hidden"></div>
+    <div id="schedule-bar" class="schedule-bar hidden" onclick="openScheduleModal()"></div>
 
     <main>
       <!-- ================= 未对话状态:模式切换区 ================= -->
@@ -294,6 +304,23 @@
           <button class="primary-btn" onclick="mcpUI.save()">保存</button>
         </div>
         <div class="cfg-note">仅写入配置，点击「重启服务」后生效。</div>
+      </div>
+    </div>
+
+    <!-- 定时任务详情弹窗：展示定时时间 + 提示词（可改），动作：更新/删除。
+         必须在 confirm-modal 之前：同为 z-index:100，DOM 靠后者叠在上，删除二次确认要盖住本窗 -->
+    <div id="schedule-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeScheduleModal()">
+      <div class="modal">
+        <button class="modal-close-btn" onclick="closeScheduleModal()">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+        <h3>定时任务</h3>
+        <div class="modal-text" id="sched-modal-time"></div>
+        <textarea id="sched-modal-prompt" rows="6" placeholder="每次触发时投递给本会话的提示词"></textarea>
+        <div class="btn-row">
+          <button class="ghost-btn danger" onclick="deleteSchedule()">删除</button>
+          <button class="primary-btn" onclick="saveSchedulePrompt()">更新</button>
+        </div>
       </div>
     </div>
 
@@ -653,6 +680,35 @@
     return '<details class="msg-think"><summary>思考过程' + THINK_COPY_BTN + '</summary><div class="msg-think-body">' + esc(text) + '</div></details>';
   }
 
+  // ---------- markdown 代码块逐块复制 ----------
+  // marked 把围栏代码渲染成 .md 气泡内的 <pre><code>;渲染完成后做一次 DOM 装饰:
+  // pre 包一层 .code-wrap(定位容器,按钮在滚动区外,横向滚动不带走按钮),右上放复制钮。
+  // 复制文本在点击时从 pre.textContent 现取(onCopyClick 的 .code-wrap 分支),不嵌 b64、不怕内容后续变化。
+  // 只碰 .md 里的 pre:工具卡 / 思考区已有自己的复制按钮,行内 code 不加。
+  const CODE_COPY_BTN = '<button class="act act-copy" type="button" title="复制代码">' +
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
+    '</button>';
+  function decorateCodePre(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('.md pre').forEach(function (pre) {
+      if (pre.querySelector('code')) decorateOne(pre);
+    });
+  }
+  function decorateOne(pre) {
+    const parent = pre.parentElement;
+    if (!parent || parent === document.documentElement) return;
+    if (parent.classList.contains('code-wrap')) {
+      if (parent.querySelector('.act-copy')) return; // 已装饰过,幂等跳过
+      parent.insertAdjacentHTML('beforeend', CODE_COPY_BTN);
+      return;
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'code-wrap';
+    parent.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    wrap.insertAdjacentHTML('beforeend', CODE_COPY_BTN);
+  }
+
   // 「压缩」摘要卡片：流式收尾与历史重渲染共用的头部（图标 + 标题 + 右侧说明）。
   function summaryHeaderHtml() {
     return '<summary>' +
@@ -871,6 +927,8 @@
       if (m.role === 'assistant' && m.tool_call_msg_ids) Object.assign(state.toolCallMsgIds, m.tool_call_msg_ids);
       if (m.role === 'assistant') appendToolCardsFromAssistant(m, t);
     }
+    // 历史渲染收口:给本轮新渲染出的代码块补复制按钮(目标可能是分页离屏容器,装饰后再随节点搬迁)
+    decorateCodePre(target);
     return { closeArc };
   }
 
@@ -976,6 +1034,7 @@
     wrap.className = 'msg me';
     wrap.innerHTML = '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
       actionsHtml(Date.now(), content, msgId);
+    decorateCodePre(wrap); // 用户消息里也可能有围栏代码块
     $('chat-view').appendChild(wrap);
     scrollBottom();
   }
@@ -1339,7 +1398,7 @@
         }
       }
 
-  // ---------- 定时任务状态条（仅展示 + 删除；不提供增/改/停：创建走 AI 工具，改=删后让 AI 重建） ----------
+  // ---------- 定时任务状态条（整条可点→详情弹窗；创建只走 AI 工具，频次暂不可改，提示词可在弹窗内更新） ----------
   const CRON_DOW = ['日', '一', '二', '三', '四', '五', '六'];
   // cron 人类可读化：只覆盖常见形态（每天/每周几几点、每 N 小时），其余原样显示表达式
   function cronText(expr) {
@@ -1369,17 +1428,41 @@
     else if (sc.last_status === 'skipped') last = '上次 跳过' + (sc.last_note ? '：' + sc.last_note : '');
     else last = '下次 ' + fmtTime(sc.next_run_at);
     bar.innerHTML = '<span class="sched-text">⏰ ' + esc(cronText(sc.cron_expr)) + ' · ' + esc(last) + '</span>'
-      + '<button class="stop-link sched-del" onclick="deleteSchedule()">删除</button>';
+      + '<span class="sched-eye"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></span>';
     bar.classList.remove('hidden');
+  }
+  function openScheduleModal() {
+    const sc = state.schedule;
+    if (!sc || state.view !== 'chat') return;
+    let time = '⏰ ' + cronText(sc.cron_expr) + '（' + sc.cron_expr + '）';
+    if (sc.next_run_at) time += '\n下次执行 ' + fmtTime(sc.next_run_at);
+    if (sc.last_run_at) time += '\n上次执行 ' + fmtTime(sc.last_run_at) + (sc.last_status ? ' · ' + sc.last_status : '');
+    $('sched-modal-time').textContent = time;
+    $('sched-modal-prompt').value = sc.prompt || '';
+    $('schedule-modal').classList.remove('hidden');
+  }
+  function closeScheduleModal() { $('schedule-modal').classList.add('hidden'); }
+  async function saveSchedulePrompt() {
+    const id = state.sessionId;
+    if (!id || !state.schedule) return;
+    const prompt = $('sched-modal-prompt').value.trim();
+    if (!prompt) { toast('提示词不能为空'); return; }
+    try {
+      await req('PATCH', '/api/sessions/' + id + '/schedule', { prompt });
+      state.schedule.prompt = prompt;   // 本地同步，免重拉详情
+      toast('定时任务已更新');
+      closeScheduleModal();
+    } catch (e) { toast('更新失败:' + e.message); }
   }
   async function deleteSchedule() {
     if (!state.sessionId) return;
     const id = state.sessionId;
-    if (!await confirmModal('删除定时任务', '删除后本会话不再定时执行。要改频次/内容，先删除再让 AI 重新创建。', '删除', true)) return;
+    if (!await confirmModal('删除定时任务', '删除后本会话不再定时执行。要改频次，先删除再让 AI 重新创建。', '删除', true)) return;
     try {
       await req('DELETE', '/api/sessions/' + id + '/schedule');
       toast('定时任务已删除');
-      // 重载详情：状态行消失，会话内多出一条 scheduler_note 通知（AI 未被触发）
+      closeScheduleModal();
+      // 重载详情：状态条消失，会话内多出一条 scheduler_note 通知（AI 未被触发）
       const detail = await req('GET', '/api/sessions/' + id + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount));
       if (state.sessionId === id) { renderDetail(detail); connectStream(); }
     } catch (e) { toast('删除失败:' + e.message); }
@@ -1806,6 +1889,7 @@
             if (r) {
               state.streamEl.className = 'bubble-ai' + (r.fmt ? ' md' : ''); // 增量期间是纯文本,收尾统一换 md 排版
               state.streamEl.innerHTML = r.html;
+              decorateCodePre(state.streamEl); // 流式期间不插按钮(每帧整块换 innerHTML),收尾统一装饰一次
             } else {
               // 无文本时去掉气泡（纯工具调用/纯思考也要保留思考面板）
               state.streamEl.remove();
@@ -1818,6 +1902,7 @@
             const bubble = document.createElement('div');
             bubble.className = 'bubble-ai' + (r.fmt ? ' md' : '');
             bubble.innerHTML = r.html;
+            decorateCodePre(bubble);
             state.streamWrap.appendChild(bubble);
           }
           // 「压缩」总结回合的最终答复（后端已保证只有压缩回合里首条无工具调用的收尾回复才带 is_summary，
@@ -1970,7 +2055,11 @@
     const think = copyBtn.closest('.msg-think');
     if (think) e.preventDefault(); // 按钮在 summary 内:只复制,不触发折叠/展开
     let text = '';
-    if (toolCard) {
+    const codeWrap = copyBtn.closest('.code-wrap'); // 代码块逐块复制(decorateCodePre 注入):点时现取 pre 全文
+    if (codeWrap) {
+      const pre = codeWrap.querySelector('pre');
+      text = pre ? pre.textContent : '';
+    } else if (toolCard) {
       // 工具卡:参数 + 结果一并复制。点时取 DOM 现值,多次回填/流式更新后也不会复制旧内容
       const args = toolCard.querySelector('.tool-args-full');
       const res = toolCard.querySelector('.tool-result');
@@ -2634,6 +2723,7 @@
         const wrap = document.createElement('div');
         wrap.className = 'msg other';
         wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';
+        decorateCodePre(wrap); // 先装饰再克隆:按钮随 openFullscreen 的深拷贝进查看器,fs-viewer 已有 .act-copy 委托
         openFullscreen(wrap.firstChild);
       }
     } catch (e) { toast('预览失败:' + e.message); }

@@ -204,7 +204,7 @@ router.get('/:id', wrap((req, res) => {
   // 定时任务状态（scheduler.js / schedule_task 工具；每会话至多一行，无则 null）。
   // 列表接口故意不带此字段，避免 N+1；前端进会话详情时才拉。
   const schedule = db.prepare(
-    'SELECT cron_expr, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
+    'SELECT cron_expr, prompt, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
   ).get(session.id) || null;
   res.json({
     session,
@@ -235,9 +235,22 @@ router.delete('/:id', wrap((req, res) => {
   res.json(engine.deleteSession(req.params.id, delDir));
 }));
 
-// 手动删除定时任务（用户端唯一入口；创建只经 AI 工具，改 = 删后让 AI 重建）。
-// 通知消息只 saveMessage 落库，不走 postUserMessage：不触发 AI 运行，
-// 下一次自然对话时 AI 自会看到（type='scheduler_note' 对 buildMessages 是未知型，按普通 user 消息发）。
+// 手动修改定时任务提示词（会话详情 schedule 弹窗入口）。
+// 只改 prompt，不动 next_run_at/cron；不插通知消息——每次触发前历史会被存档，
+// AI 只看到投递的 prompt 本身，改完下次触发自然生效。
+router.patch('/:id/schedule', wrap((req, res) => {
+  const db = engine.getDb();
+  const prompt = String((req.body && req.body.prompt) || '').trim();
+  if (!prompt) throw Object.assign(new Error('提示词不能为空'), { status_code: 400 });
+  if (prompt.length > 20000) throw Object.assign(new Error('提示词过长（上限 20000 字符）'), { status_code: 400 });
+  const r = db.prepare('UPDATE scheduled_tasks SET prompt = ? WHERE session_id = ?').run(prompt, req.params.id);
+  if (!r.changes) throw Object.assign(new Error('本会话没有定时任务'), { status_code: 404 });
+  log.info('scheduler', req.params.id + ' 更新定时任务提示词');
+  res.json({ ok: true });
+}));
+
+// 手动删除定时任务（创建只经 AI 工具；频次暂不可改，内容可在弹窗内更新）。
+// 通知消息只 saveMessage 落库，不走 postUserMessage：不触发 AI 运行。
 // 删会话无需此处：scheduled_tasks 随 sessions 行 ON DELETE CASCADE 自动清理。
 router.delete('/:id/schedule', wrap((req, res) => {
   const db = engine.getDb();

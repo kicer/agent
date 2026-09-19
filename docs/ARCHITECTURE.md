@@ -191,7 +191,8 @@ scheduled_tasks   session_id PK (FK sessions, ON DELETE CASCADE) / cron_expr /
                   prompt / next_run_at / last_run_at / last_status (ok|error|skipped|running) /
                   last_note (给人看的中文说明，UI 原样展示) / created_at
                   # 定时任务：每会话至多一个（session_id 主键兼防重），按 next_run_at 索引；
-                  # 创建只经 AI 工具 schedule_task，删除走 CASCADE 或 DELETE /:id/schedule（见 §5.12）
+                  # 创建只经 AI 工具 schedule_task；提示词可在会话详情弹窗改（PATCH /:id/schedule），
+                  # cron 暂不可改（改=删后让 AI 重建）；删除走 CASCADE 或 DELETE /:id/schedule（见 §5.12）
 ```
 
 **session.status 状态机**（`engine.js`）：
@@ -362,7 +363,7 @@ AI 通过 `schedule_task` 工具为所在会话建周期性任务（`scheduled_t
 - **tick 两阶段**：A 收尾上一轮 `running`（runLoop 无结束回调，轮询推断：会话转非 active 即标 ok）；B 取到期任务投递——`next_run_at <= now` 且非 running；**防堆积以会话状态为准**：active 直接标 `skipped` 不投递（比 DB 标记时序可靠）。
 - **投递 = 存档 + postUserMessage**（顺序不可换）：先把会话全部消息标 `type='archived'`（`buildMessages` 跳过 → AI 只看到本次 prompt，等价全新会话，上下文不随触发次数增长；UI 照常展示全量），再 `engine.postUserMessage`——它自带复活语义：held 立即开跑（**会抢占保持中的模型**，自用可接受）；queued/completed/cancelled 重新入队尝试派发，无空闲模型则排队等 `dispatchQueued`（正常的夜间排队场景，非异常）。
 - **补跑语义**：`computeNext` 一律以 `now` 为基准，停机跨过多个触发点后重启只算未来一次，天然不补跑；重启后任务从库自动恢复。
-- **安全**：本功能等价给 AI 开持久化后门（prompt injection 可诱使建任务定时执行任意指令）。缓解三件：工具描述限定「仅用户明确要求时调用」+ 会话页常驻状态条（用户可见 AI 排了什么、一键删）+ 创建/触发/跳过/删除全打 `scheduler` info 日志。无权限分级/审批/配额。
+- **安全**：本功能等价给 AI 开持久化后门（prompt injection 可诱使建任务定时执行任意指令）。缓解三件：工具描述限定「仅用户明确要求时调用」+ 会话页常驻状态条（点击弹详情窗，可见 cron/上次下次时间/提示词，能就地改提示词或删除）+ 创建/触发/跳过/删除全打 `scheduler` info 日志。无权限分级/审批/配额。
 - **边界**：两次触发之间的用户对话也会被下次触发一并存档（UI 可见、AI 下次看不到，符合设计意图）；多用户：调度器全局遍历不按 user 过滤（投递目标是会话本身，隔离在建任务时的 ctx.sessionId 已有）；`last_status='running'` 的收尾不精确（异常结束的回合也会被标 ok）。
 
 ---
@@ -414,7 +415,7 @@ AI 通过 `schedule_task` 工具为所在会话建周期性任务（`scheduled_t
 
 | 路径前缀 | 文件 | 主要端点 |
 |---|---|---|
-| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI） |
+| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI）、`PATCH /:id/schedule`（改提示词，不动 cron/next_run_at） |
 | `/api/sessions/:id/messages` | `routes/messages.js` | `POST /` 发消息（`delivered:'live'\|'queued'`）、`POST /start` "开始执行" 模板消息、`POST /stop`、`POST /release`（held→completed）、`DELETE /messages`（清空 + ?keep=summary）、`POST /summarize`（压缩）、`DELETE /messages/:mid`、`GET /stream` SSE 事件流 |
 | `/api/sessions/:id/files` | `routes/files.js` | `POST /` 上传（multer，50MB/文件，文件名清洗 sanitizeName）、`GET /` 列表（递归）、`GET /download[-name/...]` 签名下载（5 分钟 TTL）、`GET /zip-token` + `GET /zip[-name/...]` 选中项（含文件夹）打包 zip 流式下载（纯 Node STORE，两遍读：先 CRC 后磁盘流发送）、`DELETE /` 删文件（目录递归删） |
 | `/api/skills` | `routes/skills.js` | 技能列表/创建/重命名/删除 + 技能内文件 CRUD + 上传（`?overwrite=true` 覆盖） |
