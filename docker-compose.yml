@@ -12,7 +12,6 @@ services:
       - ./skills:/workspace/skills      # 技能目录：所有任务/会话共享同一份技能
       - ./data:/workspace/data          # 持久化：数据目录
       - ./config.yml:/app/config.yml    # 允许设置页写配置(写前服务端会校验)
-      - ./app/server:/app/server
     environment:
       - PORT=8090
       - AGENT_CONFIG=/app/config.yml
