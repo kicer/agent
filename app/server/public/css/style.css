@@ -896,6 +896,19 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   border: none; border-radius: 50%; background: rgba(255,255,255,0.18); color: #fff;
   font-size: 15px; line-height: 1; cursor: pointer;
 }
+/* 源码切换 eye 钮:与关闭钮同款,居其左;仅当前内容有源文本时显示(setFsSource 控显隐) */
+.fs-eye { right: 58px; display: flex; align-items: center; justify-content: center; }
+.fs-eye svg { width: 17px; height: 17px; }
+.fs-eye.on { background: rgba(255,255,255,0.85); color: #333; }
+/* 源码面板:与 #fs-body 互斥显示(toggleFsSrc 切换);不参与双指缩放逻辑 */
+.fs-src-panel { padding: 14px 16px; }
+#fs-src-code {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.55; color: var(--ink);
+  background: #fafbfd; border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; max-height: 76vh; overflow: auto;
+}
 #fs-body .bubble-ai, #fs-body .bubble-user { max-width: 100%; box-shadow: none; }
 #fs-body .tool-card { max-width: 100%; }
 #fs-body .tool-card pre { max-height: 65vh; }

@@ -411,7 +411,12 @@
   <!-- 消息全屏查看器(双击气泡/工具卡打开;支持双指缩放) -->
   <div id="fs-viewer" class="hidden" onclick="if(event.target===this)closeFullscreen()">
     <button class="fs-close" onclick="closeFullscreen()">✕</button>
+    <!-- 源码切换钮:仅当当前内容有源文本时显隐(toggleFsSrc 在渲染视图/源码面板间互切) -->
+    <button class="fs-close fs-eye hidden" id="fs-src-btn" title="显示源码" aria-label="显示源码">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+    </button>
     <div class="fs-panel" id="fs-body"></div>
+    <div class="fs-panel fs-src-panel hidden" id="fs-src-pane"><pre id="fs-src-code"></pre></div>
   </div>
 
   <script>
@@ -581,6 +586,7 @@
     sessions: [],               // 抽屉列表缓存
     attachments: [],            // 待发送附件 {file, name, size}
     lastImgBlobUrl: null,       // 任务文件图片预览的 blob URL，下次预览或开新图时回收
+    lastPdfBlobUrl: null,       // 同上:PDF 页内预览的 blob URL(浏览器内建查看器用)
     es: null,                   // EventSource
     lastSseAt: 0,               // 最近一次收到 SSE 心跳时刻（看门狗静默判死用）
     streamText: '',             // 当前流式累积文本
@@ -2187,7 +2193,37 @@
   });
 
   // ---------- 全屏查看器(双击气泡/工具卡放大;图片单击放大;均同步 index) ----------
-  function openFullscreen(el) {
+  // 源码查看:当前内容有源文本时(消息/文件预览)右上角 eye 钮可点,源码面板与渲染视图互切。
+  // 源文本两条来路:预览调用方直接传(文件原文);双击消息时从尾部操作行复制钮取
+  // (actionsHtml 本来就随消息嵌了全文 b64,零额外存储)。
+  let fsSrcText = null; // null = 本轮查看无源文本,eye 钮隐藏
+  let fsSrcOn = false;
+  function setFsSource(text) {
+    fsSrcText = text == null || text === '' ? null : String(text);
+    fsSrcOn = false;
+    $('fs-src-pane').classList.add('hidden');
+    $('fs-body').classList.remove('hidden');
+    const btn = $('fs-src-btn');
+    btn.classList.toggle('hidden', fsSrcText == null);
+    btn.classList.remove('on');
+    btn.title = '显示源码';
+    btn.setAttribute('aria-label', '显示源码');
+  }
+  function toggleFsSrc() {
+    if (fsSrcText == null) return;
+    fsSrcOn = !fsSrcOn;
+    if (fsSrcOn) $('fs-src-code').textContent = fsSrcText; // 点开才填,闲置期不留大 DOM
+    $('fs-src-pane').classList.toggle('hidden', !fsSrcOn);
+    $('fs-body').classList.toggle('hidden', fsSrcOn);
+    const btn = $('fs-src-btn');
+    btn.classList.toggle('on', fsSrcOn);
+    const lbl = fsSrcOn ? '返回渲染视图' : '显示源码';
+    btn.title = lbl;
+    btn.setAttribute('aria-label', lbl);
+  }
+  $('fs-src-btn').addEventListener('click', toggleFsSrc);
+
+  function openFullscreen(el, src) {
     const body = $('fs-body');
     body.innerHTML = '';
     body.style.zoom = '';
@@ -2197,15 +2233,31 @@
     clone.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
     // 全屏查看直接展开参数/结果,方便观看
     clone.querySelectorAll('details').forEach(function (d) { d.open = true; });
+    // 克隆里摘掉删除钮:删除的委托绑在 chat-view,查看器里点了无响应,不留死按钮
+    clone.querySelectorAll('.act-del').forEach(function (n) { n.remove(); });
+    // 源文本:调用方传入优先(文件预览),否则从消息自带 b64 现取(双击场景)
+    let s = src;
+    if (s == null) {
+      const b = clone.querySelector('.act-copy[data-b64]:not([data-b64=""])');
+      if (b) { try { s = decodeURIComponent(escape(atob(b.dataset.b64))); } catch (_) { s = null; } }
+    }
     body.appendChild(clone);
+    setFsSource(s);
     $('fs-viewer').classList.remove('hidden');
   }
-  function closeFullscreen() { $('fs-viewer').classList.add('hidden'); $('fs-viewer').dispatchEvent(new Event('fs:close')); }
+  function closeFullscreen() {
+    setFsSource(null); // 顺手收起源码面板/隐藏 eye 钮,下轮打开不残留
+    $('fs-viewer').classList.add('hidden');
+    $('fs-viewer').dispatchEvent(new Event('fs:close'));
+  }
   // 双击消息气泡/工具卡 → 全屏查看(操作钮/图片不误触全屏)
+  // 气泡连整个 .msg 一起克隆:尾部操作行(时间/token/复制)随原文进查看器,与聊天里所见一致
   $('chat-view').addEventListener('dblclick', function (e) {
     if (e.target.closest('.act') || e.target.closest('img')) return;
-    const el = e.target.closest('.bubble-ai, .bubble-user, .tool-card');
-    if (el) openFullscreen(el);
+    const card = e.target.closest('.tool-card');
+    if (card) { openFullscreen(card); return; }
+    const bubble = e.target.closest('.bubble-ai, .bubble-user');
+    if (bubble) openFullscreen(bubble.closest('.msg') || bubble);
   });
 
   // 点击消息/工具卡里的图片 → 图片全屏查看器(#fs-viewer 里的克隆图也生效)
@@ -2614,9 +2666,9 @@
   }
 
   function fileRowHtml(f) {
-    // 预览策略：md/txt/html + 图片在 fs-viewer 预览（pdf 不预）
+    // 预览策略：md/txt/html/pdf + 图片在 fs-viewer 预览（pdf 按 pdfViewerEnabled 页内/下载分流）
     const low = f.filename.toLowerCase();
-    const fsPv = /\.(md|txt|html?|png|jpe?g|gif|webp|svg)$/.test(low);
+    const fsPv = /\.(md|txt|html?|pdf|png|jpe?g|gif|webp|svg)$/.test(low);
     const ico = fsPv
       ? '<svg class="file-ico eye" viewBox="0 0 24 24" aria-label="可预览"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
       : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
@@ -2763,7 +2815,7 @@
     });
     return host.innerHTML;
   }
-  // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe、图片用 <img>
+  // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe、pdf 按 pdfViewerEnabled 页内/下载分流、图片用 <img>
   async function previewInFs(name) {
     try {
       const r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
@@ -2778,7 +2830,31 @@
         iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
         iframe.srcdoc = html;
         body.appendChild(iframe);
+        setFsSource(html); // 源码钮可看页面原码
         $('fs-viewer').classList.remove('hidden');
+      } else if (/\.pdf$/i.test(name)) {
+        // H5 方案 A:navigator.pdfViewerEnabled 是专为「能否内嵌渲染 PDF」设计的检测位
+        // (桌面各浏览器/iOS Safari = true;Android Chrome/微信 webview = false)
+        if (navigator.pdfViewerEnabled) {
+          const blob = await r.blob(); // 响应 Content-Type 即 application/pdf
+          const url = URL.createObjectURL(blob);
+          if (state.lastPdfBlobUrl) { try { URL.revokeObjectURL(state.lastPdfBlobUrl); } catch (_) {} }
+          state.lastPdfBlobUrl = url;
+          const body = $('fs-body');
+          body.innerHTML = '';
+          body.style.zoom = '';
+          const frame = document.createElement('iframe');
+          frame.className = 'fs-html-frame';
+          frame.title = name; // 不加 sandbox:内建查看器插件需要 unrestricted 帧
+          frame.src = url;
+          body.appendChild(frame);
+          setFsSource(null); // 二进制无源码可看,隐藏 eye 钮
+          $('fs-viewer').classList.remove('hidden');
+        } else {
+          // 不支持页内嵌的浏览器:交给既有签名直链下载链路(Android 通知栏用系统查看器打开)
+          toast('当前浏览器不支持页内预览 PDF,已开始下载');
+          downloadFile(name);
+        }
       } else if (/\.(png|jpe?g|gif|webp|svg)$/i.test(name)) {
         // 图片：复用会话里单击图片的全屏查看器（双指缩放+拖动+双击放大），大图也能看完
         const blob = await r.blob();
@@ -2805,7 +2881,7 @@
         wrap.className = 'msg other';
         wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';
         decorateCodePre(wrap); // 先装饰再克隆:按钮随 openFullscreen 的深拷贝进查看器,fs-viewer 已有 .act-copy 委托
-        openFullscreen(wrap.firstChild);
+        openFullscreen(wrap.firstChild, text); // 文件原文供 eye 钮看源码
       }
     } catch (e) { toast('预览失败:' + e.message); }
   }
