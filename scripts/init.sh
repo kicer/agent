@@ -1,13 +1,11 @@
 #!/bin/bash
-# init.sh — 生成 .env 与 config.yml，然后起服务（agent → mcp）。
+# init.sh — 生成 .env 与 config.yml。
 #
 # 只读环境变量，不依赖任何外部文件；**全部可选**，什么都不给也能直接跑。
 #
 # 用法：
 #   ./scripts/init.sh                                     # 全用默认值（无模型、admin/admin、自动探测公网 IP）
 #   BIGMODEL_KEY=xxx PUBLIC_IP=1.2.3.4 ./scripts/init.sh  # 给几个变量就行
-#   UP=0 ./scripts/init.sh                                # 只生成 .env / config.yml，不起容器
-#   MCP_DIR=/path/to/mcp ./scripts/init.sh                # mcp 仓库不在 ../mcp 时指定
 #
 # 输入（都可选）：
 #   BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY  模型平台 key，填几个启用几个（0~3 个）
@@ -15,8 +13,6 @@
 #   AUTH_USER / AUTH_PASSWORD               登录账号（默认 admin / admin，请自行改掉）
 #   PUBLIC_IP / AGENT_PORT                  对外地址与端口（PUBLIC_IP 空则尝试自动探测）
 #   LOG_LEVEL                               日志级别（调试 debug；日常用 info）
-#   MCP_DIR                                 mcp 仓库位置（默认本仓库同级 ../mcp；不存在就跳过）
-#   UP                                      1=生成后起服务（默认），0=只生成配置
 #   AUTH_SECRET / EXECUTOR_TOKEN            一般不用给：不给就自动生成并复用（见下）
 #
 # ⚠️ config.yml 是本脚本的生成物，不要手改（每次生成前会把旧的备份为 config.yml.bak.<时间戳>）。
@@ -30,7 +26,6 @@ cd "$REPO_DIR"
 
 CONFIG_YML="$REPO_DIR/config.yml"
 ENV_FILE="$REPO_DIR/.env"
-MCP_DIR="${MCP_DIR:-$(cd "$REPO_DIR/.." && pwd)/mcp}"
 
 BIGMODEL_KEY="${BIGMODEL_KEY:-}"
 DEEPSEEK_KEY="${DEEPSEEK_KEY:-}"
@@ -43,7 +38,6 @@ AGENT_PORT="${AGENT_PORT:-8090}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-}"
 AUTH_SECRET="${AUTH_SECRET:-}"
-UP="${UP:-1}"
 # 只用于日志里显示"配置从哪来"，不影响行为
 CONFIG_SOURCE="${CONF:-环境变量}"
 
@@ -60,12 +54,6 @@ gen_hex() {  # $1 = 字节数（默认 32）
         head -c "$n" /dev/urandom | od -An -tx1 | tr -d ' \n'
     fi
 }
-
-if [ "$UP" = "1" ] && { ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; }; then
-    err "要起服务需要 docker + docker compose。可先跑本仓库的 scripts/init_host.sh（宿主机初始化：装 Docker、swap 等）。"
-    err "只生成配置请用： UP=0 $0"
-    exit 1
-fi
 
 # ============================================================
 # 1. 生成 .env（密钥只生成一次，之后复用 → 重跑不掉登录态、不改 executor token）
@@ -248,32 +236,7 @@ info "配置来源: $CONFIG_SOURCE"
 info "平台: ${enabled_plats[*]:-无}；智谱 MCP: $([ -n "$ZHIPU_KEY" ] && echo 启用 || echo 未配置)"
 
 # ============================================================
-# 3. 起服务（顺序：agent 先起，它创建 agent-mcp-net）
-# ============================================================
-if [ "$UP" != "1" ]; then
-    log "UP=$UP：只生成配置，不起服务"
-else
-    log "启动 agent"
-    docker compose up -d --build
-
-    if [ -d "$MCP_DIR" ]; then
-        log "启动 mcp（$MCP_DIR）"
-        ( cd "$MCP_DIR" && docker compose up -d --build )
-
-        # MCP 工具只在 agent-core【启动时】发现一次（app/server/mcp.js 的 init，不重试），
-        # 而 agent 必须先起（它创建 agent-mcp-net），所以这里重启一次让 agent 发现已就绪的 mcp 服务。
-        info "重启 agent-core 以发现 MCP 工具……"
-        docker compose restart agent-core >/dev/null
-        sleep 3
-        info "本次 MCP 工具发现结果："
-        docker compose logs --tail=80 agent-core | grep -E '\[mcp\]|\[startup\].*public_link' || true
-    else
-        warn "没找到 mcp 仓库（$MCP_DIR），跳过。可用 MCP_DIR=<路径> 指定。"
-    fi
-fi
-
-# ============================================================
-# 4. 汇总
+# 3. 汇总
 # ============================================================
 log "汇总"
 echo "---------------------------------------------"
@@ -284,16 +247,4 @@ echo " 平台     : ${enabled_plats[*]:-（无）}"
 echo " 智谱 MCP : $([ -n "$ZHIPU_KEY" ] && echo "image-gen / video-gen 已启用" || echo "未配置（enable: false）")"
 echo " 日志级别 : $LOG_LEVEL"
 echo "---------------------------------------------"
-
-if [ "$UP" = "1" ]; then
-    echo
-    info "容器状态："
-    docker compose ps
-    if [ -d "$MCP_DIR" ]; then
-        ( cd "$MCP_DIR" && docker compose ps )
-    fi
-    echo
-    info "看日志： docker compose logs -f agent-core"
-    info "注意：安全组/防火墙需放行 ${AGENT_PORT}（mcp 各服务都不映射宿主机端口）"
-fi
 log "完成 ✅"
