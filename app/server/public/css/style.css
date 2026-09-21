@@ -85,11 +85,11 @@ input, textarea { font: inherit; color: inherit; border: 0; outline: none; backg
 /* ================= 主内容区 ================= */
 main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-/* ---------- 未对话状态:模式选择 ---------- */
+/* ---------- 未对话状态:欢迎页 ---------- */
 #welcome-view {
   flex: 1; overflow-y: auto; overflow-x: hidden;
-  display: flex; flex-direction: column; align-items: center;
-  padding: max(48px, 10vh) 24px 24px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 24px;
 }
 .logo-badge {
   width: auto;
@@ -102,30 +102,14 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   color: var(--active);
 }
 .logo-badge .ic { width: 40px; height: 40px; }
-.welcome-slogan { margin-top: 0; font-size: 18px; }
+.welcome-slogan { font-size: 18px; }
+/* 两行竖排：上 logo、下提示词，整体由 #welcome-view 垂直居中 */
 .welcome-head {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: 14px;
 }
-
-/* 胶囊式分段控件 */
-.mode-switch {
-  border: 1px solid var(--gray-light);
-  margin-top: 28px; width: 100%; max-width: 360px;
-  display: flex; gap: 4px;
-  border-radius: 999px;
-}
-.mode-chip {
-  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 8px 0; border-radius: 999px;
-  font-size: 14px; color: var(--ink);
-}
-.mode-chip:hover {background: var(--surface);}
-.mode-chip.on { background: var(--active-soft); color: var(--active); border: 1px solid var(--active); margin: -3px; background-color: var(--active-light); }
-.mode-hint { margin-top: 14px; font-size: 13px; color: var(--gray); min-height: 20px; text-align: center; }
 
 /* ---------- 对话状态:对话内容区 ---------- */
 /* overflow-x 显式 hidden:overflow-y:auto 会把 visible 的 overflow-x 计算成 auto,

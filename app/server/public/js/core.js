@@ -139,7 +139,7 @@
     return res.json();
   }
 
-  // ---------- 模式配置（新增助手类型时只需在这里加一项，welcome 卡片与顶部 icon 会自动跟随） ----------
+  // ---------- 模式配置（顶部 icon 按会话助手类型渲染；欢迎页已不再提供模式切换） ----------
   const MODES = {
     secretary: {
       label: '文秘助理', hint: '支持文字输入，可起草、润色、整理文书',
@@ -154,7 +154,7 @@
   // ---------- 全局状态 ----------
   const state = {
     view: 'welcome',          // welcome | chat
-    mode: 'secretary',          // 模式选择区当前选中（仅 welcome 视图可操作）
+    mode: 'secretary',          // 新建会话默认助手类型（欢迎页已去掉模式切换，不再可变）
     sessionType: 'secretary',   // 当前会话的助手类型（建档时锁定，后续不随模式切换变更）
     deepThink: false,           // 深度思考开关(仅本地视觉状态,无后端参数)
     sessionId: null,            // 当前会话
@@ -211,18 +211,6 @@
     c.appendChild(title);
   }
 
-  // ---------- 模式切换区 ----------
-  function selectMode(mode) {
-    state.mode = mode;
-    for (const chip of document.querySelectorAll('.mode-chip')) {
-      const on = chip.dataset.mode === mode;
-      chip.classList.toggle('on', on);
-      chip.setAttribute('aria-selected', on ? 'true' : 'false');
-    }
-    $('mode-hint').textContent = MODES[mode].hint;
-  }
-  $('mode-switch').addEventListener('click', e => {
-    const chip = e.target.closest('.mode-chip');
-    if (chip) selectMode(chip.dataset.mode);
-  });
+  // ---------- 模式切换已移除：新建会话固定用 state.mode（secretary），历史会话的
+  // 助手类型由 sessionType 决定（旧 vision 会话仍正常渲染顶部 icon）。 ----------
 

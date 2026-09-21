@@ -1406,7 +1406,6 @@
 
   // ---------- 初始化 ----------
   bindChatScroll(); // 聊天区滚动跟随/右下角回底按钮(只绑一次)
-  selectMode('secretary'); // 默认选中【文秘助理】
   setView('welcome');
   openDrawer(drawerMQ.matches); // 桌面端:侧边栏默认展开;跨断点缩放窗口时同步切换开合态
   drawerMQ.addEventListener('change', e => openDrawer(e.matches));

@@ -218,7 +218,6 @@
     userPaused = false;
     renderAttachChips();
     clearUploadCards();
-    selectMode('secretary'); // 置顶逻辑:新建时自动选中【文秘助理】
     setView('welcome');
     $('chat-view').innerHTML = '';
     $('msg-input').value = '';
