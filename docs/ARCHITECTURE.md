@@ -57,13 +57,14 @@ agent/
 │   │   │   ├── public-files.js    GET /p/<id> 公网临时文件取用（匿名）
 │   │   │   └── system.js          /api/system/status + /restart 优雅重启
 │   │   ├── templates/
-│   │   │   └── system-prompt.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
-│   │   └── public/                前端 H5 SPA（无构建，Vanilla JS + SSE）
-│   │       ├── index.html         主页（任务 Tab + 设置 Tab + 技能 Tab）
+│   │   │   ├── system-prompt.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
+│   │   │   ├── compress-prompt.txt 上下文压缩提示词（{{conversation}} 占位符填完整历史）
+│   │   │   └── title-prompt.txt   会话标题自动生成提示词（首次交互结束后触发，{{language}} 填配置语言）
+│   │   └── public/                前端 H5 SPA（无构建，Vanilla JS 经典脚本多文件 + SSE）
+│   │       ├── index.html         主页（HTML+样式；脚本全部在 js/，按序加载共享全局作用域）
 │   │       ├── login.html         登录页
-│   │       ├── v1.html            移动单聊视图（详见 docs/v2-develop.md）
-│   │       ├── js/                core.js / tasks.js / models.js / settings.js / skills.js
-│   │       ├── css/               style.css / v1.css
+│   │       ├── js/                core / chat / sessions / stream / files / settings 六模块（settings.js 尾部含全局初始化，须最后加载）
+│   │       ├── css/style.css
 │   │       ├── vendor/marked.min.js
 │   │       └── sw.js              service worker
 │   └── test/
@@ -441,21 +442,23 @@ AI 通过 `schedule_task` 工具为所在会话建周期性任务（`scheduled_t
 | `tool_result` | `{tool_call_id, name, content, is_error, image_url, msg_id}` | 工具回执落库后 |
 | `phase` | `{phase}` | 阶段切换 |
 | `done` | `{status: 'held'\|'cancelled'\|'completed'}` | 回合收尾 |
+| `title` | `{title}` | 首次交互结束后自动生成的标题落库时（生成流程见 §9） |
 | `error` | `{message}` | 异常 |
 
 ---
 
 ## 8. 前端
 
-`app/server/public/` 是 H5 SPA（无构建步骤，本地 `vendor/marked.min.js` 渲染 Markdown，不引外部 CDN）。`index.html` 是主入口，按 Tab 组织：
+`app/server/public/` 是 H5 SPA（无构建步骤，本地 `vendor/marked.min.js` 渲染 Markdown，不引外部 CDN）。`index.html` 只包含 HTML/CSS 与按序加载的 6 个经典脚本（`<script src>`，无 import/打包）：顶层 `function` 声明仍挂 window 供内联 `onclick` 调用，顶层 `const/let` 进全局词法环境跨脚本可见；每文件各自 `'use strict'`。拆自旧版单一内联脚本，**纯搬运零改动，切分均在顶层语句边界**：
 
-- `js/tasks.js` —— 任务 Tab：会话列表（活跃/归档分页 + 搜索 + 滑入滑出聊天）、聊天 SSE 流式、文件管理、阶段开关。
-- `js/models.js` —— 模型 Tab：模型池状态、token 用量。
-- `js/settings.js` —— 设置 Tab：配置编辑（原文 + 单项 PATCH）、版本信息、优雅重启、上传压缩参数展示。
-- `js/skills.js` —— 技能 Tab：技能列表/创建/重命名/删除 + 技能内文件编辑/上传。
-- `js/core.js` —— 通用工具：`$`/`esc`/`req`/`toast`/`copyText`/`fmtTime`、Tab 切换。
+- `js/core.js` —— 架构注释头、通用工具（`$`/`esc`/`req`/`toast`/`copyText`/`fmtTime`/markdown 渲染）、MODES、全局 `state`、视图/模式切换。
+- `js/chat.js` —— 消息渲染（气泡/思考面板/工具卡）、历史懒加载分页、滚动跟随与回底、typing。
+- `js/sessions.js` —— 会话列表（抽屉）、打开/新建/重命名/删除、SSE 静默看门狗与后台挂起、phase-bar、定时任务、上下文压缩。
+- `js/stream.js` —— 发送、SSE 流式渲染（delta 合帧/工具早卡）、消息复制、全屏查看器。
+- `js/files.js` —— 输入区、任务文件面板（树/选择/下载/拖拽调高）、大图压缩与上传卡片、抽屉与滑动手势。
+- `js/settings.js` —— 设置区全部（页面栈/账户/服务/config 编辑器/技能/模型池/MCP）及 `window.sUI`/`window.mcpUI` 对外接口；**文件尾是全局初始化段（load 时直接调 `bindChatScroll()`/`openDrawer()`/`loadSessionList()` 等），必须最后加载**。
 
-`v1.html` 是移动单聊视图（`v2-develop.md` 详述），`login.html` 单独登录页。`sw.js` 是 service worker。
+新增模块或调整顺序时注意保持与上表一致的加载序（末尾初始化依赖前面所有文件）。`login.html` 单独登录页。`sw.js` 是 service worker：`/api/*` 与 SSE 直接放行；HTML/CSS/JS 网络优先（改完刷新即生效）；图片/JSON 缓存优先（改动需升 `CACHE_VERSION`）。
 
 前端用 `EventSource` 订阅 `GET /api/sessions/:id/stream`；消息体默认 `Content-Type: text/event-stream`，nginx-proxy 必须 `proxy_buffering off` 才能实时下发。
 
@@ -471,6 +474,7 @@ AI 通过 `schedule_task` 工具为所在会话建周期性任务（`scheduled_t
 - `skills.skills_root` —— 缺省取 `workspace_root` 的同级 `skills/`。
 - `model_hold` —— 保持租约；详情见 §5.1。
 - 上下文压缩 —— 无配置项：压缩回合的 system prompt 整体替换为固定模板 `server/templates/compress-prompt.txt`，该回合不传 tools；调整压缩策略直接改该文件。
+- 会话标题自动生成 —— 无配置项：首次交互回合结束（`finalize` 成功分支）后触发，用会话当前 model_id 发一次**不带 system、不传 tools** 的标题请求（历史 user/assistant 原文 + 模板 `server/templates/title-prompt.txt` 作末条 user，`{{language}}` 填 `agent.language`）；结果清洗后写入 `sessions.title` 并 SSE 推 `title` 事件。失败静默（title 仍空，下个回合结束自动重试）；已有标题（建会话时填写或手动重命名）不覆盖。
 - `auth.users` —— 明文密码配在配置里（自用场景）；`secret` 留空则随机生成（重启掉登录态，建议固定随机串）。
 - `mcp_servers[].enable: false` —— 启动不加载该服务（配置保留），其余工具不受影响。
 - `mcp_servers[].timeout_ms` —— 该服务单次 `tools/call` 的最大等待，默认 60000（夹在 1s~10min）；工具发现/握手用固定 15s，不受本项影响。

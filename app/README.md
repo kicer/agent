@@ -22,7 +22,7 @@ app/
 │   │   ├── definitions.json # 内置 16 个工具的 JSON Schema
 │   │   └── executor.js      # 内置工具执行器（任务目录沙箱；未知工具名转 MCP）
 │   ├── templates/system-prompt.txt  # System prompt 模板（直接编辑）
-│   └── public/              # H5 前端（Vanilla JS + SSE）
+│   └── public/              # H5 前端（Vanilla JS + SSE；无构建，index.html + js/ 六模块按序加载）
 ├── test/                    # mock 上游 + 端到端冒烟测试
 ├── config.example.yml
 ├── Dockerfile / docker-compose.yml
