@@ -332,7 +332,8 @@
     // 服务端首次交互后自动生成的标题（finalize 后约 1s 到达）：即时刷新顶栏 + 重拉会话列表（PC 常驻侧边栏/移动抽屉）
     es.addEventListener('title', ev => {
       const d = JSON.parse(ev.data);
-      if (d && d.title) { state.sessionTitle = d.title; renderHeader(); }
+      // title 为 null = 服务端清空会话时重置标题：顶栏一并清掉，避免新对话文不对题
+      if (d && 'title' in d) { state.sessionTitle = d.title || ''; renderHeader(); }
       loadSessionList();
     });
     es.addEventListener('error', ev => {

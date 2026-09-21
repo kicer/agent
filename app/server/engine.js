@@ -428,6 +428,7 @@ function maybeGenerateTitle(sessionId, s) {
       .then(r => {
         const title = cleanTitle(r && r.content);
         if (!title) return;
+        if (!loadHistory(sessionId).length) return; // 生成期间会话被清空：旧历史催生的标题不再回写
         touch(sessionId, { title });
         bus.emit(sessionId, 'title', { title }); // 前端监听：刷新详情页标题 + 重拉会话列表
         log.info('task', sessionId + ' 自动生成标题「' + title + '」');
@@ -1019,8 +1020,11 @@ function clearSessionMessages(sessionId) {
   releaseModel(sessionId);
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
-  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null });
+  // 标题随历史一并清零：旧标题描述的是已删除的对话，留着会让新对话文不对题；
+  // 新一轮交互结束后 maybeGenerateTitle 见 title 为空会自动重新生成。
+  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null, title: null });
   bus.emit(sessionId, 'done', { status: 'completed' });
+  bus.emit(sessionId, 'title', { title: null }); // 供其他打开同一会话的窗口同步清掉旧标题
   emitStatus(sessionId);
   dispatchQueued();
   return { ok: true };
