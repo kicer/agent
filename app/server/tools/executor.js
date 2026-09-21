@@ -142,6 +142,7 @@ function outlineWrapper(outlineText) {
 
 // 用 sharp 压缩（按 EXIF 摆正、长边 ≤2000px、JPEG 质量 80）并落盘 .imgcache/。
 // 成功返回 {text, image_rel}；产物文件名带源文件指纹（mtime+size），同图重复读复用同一份不增殖。
+// 无收益守卫（与浏览器端压缩同款）：重编码 JPEG 反而 ≥ 原图时不落盘，image_rel 直指原文件。
 // sharp 缺失或解码失败时退回纯文本提示，不让整个工具回合报错。
 async function readImageAsBlocks(ctx, abs, rel, size) {
   let sharp;
@@ -153,6 +154,13 @@ async function readImageAsBlocks(ctx, abs, rel, size) {
       .resize({ width: IMG_MAX_SIDE, height: IMG_MAX_SIDE, fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: IMG_JPEG_QUALITY })
       .toBuffer({ resolveWithObject: true });
+    if (r.data.length >= size) {
+      // 低内容熵图（截图/线稿/纯色）JPEG 重编码可能比原图还大：不产出缓存，外链直接指向原文件
+      return {
+        text: '[图片文件] ' + rel + '（' + size + ' 字节，压缩无收益，按原图回传）',
+        image_rel: rel,
+      };
+    }
     let st = null;
     try { st = await fsp.stat(abs); } catch (_) {}
     const stem = path.basename(rel).replace(/\.[^.]+$/, '').replace(/[^\w.\-\u4e00-\u9fff]/g, '_').slice(0, 60);

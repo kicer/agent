@@ -516,11 +516,16 @@ async function runLoopInner(sessionId, run) {
     // 且不传 tools，模型只能输出摘要文本。
     // 发送前为历史里的 image_ref 块现签公网外链（GET /p/<id>，同 mint_public_link）：
     // 每次请求重签，回合内多轮迭代/重试永不过期；DB 只存几十字符的 rel，base64 不进库不进请求体。
-    // base_url 未配/mint 异常时返回 null，buildMessages 降级为文字占位。
+    // base_url 未配/校验不过/mint 异常时返回 null，buildMessages 降级为文字占位。
+    // image_rel 可能是压缩无收益时直指的原文件：与 mint_public_link 同款 realpath 复核，
+    // 防任务目录里指向外部的符号链接图片被签上公网。
     const mintImageUrl = (rel) => {
       const pl = cfg.public_link || {};
       if (!pl.base_url) return null;
       try {
+        const dir = taskDirOf(sessionId);
+        const real = fs.realpathSync(resolveInTask(dir, rel));
+        if (real !== dir && !real.startsWith(dir + path.sep)) return null;
         return pl.base_url + '/p/' + publicFiles.mint({ sessionId: sessionId, rel, ttlMs: pl.ttl_ms });
       } catch (_) { return null; }
     };
