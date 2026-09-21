@@ -51,6 +51,30 @@ function compressPromptText(conversation) {
   return COMPRESS_PROMPT_TEMPLATE + '\n\n## 对话记录\n' + rec;
 }
 
+// 自动生成会话标题提示词（templates/title-prompt.txt）：会话建立后第 1 次交互完成时触发。
+// 与压缩回合不同，这里**不带 system prompt**：直接复用历史里的 user/assistant 文本消息，
+// 末尾追加一条 user（本模板，{{language}} 占位符替换为配置语言），见 titleMessages。
+const TITLE_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'title-prompt.txt'), 'utf8');
+
+// 拼标题回合的 messages：历史原样（只留 user/assistant 纯文本行）+ 末尾一条标题指令 user。
+// 与 historyTranscript 同取舍：archived 行不进；__blocks__ 哨兵 JSON 还原为文字，图片以 [图片] 占位；
+// 含 tool_calls 的 assistant 行无文本内容则跳过，tool 回执行整体跳过（只要对话主干）。
+function titleMessages(history, language) {
+  const messages = [];
+  for (const row of history || []) {
+    if (row.type === 'archived') continue;
+    if (row.role !== 'user' && row.role !== 'assistant') continue;
+    let content = row.content || '';
+    const blocks = decodeBlocks(content);
+    if (blocks) content = blocks.map(b => (b && b.type === 'text' ? b.text : '[图片]')).join('\n');
+    if (!content.trim()) continue;
+    messages.push({ role: row.role, content });
+  }
+  const lang = String(language || '').trim() || 'the same language as the conversation';
+  messages.push({ role: 'user', content: TITLE_PROMPT_TEMPLATE.replaceAll('{{language}}', () => lang) });
+  return messages;
+}
+
 // system prompt 完全静态：所有会话共用同一份内容，利于上游前缀缓存。
 function buildSystemPrompt() {
   return SYSTEM_PROMPT_TEMPLATE;
@@ -386,4 +410,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks, compressPromptText, historyTranscript };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks, compressPromptText, historyTranscript, titleMessages };

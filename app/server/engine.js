@@ -2,7 +2,7 @@
 // 单进程内存模型：JS 单线程 + better-sqlite3 同步 API，不存在跨进程竞争。
 const fs = require('fs');
 const path = require('path');
-const { buildMessages, callModel, encodeBlocks, compressPromptText, historyTranscript } = require('./llm');
+const { buildMessages, callModel, encodeBlocks, compressPromptText, historyTranscript, titleMessages } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const mcp = require('./mcp');
 const log = require('./log');
@@ -11,6 +11,7 @@ const TOOL_DEFINITIONS = require('./tools/definitions.json');
 
 let cfg, db, bus;
 const runs = new Map(); // session_id -> {cancelled, procs:Set, abortController, looping:boolean}
+const titling = new Set(); // 正在生成标题的会话（防重入；标题落库后靠 title 非空自然不再触发）
 
 // ---------- 小工具 ----------
 const now = () => Date.now();
@@ -410,6 +411,42 @@ function finalize(sessionId, run) {
   runs.delete(sessionId);
   bus.emit(sessionId, 'done', { status: 'held' });
   emitStatus(sessionId);
+  maybeGenerateTitle(sessionId, s);
+}
+
+// 首次交互结束后自动生成会话标题：fire-and-forget，不阻塞回合收尾。
+// 不带 system prompt：历史 user/assistant 原文 + 末尾一条标题指令 user（见 llm.titleMessages），
+// 用会话当前 model_id 发一次不传 tools 的调用。失败静默（title 仍空，下个回合结束自动重试）。
+function maybeGenerateTitle(sessionId, s) {
+  try {
+    if (s.title) return;
+    const modelId = s.model_id;
+    if (!modelId || titling.has(sessionId)) return;
+    titling.add(sessionId);
+    const messages = titleMessages(loadHistory(sessionId), cfg.agent.language);
+    callModel(cfg, modelId, messages, null, {})
+      .then(r => {
+        const title = cleanTitle(r && r.content);
+        if (!title) return;
+        touch(sessionId, { title });
+        bus.emit(sessionId, 'title', { title }); // 前端监听：刷新详情页标题 + 重拉会话列表
+        log.info('task', sessionId + ' 自动生成标题「' + title + '」');
+      })
+      .catch(err => log.warn('task', sessionId + ' 生成标题失败：' + String(err && err.message || err)))
+      .finally(() => titling.delete(sessionId));
+  } catch (e) {
+    titling.delete(sessionId);
+    log.warn('task', sessionId + ' 生成标题异常：' + String(e && e.message || e));
+  }
+}
+
+// 清洗模型返回的标题：压成单行、去包裹引号，截断到 60 字（手动重命名上限 100，留余量）。
+function cleanTitle(raw) {
+  let t = String(raw || '').replace(/\s+/g, ' ').trim();
+  const q = ['"', '\'', '“', '”', '‘', '’', '「', '」', '『', '』', '《', '》'];
+  while (t.length > 2 && q.includes(t[0])) t = t.slice(1).trimStart();
+  while (t.length > 1 && q.includes(t[t.length - 1])) t = t.slice(0, -1).trimEnd();
+  return t.slice(0, 60);
 }
 
 async function runLoopInner(sessionId, run) {
@@ -779,9 +816,6 @@ function postUserMessage(sessionId, content, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   const messageId = saveMessage(sessionId, { role: 'user', content });
-    if (!session.title) {
-      touch(sessionId, { title: content.slice(0, 24) });
-    }
     // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
     const run = getRun(sessionId, true);
     run.deepThink = !!(opts && opts.deepThink);

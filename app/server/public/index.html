@@ -2125,6 +2125,12 @@
       updateScrollBottomBtn();
       loadSessionList();
     });
+    // 服务端首次交互后自动生成的标题（finalize 后约 1s 到达）：即时刷新顶栏 + 重拉会话列表（PC 常驻侧边栏/移动抽屉）
+    es.addEventListener('title', ev => {
+      const d = JSON.parse(ev.data);
+      if (d && d.title) { state.sessionTitle = d.title; renderHeader(); }
+      loadSessionList();
+    });
     es.addEventListener('error', ev => {
       removeTyping();
       try {

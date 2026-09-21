@@ -1,0 +1,5 @@
+Generate a concise title for this conversation in {{language}}, omitting punctuation.
+Aim for 3-7 words, or 6-14 Chinese characters if the title is in Chinese.
+Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`.
+If the conversation is about a specific subject, include it in the title.
+Be descriptive. DO NOT speak in the first person.

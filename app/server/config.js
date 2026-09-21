@@ -32,7 +32,7 @@ const DEFAULTS = {
   // 只在回合循环结束、finalize 之后检查，AI↔工具交互过程中绝不触发；压缩回合自身不再复查（防递归）。
   // 满足条件后延迟 1.5s 再推送（避开超长回合刚结束时前端收尾渲染的高峰；期间会话有变动则撤回提议）。
   // 改后重启生效。
-  agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2, language: '中文', auto_compress_tokens: 60000 },
+  agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000 },
   // 大图上传预处理：图片文件超过 threshold_kb 时，浏览器端询问用户后用 canvas 压缩
   // （长边 ≤ max_dim，JPEG quality）再上传，减轻服务器带宽与存储压力。参数经 /api/system/status 下发给前端。
   upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85 },
