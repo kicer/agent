@@ -157,20 +157,23 @@ function syncModelPool() {
   const stmt = db.prepare(
     'INSERT INTO model_pool (id, display_name, is_busy, current_session_id) VALUES (?,?,0,NULL) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name'
   );
+  // 池槽位按 key 拆分：cfg.models 里同模型每个 key 一条副本，槽位 id = 「模型id#key下标」，
+  // 一个空闲 key 一个槽位 → 同模型可被多会话并行占用（见 slotBase/freeSlotFor）。
   // enable:false 的模型不进池：分配/绑定均按池取模型，天然跳过禁用项（与其他模型配置一致，重启生效）。
+  const slotId = m => m.id + '#' + m.key_index;
   const enabled = cfg.models.filter(m => m.enable !== false);
-  for (const m of enabled) stmt.run(m.id, m.display_name);
-  // 清理配置中已删除/已禁用的模型
-  const ids = enabled.map(m => m.id);
+  for (const m of enabled) stmt.run(slotId(m), m.display_name);
+  // 清理配置中已删除/已禁用的模型（含旧版按模型 id 建的行，重启后自动重建为槽位行）
+  const ids = enabled.map(slotId);
   for (const row of db.prepare('SELECT id FROM model_pool').all()) {
     if (!ids.includes(row.id)) db.prepare('DELETE FROM model_pool WHERE id = ?').run(row.id);
   }
   // 进程重启后：释放所有绑定、把 active 会话退回队列；held 会话直接结版（释放）。
   // 禁用模型同样走这里收尾：重启后池里已无它，绑过它的会话被退回队列/结版，后续重新分配启用中的模型。
   db.prepare('UPDATE model_pool SET is_busy = 0, current_session_id = NULL').run();
-  db.prepare("UPDATE sessions SET status='completed', completed_at=?, held_at=NULL, model_id=NULL WHERE status='held'").run(now());
+  db.prepare("UPDATE sessions SET status='completed', completed_at=?, held_at=NULL, model_id=NULL, model_slot=NULL WHERE status='held'").run(now());
   for (const s of db.prepare("SELECT id FROM sessions WHERE status = 'active'").all()) {
-    db.prepare("UPDATE sessions SET status='queued', model_id=NULL, updated_at=? WHERE id=?").run(now(), s.id);
+    db.prepare("UPDATE sessions SET status='queued', model_id=NULL, model_slot=NULL, updated_at=? WHERE id=?").run(now(), s.id);
     enqueue(s.id);
   }
   // 兑底：queued 会话必须在队列中
@@ -180,6 +183,18 @@ function syncModelPool() {
 
 function freeModel() {
   return db.prepare('SELECT * FROM model_pool WHERE is_busy = 0 ORDER BY id').get();
+}
+
+// 槽位 id（「模型id#key下标」）→ 模型 id（「平台/模型」）。对外一律用模型 id，槽位只在池内/取 key 时用。
+function slotBase(id) { return String(id || '').split('#')[0]; }
+
+// 找指定模型（传模型 id 或槽位 id 均可）的任意空闲槽位：同模型多个空闲 key 时任取其一。
+// 用范围比较而非 LIKE，避免模型 id 里的 _/% 被当通配符。
+function freeSlotFor(modelId) {
+  const base = slotBase(modelId);
+  if (!base) return null;
+  return db.prepare('SELECT * FROM model_pool WHERE id >= ? AND id < ? AND is_busy = 0 ORDER BY id LIMIT 1')
+    .get(base + '#', base + '#\uffff');
 }
 
 // 会话绑定的模型是否支持 vision（图片回传）；决定 read_file 读图行为（见 tools/executor.js）。
@@ -204,14 +219,15 @@ function dequeue(sessionId) {
 function bindModel(session, model, status) {
   const st = status === 'held' ? 'held' : 'active';
   db.prepare('UPDATE model_pool SET is_busy = 1, current_session_id = ? WHERE id = ?').run(session.id, model.id);
-  // last_model_id 不随释放清除：会话再次需要模型时优先回绑（见 pickModelFor）
-  db.prepare("UPDATE sessions SET status=?, model_id=?, last_model_id=?, held_at=?, updated_at=? WHERE id=?")
-    .run(st, model.id, model.id, st === 'held' ? now() : null, now(), session.id);
+  // model_id/last_model_id 存模型 id（展示/统计/回绑语义不变），model_slot 记绑定的具体 key 槽位；
+  // last_model_id 不随释放清除：会话再次需要模型时优先回绑同模型的空闲 key（见 pickModelFor）
+  db.prepare("UPDATE sessions SET status=?, model_id=?, model_slot=?, last_model_id=?, held_at=?, updated_at=? WHERE id=?")
+    .run(st, slotBase(model.id), model.id, slotBase(model.id), st === 'held' ? now() : null, now(), session.id);
 }
 
 function releaseModel(sessionId) {
   db.prepare('UPDATE model_pool SET is_busy = 0, current_session_id = NULL WHERE current_session_id = ?').run(sessionId);
-  db.prepare('UPDATE sessions SET model_id = NULL, updated_at = ? WHERE id = ?').run(now(), sessionId);
+  db.prepare('UPDATE sessions SET model_id = NULL, model_slot = NULL, updated_at = ? WHERE id = ?').run(now(), sessionId);
 }
 
 // 手动为已结版/已终止的会话指定模型：选定的模型必须空闲。
@@ -224,7 +240,8 @@ function bindToSession(sessionId, modelId) {
   if (s.status !== 'completed' && s.status !== 'cancelled') {
     throw Object.assign(new Error('仅已完成/已终止的会话可手动选择模型'), { status_code: 409 });
   }
-  const model = db.prepare('SELECT * FROM model_pool WHERE id = ? AND is_busy = 0').get(String(modelId || ''));
+  // 传模型 id：绑到该模型任意一个空闲 key 槽位；全部槽位被占才算「正被占用」
+  const model = freeSlotFor(String(modelId || ''));
   if (!model) throw Object.assign(new Error('模型不存在或正被占用'), { status_code: 409 });
   touch(sessionId, { cancelled_at: null, completed_at: null, held_at: null });
   const pending = hasPendingUser(sessionId);
@@ -232,7 +249,7 @@ function bindToSession(sessionId, modelId) {
   emitStatus(sessionId);
   log.info('model', sessionId + ' 手动绑定模型 ' + model.id);
   if (pending) runLoop(sessionId);
-  return { ok: true, model_id: model.id };
+  return { ok: true, model_id: slotBase(model.id) };
 }
 
 // 是否还有待回应的新用户消息（最后一条非 tool 消息是 user）。
@@ -249,7 +266,7 @@ function hasPendingUser(sessionId) {
 // 被占用（或从未绑过/已从配置删除）则按 id 序取任意空闲模型。
 function pickModelFor(session) {
   if (session.last_model_id) {
-    const pref = db.prepare('SELECT * FROM model_pool WHERE id = ? AND is_busy = 0').get(session.last_model_id);
+    const pref = freeSlotFor(session.last_model_id);
     if (pref) return pref;
   }
   return freeModel();
@@ -420,7 +437,7 @@ function finalize(sessionId, run) {
 function maybeGenerateTitle(sessionId, s) {
   try {
     if (s.title) return;
-    const modelId = s.model_id;
+    const modelId = s.model_slot || s.model_id; // 用绑定槽位精确到 key
     if (!modelId || titling.has(sessionId)) return;
     titling.add(sessionId);
     const messages = titleMessages(loadHistory(sessionId), cfg.agent.language);
@@ -672,7 +689,8 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
   const tcDbg = { starts: 0, frags: 0, chars: 0 };
   try {
     const handleSseMeta = makeSseMetaHandler(sessionId);
-    const result = await callModel(cfg, session.model_id, messages, tools, {
+    // 用绑定槽位（含 key 下标）精确取到会话占用的那个 key 的配置
+    const result = await callModel(cfg, session.model_slot || session.model_id, messages, tools, {
       signal: run.abortController.signal,
       shouldCancel: () => run.cancelled,
       onText: delta => bus.emit(sessionId, 'assistant_delta', { text: delta }),
@@ -793,9 +811,7 @@ function createSession(title, preferModelId, assistantType, user) {
     "INSERT INTO sessions (id, title, status, phase, model_id, assistant_type, user, created_at, updated_at) VALUES (?,?,'queued','planning',NULL,?,?,?,?)"
   ).run(id, title || '', assistantType || 'secretary', user || '', now(), now());
   // 指定了模型且它恰好空闲 → 直接绑定，跳过排队；否则回退到 FIFO 队列
-  const prefer = preferModelId
-    ? db.prepare('SELECT * FROM model_pool WHERE id = ? AND is_busy = 0').get(preferModelId)
-    : null;
+  const prefer = preferModelId ? freeSlotFor(preferModelId) : null;
   if (prefer) {
     // 新建时指定模型 = 仅预留（此时还没有任何消息）：先绑成 held 占住模型，
     // 用户发首条消息后再转 active 开跑

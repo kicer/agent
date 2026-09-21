@@ -433,30 +433,27 @@
       }
       // 平台颜色盘(循环使用)
       const DOT_COLORS = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#06B6D4','#F97316'];
-      // 按平台分组;models 全平台共用,一个会话占用一个 key → 平台空闲 key 数 = key_count - 占用模型数
+      // 按平台分组;/api/models 已按模型聚合槽位:slots_total/slots_busy = 该模型的 key 总数/被占数,
+      // is_busy 仅在全部 key 被占时为真(同模型还剩空闲 key 就仍可再选)。
       const platMap = new Map();
       for (const m of rows) {
         const pk = m.platform || '';
         if (!platMap.has(pk)) {
-          platMap.set(pk, { name: pk || '未知平台', keyCount: m.key_count || 0, models: [], busyCount: 0 });
+          platMap.set(pk, { name: pk || '未知平台', keyCount: m.key_count || 0, models: [] });
         }
-        const g = platMap.get(pk);
-        g.models.push(m);
-        if (m.is_busy) g.busyCount++;
+        platMap.get(pk).models.push(m);
       }
-      const groups = [];
-      for (const g of platMap.values()) {
-        g.freeKeys = Math.max(0, g.keyCount - g.busyCount);
-        groups.push(g);
-      }
-      // 可选 = 模型自身空闲 且 该平台还有空闲 key；统计可用数供底部提示
+      const groups = [...platMap.values()];
+      // 可选 = 模型还有空闲 key 槽位;统计可用数供底部提示
       let avail = 0;
-      for (const g of groups) for (const m of g.models) if (!m.is_busy && g.freeKeys > 0) avail++;
+      for (const g of groups) for (const m of g.models) if (!m.is_busy) avail++;
       list.innerHTML = groups.map((g, gi) => {
         const dotColor = DOT_COLORS[gi % DOT_COLORS.length];
         const itemHtml = g.models.map(m => {
-          const disabled = !!m.is_busy || g.freeKeys <= 0;
-          const title = m.is_busy ? ' 占用中' : (g.freeKeys <= 0 ? ' 无空闲 Key' : '');
+          const total = m.slots_total || g.keyCount || 1;
+          const free = total - (m.slots_busy || 0);
+          const disabled = !!m.is_busy;
+          const title = m.is_busy ? ' 占用中' : ((m.slots_busy || 0) > 0 ? ' ' + free + '/' + total + ' key 空闲' : '');
           return '<div class="msw-item' + (disabled ? ' disabled' : '') + '"' +
             (disabled ? '' : ' onclick="bindModel(\'' + esc(m.id) + '\')"') + '>' +
             '<div class="msw-radio"></div>' +

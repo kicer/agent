@@ -57,7 +57,18 @@ app.use('/api/system', require('./routes/system'));
 // model_pool 表只有 id/display_name/占用态,会话页「选择模型」弹窗需要按平台分组展示。
 // 配置里新增但重启前未进池的模型不在此返回(池才是运行时真相)。
 app.get('/api/models', (req, res) => {
-  const rows = db.prepare('SELECT id, display_name, is_busy, current_session_id FROM model_pool ORDER BY id').all();
+  // 池行是按 key 拆分的槽位（id=「模型id#下标」）：按模型聚合为一行对外展示，
+  // is_busy = 全部槽位被占；附 slots_total/slots_busy 供前端显示剩余空闲 key。
+  const raw = db.prepare('SELECT id, display_name, is_busy, current_session_id FROM model_pool ORDER BY id').all();
+  const byBase = new Map();
+  for (const r of raw) {
+    const base = r.id.split('#')[0];
+    let g = byBase.get(base);
+    if (!g) { g = { id: base, display_name: r.display_name, is_busy: 0, slots_total: 0, slots_busy: 0, sessions: [] }; byBase.set(base, g); }
+    g.slots_total++;
+    if (r.is_busy) { g.slots_busy++; if (r.current_session_id) g.sessions.push(r.current_session_id); }
+  }
+  const rows = [...byBase.values()].map(g => Object.assign(g, { is_busy: g.slots_busy >= g.slots_total ? 1 : 0, current_session_id: g.sessions.join(',') }));
   const stats = engine.modelUsageStats();
   // 配置视图:模型唯一键 → 平台/原始 id/vision;平台名 → key 数(cfg.models 含 key 副本,不能直接拿来用)
   const cfgNow = engine.getConfig();

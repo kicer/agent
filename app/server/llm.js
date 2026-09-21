@@ -340,8 +340,10 @@ async function callModel(cfg, modelId, messages, tools, options) {
     if (opts.signal.aborted) controller.abort();
     else opts.signal.addEventListener('abort', () => controller.abort());
   }
-  // modelId = 内部唯一键「平台名/模型id」；发给上游的模型名用 mid（原始 id）。
-  const modelCfg = (cfg.models || []).find(m => m.id === modelId);
+  // modelId = 池槽位 id「平台名/模型id#key下标」（精确到会话占用的 key）；兼容传纯模型 id（取第一个 key 副本）。
+  // 发给上游的模型名用 mid（原始 id）。
+  const all = cfg.models || [];
+  const modelCfg = all.find(m => m.id + '#' + m.key_index === modelId) || all.find(m => m.id === modelId);
   if (!modelCfg || !modelCfg.url) throw new Error('模型未在配置中定义或缺少 url: ' + modelId);
 
   const body = {
