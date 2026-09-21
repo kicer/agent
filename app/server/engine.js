@@ -182,18 +182,19 @@ function syncModelPool() {
 }
 
 function freeModel() {
-  return db.prepare('SELECT * FROM model_pool WHERE is_busy = 0 ORDER BY id').get();
+  // 轮转：最久未用（从未用过排最前）的空闲槽先上，同模型多 key / 跨模型都自然摊平
+  return db.prepare('SELECT * FROM model_pool WHERE is_busy = 0 ORDER BY ifnull(last_used_at, 0), id').get();
 }
 
 // 槽位 id（「模型id#key下标」）→ 模型 id（「平台/模型」）。对外一律用模型 id，槽位只在池内/取 key 时用。
 function slotBase(id) { return String(id || '').split('#')[0]; }
 
-// 找指定模型（传模型 id 或槽位 id 均可）的任意空闲槽位：同模型多个空闲 key 时任取其一。
+// 找指定模型（传模型 id 或槽位 id 均可）的空闲槽位：多个空闲 key 时取最久未用的。
 // 用范围比较而非 LIKE，避免模型 id 里的 _/% 被当通配符。
 function freeSlotFor(modelId) {
   const base = slotBase(modelId);
   if (!base) return null;
-  return db.prepare('SELECT * FROM model_pool WHERE id >= ? AND id < ? AND is_busy = 0 ORDER BY id LIMIT 1')
+  return db.prepare('SELECT * FROM model_pool WHERE id >= ? AND id < ? AND is_busy = 0 ORDER BY ifnull(last_used_at, 0), id LIMIT 1')
     .get(base + '#', base + '#\uffff');
 }
 
@@ -218,7 +219,7 @@ function dequeue(sessionId) {
 //   用户发首条消息后由 postUserMessage 的 held 分支转 active 开跑。
 function bindModel(session, model, status) {
   const st = status === 'held' ? 'held' : 'active';
-  db.prepare('UPDATE model_pool SET is_busy = 1, current_session_id = ? WHERE id = ?').run(session.id, model.id);
+  db.prepare('UPDATE model_pool SET is_busy = 1, current_session_id = ?, last_used_at = ? WHERE id = ?').run(session.id, now(), model.id);
   // model_id/last_model_id 存模型 id（展示/统计/回绑语义不变），model_slot 记绑定的具体 key 槽位；
   // last_model_id 不随释放清除：会话再次需要模型时优先回绑同模型的空闲 key（见 pickModelFor）
   db.prepare("UPDATE sessions SET status=?, model_id=?, model_slot=?, last_model_id=?, held_at=?, updated_at=? WHERE id=?")

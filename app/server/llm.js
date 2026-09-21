@@ -274,8 +274,12 @@ async function forEachSSEData(response, onEvent, onMeta, onBadData) {
 function deepMergeInto(dst, src) {
   for (const k of Object.keys(src || {})) {
     const sv = src[k];
-    if (sv && typeof sv === 'object' && !Array.isArray(sv) && dst[k] && typeof dst[k] === 'object' && !Array.isArray(dst[k])) {
+    if (sv && typeof sv === 'object' && !Array.isArray(sv)
+        && dst[k] && typeof dst[k] === 'object' && !Array.isArray(dst[k])) {
       deepMergeInto(dst[k], sv);
+    } else if (sv && typeof sv === 'object') {
+      // 切断与配置对象的引用关系
+      dst[k] = Array.isArray(sv) ? sv.slice() : structuredClone(sv);
     } else {
       dst[k] = sv;
     }

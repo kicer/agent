@@ -64,7 +64,8 @@ function initDb(dbPath) {
       id TEXT PRIMARY KEY,
       display_name TEXT,
       is_busy INTEGER DEFAULT 0,
-      current_session_id TEXT
+      current_session_id TEXT,
+      last_used_at INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS wait_queue (
@@ -123,6 +124,9 @@ function initDb(dbPath) {
   // 迁移：model_slot 记会话占用的具体池槽位（「模型id#key下标」，同模型多 key 并行占用），
   // model_id 仍存模型 id 供展示/统计（见 engine.bindModel）。
   if (!cols.some(c => c.name === 'model_slot')) db.exec('ALTER TABLE sessions ADD COLUMN model_slot TEXT');
+  // 迁移：model_pool.last_used_at 记槽位最近被绑定时刻，调度按「最久未用先上」轮转（见 engine.freeModel）
+  const poolCols = db.prepare('PRAGMA table_info(model_pool)').all();
+  if (!poolCols.some(c => c.name === 'last_used_at')) db.exec('ALTER TABLE model_pool ADD COLUMN last_used_at INTEGER');
   // 迁移：last_model_id 记住会话最近用过的模型，释放后新消息优先回绑（见 engine.dispatchQueued）
   if (!cols.some(c => c.name === 'last_model_id')) {
     db.exec('ALTER TABLE sessions ADD COLUMN last_model_id TEXT');
