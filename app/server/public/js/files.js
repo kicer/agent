@@ -52,42 +52,20 @@
     $('files-mask').classList.toggle('show', open);
     $('files-btn').classList.toggle('active', open);
   }
-  let ensuringSessionForFiles = false; // 防止建会话请求发出前重复点击按钮导致连建两个会话
   async function toggleFilesPanel() {
     const panel = $('files-panel');
     const open = !panel.classList.contains('open');
     if (open && !state.sessionId) {
-      // 新建会话页直接管理文件:自动建档会话再弹面板;建会话失败(如无可用模型)给出提示
-      if (ensuringSessionForFiles) return;
-      ensuringSessionForFiles = true;
-      try {
-        await ensureSession();
-      } catch (e) {
-        toast('创建会话失败:' + e.message);
-        return;
-      } finally {
-        ensuringSessionForFiles = false;
-      }
+      // 新建会话页不再静默建档：没有会话就没有任务目录，无从查看文件，只轻提示一下
+      toast('尚未开始会话，暂无任务文件可查看');
+      return;
     }
     setFilesPanel(open);
   }
   $('files-btn').addEventListener('click', toggleFilesPanel);
-  // 附件(回形针)按钮:直接唤起文件选择写入当前会话任务目录;无会话时先建会话再弹选择器，
-  // 避免选完文件后因无会话被丢弃（与面板同策略）。
-  let ensuringSessionForUpload = false;
-  $('attach-btn').addEventListener('click', async () => {
-    if (!state.sessionId) {
-      if (ensuringSessionForUpload) return;
-      ensuringSessionForUpload = true;
-      try {
-        await ensureSession();
-      } catch (e) {
-        toast('创建会话失败:' + e.message);
-        return;
-      } finally {
-        ensuringSessionForUpload = false;
-      }
-    }
+  // 附件(回形针)按钮:只弹文件选择器，不预建会话；选中文件后由 change 处理器
+  // 写入当前会话任务目录（无会话时先建档再传，见下方）；取消选择则什么都不发生。
+  $('attach-btn').addEventListener('click', () => {
     $('file-input').click();
   });
   $('files-mask').addEventListener('click', () => setFilesPanel(false)); // 点遮罩收起
@@ -690,7 +668,9 @@
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelectAll(); }
     });
   // ---------- 大图上传前压缩(同步 v1:阈值/参数由 /api/system/status 透出) ----------
-  const DEFAULT_UPLOAD_CFG = { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85 };
+  const DEFAULT_UPLOAD_CFG = { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10 };
+  // 后端 multer 单文件硬限（routes/files.js limits.filesize），前端预检对齐它，超了直接拒掉不发起上传
+  const UPLOAD_HARD_LIMIT = 50 * 1024 * 1024;
   let uploadCfgCache = null;
   async function getUploadCfg() {
     if (!uploadCfgCache) {
@@ -715,42 +695,67 @@
       fr.readAsDataURL(file);
     });
   }
-  // 返回待上传的 File:需要时询问并压缩;取消/失败/无收益都按原文件上传
-  async function maybeCompressImage(file) {
+  // 上传前逐文件预处理(串行,模态弹窗不能并行)，返回待上传 File 或 null(用户放弃该文件):
+  //  1) 大图(>image_compress_threshold_kb)：三选一——「压缩」本地压后传 / 「直接上传」原样传 /
+  //     右上 X、点遮罩关闭 = 放弃该文件(不上传，也就不触发建会话)；
+  //  2) 最终体积 >50M(后端 multer 硬限)：直接拒掉，不发起上传；
+  //  3) 预处理后仍 >confirm_size_mb(默认 10M，不限类型)：二次确认「继续上传」，
+  //     取消/X/遮罩一律放弃。
+  // 压缩失败/无收益按原文件继续后续流程。
+  async function prepareUploadFile(file) {
     const cfg = await getUploadCfg();
     const isImg = /^image\//.test(file.type || '') || /\.(png|jpe?g|gif|bmp|webp)$/i.test(file.name || '');
     const threshold = Number(cfg.image_compress_threshold_kb || 1536) * 1024;
-    if (!isImg || file.size <= threshold) return file;
     const maxDim = Number(cfg.image_max_dim || 2000);
     const quality = Number(cfg.image_quality || 0.85);
-    const ok = await confirmModal('图片文件过大',
-      '「' + file.name + '」有 ' + fmtSize(file.size) + '，超过 ' + fmtSize(threshold) +
-      '。建议在浏览器本地压缩为 JPEG(长边≤' + maxDim + 'px)后再上传。是否压缩？', '压缩后上传');
-    if (!ok) return file;
-    try {
-      const img = await loadImageEl(file);
-      const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
-      if (!iw || !ih) throw new Error('无法读取图片尺寸');
-      const scale = Math.min(1, maxDim / Math.max(iw, ih));
-      const w = Math.max(1, Math.round(iw * scale)), h = Math.max(1, Math.round(ih * scale));
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      // 透明底(PNG)转 JPEG 前先铺白,避免变黑
-      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
-      ctx.drawImage(img, 0, 0, w, h);
-      const blob = await new Promise(function (res) { canvas.toBlob(function (b) { res(b); }, 'image/jpeg', quality); });
-      if (!blob || blob.size >= file.size) {
-        toast('压缩无收益,已按原文件上传');
-        return file;
+    if (isImg && file.size > threshold) {
+      // confirmModal resolve: true=压缩 / false=直接上传 / null=X或遮罩=放弃
+      const ans = await confirmModal('图片文件过大',
+        '「' + file.name + '」有 ' + fmtSize(file.size) + '，超过 ' + fmtSize(threshold) +
+        '。建议在浏览器本地压缩为 JPEG(长边≤' + maxDim + 'px)后再上传；也可原样直接上传。',
+        '压缩', false, { cancelText: '直接上传' });
+      if (ans === null) return null;
+      if (ans) {
+        try {
+          const img = await loadImageEl(file);
+          const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+          if (!iw || !ih) throw new Error('无法读取图片尺寸');
+          const scale = Math.min(1, maxDim / Math.max(iw, ih));
+          const w = Math.max(1, Math.round(iw * scale)), h = Math.max(1, Math.round(ih * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          // 透明底(PNG)转 JPEG 前先铺白,避免变黑
+          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          const blob = await new Promise(function (res) { canvas.toBlob(function (b) { res(b); }, 'image/jpeg', quality); });
+          if (!blob || blob.size >= file.size) {
+            toast('压缩无收益,按原文件上传');
+          } else {
+            const newName = String(file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg';
+            toast('已压缩 ' + fmtSize(file.size) + ' → ' + fmtSize(blob.size));
+            file = new File([blob], newName, { type: 'image/jpeg' });
+          }
+        } catch (e) {
+          toast('压缩失败(' + (e && e.message || e) + '),按原文件上传');
+        }
       }
-      const newName = String(file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg';
-      toast('已压缩 ' + fmtSize(file.size) + ' → ' + fmtSize(blob.size));
-      return new File([blob], newName, { type: 'image/jpeg' });
-    } catch (e) {
-      toast('压缩失败(' + (e && e.message || e) + '),按原文件上传');
-      return file;
     }
+    // 后端 multer 单文件硬限 50M：压缩后仍超限、或选了「直接上传」的超限大图、非图片超限文件，
+    // 都在这里拒掉（返回 null，与其他「放弃」同一条路径），免得传完一个 500 才知道原因
+    if (file.size > UPLOAD_HARD_LIMIT) {
+      toast('「' + file.name + '」有 ' + fmtSize(file.size) + '，超过 50M 上限，无法上传' + (isImg ? '，可尝试选「压缩」后上传' : ''));
+      return null;
+    }
+    // 最终体积仍超大盘阈值的文件(含非图片、含压缩后仍超限)：用户确认后才传
+    const bigLimit = Number(cfg.confirm_size_mb || 10) * 1024 * 1024;
+    if (file.size > bigLimit) {
+      const go = await confirmModal('文件过大',
+        '「' + file.name + '」有 ' + fmtSize(file.size) + '，超过 ' + fmtSize(bigLimit) + '。确认继续上传？',
+        '继续上传');
+      if (go !== true) return null; // 取消/X/遮罩：不传该文件
+    }
+    return file;
   }
 
   // ---------- 上传文件卡片(嵌在输入框内部顶端,随卡片数撑高输入框;新卡插最前,图标 + 文件名/类型大小,逐卡上传进度遮罩;过多横向滚动) ----------
@@ -816,16 +821,29 @@
     row.classList.add('hidden');
   }
 
-  // 面板内上传:直接写入当前会话任务目录(>阈值的图片逐个询问压缩;多文件并行上传+总进度条+逐卡进度)
+  // 文件选择统一入口:先逐文件预处理(大图压缩询问/大文件确认,X或遮罩=放弃该文件)，
+  // 只要还剩至少一个待传文件才自动建档(welcome 无会话时)并走即传路径(多文件并行上传+总进度条+逐卡进度)；
+  // 全部放弃或取消选择都不上传、不新建会话。
   $('file-input').addEventListener('change', async e => {
     const input = e.target;
     const files = Array.prototype.slice.call(input.files || []); // 先快照再清空,FileList 是实时的
     input.value = '';
     if (!files.length) return;
-    if (!state.sessionId) { toast('先发送一条消息创建会话'); return; }
-    // 大图逐个串行询问压缩(模态弹窗不能并行)
+    // 逐个串行预处理(模态弹窗不能并行)
     const ready = [];
-    for (const f of files) ready.push(await maybeCompressImage(f));
+    for (const f of files) {
+      const r = await prepareUploadFile(f);
+      if (r) ready.push(r);
+    }
+    if (!ready.length) return; // 用户全放弃了:不上传也不建档
+    if (!state.sessionId) {
+      try {
+        await ensureSession();
+      } catch (er) {
+        toast('创建会话失败:' + er.message);
+        return;
+      }
+    }
     // 每张卡对应一个文件的上传进度(输入区上方;面板内总进度条保留不变)
     const cards = ready.map(f => addUploadCard(f));
     // ---- 并行上传 + 实时进度 ----

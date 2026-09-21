@@ -342,14 +342,17 @@
       </div>
     </div>
 
-    <!-- 全局确认弹窗(替代原生 confirm;搬自 index) -->
-    <div id="confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)confirmClose(false)">
+    <!-- 全局确认弹窗(替代原生 confirm;搬自 index)。resolve: true=确定 / false=取消 / null=右上 X 或点遮罩关闭 -->
+    <div id="confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)confirmClose(null)">
       <div class="modal">
+        <button class="modal-close-btn" onclick="confirmClose(null)" aria-label="关闭">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
         <h3 id="confirm-title">请确认</h3>
         <div class="modal-text" id="confirm-text"></div>
         <label class="del-dir hidden" id="confirm-check-wrap"><input type="checkbox" id="confirm-check"> <span id="confirm-check-label"></span></label>
         <div class="btn-row">
-          <button class="ghost-btn" onclick="confirmClose(false)">取消</button>
+          <button class="ghost-btn" id="confirm-cancel-btn" onclick="confirmClose(false)">取消</button>
           <button class="primary-btn" id="confirm-ok-btn" onclick="confirmClose(true)">确定</button>
         </div>
       </div>

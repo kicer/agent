@@ -47,7 +47,7 @@ router.get('/status', wrap((req, res) => {
     port: cfg.port,
     auth_enabled: !!(cfg.auth && cfg.auth.users && cfg.auth.users.length),
     running_sessions: engine.activeRuns(),
-    // 前端上传前的大图压缩参数（阈值/尺寸/质量），避免前端写死
+    // 前端上传预处理参数（大图压缩阈值/尺寸/质量、大文件确认阈值），避免前端写死
     upload: cfg.upload || {},
   });
 }));

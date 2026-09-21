@@ -66,9 +66,12 @@
   }
   // confirmModal(title, text, okText, danger, opts?)
   // opts.checkbox = {label, default=true} 可选:展示一个默认勾选状态可改的复选框
+  // opts.cancelText 可选:改左键文案(如「直接上传」)，缺省「取消」
+  // resolve: true=确定 / false=取消 / null=右上 X 或点遮罩关闭（对只认布尔的旧调用方等同取消）
   // 确认/取消后在 state._confirmChecked 读出勾选状态(不破坏现有调用方签名)
   function confirmModal(title, text, okText, danger, opts) {
     state._confirmChecked = !!(opts && opts.checkbox); // 未传 opts 时 reset 为 false
+    $('confirm-cancel-btn').textContent = (opts && opts.cancelText) || '取消';
     const wrap = $('confirm-check-wrap');
     if (opts && opts.checkbox) {
       $('confirm-check-label').textContent = opts.checkbox.label;
@@ -92,6 +95,7 @@
       $('confirm-modal').classList.remove('hidden');
     });
   }
+  // 调用方语义见 confirmModal：true=确定 / false=取消 / null=X、遮罩
   function confirmClose(v) { _dlgSettle(v); }
   function promptModal(title, placeholder, initial, opts) {
     return new Promise(resolve => {
@@ -377,10 +381,11 @@
     { group: '技能', items: [
       { path: 'skills.timeout_ms', label: '技能执行超时(ms)', type: 'int' },
     ] },
-    { group: '图片上传压缩（浏览器端）', items: [
+    { group: '上传预处理（浏览器端）', items: [
       { path: 'upload.image_compress_threshold_kb', label: '大图阈值(KB)', type: 'int' },
       { path: 'upload.image_max_dim', label: '压缩后长边上限(px)', type: 'int' },
       { path: 'upload.image_quality', label: 'JPEG 质量(0~1)', type: 'float' },
+      { path: 'upload.confirm_size_mb', label: '大文件确认阈值(MB)', type: 'int' },
     ] },
     { group: '模型租约(会话结束后的保持)', items: [
       { path: 'model_hold.idle_release_ms', label: '无人观看释放(ms)', type: 'int' },
