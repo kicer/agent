@@ -283,6 +283,51 @@ function deepMergeInto(dst, src) {
   return dst;
 }
 
+// 有些小模型（如 MiniCPM）不走 reasoning 字段，而是把思考过程混进 content 开头：
+//   - 成对前缀：  <think>思考</think>答复（可连多个，也兼容 <thinking>）；
+//   - 仅结束标记：思考</think>答复（无开标签，第一个 </think> 之前全是思考）。
+// 只在「正文开头」识别思考块：命中才剥离，正文中段出现的字面 <think>/</think>
+//（代码示例、讲解标签等）一律不动，避免误吞答案。
+function splitInlineThinking(raw) {
+  const text0 = String(raw || '');
+  if (!/<\/?think/i.test(text0)) return { content: text0, reasoning: '' };
+
+  let text = text0;
+  let think = '';
+  let matched = false;
+
+  // A) 开头成对块：^\s*<think>…</think>，非贪婪；连续多个块一并剥离，中段的不碰
+  const paired = /^\s*<think(?:ing)?>([\s\S]*?)<\/think(?:ing)>/i;
+  let m;
+  while ((m = paired.exec(text))) {
+    think += m[1];
+    text = text.slice(m[0].length);
+    matched = true;
+  }
+
+  // B) 无成对块时，按 MiniCPM 风格处理孤立的结束标记：
+  //    只有第一个 </think> 之前算思考（indexOf 只吃前缀，绝不回退到最后，
+  //    否则正文里随便一个 </think> 会把前面的全部答案吸进思考面板）；
+  //    且要求结束标记之前没有任何开标签——真正的「仅结束标记」风格本就无开标签，
+  //    正文里合法写出的 <think>…</think>（代码示例/讲解标签）因此得以放行。
+  if (!matched) {
+    const lc = text.toLowerCase();
+    const close = lc.indexOf('</think');
+    const open = lc.indexOf('<think');
+    if (close !== -1 && (open === -1 || open > close)) {
+      const gt = text.indexOf('>', close);
+      think += text.slice(0, close);
+      text = text.slice(gt === -1 ? text.length : gt + 1);
+      matched = true;
+    }
+  }
+
+  // 没在开头命中思考块 → 原样返回，保护正文里的字面标签
+  if (!matched) return { content: text0, reasoning: '' };
+
+  return { content: text.trim(), reasoning: think.trim() };
+}
+
 // 调模型一次。onText(textDelta) 回调流式文本。
 // 返回 { content, tool_calls: [{id,name,arguments(string)}], finish_reason, usage, aborted }
 // 可选回调 opts.onToolCallStart({id,name})：某 tool_call 首次凑齐 id+name 时触发一次；
@@ -406,6 +451,12 @@ async function callModel(cfg, modelId, messages, tools, options) {
     if (e && e.name === 'AbortError') aborted = true; else throw e;
   }
   if (opts.shouldCancel && opts.shouldCancel()) aborted = true;
+
+  // 归一化：把混进 content 的思考标签剥离出来（流式阶段无法回溯，故在整轮收尾统一处理；
+  // engine 落库/发 assistant_message 用的是这里的返回值，前端收尾会用干净正文覆盖流式文本）
+  const split = splitInlineThinking(content);
+  content = split.content;
+  if (split.reasoning) reasoning = reasoning ? split.reasoning + '\n' + reasoning : split.reasoning;
 
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
