@@ -423,32 +423,74 @@
       updateFilesFooter();
     } catch (e) { toast('读取文件失败:' + e.message); }
   }
-  // 把渲染好的 Markdown HTML 里的相对图片路径，重写成可访问的任务文件下载地址：
-  // 预览在浏览器里以应用页面为基准解析相对 src，而图片其实在任务目录里，直接写相对路径会 404。
-  // 相对路径一律按 md 文件所在目录为基准解析到任务目录下的路径，再拼下载接口。
-  function rewriteMdImageSrcs(html, mdPath) {
-    const host = document.createElement('div');
-    host.innerHTML = html;
-    // md 所在目录（任务根下无子目录时为 ''，否则如 'docs'）
-    const baseSegs = mdPath.includes('/') ? mdPath.split('/').slice(0, -1) : [];
-    const resolve = function (p) {
-      if (/^(https?:)?\/\//i.test(p) || p.startsWith('data:') || p.startsWith('blob:')) return null; // 已是外链/内联
-      const segs = p.startsWith('/') ? [] : baseSegs.slice(); // 以 / 开头视为任务根下
-      for (const part of p.split('/')) {
+  // 造一个「相对资源 → 任务根相对路径」解析器：以 refPath 所在目录为基准解析 p（md 图片、html 预览共用）。
+  // 外链/内联/页面内跳转返回 null（不改写）。
+  // 关键：marked 会把 img src 里的中文/空格预先百分号编码成 %XX，这里必须先解码回真实路径，
+  // 否则最后 encodeURIComponent 会把 % 再编码成 %25（双重编码），服务端解码一次后得到含字面 %XX
+  // 的假文件名 → 磁盘上不存在 → 404（中文/空格文件名图片显示不出来的根因）。
+  function makeAssetResolver(refPath) {
+    // refPath 所在目录（任务根下无子目录时为 ''）
+    const baseSegs = refPath.includes('/') ? refPath.split('/').slice(0, -1) : [];
+    return function (p) {
+      p = String(p || '').trim();
+      if (!p || /^(https?:)?\/\//i.test(p) || /^(data|blob|about|javascript|mailto|tel):/i.test(p)) return null; // 已是外链/内联
+      let raw = p;
+      try { raw = decodeURIComponent(raw); } catch (_) { /* 文件名本身含裸 % 会抛，保留原文 */ }
+      const hash = raw.indexOf('#');
+      if (hash >= 0) raw = raw.slice(0, hash); // 资源加载不关心片段锚点
+      const segs = raw.startsWith('/') ? [] : baseSegs.slice(); // 以 / 开头视为任务根下
+      for (const part of raw.split('/')) {
         if (!part || part === '.') continue;
         if (part === '..') { if (segs.length) segs.pop(); continue; }
         segs.push(part);
       }
       return segs.join('/');
     };
+  }
+  const assetDownloadUrl = function (rel) {
+    return '/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(rel);
+  };
+  // 把渲染好的 Markdown HTML 里的相对图片路径重写成下载接口地址：
+  // 预览在浏览器里以应用页面为基准解析相对 src，而图片其实在任务目录里，直接写相对路径会 404。
+  function rewriteMdImageSrcs(html, mdPath) {
+    const resolve = makeAssetResolver(mdPath);
+    const host = document.createElement('div');
+    host.innerHTML = html;
     host.querySelectorAll('img').forEach(function (im) {
-      const src = im.getAttribute('src');
-      if (!src) return;
-      const rel = resolve(src);
-      if (rel === null || rel === '') return;
-      im.setAttribute('src', '/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(rel));
+      const rel = resolve(im.getAttribute('src'));
+      if (!rel) return;
+      im.setAttribute('src', assetDownloadUrl(rel));
     });
     return host.innerHTML;
+  }
+  // HTML 预览小修：srcdoc 的基准 URL 是 about:srcdoc，相对资源路径全都解析失败。
+  // 把 img/script/link(stylesheet)/source 等常见资源引用改写成绝对下载地址；
+  // CSS url() 内部、JS fetch 的相对路径覆盖不了（那需要后端目录级 inline 访问，暂不做）。
+  function rewriteHtmlDocSrcs(html, filePath) {
+    const resolve = makeAssetResolver(filePath);
+    const doc = new DOMParser().parseFromString(html, 'text/html'); // 不用 div:保留 head/body 结构
+    const fix = function (sel, attr) {
+      doc.querySelectorAll(sel).forEach(function (el) {
+        const rel = resolve(el.getAttribute(attr));
+        if (rel) el.setAttribute(attr, assetDownloadUrl(rel));
+      });
+    };
+    fix('img[src]', 'src');
+    fix('script[src]', 'src');
+    fix('source[src]', 'src');
+    fix('video[src]', 'src');
+    fix('video[poster]', 'poster');
+    fix('audio[src]', 'src');
+    fix('embed[src]', 'src');
+    fix('track[src]', 'src');
+    fix('input[type="image"][src]', 'src');
+    fix('use[href]', 'href');
+    doc.querySelectorAll('link[href]').forEach(function (el) {
+      if (!/(stylesheet|icon)/i.test(String(el.getAttribute('rel') || ''))) return; // 只动样式/图标，不碰页面跳转
+      const rel = resolve(el.getAttribute('href'));
+      if (rel) el.setAttribute('href', assetDownloadUrl(rel));
+    });
+    return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
   }
   // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe、pdf 按 pdfViewerEnabled 页内/下载分流、图片用 <img>
   async function previewInFs(name) {
@@ -463,7 +505,7 @@
         const iframe = document.createElement('iframe');
         iframe.className = 'fs-html-frame';
         iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
-        iframe.srcdoc = html;
+        iframe.srcdoc = rewriteHtmlDocSrcs(html, name); // 相对资源改写，否则 about:srcdoc 基准下全 404
         body.appendChild(iframe);
         setFsSource(html); // 源码钮可看页面原码
         $('fs-viewer').classList.remove('hidden');
