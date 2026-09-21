@@ -121,10 +121,10 @@ function initDb(dbPath) {
   // 迁移：旧库补 held_at 列（held 保持租约起始时间）
   const cols = db.prepare('PRAGMA table_info(sessions)').all();
   if (!cols.some(c => c.name === 'held_at')) db.exec('ALTER TABLE sessions ADD COLUMN held_at INTEGER');
-  // 迁移：model_slot 记会话占用的具体池槽位（「模型id#key下标」，同模型多 key 并行占用），
+  // 迁移：model_slot 记会话占用的具体池 key 槽位（「平台#key下标」，平台 key 为其下模型共享资源），
   // model_id 仍存模型 id 供展示/统计（见 engine.bindModel）。
   if (!cols.some(c => c.name === 'model_slot')) db.exec('ALTER TABLE sessions ADD COLUMN model_slot TEXT');
-  // 迁移：model_pool.last_used_at 记槽位最近被绑定时刻，调度按「最久未用先上」轮转（见 engine.freeModel）
+  // 迁移：model_pool 一行一个物理 key 槽位（id=「平台#下标」），last_used_at 支撑「最久未用先上」轮转（见 engine.freeModel）
   const poolCols = db.prepare('PRAGMA table_info(model_pool)').all();
   if (!poolCols.some(c => c.name === 'last_used_at')) db.exec('ALTER TABLE model_pool ADD COLUMN last_used_at INTEGER');
   // 迁移：last_model_id 记住会话最近用过的模型，释放后新消息优先回绑（见 engine.dispatchQueued）

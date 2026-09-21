@@ -4,7 +4,7 @@
 # 模型池：平台(platforms) → models + keys 两层结构。url/type/models 配在平台层（同一份 models
 # 被该平台下所有 key 共用），api_key/concurrency 配在 keys 里（每个 key 独立账号/额度）。
 # 加载时自动打平：每个 key 复制一份该平台下所有 models，生成全局 cfg.models 列表。
-# 暂按每模型 1 会话调度；concurrency 已解析入库，多会话并发后续再接调度。
+# 暂按每 key 1 会话调度（同平台模型共享该批 key，平台 key 全满则其下模型均不可选）；concurrency 已解析入库，后续再接调度。
 platforms:
   - name: proxy-a                        # 平台名；留空取 url 主机名首段。注意：它是模型唯一键的一部分，改名等于重建其下所有模型（历史会话回绑失效、用量统计分家）
     url: "https://proxy-a.example.com/v1" # OpenAI 兼容 /v1 地址，该平台下所有模型共用
