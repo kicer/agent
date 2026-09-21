@@ -43,11 +43,13 @@ function getMessage(req, res) {
 //（filename 以 '/' 结尾 + dir:true），使不含任何文件的空夹子也能被前端展示。
 function listTaskFiles(dir, opts) {
   const wantDirs = !!(opts && opts.dirs);
+  const wantHidden = !!(opts && opts.hidden); // 勾选「显示隐藏文件」时连同 . 开头的文件/目录一起列（含 .imgcache）
   const out = [];
   (function rec(d, rel) {
     let entries;
     try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (_) { return; }
     for (const e of entries) {
+      if (!wantHidden && e.name.startsWith('.')) continue; // 默认隐藏点开头项（如 .imgcache/ 读图压缩产物缓存）
       const abs = path.join(d, e.name);
       const relPath = rel ? rel + '/' + e.name : e.name;
       if (e.isDirectory()) {

@@ -95,7 +95,11 @@ function cachedDecodeBlocks(session, row) {
 }
 
 // 将 DB 消息行转为 OpenAI messages 数组（不含 system，由调用方拼接）。
-// 省 token：image_url 块仅在其位于最后一条 assistant 消息之后（模型尚未对它回复）时保留；
+// 图片两种形态：旧库/用户粘贴附件的 image_url 块（data: URL）原样透传；
+// 新版 read_file 读图存的是 image_ref 块（{rel}，指向任务目录 .imgcache/ 产物），
+// 发送前用 mintUrl(rel)（engine 传入的公网链现签回调）换成 image_url 外链块，
+// 签不到（base_url 未配等）降级为文字占位，绝不把 image_ref 这种非标准块发上游。
+// 省 token：图块仅在其位于最后一条 assistant 消息之后（模型尚未对它回复）时保留；
 // 之前的视为已消费，发请求时替换为文字标记。DB 始终存全量：UI 历史照常渲染图片，
 // 模型如需重看可再次 read_file（新消息在尾部，会重新携带图片）。
 // 压缩摘要相关行（见 engine.runLoopInner / summarizeContext）：
@@ -109,7 +113,7 @@ function cachedDecodeBlocks(session, row) {
 // 关联 tool 回执按 id 一并跳过（否则会留下无 tool_call 配对的孤儿 tool 消息，上游拒收）；
 // 改以一条 user 错误提示替代，让模型看到原因后重新生成工具调用 ——
 // 坏样本留在上下文里只会被模型继续模仿，反复报同一个错。
-function buildMessages(session, language) {
+function buildMessages(session, language, mintUrl) {
   const messages = [{ role: 'system', content: systemPromptText(language) }];
   const history = session.history;
   // 行被删除后清理残留的图片解析缓存条目（只增不清会缓慢泄漏；条数不会超过现存行数）
@@ -171,7 +175,7 @@ function buildMessages(session, language) {
     }
     // errAck 轮的 tool 回执：随该轮一起丢弃，避免无主 tool 消息
     if (row.role === 'tool' && dropToolCallIds.has(row.tool_call_id)) return;
-    // tool/user 行：含图哨兵 JSON 还原为内容块（解析结果按行 id 缓存）；已消费的图剥掉 base64，只留文字描述 + 标记
+    // tool/user 行：含图哨兵 JSON 还原为内容块（解析结果按行 id 缓存）；已消费的图只留文字描述 + 标记
     const blocks = cachedDecodeBlocks(session, row);
     let content = row.content || '';
     if (blocks) {
@@ -179,7 +183,12 @@ function buildMessages(session, language) {
         content = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n') +
           '\n[图片数据已省略：模型此前已识别过本图；如需重新查看请再次调用 read_file]';
       } else {
-        content = blocks;
+        // 未消费：image_ref → 现签公网外链（每次请求重签，不过期）；其余块（含旧 data: URL）原样
+        content = blocks.map(b => {
+          if (!b || b.type !== 'image_ref') return b;
+          const url = mintUrl ? mintUrl(b.rel) : null;
+          return url ? { type: 'image_url', image_url: { url } } : { type: 'text', text: '[图片外链不可用：请重新读取]' };
+        });
       }
     }
     if (row.role === 'tool') {
@@ -195,8 +204,8 @@ function buildMessages(session, language) {
 //（与 buildMessages 同取舍：archived 不发、旧摘要/工具轮照常），末尾追加一条 user
 //（compress-prompt.txt 原文，历史就在它前面的 messages 里，不再填占位符）。
 // 调用方（engine.runLoopInner 的 compressing 分支）需同时不传 tools。
-function compressMessages(session, language) {
-  const messages = buildMessages(session, language);
+function compressMessages(session, language, mintUrl) {
+  const messages = buildMessages(session, language, mintUrl);
   messages.push({ role: 'user', content: COMPRESS_PROMPT_TEMPLATE });
   return messages;
 }

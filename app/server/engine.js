@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { buildMessages, callModel, encodeBlocks, compressMessages, titleMessages } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
+const publicFiles = require('./public-files');
 const mcp = require('./mcp');
 const log = require('./log');
 
@@ -513,10 +514,20 @@ async function runLoopInner(sessionId, run) {
     // 压缩回合（run.summarizing = 由「压缩」按钮发起、尚未产出摘要）：
     // 沿用默认 system prompt + 正常历史，末尾追加一条压缩指令 user（见 llm.compressMessages）；
     // 且不传 tools，模型只能输出摘要文本。
+    // 发送前为历史里的 image_ref 块现签公网外链（GET /p/<id>，同 mint_public_link）：
+    // 每次请求重签，回合内多轮迭代/重试永不过期；DB 只存几十字符的 rel，base64 不进库不进请求体。
+    // base_url 未配/mint 异常时返回 null，buildMessages 降级为文字占位。
+    const mintImageUrl = (rel) => {
+      const pl = cfg.public_link || {};
+      if (!pl.base_url) return null;
+      try {
+        return pl.base_url + '/p/' + publicFiles.mint({ sessionId: sessionId, rel, ttlMs: pl.ttl_ms });
+      } catch (_) { return null; }
+    };
     const compressing = !!run.summarizing;
     const messages = compressing
-      ? compressMessages(session, (cfg.agent || {}).language)
-      : buildMessages(session, (cfg.agent || {}).language);
+      ? compressMessages(session, (cfg.agent || {}).language, mintImageUrl)
+      : buildMessages(session, (cfg.agent || {}).language, mintImageUrl);
     // 内置工具 + 启动时发现的 MCP 工具，一起随 system prompt 发给模型（压缩回合不发）
     const tools = compressing ? [] : TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
 
@@ -645,30 +656,33 @@ async function runLoopInner(sessionId, run) {
           isError = true;
         }
       }
-      // 工具可返回 {text, image_data_url}（read_file 读图且模型支持 vision）：
-      // 落库时把图片以 image_url 内容块拼进 tool 消息（哨兵 JSON，见 llm.js encodeBlocks），
-      // buildMessages 发请求前还原为 OpenAI 内容块数组。
+      // 工具可返回 {text, image_rel}（read_file 读图且模型支持 vision，压缩产物在 .imgcache/）：
+      // 落库时以 image_ref 内容块拼进 tool 消息（哨兵 JSON，见 llm.js encodeBlocks），
+      // buildMessages 发请求前现签成公网外链的 image_url 块；前端工具卡走带 cookie 的下载路由渲染。
       let outText;
-      let imageDataUrl = null;
-      if (output && typeof output === 'object' && output.image_data_url) {
+      let imageRel = null;
+      if (output && typeof output === 'object' && output.image_rel) {
         outText = String(output.text || '');
-        imageDataUrl = String(output.image_data_url);
+        imageRel = String(output.image_rel);
       } else {
         outText = String(output == null ? '' : output);
       }
       if (run.cancelled && !isError) outText = (outText ? outText + '\n' : '') + '（用户已终止任务）';
       log.debug('tool', sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText);
-      const toolContent = imageDataUrl
+      const toolContent = imageRel
         ? encodeBlocks([
             { type: 'text', text: outText },
-            { type: 'image_url', image_url: { url: imageDataUrl } },
+            { type: 'image_ref', rel: imageRel },
           ])
         : outText;
       // 先落库再广播：回执带上消息行 id（msg_id），前端工具卡据此挂「删除本条」按钮
       const toolMsgId = saveMessage(sessionId, { role: 'tool', tool_call_id: id, name: tc.function.name, content: toolContent, is_error: isError });
       bus.emit(sessionId, 'tool_result', {
         tool_call_id: id, name: tc.function.name, content: outText.slice(0, 20000),
-        is_error: isError, image_url: imageDataUrl || undefined, msg_id: toolMsgId,
+        is_error: isError,
+        // 实时工具卡预览图：带 cookie 的会话内下载路由（与历史重渲染同源），非 base64
+        image_url: imageRel ? '/api/sessions/' + encodeURIComponent(sessionId) + '/files/download?path=' + encodeURIComponent(imageRel) : undefined,
+        msg_id: toolMsgId,
       });
     }
     iter++;

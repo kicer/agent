@@ -248,7 +248,7 @@ stateDiagram-v2
 - `lastIncludedId` 跟踪本轮已纳入模型请求的最新消息 id；流式期间到达的新 user 消息靠它在下一轮迭代时自动带上。
 - **errAck 机制**：工具参数结构性错误（JSON 非法/缺必填）→ 整条 assistant 标 `type='errAck'`，关联 tool 回执一并丢弃，发请求时由 user 错误提示替代（`llm.buildMessages`）—— 防止模型模仿自己的坏样本死循环。
 - **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。压缩回合**不插入任何指令消息**：由 `engine.summarizeContext` 在内存 run 上标 `summarizing`，`runLoopInner` 据此走 `llm.compressMessages`：沿用默认 system prompt + 正常历史 messages，末尾追加一条 user（`server/templates/compress-prompt.txt` 原文，参考标题回合的拼法），且不传 tools；回合内首条无 tool_calls 的收尾回复即摘要。（`llm.buildMessages` 仍保留旧库 `summarize_request` 行的处理，仅为历史数据兼容。）
-- **图片（多模态）**：`messages.content` 列是 TEXT，含图时存 `{"__blocks__":[content...]}` 哨兵 JSON；发请求时还原为 OpenAI `image_url` 块，且**只保留最后一条 assistant 之后的图**（`lastAssistant` 判定）—— 之前的图剥 base64 改成"已省略"文字描述，省 token；DB 始终存全量供 UI 重渲染。
+- **图片（多模态）**：`messages.content` 列是 TEXT，含图时存 `{"__blocks__":[content...]}` 哨兵 JSON。新版 `read_file` 读图：sharp 压缩产物落任务目录 `.imgcache/`（前端文件列表隐带点的项），库里只存 `image_ref` 轻量块；`buildMessages` 发送前经调用方传入的 `mintUrl` 回调现签成公网外链（同 `mint_public_link` 那套 `GET /p/<id>`）填入 `image_url` 块，base64 不进 DB 也不进请求体；签不到降级为文字占位。旧库/用户粘贴附件的 `data:` URL 块原样透传。图块**只保留最后一条 assistant 之后的**（`lastAssistant` 判定），之前的换成"已省略"文字描述；UI 渲染走带 cookie 的会话内下载路由，历史永不裂图。
 - **保持租约**（`holdSweeper`）：sweeper_ms 巡检（默认 10s）；held 会话无观看者 idle_release_ms 释放（默认 3 分钟），有观看者 active_max_ms 强制释放（默认 30 分钟）。active 闲置（绑了模型但无 run 在跑、无未回应消息）按相同租约处理。
 
 ### 5.2 `llm.js` —— 上游调用
@@ -257,7 +257,7 @@ stateDiagram-v2
 |---|---|
 | `systemPromptText(language)` | 拼模板 + 技能列表 + 语言指令；进程内缓存（`_promptTextCache`） |
 | `setSkillListText(text)` | 技能列表变更后清缓存，强制重拼 |
-| `buildMessages(session, lang)` | DB 行 → OpenAI messages 数组；处理 summary/archived/errAck/图片消费 |
+| `buildMessages(session, lang, mintUrl?)` | DB 行 → OpenAI messages 数组；处理 summary/archived/errAck/图片消费；`image_ref` 块用 `mintUrl` 现签成公网 `image_url` 外链 |
 | `forEachSSEData(res, onEvent, onMeta, onBadData)` | 通用 SSE 帧解析（空行分隔，data: 行 JSON.parse，注释行走 onMeta） |
 | `callModel(cfg, modelId, messages, tools, opts)` | 一次模型调用；`opts.deepThink` 启用时合并 `thinking_params`；返回 `{content, reasoning, tool_calls, finish_reason, usage, aborted, sseFrames}` |
 
@@ -283,7 +283,7 @@ stateDiagram-v2
 
 | 工具 | 实现要点 |
 |---|---|
-| `read_file` | 走 `resolveInTask` 防路径穿越；图像（PNG/JPEG/WebP/GIF/BMP/TIFF）按 vision 能力走 `sharp` 压缩回传 `image_data_url`（长边 ≤ 2000px，JPEG q=0.85）；大文本/二进制给 outline；行号前缀格式 "`<6位右对齐行号>\\t<原文>`"（`edit_file` 用） |
+| `read_file` | 走 `resolveInTask` 防路径穿越；图像（PNG/JPEG/WebP/GIF/BMP/TIFF）按 vision 能力走 `sharp` 压缩后落盘 `.imgcache/` 并回传 `image_rel`（长边 ≤ 2000px，JPEG q=80；文件名带源文件 mtime+size 指纹，重读复用不增殖），发送前由 `llm.buildMessages` 现签成公网外链；大文本/二进制给 outline；行号前缀格式 "`<6位右对齐行号>\\t<原文>`"（`edit_file` 用） |
 | `write_file` / `edit_file` | `edit_file` 用模糊定位（Zed 风格）：先精确匹配，失败后用 Levenshtein DP 找最相似行；`old_text`/`new_text` 协议见 `definitions.json` |
 | `list_directory` / `create_directory` / `delete_path` / `move_path` / `copy_path` / `find_path` / `grep` | 标准文件操作，全部 `resolveInTask` 约束；`grep` 走 `ripgrep`（`rg`）优先 |
 | `terminal` | **唯一一个走 executor 的内置工具**（当 `rexec.isRemote(cfg)`）；本地分支用 `spawn` + `detached` + 进程组 kill；远端分支 `rexec.run` SSE 收流，结果套上超时/截断/取消注解后 `truncate(text, cfg.terminal.max_output_chars)` 返回 |

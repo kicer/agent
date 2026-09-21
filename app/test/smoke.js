@@ -130,9 +130,11 @@ async function main() {
       .map(m => { try { return JSON.parse(m.content); } catch (_) { return null; } })
       .find(j => j && Array.isArray(j.__blocks__));
     ok(!!imgTool && imgTool.__blocks__.some(b =>
-      b.type === 'image_url' && String(b.image_url && b.image_url.url).startsWith('data:image/jpeg;base64,')),
-      'tool 消息含压缩后的 image_url 内容块',
+      b.type === 'image_ref' && String(b.rel).startsWith('.imgcache/')),
+      'tool 消息含压缩图的 image_ref 内容块（外链发送时现签，库里不存 base64）',
       imgTool ? JSON.stringify(imgTool.__blocks__.map(b => b.type)) : '无多模态块');
+    const cacheInPanel = await api('GET', '/api/sessions/' + si.id + '/files');
+    ok(!cacheInPanel.some(f => String(f.filename).startsWith('.imgcache/')), '.imgcache 不进前端文件列表');
 
     // ---- 2.8 释放后新消息优先回绑上次模型（last_model_id）----
     console.log('\n[2.8] 优先回绑');
@@ -227,15 +229,16 @@ async function main() {
     ok(fpath.includes('g.txt'), 'find_path 命中', fpath);
     const esc = await executeTool(ctx, 'read_file', { path: '../outside.txt' }).catch(e => 'ERR:' + e.message);
     ok(String(esc).includes('越界'), 'read_file 拒绝越界', String(esc));
-    // read_file 读图：非 vision → 文本提示；vision → {text, image_data_url}（依赖 sharp）
+    // read_file 读图：非 vision → 文本提示；vision → {text, image_rel}（依赖 sharp，产物落 .imgcache/）
     const unitPng = await require('sharp')({ create: { width: 4, height: 4, channels: 3, background: { r: 10, g: 120, b: 200 } } }).png().toBuffer();
     fs.writeFileSync(path.join(ctx.taskDir, 'pic.png'), unitPng);
     const imgNoVision = await executeTool(ctx, 'read_file', { path: 'pic.png' });
     ok(typeof imgNoVision === 'string' && imgNoVision.includes('不支持视觉识别'), 'read_file 非 vision 图片返回文本提示', String(imgNoVision).slice(0, 80));
     const ctxVision = Object.assign({}, ctx, { vision: true });
     const imgVision = await executeTool(ctxVision, 'read_file', { path: 'pic.png' });
-    ok(imgVision && typeof imgVision === 'object' && String(imgVision.image_data_url).startsWith('data:image/jpeg;base64,'),
-      'read_file vision 图片返回压缩 data URL', imgVision && imgVision.text ? String(imgVision.text).slice(0, 90) : String(imgVision).slice(0, 90));
+    ok(imgVision && typeof imgVision === 'object' && String(imgVision.image_rel).startsWith('.imgcache/'),
+      'read_file vision 图片返回压缩产物 image_rel', imgVision && imgVision.text ? String(imgVision.text).slice(0, 90) : String(imgVision).slice(0, 90));
+    ok(fs.existsSync(path.join(ctx.taskDir, imgVision.image_rel)), '压缩产物已落盘 .imgcache/');
 
     // ---- 8. 配置读写 API(阶段 2)----
     console.log('\n[8] 配置读写');

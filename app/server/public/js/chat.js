@@ -188,10 +188,15 @@
     if (typeof content === 'string' && content.startsWith('{"__blocks__":')) {
       try {
         const blocks = JSON.parse(content).__blocks__ || [];
+        const ref = blocks.find(b => b.type === 'image_ref');
         const img = blocks.find(b => b.type === 'image_url');
         return {
           text: blocks.filter(b => b.type === 'text').map(b => (b.text || '').replace(/，图片见同条消息的 image_url 内容块/g, '')).join('\n'),
-          imageUrl: img && img.image_url && img.image_url.url || null,
+          // 新版存 .imgcache/ 相对路径:渲染走带 cookie 的会话内下载路由（不过期不裂图）；
+          // 旧库里的 base64 image_url 块照常直接用
+          imageUrl: ref
+            ? '/api/sessions/' + encodeURIComponent(state.sessionId) + '/files/download?path=' + encodeURIComponent(ref.rel)
+            : (img && img.image_url && img.image_url.url || null),
         };
       } catch (_) { /* 解析失败按原文显示 */ }
     }

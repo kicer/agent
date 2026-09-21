@@ -43,6 +43,7 @@
     const panel = $('files-panel');
     if (open) {
       filesCurDir = ''; // 每次弹出回到根目录
+      filesShowHidden = false; // 隐藏文件彩蛋态不跨次记忆，每次打开从干净视图开始
       applyFilesPanelH(); // 沿用上次拖拽高度(会话内)，无则用 CSS 默认
       loadFiles();
       // 弹出面板时收起软键盘,避免顶起布局
@@ -127,6 +128,7 @@
   let filesTreeRoot = null; // 最近一次拉取构建的目录树（单层列表渲染与全选/有效性计算都基于它）
   let filesDirSizes = new Map(); // 目录路径('' = 根) → 其下文件递归总字节；按未过滤原始列表聚合（含隐藏的 .tmp/.venv）
   let filesCurDir = '';     // 当前浏览目录（相对任务根；'' = 根）。面包屑 + 单层列表的游标
+  let filesShowHidden = false; // 彩蛋：点面板标题旁总大小文本切换 dot 项显隐（后端 ?hidden=1，连 .tmp/.venv 一起放出）
 
   const dirSelKey = p => DIR_SEL_PREFIX + p;
   const isDirSelKey = k => k.startsWith(DIR_SEL_PREFIX);
@@ -352,7 +354,7 @@
     if (!node) { filesCurDir = ''; node = filesNodeAt(''); } // 当前目录已被删除 → 退回根
     const sizeEl = $('files-panel-size');
     if (!node) { el.innerHTML = ''; if (sizeEl) sizeEl.textContent = ''; return; }
-    // 标题旁总大小：按未过滤的聚合表取当前目录递归总量（.tmp/.venv 隐藏但计数）
+    // 标题旁总大小：按未过滤的聚合表取当前目录递归总量（关彩蛋时服务端不返回 dot 项；开彩蛋时含 .imgcache/.tmp/.venv 全计）
     if (sizeEl) {
       const total = filesDirSizes.get(filesCurDir) || 0;
       sizeEl.textContent = total > 0 ? fmtSize(total) : '';
@@ -392,9 +394,11 @@
     filesTreeRoot = null;
     updateFilesFooter();
     try {
-      const files = await req('GET', '/api/sessions/' + state.sessionId + '/files?dirs=1');
-      // 会话级 .tmp（executor 的共享 /tmp 落盘处）与 .venv（Python 虚拟环境）不属于任务产物：列表/选中/下载里隐藏，但计入总大小
-      const shown = files.filter(f => !/^(\.tmp|\.venv)(\/|$)/.test(String(f.filename)));
+      // 彩蛋开启时后端连 dot 项一起列，且不再滤 .tmp/.venv（全量放出）
+      const hiddenQ = filesShowHidden ? '&hidden=1' : '';
+      const files = await req('GET', '/api/sessions/' + state.sessionId + '/files?dirs=1' + hiddenQ);
+      // 会话级 .tmp（executor 的共享 /tmp 落盘处）与 .venv（Python 虚拟环境）不属于任务产物：默认隐藏（老后端兼容兑底；新版关彩蛋时服务端已不返回 dot 项）
+      const shown = filesShowHidden ? files : files.filter(f => !/^(\.tmp|\.venv)(\/|$)/.test(String(f.filename)));
       // 目录标记行不参与选中/全选/计数，只用来铺树（空文件夹可见）
       filesAllPaths = shown.filter(f => !(f.dir === true || /\/$/.test(String(f.filename)))).map(f => f.filename);
       // 重建目录树后只渲染当前目录这一层(后端已按时间倒序,组内再排一次防旧排序缓存)
@@ -595,6 +599,13 @@
     if (!c) return;
     filesCurDir = c.dataset.path;
     renderFilesDir();
+  });
+
+  // 彩蛋：点面板标题旁的总大小文本 = 切换隐藏文件（dot 项含 .tmp/.venv）显隐。
+  // 故意不加任何光标/文案提示，也不限层级（子目录里点同样生效）。
+  $('files-panel-size').addEventListener('click', () => {
+    filesShowHidden = !filesShowHidden;
+    loadFiles();
   });
 
     // 批量下载：选中项含文件夹（含全选后整目录被覆盖的情况）时，整个选择交给后端打包成

@@ -88,8 +88,9 @@ function truncate(text, max) {
 const AUTO_OUTLINE_SIZE = 16384;
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff', '.tif']);
 
-// read_file 读图（仅当会话绑定的模型 vision: true）：sharp 压缩后转 base64 data URL，
-// 由 engine 拼成下一轮请求里 tool 消息的 image_url 内容块。
+// read_file 读图（仅当会话绑定的模型 vision: true）：sharp 压缩后落盘到任务目录 .imgcache/，
+// 返回 {text, image_rel}；engine 拼成 image_ref 内容块落库，llm.buildMessages 发请求前
+// 现签成公网外链（GET /p/<id>）进 image_url 块，base64 不再进 DB/请求体。
 const IMG_MAX_INPUT_BYTES = 50 * 1024 * 1024; // 与上传上限一致
 const IMG_MAX_SIDE = 2000;                    // 长边压缩阈值（px）
 const IMG_JPEG_QUALITY = 80;
@@ -139,10 +140,10 @@ function outlineWrapper(outlineText) {
     'For example, to read a function shown as [L100-150], use start_line: 100 and end_line: 150.';
 }
 
-// 用 sharp 压缩（按 EXIF 摆正、长边 ≤2000px、JPEG 质量 80）并转 base64 data URL。
-// 成功返回 {text, image_data_url}，engine 侧拼成 tool 消息的多模态内容块；
+// 用 sharp 压缩（按 EXIF 摆正、长边 ≤2000px、JPEG 质量 80）并落盘 .imgcache/。
+// 成功返回 {text, image_rel}；产物文件名带源文件指纹（mtime+size），同图重复读复用同一份不增殖。
 // sharp 缺失或解码失败时退回纯文本提示，不让整个工具回合报错。
-async function readImageAsBlocks(abs, rel, size) {
+async function readImageAsBlocks(ctx, abs, rel, size) {
   let sharp;
   try { sharp = require('sharp'); }
   catch (_) { return '[图片文件] ' + rel + '（' + size + ' 字节）。服务端未安装 sharp，无法压缩回传图片内容。'; }
@@ -152,10 +153,19 @@ async function readImageAsBlocks(abs, rel, size) {
       .resize({ width: IMG_MAX_SIDE, height: IMG_MAX_SIDE, fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: IMG_JPEG_QUALITY })
       .toBuffer({ resolveWithObject: true });
+    let st = null;
+    try { st = await fsp.stat(abs); } catch (_) {}
+    const stem = path.basename(rel).replace(/\.[^.]+$/, '').replace(/[^\w.\-\u4e00-\u9fff]/g, '_').slice(0, 60);
+    const cacheRel = '.imgcache/' + (stem || 'img') + '-' + size + '-' + Math.round(st ? st.mtimeMs : 0) + '.jpg';
+    const outAbs = path.join(ctx.taskDir, cacheRel);
+    if (!fs.existsSync(outAbs)) {
+      await fsp.mkdir(path.dirname(outAbs), { recursive: true });
+      await fsp.writeFile(outAbs, r.data);
+    }
     return {
       text: '[图片文件] ' + rel + '（原 ' + size + ' 字节，已压缩为 ' + r.info.width + '×' + r.info.height +
         ' JPEG ' + r.data.length + ' 字节）',
-      image_data_url: 'data:image/jpeg;base64,' + r.data.toString('base64'),
+      image_rel: cacheRel,
     };
   } catch (err) {
     return '[图片文件] ' + rel + '（' + size + ' 字节），图片解码/压缩失败：' + (err && err.message || err);
@@ -176,7 +186,7 @@ async function toolReadFile(ctx, args) {
     if (st.size > IMG_MAX_INPUT_BYTES) {
       return '[图片文件] ' + rel + '（' + st.size + ' 字节）过大（上限 ' + IMG_MAX_INPUT_BYTES + ' 字节），已跳过回传。';
     }
-    return await readImageAsBlocks(abs, rel, st.size);
+    return await readImageAsBlocks(ctx, abs, rel, st.size);
   }
   if (isProbablyBinary(abs)) return '[二进制文件，跳过文本读取] ' + relOf(ctx.taskDir, abs);
   const text = await fsp.readFile(abs, 'utf8');
@@ -754,7 +764,7 @@ const HANDLERS = {
 };
 
 // ctx: {sessionId, taskDir, run, cfg, db, vision}
-// 返回值一般为字符串；read_file 读图且 ctx.vision 为 true 时返回 {text, image_data_url}。
+// 返回值一般为字符串；read_file 读图且 ctx.vision 为 true 时返回 {text, image_rel}。
 // 内置工具优先；未命中时交给 MCP 注册表（启动时发现的服务工具）。
 async function executeTool(baseCtx, name, args) {
   const handler = HANDLERS[name];
