@@ -106,7 +106,7 @@ model_hold:
   sweep_ms: 10000           # 10 秒
 
 # 上下文压缩：顶栏「压缩」按钮触发。压缩指令不作为 user 消息插入会话：
-# 压缩回合只发一条 system（模板里 {{conversation}} 占位符自动替换为完整历史）+ 一句触发语，且该回合不传 tools。
+# 压缩回合沿用默认 system prompt + 正常历史，末尾追加一条 user（提示词原文），且该回合不传 tools。
 # 提示词固定在 server/templates/compress-prompt.txt，需要调整压缩策略时直接改该文件。
 
 # 登录认证（推荐启用）：多用户，用户名/明文密码直接配在这里（自用场景）。

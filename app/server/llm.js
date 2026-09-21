@@ -5,51 +5,11 @@ const path = require('path');
 
 const SYSTEM_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'system-prompt.txt'), 'utf8');
 
-// 上下文压缩提示词（templates/compress-prompt.txt）：点「压缩」时不插入指令消息，
-// 压缩回合只发一条 system（本模板，{{conversation}} 占位符替换为完整历史纯文本，
-// 见 compressPromptText / historyTranscript）+ 一句 user 触发语，且该回合不传 tools。
-// 需要调整压缩策略时直接改这个模板文件（不写 {{conversation}} 则历史自动追加到末尾）。
+// 上下文压缩提示词（templates/compress-prompt.txt）：点「压缩」时不插入指令消息。
+// 压缩回合（见 compressMessages）沿用默认 system prompt + 正常历史消息，
+// 末尾追加一条 user（本模板原文，参考 titleMessages 的拼法），且该回合不传 tools。
+// 需要调整压缩策略时直接改这个模板文件。
 const COMPRESS_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'compress-prompt.txt'), 'utf8');
-
-// 把即将压缩的会话历史序列化为「用户/AI 交互记录」纯文本，填入模板 {{conversation}} 处。
-// 与 buildMessages 同取舍：archived 行不进记录（旧摘要之后的内容才算「本轮上下文」）；
-// __blocks__ 哨兵 JSON 还原为文字，图片以 [图片] 占位，base64 不进摘要记录。
-function historyTranscript(session) {
-  const lines = [];
-  for (const row of (session && session.history) || []) {
-    if (row.type === 'archived') continue;
-    let content = row.content || '';
-    const blocks = decodeBlocks(content);
-    if (blocks) content = blocks.map(b => (b && b.type === 'text' ? b.text : '[图片]')).join('\n');
-    if (row.role === 'user') {
-      lines.push('[用户] ' + content);
-    } else if (row.role === 'assistant') {
-      const parts = [];
-      if (content) parts.push('[AI] ' + content);
-      let calls = null;
-      if (row.tool_calls) { try { calls = JSON.parse(row.tool_calls); } catch (_) {} }
-      for (const c of calls || []) {
-        const f = (c && c.function) || {};
-        parts.push('[AI 调用工具 ' + (f.name || '') + '] ' + (f.arguments || ''));
-      }
-      if (parts.length) lines.push(parts.join('\n'));
-    } else if (row.role === 'tool') {
-      lines.push('[工具 ' + (row.name || '') + ' 输出] ' + content);
-    }
-  }
-  return lines.join('\n\n');
-}
-
-// 填充压缩模板：替换全部 {{conversation}} 占位符；用函数形式传替换串，
-// 避免历史文本里的 $&、$' 等序列被 String.replace 当作替换模式误解析。
-// 模板里没写占位符时，把记录追加到末尾（保证任何改法的模板都能拿到历史）。
-function compressPromptText(conversation) {
-  const rec = String(conversation == null ? '' : conversation);
-  if (COMPRESS_PROMPT_TEMPLATE.includes('{{conversation}}')) {
-    return COMPRESS_PROMPT_TEMPLATE.replaceAll('{{conversation}}', () => rec);
-  }
-  return COMPRESS_PROMPT_TEMPLATE + '\n\n## 对话记录\n' + rec;
-}
 
 // 自动生成会话标题提示词（templates/title-prompt.txt）：会话建立后第 1 次交互完成时触发。
 // 与压缩回合不同，这里**不带 system prompt**：直接复用历史里的 user/assistant 文本消息，
@@ -57,7 +17,7 @@ function compressPromptText(conversation) {
 const TITLE_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'title-prompt.txt'), 'utf8');
 
 // 拼标题回合的 messages：历史原样（只留 user/assistant 纯文本行）+ 末尾一条标题指令 user。
-// 与 historyTranscript 同取舍：archived 行不进；__blocks__ 哨兵 JSON 还原为文字，图片以 [图片] 占位；
+// 与 buildMessages 同取舍：archived 行不进；__blocks__ 哨兵 JSON 还原为文字，图片以 [图片] 占位；
 // 含 tool_calls 的 assistant 行无文本内容则跳过，tool 回执行整体跳过（只要对话主干）。
 function titleMessages(history, language) {
   const messages = [];
@@ -143,8 +103,8 @@ function cachedDecodeBlocks(session, row) {
 //   正常以 assistant 历史行发给模型；压缩收尾时打此标。
 // - type='archived'（压缩时摘要之前的全部旧行，含旧摘要/指令/工具轮）：不发模型。
 //   即压缩的核心语义：UI 照常保留展示，但后续对话从摘要开始，旧历史不再烧 token。
-// - type='summarize_request'（旧版压缩指令，已废弃）：新版压缩改为整体替换 system prompt
-//   （见 compressPromptText），不再产生这种消息行；此处分支仅为兼容旧库里残留的指令行。
+// - type='summarize_request'（旧版压缩指令，已废弃）：新版压缩不再产生这种消息行
+//   （压缩回合见 compressMessages），此处分支仅为兼容旧库里残留的指令行。
 // errAck 行（AI tool call 参数错误，见 engine.checkToolArgs）：整条不发给模型，
 // 关联 tool 回执按 id 一并跳过（否则会留下无 tool_call 配对的孤儿 tool 消息，上游拒收）；
 // 改以一条 user 错误提示替代，让模型看到原因后重新生成工具调用 ——
@@ -228,6 +188,16 @@ function buildMessages(session, language) {
       messages.push({ role: row.role, content });
     }
   });
+  return messages;
+}
+
+// 拼压缩回合的 messages（参考 titleMessages 的拼法）：默认 system prompt + 正常历史
+//（与 buildMessages 同取舍：archived 不发、旧摘要/工具轮照常），末尾追加一条 user
+//（compress-prompt.txt 原文，历史就在它前面的 messages 里，不再填占位符）。
+// 调用方（engine.runLoopInner 的 compressing 分支）需同时不传 tools。
+function compressMessages(session, language) {
+  const messages = buildMessages(session, language);
+  messages.push({ role: 'user', content: COMPRESS_PROMPT_TEMPLATE });
   return messages;
 }
 
@@ -482,4 +452,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks, compressPromptText, historyTranscript, titleMessages };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks, compressMessages, titleMessages };

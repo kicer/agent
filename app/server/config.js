@@ -45,8 +45,8 @@ const DEFAULTS = {
     model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },
     // 日志等级:debug < info < warn < error < none,只输出 >= 阈值等级的日志;none=全部静默。
     log_level: 'info',
-    // 上下文压缩提示词不再走配置：压缩回合只发一条 system（固定模板，{{conversation}}
-    // 占位符替换为完整历史）+ 一句触发语，不传 tools；模板在 server/templates/compress-prompt.txt。
+    // 上下文压缩提示词不再走配置：压缩回合沿用默认 system prompt + 正常历史，
+    // 末尾追加一条 user（提示词原文），不传 tools；模板在 server/templates/compress-prompt.txt。
   platforms: [],
   // 登录认证：{ users: [{user, password}], secret?, ttl_ms? }，密码明文存配置（自用场景）。
   // users 为空则不启用认证（可交给前置 nginx-proxy，但手机浏览器原生下载不带 Basic 头，不推荐）。

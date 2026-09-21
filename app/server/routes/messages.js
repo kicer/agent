@@ -50,8 +50,8 @@ router.delete('/:id/messages', wrap((req, res) => {
 // 上下文压缩：phase-bar「压缩」按钮弹窗里点「摘要」触发。
 // AI 总结；摘要之前的历史存档（type='archived'，UI 保留展示、不再发给模型）。
 // 摘要行本身标成 type='summary'（见 engine.runLoopInner），作为后续轮次的上下文起点。
-// 后端直接开启一个压缩回合（不往会话插入任何消息）：该回合只发一条 system（模板 +
-// 完整历史填入 {{conversation}}）且不带 tools（见 engine.summarizeContext）；
+// 后端直接开启一个压缩回合（不往会话插入任何消息）：该回合沿用默认 system prompt +
+// 正常历史，末尾追加一条压缩指令 user，且不带 tools（见 engine.summarizeContext）；
 // 响应仅回显一句短提示 prompt 供前端渲染指令气泡（不入库、不含模板正文），
 // 并在总结回合的最终 SSE assistant_message 上带 is_summary 给前端走收尾。
 // 状态非 active 时才允许（避免与正在跑的回合抢上下文）。本接口只是「丢一条总结请求进队列」，

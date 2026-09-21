@@ -2,7 +2,7 @@
 // 单进程内存模型：JS 单线程 + better-sqlite3 同步 API，不存在跨进程竞争。
 const fs = require('fs');
 const path = require('path');
-const { buildMessages, callModel, encodeBlocks, compressPromptText, historyTranscript, titleMessages } = require('./llm');
+const { buildMessages, callModel, encodeBlocks, compressMessages, titleMessages } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const mcp = require('./mcp');
 const log = require('./log');
@@ -511,12 +511,11 @@ async function runLoopInner(sessionId, run) {
     session.history = loadHistory(sessionId);
     for (const m of session.history) if (m.id > lastIncludedId) lastIncludedId = m.id;
     // 压缩回合（run.summarizing = 由「压缩」按钮发起、尚未产出摘要）：
-    // 只发一条 system（压缩模板，{{conversation}} 占位符已填入完整历史纯文本）
-    // + 一句触发 user，历史不再以 messages 重复占 token；且不传 tools，模型只能输出摘要文本。
+    // 沿用默认 system prompt + 正常历史，末尾追加一条压缩指令 user（见 llm.compressMessages）；
+    // 且不传 tools，模型只能输出摘要文本。
     const compressing = !!run.summarizing;
     const messages = compressing
-      ? [{ role: 'system', content: compressPromptText(historyTranscript(session)) },
-        { role: 'user', content: '请按以上要求输出「上下文摘要」。' }]
+      ? compressMessages(session, (cfg.agent || {}).language)
       : buildMessages(session, (cfg.agent || {}).language);
     // 内置工具 + 启动时发现的 MCP 工具，一起随 system prompt 发给模型（压缩回合不发）
     const tools = compressing ? [] : TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
@@ -955,9 +954,9 @@ function deleteSession(sessionId, deleteDir) {
 }
 
 // 上下文压缩：phase-bar「压缩」按钮触发。不再往会话里插入指令消息：
-// 压缩回合只发一条 system（templates/compress-prompt.txt 模板，{{conversation}} 占位符
-// 替换为完整历史纯文本，见 llm.compressPromptText / historyTranscript）+ 一句触发语，
-// 且不传 tools（见 runLoopInner 的 compressing 分支），模型直接基于该记录输出摘要。
+// 压缩回合沿用默认 system prompt + 正常历史消息，末尾追加一条 user
+//（templates/compress-prompt.txt 原文，见 llm.compressMessages），且不传 tools
+//（见 runLoopInner 的 compressing 分支），模型直接基于历史输出摘要。
 // 识别标记 = run.summarizing（仅在内存 run 上，不入库）：runLoopInner 据此换 prompt/去 tools，
 // 并在压缩回合的收尾答复 emit 时带 is_summary: true，前端据此把气泡装进摘要卡片并淡出存档旧历史。
 // 收尾落库：摘要行标 type='summary'，它之前的全部消息标 type='archived'
