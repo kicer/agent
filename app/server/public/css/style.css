@@ -470,7 +470,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .files-panel-header .files-panel-title {
   flex: 1; min-width: 0;
 }
-/* 标题内紧跟「任务文件」的当前目录总大小（含隐藏的 .tmp）；无内容时置空不占位 */
+/* 标题内紧跟「任务文件」的当前目录总大小（含隐藏的 .tmp/.venv）；无内容时置空不占位 */
 .files-panel-header .files-panel-size {
   margin-left: 6px; white-space: nowrap;
   font-size: 12px; font-weight: 400; color: var(--gray);

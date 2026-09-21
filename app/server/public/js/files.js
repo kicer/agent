@@ -147,7 +147,7 @@
   const fileSelected = new Set();
   let filesAllPaths = [];
   let filesTreeRoot = null; // 最近一次拉取构建的目录树（单层列表渲染与全选/有效性计算都基于它）
-  let filesDirSizes = new Map(); // 目录路径('' = 根) → 其下文件递归总字节；按未过滤原始列表聚合（含隐藏的 .tmp）
+  let filesDirSizes = new Map(); // 目录路径('' = 根) → 其下文件递归总字节；按未过滤原始列表聚合（含隐藏的 .tmp/.venv）
   let filesCurDir = '';     // 当前浏览目录（相对任务根；'' = 根）。面包屑 + 单层列表的游标
 
   const dirSelKey = p => DIR_SEL_PREFIX + p;
@@ -374,7 +374,7 @@
     if (!node) { filesCurDir = ''; node = filesNodeAt(''); } // 当前目录已被删除 → 退回根
     const sizeEl = $('files-panel-size');
     if (!node) { el.innerHTML = ''; if (sizeEl) sizeEl.textContent = ''; return; }
-    // 标题旁总大小：按未过滤的聚合表取当前目录递归总量（.tmp 隐藏但计数）
+    // 标题旁总大小：按未过滤的聚合表取当前目录递归总量（.tmp/.venv 隐藏但计数）
     if (sizeEl) {
       const total = filesDirSizes.get(filesCurDir) || 0;
       sizeEl.textContent = total > 0 ? fmtSize(total) : '';
@@ -415,13 +415,13 @@
     updateFilesFooter();
     try {
       const files = await req('GET', '/api/sessions/' + state.sessionId + '/files?dirs=1');
-      // 会话级 .tmp（executor 的共享 /tmp 落盘处）不属于任务产物：列表/选中/下载里隐藏，但计入总大小
-      const shown = files.filter(f => !/^\.tmp(\/|$)/.test(String(f.filename)));
+      // 会话级 .tmp（executor 的共享 /tmp 落盘处）与 .venv（Python 虚拟环境）不属于任务产物：列表/选中/下载里隐藏，但计入总大小
+      const shown = files.filter(f => !/^(\.tmp|\.venv)(\/|$)/.test(String(f.filename)));
       // 目录标记行不参与选中/全选/计数，只用来铺树（空文件夹可见）
       filesAllPaths = shown.filter(f => !(f.dir === true || /\/$/.test(String(f.filename)))).map(f => f.filename);
       // 重建目录树后只渲染当前目录这一层(后端已按时间倒序,组内再排一次防旧排序缓存)
       filesTreeRoot = buildFilesTree(shown);
-      // 总大小按原始列表（含 .tmp）聚合：目录标记行无字节量跳过；文件把 size 记到每一级祖先目录（根 = ''）
+      // 总大小按原始列表（含 .tmp/.venv）聚合：目录标记行无字节量跳过；文件把 size 记到每一级祖先目录（根 = ''）
       filesDirSizes = new Map([['', 0]]);
       for (const f of files) {
         if (f.dir === true || /\/$/.test(String(f.filename))) continue;
