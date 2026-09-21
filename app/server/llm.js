@@ -260,11 +260,15 @@ async function forEachSSEData(response, onEvent, onMeta, onBadData) {
       if (!dataPieces.length) continue;
       const data = dataPieces.join('\n');
       if (data === '[DONE]') return;
+      // 只把 JSON 解析失败归入坏帧；onEvent 内抛出的错误（如错误帧转的 throw）必须冒泡，不能被当成坏帧吞掉。
+      let parsed;
       try {
-        onEvent(JSON.parse(data));
+        parsed = JSON.parse(data);
       } catch (_) {
         if (onBadData) onBadData(data);
+        continue;
       }
+      onEvent(parsed);
     }
   }
 }
@@ -407,8 +411,18 @@ async function callModel(cfg, modelId, messages, tools, options) {
       if (evt.usage) usage = evt.usage;
       const choice = evt.choices && evt.choices[0];
       if (!choice) {
+        // 部分代理把错误包成 HTTP 200 流内的 {"error":...} 帧：直接转 throw，
+        // 汇入既有「非 200 → 重试/放弃 → ⚠️ 上屏」链路，不再静默吞帧。
+        if (evt.error) {
+          const msg = String(evt.error.message || evt.error.code || JSON.stringify(evt.error)).slice(0, 500);
+          const err = new Error('上游错误帧: ' + msg);
+          // 请求侧错误（参数不兼容等）重试也不会好，标 400 跳过重试
+          if (/client_error|invalid_request/i.test(String(evt.error.code || '') + ' ' + String(evt.error.type || ''))) err.upstream_status = 400;
+          controller.abort(); // 放掉底层连接（abort 不影响本次 throw）
+          throw err;
+        }
         // choices=[] 但含 usage：OpenAI 兼容协议最后一帧只发 token 统计，正常情况，
-        // 不算错误帧。其它无 usage 也无 choices 的（如 event: error 帧）才走 onBadEvent。
+        // 不算错误帧。其它无 usage 也无 choices 的怪帧才走 onBadEvent。
         if (!evt.usage && opts.onBadEvent) opts.onBadEvent(evt);
         return;
       }

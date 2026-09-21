@@ -747,9 +747,9 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       onMeta: handleSseMeta,
       onFetchParams: params => log.debug('req', JSON.stringify(params, null, 2)),
       onBadData: raw => log.warn('sse', sessionId + ' 坏帧：' + raw.slice(0, 200)),
-      // data 解析成功但没有 choices（如 event: error 帧）：上游发了非正常响应，
+      // data 解析成功但没有 choices 也无 usage 的怪帧（含 evt.error 的错误帧已在 callModel 内转 throw 上屏）：
       // 之前会伪装成"0 字"沉默忽略，这里 warn 把原始 evt 打出来便于定位。
-      onBadEvent: evt => log.warn('sse', sessionId + ' 上游错误帧：' + JSON.stringify(evt).slice(0, 500)),
+      onBadEvent: evt => log.warn('sse', sessionId + ' 上游怪帧（无 choices）：' + JSON.stringify(evt).slice(0, 500)),
     });
     // 本轮上游响应总览：帧数 + 文本长度 + 工具调用 + finish + aborted。
     // sseFrames=0 且 aborted=false 表示上游未发任何 data（疑似流异常）；其他情况可快速区分
