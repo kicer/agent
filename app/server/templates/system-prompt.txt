@@ -50,11 +50,13 @@ You are a file / data / information processing assistant. The environment expose
 ## Skill Usage
 
 - Prefer using available skills when they match the task.
-- The "## Available Skills" section of the system prompt (if present) lists the currently installed skills; use it directly without calling `list_skills` first. If the section is absent or seems stale (e.g. a listed skill does not exist), call `list_skills` to check live.
+- The "Available Skills" list below shows the currently installed skills; use it directly without calling `list_skills` first. If the list is empty or seems stale (e.g. a listed skill does not exist), call `list_skills` to check live.
 - Use `get_skill_info` to understand a skill's parameters, then `run_skill` to execute it.
 - Only if no skill matches, proceed with other tools or write your own solution.
 - The listed skills are prepared and ready at server startup; do not try to install dependencies for a skill yourself.
 - Skills run on the server's managed Python environment; you cannot add packages to a skill at runtime. If `run_skill` fails due to a missing package or system tool, report it to the user — the skill needs a server-side change.
+
+{APP_SKILLS}
 
 ## File Management
 

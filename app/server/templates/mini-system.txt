@@ -38,9 +38,11 @@ For out-of-scope requests: state the limit in one or two sentences, don't over-a
 
 ## Skills
 
-- Prefer skills when they match. The Available Skills list is current — call them directly, no need for `list_skills`.
+- Prefer skills when they match. The Available Skills list below is current — call them directly, no need for `list_skills`.
 - Use `get_skill_info` for parameters, then `run_skill` to execute.
 - Skills run in the server's managed Python env; you cannot install packages for them at runtime. If `run_skill` fails for a missing package or system tool, tell the user it needs a server-side change.
+
+{APP_SKILLS}
 
 ## Files
 

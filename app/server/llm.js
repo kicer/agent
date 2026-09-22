@@ -54,13 +54,25 @@ function setProfilePrompts(map) {
 let _promptTextCache = new Map(); // 'profile\u0000lang' -> text
 
 // “可用技能”段落（skills.formatSkillListForPrompt）：启动时快照（server.js）与技能变更后
-// （routes/skills.js）经 setSkillListText 更新，拼在默认模板之后、语言指令之前。
-// 与语言指令同一约定：仅技能增删/描述变化时更新，否则进程内恒定，不破坏前缀缓存。
-// 只拼默认模板：profile 自定义 prompt 完全接管（技能工具若在其白名单内，模型用 list_skills 自取）。
+//（routes/skills.js）经 setSkillListText 更新。插入位置由模板内的 {APP_SKILLS} 占位符决定
+//（拼在技能规则旁边，模型一眼看到清单，不再盲猜尾部多出来的孤儿段落）：
+// - 模板含占位符 → 就地替换（默认模板与自定义 prompt 同机制）；
+// - 默认模板没占位符 → 兑底尾拼（兼容手改模板时删掉了占位行）；自定义 prompt 没占位符 → 无技能段（完全接管）。
+// 仅技能增删/描述变化时更新，否则进程内恒定，不破坏前缀缓存。
+const APP_SKILLS_TOKEN = '{APP_SKILLS}';
 let SKILL_LIST_TEXT = '';
 function setSkillListText(text) {
   SKILL_LIST_TEXT = text || '';
   _promptTextCache = new Map(); // 列表变化后拼接结果需重建
+}
+
+function withSkillList(text, appendFallback) {
+  if (text.includes(APP_SKILLS_TOKEN)) {
+    // split/join：替掉所有出现位；清单为空时顺手压掉替换留下的空行
+    return text.split(APP_SKILLS_TOKEN).join(SKILL_LIST_TEXT).replace(/\n{3,}/g, '\n\n').trim();
+  }
+  if (appendFallback && SKILL_LIST_TEXT) text += '\n\n' + SKILL_LIST_TEXT;
+  return text;
 }
 
 function systemPromptText(language, profile) {
@@ -70,10 +82,9 @@ function systemPromptText(language, profile) {
   if (hit) return hit;
   let text;
   if (profile && PROFILE_PROMPTS[profile]) {
-    text = PROFILE_PROMPTS[profile];
+    text = withSkillList(PROFILE_PROMPTS[profile], false); // 自定义文件：没放占位符就真没有技能段
   } else {
-    text = SYSTEM_PROMPT_TEMPLATE;
-    if (SKILL_LIST_TEXT) text += '\n\n' + SKILL_LIST_TEXT;
+    text = withSkillList(SYSTEM_PROMPT_TEMPLATE, true);
   }
   if (t) text += '\n\n## Reply Language\n' +
     '- ALWAYS respond to the user in ' + t + '. Tool descriptions, tool outputs and errors are usually in English — ' +
