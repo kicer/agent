@@ -103,18 +103,18 @@
     "type": "function",
     "function": {
       "name": "schedule_task",
-      "description": "Create a recurring scheduled task for the CURRENT session. At each trigger, the given prompt is sent to this session as a new user message. Only one task per session is allowed; if one already exists the call fails and the user must delete it first in the session view. Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.",
+      "description": "Create a recurring scheduled task for the CURRENT session. At each trigger, the given prompt is sent to this session as a new user message. Only one task per session is allowed; if one already exists the call fails and the user must delete it first in the session view. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.",
       "parameters": {
         "type": "object",
         "required": ["cron_expr", "prompt"],
         "properties": {
           "cron_expr": {
             "type": "string",
-            "description": "Standard 5-field cron expression, e.g. '0 9 * * *' for 09:00 every day. Minimum interval is 1 hour."
+            "description": "Standard 5-field cron expression in Asia/Shanghai (UTC+8), e.g. '0 9 * * *' for 09:00 Beijing time every day. The interval between two consecutive runs must be at least 1 hour."
           },
           "prompt": {
             "type": "string",
-            "description": "The message to send to this session at each trigger. Write it as a self-contained instruction, because previous conversation history is archived before each run."
+            "description": "The message to send to this session at each trigger. Write it as a self-contained instruction: previous conversation history is archived before each run, so this prompt is the only input the model will see. The output stays in this session for the user to view; if it must reach the user proactively, state how in the prompt (e.g. via a skill or webhook)."
           }
         }
       }

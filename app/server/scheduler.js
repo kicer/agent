@@ -41,9 +41,9 @@ function validateCron(cronExpr) {
     first = it.next().getTime();
     second = it.next().getTime();
   } catch (e) {
-    throw new Error('cron 表达式无效: ' + (e && e.message || e));
+    throw new Error('cron 表达式无效: ' + cronExpr + ' → ' + (e && e.message || e));
   }
-  if (second - first < MIN_INTERVAL_MS) throw new Error('定时任务间隔不能小于 1 小时');
+  if (second - first < MIN_INTERVAL_MS) throw new Error('定时任务间隔不能小于 1 小时：' + cronExpr + ' 相邻两次触发不足 1h');
   return first;
 }
 
