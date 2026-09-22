@@ -279,8 +279,15 @@ function fuzzyLocate(curLines, oldLinesTrim) {
       else { c--; }
     }
     if (!pairs.length) continue;
-    // 回溯是从下往上收集 pairs（降序），用 min/max 取区间，不依赖收集顺序。
-    const startRow = Math.min(...pairs), endRow = Math.max(...pairs);
+    // 升序排列并要求连续：不连续区间说明 DP 在中间跳过了无关的 buffer 行（left/13 代价 diag 路径），
+    // 整段 splice 会静默删掉这些行——这类候选直接丢弃（上层报找不到，模型补上下文重试）。
+    pairs.sort((a, b) => a - b);
+    let contiguous = true;
+    for (let k = 1; k < pairs.length; k++) {
+      if (pairs[k] !== pairs[k - 1] + 1) { contiguous = false; break; }
+    }
+    if (!contiguous) continue;
+    const startRow = pairs[0], endRow = pairs[pairs.length - 1];
     const span = endRow - startRow + 1;
     const ratio = pairs.length / Math.max(span, m);
     if (ratio < FUZZY_THRESHOLD) continue;
@@ -348,6 +355,12 @@ function applyEdit(text, edit, i) {
     }
     // CRLF 文件：新内容里的行尾统一成 \r\n。
     if (text.includes('\r\n')) repl = repl.replace(/\r?\n/g, '\r\n');
+    // 空 new_text 的整行删除：区间恰好行对齐（前邻行首/换行、后随换行）时把尾随行尾一并吃掉，
+    // 对齐 Zed 空 new_text=删零行（否则 JS 语义会留下一个空行）。
+    if (repl === '' && (after === '\n' || afterCRLF) &&
+        (idx === 0 || text.charAt(idx - 1) === '\n' || text.charAt(idx - 1) === '\r')) {
+      return text.slice(0, idx) + text.slice(idx + pat.length + (afterCRLF ? 2 : 1));
+    }
     return text.slice(0, idx) + repl + text.slice(idx + pat.length);
   }
   // 2) 模糊匹配（逐行 trim）
@@ -379,7 +392,9 @@ function applyEdit(text, edit, i) {
       ' 行附近）。请在 old_text 中包含更多上下文以唯一定位。');
   }
   const { startRow, endRow } = loc;
-  let newLines = newLinesRaw;
+  // 空 new_text=整行删除：对齐 Zed "".lines() 的零行语义（JS ''.split('\n') 是 1 个空行，会留白）；
+  // new_text='\n' 仍是「替换为一个空行」，语义不合并。
+  let newLines = new_text === '' ? [] : newLinesRaw;
   // 匹配区间后紧跟换行时，吃掉 new_text 的尾换行（防止吞掉行尾）。
   const hasNewlineAfter = endRow < curLines.length - 1 || text.endsWith('\n');
   if (hasNewlineAfter && newLines.length > 1 && newLines[newLines.length - 1] === '') {
