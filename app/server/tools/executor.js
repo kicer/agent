@@ -756,18 +756,48 @@ async function toolMintPublicLink(ctx, args) {
   return pl.base_url + '/p/' + id;
 }
 
-// schedule_task：为当前会话创建定时任务。sessionId 取自 ctx（AI 无法指定别的会话）；
-// 参数与会话唯一性校验均在 scheduler.createTask，失败抛中文 Error 回给 AI 自行纠正。
-// 生命周期：只能由 AI 创建，用户端只读 + 删除（改 = 删后让 AI 重建），故无修改/删除入口。
+// schedule_task：当前会话定时任务的完整生命周期（op 分派，规范见 docs/tool-design.md）。
+// sessionId 取自 ctx（AI 无法指定别的会话）；表主键 session_id → 每会话至多一条，
+// 资源即「本会话的任务」，无 id 参数。条件必填在代码里校验（schema 只 required op），
+// 错误回显 op 与缺失字段；delete 不落 scheduler_note（返回文本本身已进会话记录）。
 function toolScheduleTask(ctx, args) {
+  const op = String(args.op || '').trim().toLowerCase();
   const cronExpr = String(args.cron_expr || '').trim();
   const prompt = String(args.prompt || '').trim();
-  if (!cronExpr) throw new Error('cron_expr 不能为空');
-  if (!prompt) throw new Error('prompt 不能为空');
-  const t = scheduler.createTask(ctx.db, ctx.sessionId, cronExpr, prompt);
-  return '定时任务已创建：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。' +
-    '注意：每次触发前本会话的历史消息会被存档（AI 只看到任务 prompt），因此 prompt 需自包含；' +
-    '如需修改或删除，请让用户在会话页操作。';
+  const db = ctx.db;
+  switch (op) {
+    case 'get': {
+      const t = scheduler.getTask(db, ctx.sessionId);
+      if (!t) return '本会话当前没有定时任务。要创建用 op=create。';
+      const last = t.last_run_at
+        ? scheduler.fmtTime(t.last_run_at) + '（状态 ' + (t.last_status || '-') + (t.last_note ? '，' + t.last_note : '') + '）'
+        : '尚未执行';
+      return '本会话定时任务：cron=' + t.cron_expr + '（Asia/Shanghai），下次执行 ' +
+        scheduler.fmtTime(t.next_run_at) + '，上次执行 ' + last + '。提示词：' + t.prompt;
+    }
+    case 'create': {
+      if (!cronExpr) throw new Error('op=create 缺少必填参数 cron_expr');
+      if (!prompt) throw new Error('op=create 缺少必填参数 prompt');
+      const t = scheduler.createTask(db, ctx.sessionId, cronExpr, prompt);
+      return '定时任务已创建：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。' +
+        '注意：每次触发前本会话的历史消息会被存档（AI 只看到任务 prompt），因此 prompt 需自包含；' +
+        '后续改动用 op=update，取消用 op=delete。';
+    }
+    case 'update': {
+      if (!cronExpr && !prompt) throw new Error('op=update 需要 cron_expr 和 prompt 至少提供一个');
+      const t = scheduler.updateTask(db, ctx.sessionId, {
+        cronExpr: cronExpr || null,
+        prompt: prompt || null,
+      });
+      return '定时任务已更新：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。';
+    }
+    case 'delete': {
+      const old = scheduler.deleteTask(db, ctx.sessionId);
+      return '定时任务已删除（原定 ' + old + '）。要建新任务用 op=create。';
+    }
+    default:
+      throw new Error('未知的 op："' + op + '"。可用：get / create（需 cron_expr、prompt）/ update（需 cron_expr、prompt 至少一个）/ delete');
+  }
 }
 
 const HANDLERS = {

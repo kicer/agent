@@ -15,6 +15,7 @@ const log = require('./log');
 const TZ = 'Asia/Shanghai';            // 与容器 TZ（docker-compose）一致；显式传入，不依赖进程隐式时区
 const TICK_MS = 30000;                 // 轮询周期：相对 1h 最小间隔足够密，无调优需求，不进 config.yml
 const MIN_INTERVAL_MS = 3600000;       // cron 最小间隔 1 小时：防 AI 排出分钟级任务反复烧模型池
+const PROMPT_MAX_LEN = 20000;          // prompt 长度上限，与 routes/sessions.js PATCH 口径一致
 
 let eng = null;   // engine 引用（start 注入）
 let timer = null;
@@ -50,9 +51,10 @@ function validateCron(cronExpr) {
 // sessionId 由调用方从工具 ctx 取（AI 无法指定别的会话）。校验顺序：
 // validateCron → 本会话尚无任务 → INSERT（主键冲突兜底）。
 function createTask(db, sessionId, cronExpr, prompt) {
+  if (prompt.length > PROMPT_MAX_LEN) throw new Error('prompt 过长（上限 ' + PROMPT_MAX_LEN + ' 字符）');
   const first = validateCron(cronExpr);
   const exist = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
-  if (exist) throw new Error('本会话已有定时任务（' + exist.cron_expr + '），请先在会话页删除');
+  if (exist) throw new Error('本会话已有定时任务（' + exist.cron_expr + '）。改频次或提示词用 op=update；确要换新任务先 op=delete 再 op=create');
   try {
     db.prepare(
       'INSERT INTO scheduled_tasks (session_id, cron_expr, prompt, next_run_at, created_at) VALUES (?,?,?,?,?)'
@@ -60,10 +62,48 @@ function createTask(db, sessionId, cronExpr, prompt) {
   } catch (_) {
     // 单进程同步 API 下正常到不了这里（上一步已查重），仅作主键约束重复报错的兜底
     const ex = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
-    throw new Error('本会话已有定时任务（' + (ex ? ex.cron_expr : cronExpr) + '），请先在会话页删除');
+    throw new Error('本会话已有定时任务（' + (ex ? ex.cron_expr : cronExpr) + '）。改频次或提示词用 op=update；确要换新任务先 op=delete 再 op=create');
   }
   log.info('scheduler', sessionId + ' 创建定时任务 ' + cronExpr);
   return { cron_expr: cronExpr, next_run_at: first, next_text: fmtTime(first) };
+}
+
+// ---------- 工具侧 get/update/delete（tools/executor.js 调） ----------
+// 表主键 session_id → 每会话至多一条，资源即「本会话的任务」，无 id 参数。
+// 语义与 routes/sessions.js 的 PATCH/DELETE 对齐，但不落 scheduler_note：
+// AI 路径的返回文本本身已进会话记录，不再重复留痕。update 允许只改其一，
+// 仅当改了 cron 才重算 next_run_at。不校验 running 状态（update 天然安全，
+// delete 也不打断正在跑的回合）。
+
+function getTask(db, sessionId) {
+  return db.prepare(
+    'SELECT cron_expr, prompt, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
+  ).get(sessionId) || null;
+}
+
+function updateTask(db, sessionId, patch) {
+  const row = db.prepare('SELECT cron_expr, next_run_at FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
+  if (!row) throw new Error('本会话没有定时任务，先用 op=create 创建');
+  let cron = row.cron_expr;
+  let next = row.next_run_at;
+  if (patch.cronExpr && patch.cronExpr !== row.cron_expr) {
+    next = validateCron(patch.cronExpr);
+    cron = patch.cronExpr;
+  }
+  const prompt = patch.prompt != null ? String(patch.prompt) : null;
+  if (prompt !== null && prompt.length > PROMPT_MAX_LEN) throw new Error('prompt 过长（上限 ' + PROMPT_MAX_LEN + ' 字符）');
+  db.prepare('UPDATE scheduled_tasks SET prompt = COALESCE(?, prompt), cron_expr = ?, next_run_at = ? WHERE session_id = ?')
+    .run(prompt, cron, next, sessionId);
+  log.info('scheduler', sessionId + ' 定时任务改为 ' + cron + '（原 ' + row.cron_expr + '）');
+  return { cron_expr: cron, next_run_at: next, next_text: fmtTime(next) };
+}
+
+function deleteTask(db, sessionId) {
+  const row = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
+  if (!row) throw new Error('本会话没有定时任务，无需 op=delete');
+  db.prepare('DELETE FROM scheduled_tasks WHERE session_id = ?').run(sessionId);
+  log.info('scheduler', sessionId + ' 删除定时任务 ' + row.cron_expr);
+  return row.cron_expr;
 }
 
 // ---------- 投递 ----------
@@ -150,4 +190,4 @@ function start(engine) {
   if (timer.unref) timer.unref(); // 不阻止进程退出
 }
 
-module.exports = { start, createTask, computeNext, validateCron };
+module.exports = { start, createTask, getTask, updateTask, deleteTask, computeNext, validateCron, fmtTime };
