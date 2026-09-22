@@ -55,6 +55,8 @@ function truncate(text, max) {
 
 // 对齐 Zed：整读时文件字节数超过该阈值则返回大纲（outline），而非截断内容。
 const AUTO_OUTLINE_SIZE = 16384;
+// 全文读/编辑的硬上限：超过即拒绝整读进内存（OOM 防护，st.size 在 read 前就有），引导走 terminal。
+const TEXT_FULL_READ_CAP = 32 * 1024 * 1024;
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff', '.tif']);
 
 // read_file 读图（仅当会话绑定的模型 vision: true）：sharp 压缩后落盘到任务目录 .imgcache/，
@@ -166,12 +168,21 @@ async function toolReadFile(ctx, args) {
     return await readImageAsBlocks(ctx, abs, rel, st.size);
   }
   if (isProbablyBinary(abs)) return '[二进制文件，跳过文本读取] ' + relOf(ctx.taskDir, abs);
+  if (st.size > TEXT_FULL_READ_CAP) {
+    return '（文件过大：' + Math.round(st.size / 1048576) + ' MB，超过 read_file 全文读取上限 '
+      + (TEXT_FULL_READ_CAP / 1048576) + ' MB，拒绝整读；请用 terminal 的 grep -n / head / sed -n 定位阅读）';
+  }
   const text = await fsp.readFile(abs, 'utf8');
+  if (!text) return '（空文件）';
   let lines = text.split('\n');
+  // CRLF 文件显示层剥去行尾 \r：模型拿到的行更干净；edit_file 精确/模糊匹配与 CRLF 归一不受影响。
+  if (text.includes('\r\n')) lines = lines.map(l => (l.endsWith('\r') ? l.slice(0, -1) : l));
   const total = lines.length;
   const startLine = Math.max(1, args.start_line || 1);
   let endLine = args.end_line || total;
   if (startLine > total) return '（文件共 ' + total + ' 行，start_line 超出范围）';
+  // 显式拒绝而非 slice 出空串静默返回：空串会让模型误判文件为空/工具坏了而换路重试。
+  if (endLine < startLine) throw new Error('end_line 必须 >= start_line（got start_line=' + startLine + ', end_line=' + args.end_line + '）');
   // 对齐 Zed：未指定范围且文件超过 16KB 时返回大纲；提取不到大纲则回退回首 1KB。
   if (!args.start_line && !args.end_line && Buffer.byteLength(text, 'utf8') > AUTO_OUTLINE_SIZE) {
     const outline = buildOutline(abs, text);
@@ -419,6 +430,8 @@ async function toolEditFile(ctx, args) {
   try { st = await fsp.stat(abs); }
   catch (_) { throw new Error('文件不存在：' + args.path); }
   if (st.isDirectory()) throw new Error('无法编辑：路径是目录 ' + args.path);
+  // 同 read_file 的 OOM 防护：edit_file 也要全量读入，超限拒操作。
+  if (st.size > TEXT_FULL_READ_CAP) throw new Error('文件超过 ' + (TEXT_FULL_READ_CAP / 1048576) + 'MB 全文读取上限，edit_file 拒绝操作；请用 terminal 的 sed 等工具编辑');
   const edits = args.edits || [];
   let text = await fsp.readFile(abs, 'utf8');
   const original = text;
