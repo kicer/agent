@@ -71,7 +71,7 @@ const DEFAULTS = {
   executor: { url: '', token: '' },
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
   // auto_compress_tokens：本轮 In token 峰值 ≥ 此值时推送「自动压缩」提议（0=关）。
-  agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000 },
+  agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000 },
   // 大图上传预处理（浏览器端 canvas 压缩，参数经 /api/system/status 下发前端）。
   upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10 },
   // 技能根目录：留空取 workspace_root 同级 skills（/workspace/tasks → /workspace/skills）。

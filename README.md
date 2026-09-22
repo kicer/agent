@@ -844,7 +844,7 @@ terminal:
 
 agent:
   temperature: 1.0
-  max_tool_iterations: 50
+  max_tool_iterations: 100
 ```
 
 ---

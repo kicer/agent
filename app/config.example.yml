@@ -29,7 +29,7 @@ terminal:
 
 agent:
   temperature: 1.0                                 # 采样温度
-  max_tool_iterations: 50                          # 单轮最大迭代数（含工具调用）
+  max_tool_iterations: 100                         # 单轮最大迭代数（含工具调用）
   max_retries: 2                                   # 上游失败重试次数
   language: "Simplified Chinese"                   # 强制回复语言；留空不限
   auto_compress_tokens: 60000                      # In token 超此值弹「自动压缩」提议；0=关
