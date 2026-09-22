@@ -396,16 +396,49 @@
   function kvPlain(label, v) {
     return '<div class="cfg-kv"><label>' + esc(label) + '</label><b>' + esc(dispVal(v)) + '</b></div>';
   }
+  // 容量格式化（内存/磁盘量级到 GB/TB，fmtSize 只到 MB 不够用）；数字与单位不留空格
+  function fmtCap(n) {
+    if (n == null || !Number.isFinite(n)) return '?';
+    if (n < 1024) return n + 'B';
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let i = -1;
+    do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+    return (n >= 100 ? Math.round(n) : n.toFixed(1)) + units[i];
+  }
+  // 带阈值的 kv 行：warn 时值标红（接收拼好的纯文本，内部自行 esc）
+  function kvWarn(label, text, warn) {
+    return '<div class="cfg-kv"><label>' + esc(label) + '</label><b' +
+      (warn ? ' style="color:#c0392b"' : '') + '>' + esc(text) + '</b></div>';
+  }
+  // 服务状态里的负载三行（内存/CPU/磁盘），数据来自 /api/system/status 的 sys 字段
+  function svcLoadHtml(st) {
+    const sys = st.sys || {};
+    let html = '';
+    const mem = sys.mem;
+    if (mem && mem.total_bytes) {
+      // 「剩余」= 主机 MemAvailable（含可回收 cache），不是容器配额剩余额度
+      html += kvWarn('内存', fmtCap(mem.avail_bytes) + ' / ' + fmtCap(mem.total_bytes) +
+        ' (剩余 ' + Math.round(mem.avail_bytes / mem.total_bytes * 100) + '%)', mem.avail_bytes / mem.total_bytes < 0.15);
+    }
+    const cpu = sys.cpu;
+    if (cpu && cpu.cores) {
+      html += kvWarn('CPU', 'load ' + cpu.load1 + ' / ' + cpu.load5 + ' / ' + cpu.load15 +
+        ' · ' + cpu.cores + ' 核' + (cpu.quota_cores ? '（配额 ' + cpu.quota_cores + ' 核）' : ''),
+        cpu.load1 > cpu.cores);
+    }
+    for (const d of (sys.disks || [])) {
+      const pct = d.total_bytes ? Math.round((1 - d.free_bytes / d.total_bytes) * 100) : 0;
+      html += kvWarn('磁盘', fmtCap(d.free_bytes) + ' / ' + fmtCap(d.total_bytes) + ' (已用 ' + pct + '%)', pct >= 90);
+    }
+    return html;
+  }
   function svcCardHtml(st) {
     let html = '<div class="settings-card"><h4>服务状态' +
       (SET.pendingKeys.size ? ' <span class="badge held">待重启生效</span>' : '') + '</h4>';
     html += kvPlain('版本 / Node', st.version + ' / ' + st.node);
     html += kvPlain('已运行', fmtUptime(st.uptime_ms) + '(启动于 ' + new Date(st.started_at).toLocaleString() + ')');
     html += kvPlain('端口', st.port);
-    html += kvPlain('配置文件', st.config_path);
-    html += kvPlain('工作区', st.workspace_root);
-    html += kvPlain('数据目录', st.data_root);
-    html += kvPlain('技能目录', st.skills_root);
+    html += svcLoadHtml(st);
     html += kvPlain('命令执行', st.executor_url ? st.executor_url + '（远端）' : '本地');
     if (SET.pendingKeys.size) html += kvPlain('待生效改动', Array.from(SET.pendingKeys).join(', '));
     html += '<button class="primary-btn" id="restart-btn" style="margin-top:8px" onclick="sUI.restart()">重启服务</button>' +
