@@ -851,8 +851,10 @@ function checkToolArgs(tools, name, raw) {
   }
   const def = (tools || []).find(t => t && t.function && t.function.name === name);
   const required = def && def.function.parameters && def.function.parameters.required;
+  // null/undefined 都算缺；空串放行（如 write_file content:"" 写空文件合法），
+  // 必填串参传空的场景由各工具自己的中文校验兑底（path 空→「路径不能为空」，url 空→「缺少参数 url」…）。
   const missing = required && required.length
-    ? required.filter(k => args[k] === undefined || args[k] === '') : [];
+    ? required.filter(k => args[k] == null) : [];
   if (missing.length) return { args: null, error: 'Error: ToolCall Missing Params: ' + missing.join('、') };
   return { args, error: null };
 }

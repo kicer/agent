@@ -166,18 +166,18 @@
     "type": "function",
     "function": {
       "name": "write_file",
-      "description": "Creates a new file or overwrites an existing file with the given content.\n\nUse `edit_file` for targeted changes to existing files. Parent directories are created automatically as needed.",
+      "description": "Creates a new file or overwrites an existing file with the given content.\n\nParent directories are created automatically, so the path does not need to exist beforehand.\n\nOverwriting replaces the file's entire content irreversibly. If the file already exists, read it first, or use `edit_file` for targeted changes instead.\n\nText is written as UTF-8. To produce binary files, use `terminal` instead.",
       "parameters": {
         "type": "object",
         "required": ["path", "content"],
         "properties": {
           "path": {
             "type": "string",
-            "description": "Path of the file to create or overwrite, relative to the session working directory. Absolute paths are also accepted."
+            "description": "Path of the file to create or overwrite, relative to the session working directory. Absolute paths inside the working directory are also accepted."
           },
           "content": {
             "type": "string",
-            "description": "The entire content to write to the file."
+            "description": "The entire content to write. Required — pass an empty string to create an empty file; omitting it is an error."
           }
         }
       }

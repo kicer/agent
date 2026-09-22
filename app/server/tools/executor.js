@@ -197,10 +197,21 @@ async function toolReadFile(ctx, args) {
 
 async function toolWriteFile(ctx, args) {
   const abs = resolveInTask(ctx.taskDir, args.path);
+  // 纵深防御：引擎 checkToolArgs 已把 null 判缺，但直调 executor（测试等）不经过它；
+  // 旧版 `?? ''` 会把 null 洗成空串静默清空已有文件，这里显式拒绝。
+  if (args.content == null) throw new Error('write_file 缺少参数 content（写空文件请显式传空字符串 ""）');
+  let st = null;
+  try { st = await fsp.stat(abs); } catch (_) {}
+  if (st && st.isDirectory()) throw new Error('无法写入：路径是目录 ' + args.path);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
-  await fsp.writeFile(abs, args.content ?? '', 'utf8');
+  await fsp.writeFile(abs, String(args.content), 'utf8');
   recordFile(ctx, abs);
-  return '已成功写入文件 ' + relOf(ctx.taskDir, abs) + '（' + Buffer.byteLength(args.content || '') + ' 字节）';
+  const nbytes = Buffer.byteLength(String(args.content), 'utf8');
+  const rel = relOf(ctx.taskDir, abs);
+  // 区分新建/覆盖：「原 M 字节」是给模型的止损信号（盲覆盖大文件时能立刻察觉）。
+  return st
+    ? '已覆盖文件 ' + rel + '（' + nbytes + ' 字节，原 ' + st.size + ' 字节）'
+    : '已创建文件 ' + rel + '（' + nbytes + ' 字节）';
 }
 
 // ---------- edit_file 匹配（对齐 Zed edit_session/streaming_fuzzy_matcher 的终止态语义） ----------
