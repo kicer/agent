@@ -198,12 +198,19 @@ const COST_REP = 1, COST_INS = 3, COST_DEL = 10, FUZZY_THRESHOLD = 0.8;
 const FUZZY_DP_CELL_LIMIT = 8_000_000; // 超大文件跳过 DP，退回逐行 trim 扫描
 
 // normalized Levenshtein 相似度（1 - lev/max_len），先做长度粗筛。
+// DP 工作集复用模块级 buffer：lineSimilarity 无递归/无重入（单线程下安全），
+// 避免 fuzzyLocate m×n 内层每格新建两个 typed array（触顶时是千万次临时分配）。
+let simPrev = null, simCurr = null;
 function lineSimilarity(a, b) {
   if (a === b) return 1;
   const la = a.length, lb = b.length, max = Math.max(la, lb);
   if (max === 0) return 1;
   if (1 - Math.abs(la - lb) / max < FUZZY_THRESHOLD) return 0;
-  let prev = new Int32Array(lb + 1), curr = new Int32Array(lb + 1);
+  if (!simPrev || simPrev.length < lb + 1) {
+    simPrev = new Int32Array(lb + 1);
+    simCurr = new Int32Array(lb + 1);
+  }
+  let prev = simPrev, curr = simCurr; // 下面的交换只换局部引用，不动模块级变量
   for (let j = 0; j <= lb; j++) prev[j] = j;
   for (let i = 1; i <= la; i++) {
     curr[0] = i;
@@ -332,7 +339,13 @@ function applyEdit(text, edit, i) {
     // 尾换行摘除：匹配区间后紧跟 \n（或 CRLF 的 \r\n）时吃掉 new_text 的一个尾换行。
     const after = text.charAt(idx + pat.length);
     const afterCRLF = after === '\r' && text.charAt(idx + pat.length + 1) === '\n';
-    if ((after === '\n' || afterCRLF) && repl.endsWith('\n')) repl = repl.slice(0, -1);
+    if (afterCRLF) {
+      // 尾随 \r\n 要整对切；只切 \n 会在拼接处留下孤立的 \r
+      if (repl.endsWith('\r\n')) repl = repl.slice(0, -2);
+      else if (repl.endsWith('\n')) repl = repl.slice(0, -1);
+    } else if (after === '\n' && repl.endsWith('\n')) {
+      repl = repl.slice(0, -1);
+    }
     // CRLF 文件：新内容里的行尾统一成 \r\n。
     if (text.includes('\r\n')) repl = repl.replace(/\r?\n/g, '\r\n');
     return text.slice(0, idx) + repl + text.slice(idx + pat.length);
@@ -342,9 +355,11 @@ function applyEdit(text, edit, i) {
   const oldLines = pat.split('\n');
   const oldTrim = oldLines.map(l => l.trim());
   let loc = null;
+  let usedFallback = false;
   if (oldLines.length * curLines.length <= FUZZY_DP_CELL_LIMIT) {
     loc = fuzzyLocate(curLines, oldTrim);
   } else {
+    usedFallback = true;
     // 超大文件降级：逐行 trim 首次命中（旧行为）。
     for (let s = 0; s + oldLines.length <= curLines.length; s++) {
       let ok2 = true;
@@ -355,7 +370,9 @@ function applyEdit(text, edit, i) {
     }
   }
   if (!loc) {
-    throw new Error(tag + ': 在文件中找不到 old_text（可能已被之前的 edit 修改）。请重新 read_file 获取最新内容后再试。');
+    throw new Error(tag + ': 在文件中找不到 old_text（可能已被之前的 edit 修改）。' + (usedFallback
+      ? '文件过大，本次仅走了降级匹配（逐行 trim 精确相等、无相似度容忍）：请核对 old_text 与原文是否逐字一致，或改用 read_file 按行号定位后用 terminal 的 sed 编辑，不要以同一文本反复重试。'
+      : '请重新 read_file 获取最新内容后再试。'));
   }
   if (loc.ambiguous) {
     throw new Error(tag + ': old_text 模糊匹配到多处（第 ' + loc.ambiguous.join(', ') +

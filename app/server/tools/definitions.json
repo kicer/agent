@@ -3,7 +3,7 @@
     "type": "function",
     "function": {
       "name": "edit_file",
-      "description": "This is a tool for applying edits to an existing file.\n\nBefore using this tool, use the `read_file` tool to understand the file's contents and context.\nTo create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.\n\n`read_file` prefixes each line of its output with a line number right-aligned in a\n6-character field followed by a single tab, then the line's actual content. When you\nderive `old_text` or `new_text` from that output, strip this prefix and keep only what\ncomes after the tab, preserving the original indentation (tabs and spaces) exactly.\nNever include any part of the line number prefix in `old_text` or `new_text`.",
+      "description": "This is a tool for applying edits to an existing file.\n\nBefore using this tool, use the `read_file` tool to understand the file's contents and context.\nTo create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.\n\nWhen copying text from `read_file` output into `old_text` or `new_text`, strip the line-number prefix and the tab after it, and keep the original indentation exactly.\n\nMatching rules:\n- `old_text` is first matched exactly. If there is no exact match, a fuzzy match tolerating minor whitespace and formatting differences is attempted.\n- If `old_text` matches more than one location (overlapping matches count as separate locations), the edit fails. Include enough surrounding context to make it unique; avoid very short or repetitive `old_text`.\n- If no match is found at all, the edit fails. For very large files the fuzzy stage degrades to per-line whitespace-insensitive exact matching; the error message says so — do not retry the same text, locate with `read_file` by line numbers or use `terminal` with sed.\n\nTo delete a whole line, set `old_text` to that line WITHOUT its trailing newline and `new_text` to an empty string. Otherwise a blank line will be left behind.\n\nEdits are applied in order. If one edit fails, the edits before it are already written to disk and the file has changed: the error message tells you how many were applied. You must call `read_file` again before retrying; do not reuse the previous `old_text` values.",
       "parameters": {
         "type": "object",
         "required": ["path", "edits"],
@@ -14,18 +14,18 @@
           },
           "edits": {
             "type": "array",
-            "description": "List of edit operations to apply sequentially.",
+            "description": "List of edit operations to apply sequentially. Each edit finds `old_text` in the file and replaces it with `new_text`. If any edit fails, the edits before it remain applied.",
             "items": {
               "type": "object",
               "required": ["old_text", "new_text"],
               "properties": {
                 "old_text": {
                   "type": "string",
-                  "description": "The exact text to find in the file. Use enough context to make it unique."
+                  "description": "The text to find in the file. Matched exactly first, then fuzzily (whitespace / minor formatting differences tolerated). Provide enough context to make the match unique; short or repeated snippets are reported as ambiguous. A trailing newline, if present, is stripped before matching; for whole-line deletion omit it."
                 },
                 "new_text": {
                   "type": "string",
-                  "description": "The replacement text."
+                  "description": "The replacement text. Use an empty string together with a trailing-newline-free `old_text` to delete a whole line."
                 }
               }
             }
