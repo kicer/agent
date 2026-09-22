@@ -21,8 +21,12 @@ services:
       # 调用鉴权 token：两侧同一值。从 .env 读取（已 gitignore），不再硬编码进仓库；
       # 未设置则 compose 直接报错，避免静默无鉴权。生成：openssl rand -hex 32
       - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - see .env.example}
+      - VIRTUAL_HOST=agent.ai.foresh.com
+      - VIRTUAL_PORT=8090
+      - CERT_NAME=default
     networks:
       - agent-mcp-net
+      - my-app-network
 
   # 技能准备（一次性，跑完退出）：把各技能的“运行期可变”依赖落到宿主 ./skills——
   # requirements.txt → 先离线探测，只把镜像缺的包装进共享 deps 目录（镜像已带的不重复装）；
@@ -132,3 +136,5 @@ networks:
   agent-mcp-net:
     name: agent-mcp-net
     driver: bridge
+  my-app-network:
+    external: true

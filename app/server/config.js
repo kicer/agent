@@ -58,55 +58,45 @@ function normalizeModelProfiles(rawProfiles) {
   return out;
 }
 
+// 默认配置：与 app/config.example.yml 一一对应（改这里同时改示例，保持同步）。
 const DEFAULTS = {
   port: 8090,
-  // 数据根目录：db、prompt dump 等运行时产物默认放这里（容器内挂 ./data → /workspace/data）。
-  data_root: './data',
-  workspace_root: './data/tasks',
-  db_path: '', // 默认为 data_root/.agent.db
-  // agent-executor（独立命令执行容器）：url 非空时 terminal 工具与技能命令全部改走远端执行
-  // （core 镜像不再携带 python/libreoffice 等重工具链）；留空则本地 spawn（裸机开发兼容）。
-  // 配置留空时退到环境变量 EXECUTOR_URL / EXECUTOR_TOKEN（compose 注入）。
+  // 任务工作区根目录：AI 的文件操作限制在此（容器内挂 ./tasks → /workspace/tasks）。
+  workspace_root: '/workspace/tasks',
+  // 数据根目录：SQLite（.agent.db）与启动 prompt dump 放这里（容器内挂 ./data → /workspace/data）。
+  data_root: '/workspace/data',
+  // 缺省 data_root/.agent.db。
+  db_path: '',
+  // 命令执行服务：url 非空走远端 executor，留空本地 spawn；留空时回退 env EXECUTOR_URL / EXECUTOR_TOKEN。
   executor: { url: '', token: '' },
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
-  // auto_compress_tokens: 每轮回合完全结束后,若本轮 In token（各模型轮 prompt_tokens 峰值）≥ 此阈值,
-  // 向前端推送一次「自动压缩」确认弹窗（同手动点压缩-摘要），用户手动确认后才开始压缩；0=永不提议。
-  // 每会话至多弹一次（取消/忽略后不再打扰，删会话/清空历史/重启后重置）。
-  // 只在回合循环结束、finalize 之后检查，AI↔工具交互过程中绝不触发；压缩回合自身不再复查（防递归）。
-  // 满足条件后延迟 1.5s 再推送（避开超长回合刚结束时前端收尾渲染的高峰；期间会话有变动则撤回提议）。
-  // 改后重启生效。
+  // auto_compress_tokens：本轮 In token 峰值 ≥ 此值时推送「自动压缩」提议（0=关）。
   agent: { temperature: 1.0, max_tool_iterations: 50, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000 },
-  // 大图上传预处理：图片文件超过 threshold_kb 时，浏览器端询问用户后用 canvas 压缩
-  // （长边 ≤ max_dim，JPEG quality）再上传，减轻服务器带宽与存储压力。
-  // confirm_size_mb：任意文件最终体积超过该值（默认 10M）时再弹一次「继续上传」确认。
-  // 参数经 /api/system/status 下发给前端。
+  // 大图上传预处理（浏览器端 canvas 压缩，参数经 /api/system/status 下发前端）。
   upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10 },
-  // 技能（Skill Manager）：skills_root 为技能根目录，所有任务/会话共享（容器内挂我 ./skills → /workspace/skills）；
-  // 缺省取 workspace_root 的同级目录 skills（如 /workspace/tasks → /workspace/skills）。timeout_ms 为单个技能执行超时，默认 120000。
+  // 技能根目录：留空取 workspace_root 同级 skills（/workspace/tasks → /workspace/skills）。
   skills: { skills_root: '', timeout_ms: 120000 },
-  // 回合结束后模型保持占用（held）的租约：页内无人观看超过 idle_release_ms 则释放；
-    // 即便一直有人观看，最长也只保持 active_max_ms；sweep_ms 为巡检间隔。
-    // 「绑定模型但闲置」的会话（从未发言、无未回应消息）同样按此租约释放，防建而不用霸占模型。
-    model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },
-    // 日志等级:debug < info < warn < error < none,只输出 >= 阈值等级的日志;none=全部静默。
-    log_level: 'info',
-    // 上下文压缩提示词不再走配置：压缩回合沿用默认 system prompt + 正常历史，
-    // 末尾追加一条 user（提示词原文），不传 tools；模板在 server/templates/compress-prompt.txt。
+  // 回合结束后模型保持占用（held）租约：无人观看 idle_release_ms 释放，有人观看最长 active_max_ms，sweep_ms 巡检。
+  model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },
+  // 日志等级：debug < info < warn < error < none（none=全部静默）。
+  log_level: 'info',
+  // 模型平台池（无默认值，结构见 config.example.yml）。
   platforms: [],
-  // 模型 profile（prompt+tools 组合）：顶层定义、platforms 里的模型用 profile: 名称引用（可复用）。
-  // 每项 {tools_allow?, system_prompt_file?}，详见 normalizeModelProfiles；改配置需重启生效。
-  // 运行期前端可在已定义的 profile 间手动切换（纯内存选择），不碰本配置。
-  model_profiles: {},
-  // 登录认证：{ users: [{user, password}], secret?, ttl_ms? }，密码明文存配置（自用场景）。
-  // users 为空则不启用认证（可交给前置 nginx-proxy，但手机浏览器原生下载不带 Basic 头，不推荐）。
+  // 模型 profile（prompt + tools 白名单组合）：platforms 里的模型用 profile: <名> 引用。
+  model_profiles: {
+    // 小模型：只留文件/终端/网页等核心工具，省上下文。
+    mini: {
+      tools_allow: ['read_file', 'write_file', 'edit_file', 'list_directory', 'terminal', 'fetch', 'web_search', 'get_skill_info', 'run_skill'],
+      system_prompt_file: 'mini-system.txt',
+    },
+    // 纯文本对话：一个工具都不发。
+    zero: { tools_allow: [], system_prompt_file: 'zero-system.txt' },
+  },
+  // 登录认证：{users:[{user,password}], secret?, ttl_ms?}；null / users 空 = 不启用。
   auth: null,
-  // MCP 服务列表：每项 {name?, url, headers?, enable?（默认 true，false 时启动不加载）,
-  // timeout_ms?（单次工具调用最大等待，默认 60s）}；启动时发现其工具并追加到内置工具之后。
-  // 注意与内置工具（definitions.json）严格分离：这里只配外部 MCP 服务。
+  // 外部 MCP 服务列表（无默认值）：{name?, url, headers?, enable?(默认 true), timeout_ms?(默认 60s)}。
   mcp_servers: [],
-  // 公网临时链接：内置工具 mint_public_link 的唯一开关。base_url 非空时，工具会把会话目录里的
-  // 文件签成一条短命的公网下载链接（给智谱那类"自己来拉文件"的外部服务用）；留空则工具报错。
-  // base_url = 本服务的对外地址（如 http://1.2.3.4:8090），只用于拼绝对地址；不监听任何额外端口。
+  // 公网临时链接：base_url 非空才启用 mint_public_link；容器配 VIRTUAL_HOST 时以它为准。
   public_link: { base_url: '', ttl_ms: 1800000 },
 };
 
@@ -229,7 +219,8 @@ function parseAndValidate(rawText, configPath) {
   if (!Array.isArray(raw.platforms) || !raw.platforms.length) {
     throw new Error('配置缺少 platforms：至少需要一个平台 {name, url, keys:[{api_key}], models:[{id}]}')
   }
-  cfg.model_profiles = normalizeModelProfiles(raw.model_profiles);
+  // 用 deepMerge 后的 cfg.model_profiles（含内置 mini/zero），故 config.yml 不配也有默认组合。
+  cfg.model_profiles = normalizeModelProfiles(cfg.model_profiles);
   cfg.platforms = normalizePlatforms(raw.platforms, new Set(Object.keys(cfg.model_profiles)));
   cfg.models = [];
   cfg.platforms.forEach((p, pi) => p.keys.forEach((k, ki) => p.models.forEach((m, mi) => {

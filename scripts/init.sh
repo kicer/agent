@@ -4,16 +4,18 @@
 # 只读环境变量，不依赖任何外部文件；**全部可选**，什么都不给也能直接跑。
 #
 # 用法：
-#   ./scripts/init.sh                                     # 全用默认值（无模型、admin/admin、自动探测公网 IP）
-#   BIGMODEL_KEY=xxx PUBLIC_IP=1.2.3.4 ./scripts/init.sh  # 给几个变量就行
+#   ./scripts/init.sh                                     # 全用默认值（无模型、admin/admin）
+#   BIGMODEL_KEY=xxx AUTH_USER=me ./scripts/init.sh       # 给几个变量就行
 #
 # 输入（都可选）：
 #   BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY  模型平台 key，填几个启用几个（0~3 个）
-#   ZHIPU_KEY                               image-gen / video-gen 的智谱 key（空 = 这两个服务 enable: false）
+#   ZHIPU_KEY                               image_gen / video_gen 的智谱 key（空 = 这两个服务 enable: false）
 #   AUTH_USER / AUTH_PASSWORD               登录账号（默认 admin / admin，请自行改掉）
-#   PUBLIC_IP / AGENT_PORT                  对外地址与端口（PUBLIC_IP 空则尝试自动探测）
-#   LOG_LEVEL                               日志级别（调试 debug；日常用 info）
+#   PUBLIC_IP / AGENT_PORT                  对外地址与端口，写进 public_link.base_url（PUBLIC_IP 空则尝试自动探测）
 #   AUTH_SECRET / EXECUTOR_TOKEN            一般不用给：不给就自动生成并复用（见下）
+#
+# config.yml 只写 deploy 相关的段：platforms / auth / mcp_servers / public_link；
+# 其余配置项一律走 server/config.js 的 DEFAULTS（完整清单见 app/config.example.yml）。
 #
 # ⚠️ config.yml 是本脚本的生成物，不要手改（每次生成前会把旧的备份为 config.yml.bak.<时间戳>）。
 set -euo pipefail
@@ -35,16 +37,12 @@ AUTH_USER="${AUTH_USER:-admin}"
 AUTH_PASSWORD="${AUTH_PASSWORD:-admin}"
 PUBLIC_IP="${PUBLIC_IP:-}"
 AGENT_PORT="${AGENT_PORT:-8090}"
-LOG_LEVEL="${LOG_LEVEL:-info}"
 EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-}"
 AUTH_SECRET="${AUTH_SECRET:-}"
-# 只用于日志里显示"配置从哪来"，不影响行为
-CONFIG_SOURCE="${CONF:-环境变量}"
 
 log()  { echo -e "\n\033[1;32m===== $* =====\033[0m"; }
 info() { echo -e "\033[1;36m[INFO]\033[0m $*"; }
 warn() { echo -e "\n\033[1;33m[WARN]\033[0m $*"; }
-err()  { echo -e "\033[1;31m[ERROR]\033[0m $*"; }
 
 gen_hex() {  # $1 = 字节数（默认 32）
     local n="${1:-32}"
@@ -93,7 +91,7 @@ if [ -z "$PUBLIC_IP" ]; then
 fi
 
 # ============================================================
-# 2. 生成 config.yml
+# 2. 生成 config.yml（只写 platforms / auth / mcp_servers / public_link）
 # ============================================================
 log "生成 $CONFIG_YML"
 
@@ -111,7 +109,6 @@ emit_platform() {
     url: https://open.bigmodel.cn/api/paas/v4
     keys:
       - api_key: "$2"
-        concurrency: 1
     models:
       - id: glm-5.3-flash
         vision: true
@@ -125,7 +122,6 @@ EOF
     url: https://api.deepseek.com
     keys:
       - api_key: "$2"
-        concurrency: 1
     models:
       - id: deepseek-flash
         vision: true
@@ -139,7 +135,6 @@ EOF
     url: https://dashscope.aliyuncs.com/compatible-mode/v1
     keys:
       - api_key: "$2"
-        concurrency: 1
     models:
       - id: qwen3.8-flash
         vision: true
@@ -157,13 +152,13 @@ if [ -n "$QWEN_KEY" ];     then enabled_plats+=("qwen"); fi
 
 {
     echo "# 本文件由 scripts/init.sh 生成，请勿手改！"
-    echo "# 改配置请带环境变量重新运行该脚本（本文件会重新生成，旧的留 .bak）。"
+    echo "# 只含 deploy 相关段（platforms / auth / mcp_servers / public_link），其余走 server/config.js 默认值。"
     echo "# 生成时间: $(date '+%Y-%m-%d %H:%M:%S')"
     echo "# 已启用平台: ${enabled_plats[*]:-（无）}"
     echo
 
     if [ "${#enabled_plats[@]}" -eq 0 ]; then
-        echo "platforms: []    # 没有配置任何平台 key（BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY）"
+        echo "platforms: []    # 没有配置平台 key（BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY）"
     else
         echo "platforms:"
         if [ -n "$BIGMODEL_KEY" ]; then emit_platform bigmodel "$BIGMODEL_KEY"; fi
@@ -173,67 +168,48 @@ if [ -n "$QWEN_KEY" ];     then enabled_plats+=("qwen"); fi
     echo
 
     cat <<EOF
-workspace_root: /workspace/tasks
-data_root: /workspace/data
-
-skills:
-  skills_root: /workspace/skills
-
-# 给外部服务（如智谱）现签公网临时链接用；base_url 就是本服务的对外地址
-public_link:
-  base_url: "${PUBLIC_IP:+http://$PUBLIC_IP:$AGENT_PORT}"
-  ttl_ms: 1800000
-
-log_level: $LOG_LEVEL
-
 auth:
   secret: "$AUTH_SECRET"
   users:
     - user: $AUTH_USER
       password: "$AUTH_PASSWORD"
+
+mcp_servers:
+  - name: web_search
+    url: "http://mcp_web_search:3000/"
 EOF
 
     if [ -n "$ZHIPU_KEY" ]; then
         cat <<EOF
-
-mcp_servers:
-  - name: web-search
-    url: "http://mcp_web_search:3000/"
-  - name: image-gen
+  - name: image_gen
     url: "http://mcp_image_gen:3000/mcp"
-    enable: true
     headers:
       Authorization: "Bearer $ZHIPU_KEY"
-  - name: video-gen
+  - name: video_gen
     url: "http://mcp_video_gen:3000/mcp"
-    enable: true
     headers:
       Authorization: "Bearer $ZHIPU_KEY"
 EOF
     else
         cat <<'EOF'
-
-# 没有配置 ZHIPU_KEY：image-gen / video-gen 先注册但 enable: false（工具不加载）。
-# 带上 ZHIPU_KEY 重新运行本脚本即启用。
-mcp_servers:
-  - name: web-search
-    url: "http://mcp_web_search:3000/"
-  - name: image-gen
+  - name: image_gen
     url: "http://mcp_image_gen:3000/mcp"
-    enable: false
-    headers:
-      Authorization: ""
-  - name: video-gen
+    enable: false          # 未配 ZHIPU_KEY：只注册不加载，工具不发给模型
+  - name: video_gen
     url: "http://mcp_video_gen:3000/mcp"
-    enable: false
-    headers:
-      Authorization: ""
+    enable: false          # 未配 ZHIPU_KEY：只注册不加载，工具不发给模型
 EOF
     fi
+
+    echo
+    cat <<EOF
+# 给外部服务（如智谱）现签公网临时链接用；改地址后重跑本脚本
+public_link:
+  base_url: "${PUBLIC_IP:+http://$PUBLIC_IP:$AGENT_PORT}"
+EOF
 } > "$CONFIG_YML"
 
-info "配置来源: $CONFIG_SOURCE"
-info "平台: ${enabled_plats[*]:-无}；智谱 MCP: $([ -n "$ZHIPU_KEY" ] && echo 启用 || echo 未配置)"
+info "平台: ${enabled_plats[*]:-无}；智谱 MCP: $([ -n "$ZHIPU_KEY" ] && echo 启用 || echo 未配置（enable: false）)"
 
 # ============================================================
 # 3. 汇总
@@ -244,7 +220,6 @@ echo " 访问地址 : http://${PUBLIC_IP:-<公网IP>}:${AGENT_PORT}"
 echo " 账号     : $AUTH_USER"
 echo " 密码     : $AUTH_PASSWORD"
 echo " 平台     : ${enabled_plats[*]:-（无）}"
-echo " 智谱 MCP : $([ -n "$ZHIPU_KEY" ] && echo "image-gen / video-gen 已启用" || echo "未配置（enable: false）")"
-echo " 日志级别 : $LOG_LEVEL"
+echo " 智谱 MCP : $([ -n "$ZHIPU_KEY" ] && echo "image_gen / video_gen 已启用" || echo "未配置（enable: false）")"
 echo "---------------------------------------------"
 log "完成 ✅"

@@ -811,38 +811,30 @@ HTTP 直连时浏览器不认为这是“安全上下文”：PWA/Service Worker
 
 ## 十四、配置文件示例
 
+完整字段与默认值见 `app/config.example.yml`（与 `server/config.js` 的 `DEFAULTS` 一一对应）；
+部署时由 `scripts/init.sh` 生成的顶层 `config.yml` 只覆盖 `platforms` / `auth` / `mcp_servers`。
+
 ```yaml
-# 模型池:平台(platforms) → Key → 模型 三层。url/type 配在平台,api_key/concurrency 配在 Key,
-# 模型只声明 {id, display_name, vision}。加载时打平成全局模型列表。
+# 模型池:平台(platforms) → models（平台层,多 key 共用）+ keys(api_key/concurrency)。
+# url/type 配在平台层;模型只声明 {id, display_name, profile, vision}。加载时打平成全局模型列表。
 platforms:
   - name: proxy-a
     url: "https://proxy-a.example.com/v1"
-    type: openai                    # openai/deepseek/custom,决定余额查询适配器(预留)
+    type: openai                    # 选填,缺省取 name;决定余额查询适配器
+    models:
+      - id: ds1
+        display_name: "AMD DeepSeek 1"   # 选填,缺省同 id
+        profile: mini                    # 选填,引用顶层 model_profiles 的 prompt+tools 组合
     keys:
       - api_key: "sk-..."
-        concurrency: 1              # 该 Key 并发会话数,默认 1(当前仅记录,未参与调度)
-        models:
-          - id: ds1
-            display_name: "AMD DeepSeek 1"
-            # vision: true          # 选填,默认 false
-  - name: proxy-c
-    url: "https://proxy-c.example.com/v1"
-    type: custom
-    keys:
-      - api_key: "sk-..."
-        models:
-          - id: ds3
-            display_name: "AMD DeepSeek 3"
-            # profile: mini       # 选填,引用顶层 model_profiles 的 prompt+tools 组合(小模型省上下文用)
+        concurrency: 1              # 该 Key 并发会话数,默认 1
 
-# 模型 profile(可选):预定义多套「system prompt 文件 + tools 白名单」组合,模型用 profile: <名>
-# 引用(同 id 模型跳平台复用时免重复配置)。不配 profile 的模型照旧全量。动机:默认发给模型的
-# 内置工具 schema + system prompt 约 6K token,特别小的模型会被撑爆上下文。
-# 改后重启生效;运行期前端可在已定义组合间手动切换(发消息带 profile 参数,纯内存选择、不碰配置)。
-# model_profiles:
-#   mini:
-#     tools_allow: [read_file, write_file, edit_file, list_directory, find_path, grep, terminal]  # 白名单（内置名 + MCP 最终名）
-#     system_prompt_file: mini-system.txt   # 相对 server/templates/ 的自定义 prompt
+# 模型 profile:预定义「system prompt 文件 + tools 白名单」组合,模型用 profile: <名> 引用。
+# 内置 mini/zero 两套默认组合,可用同名覆盖或新增;详见 §5.8。
+model_profiles:
+  mini:
+    tools_allow: [read_file, write_file, edit_file, list_directory, terminal]
+    system_prompt_file: mini-system.txt   # 相对 server/templates/
 
 workspace_root: "/workspace/tasks"
 

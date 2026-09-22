@@ -1,197 +1,64 @@
-# 自用通用 Agent 系统配置示例
-# 复制为 config.yml 后按需修改；容器内通过 AGENT_CONFIG 指定路径。
+# config.example.yml — 配置模板：与 server/config.js 的 DEFAULTS 一一对应。
+# 复制为 config.yml 后补齐 platforms（至少一个平台，否则启动报错），其余可按需覆盖。
 
-# 模型池：平台(platforms) → models + keys 两层结构。url/type/models 配在平台层（同一份 models
-# 被该平台下所有 key 共用），api_key/concurrency 配在 keys 里（每个 key 独立账号/额度）。
-# 加载时自动打平：每个 key 复制一份该平台下所有 models，生成全局 cfg.models 列表。
-# 暂按每 key 1 会话调度（同平台模型共享该批 key，平台 key 全满则其下模型均不可选）；concurrency 已解析入库，后续再接调度。
-platforms:
-  - name: proxy-a                        # 平台名；留空取 url 主机名首段。注意：它是模型唯一键的一部分，改名等于重建其下所有模型（历史会话回绑失效、用量统计分家）
-    url: "https://proxy-a.example.com/v1" # OpenAI 兼容 /v1 地址，该平台下所有模型共用
-    type: openai                          # 选填，缺省取 name；余额查询按 type 找适配器（已接 deepseek/bigmodel），未命中返回「暂未接入」
-    models:                               # 该平台下所有模型（与 url/type 同级）；多 key 共用
-      - id: ds1                           # 上游模型名；只需同平台内唯一（不同平台可同名），内部唯一键 = 平台名/模型id，历史会话按它绑定，页面不可改
-        display_name: "AMD DeepSeek 1"    # 显示名，缺省同 id
-        # profile: mini                  # 选填：引用顶层 model_profiles 的 prompt+tools 组合（小模型省上下文），见下方示例；不配 = 默认全量
-        # vision: true                   # 选填，默认 false；支持时 read_file 读图会压缩回传（长边≤2000px JPEG），会话上下文会告知 AI
-        # enable: false                  # 选填，默认 true；禁用后不进模型池，不参与分配/绑定（重启生效）
-        # extra_params:                  # 选填：每次发往上游都会合并进 body 顶层的对象；同 key 覆盖默认（model/messages/stream/temperature/tools）
-        #   top_p: 0.9
-        #   response_format: { type: "json_object" }
-        # thinking_params:               # 选填：仅「深度思考」开启时合并进 body（优先级高于 extra_params）
-        #   thinking: { type: "enabled", budget_tokens: 4096 }
-      - id: ds2
-        display_name: "AMD DeepSeek 2"
-      - id: ds3
-        # display_name 缺省 = id
-    keys:
-      - api_key: "sk-..."                 # 各 Key 独立（同平台不同账号/额度），留空则不带鉴权头
-        concurrency: 1                    # 该 Key 并发会话数，默认 1（当前仅记录，未参与调度）
-      - api_key: "sk-..."                 # 同平台的第二个 Key，自动可用上面所有 models
-  - name: proxy-c
-    url: "https://proxy-c.example.com/v1"
-    # type 缺省取 name（=proxy-c），未命中适配器时余额查询会返回「暂未接入」
-    models:
-      - id: ds4
-        display_name: "No Auth Model"
-    keys:
-      - api_key: ""
-  - name: bigmodel                       # 智谱 bigmodel：起名 bigmodel 可省略 type，自动命中 bigmodel 适配器
-    url: "https://open.bigmodel.cn/api/paas/v4"
-    models:
-      - id: glm-4.6
-    keys:
-      - api_key: "your-key"
+# 模型平台池：每平台 {name, url, type?, models:[{id, ...}], keys:[{api_key, concurrency?}]}。
+platforms: []
 
-# 模型 profile（可选）：预定义多套「prompt + tools 白名单」组合，platforms 里的模型用
-# profile: <名字> 引用，同 id 模型跨平台复用时免重复配置。动机：默认发给模型的
-# 内置工具 schema + system prompt 合计 ~20KB 字符（约 6K token），对特别小的模型会撑爆上下文。
-# - tools_allow：白名单（字符串数组），只保留名单内的工具发给模型；内置名 + MCP 最终名
-#   （含冲突时加的 服务名__ 前缀，与 data/prompt.txt dump 一致可对）。不配 = 全量发；
-#   空数组 [] = 一个都不发（纯文本模式，给弱到不会调工具的小模型；与 MCP 的 tools_allow
-#   「空名单视作未配」约定有意不同）。只影响模型「看得到什么」：名单外但真实存在的工具若被调用，
-#   后端照常执行，不拦不误杀。
-# - system_prompt_file：自定义 system prompt 文件，相对 server/templates/（也接受绝对路径），
-#   配置加载时一次性读入常驻内存；设了即完全接管模板正文（末尾语言指令仍自动拼）。
-#   想要技能清单在模板里放 {APP_SKILLS} 占位符（拼装时就地替换为已装技能列表；不放 = 没有技能段），
-#   默认模板同机制。文件缺失/为空直接校验报错。两者至少配一个；引用不存在的 profile 名同样直接报错。
-# 改本段需重启；运行期前端可在已定义的 profile 间手动切换（发消息带 profile 参数，
-# 纯内存选择、下一请求即生效，不碰配置文件）；列表随 /api/system/status 的 model_profiles 下发。
-# model_profiles:
-#   mini:                                   # 2B 级小模型：只留文件读写 + 终端
-#     tools_allow: [read_file, write_file, edit_file, list_directory, find_path, grep, terminal]
-#     system_prompt_file: mini-system.txt   # 配套的精简提示词（别留着默认模板里「用 XX 工具…」的段落）
-#   web-only:                               # 只配白名单也行，prompt 沿用默认模板
-#     tools_allow: [read_file, grep, fetch, web-search__search]
+# 模型 profile：prompt + tools 白名单组合，模型用 profile: <名> 引用（不配 = 全量）。
+model_profiles:
+  mini:                                            # 小模型：只留核心工具，省上下文
+    tools_allow: [read_file, write_file, edit_file, list_directory, terminal, fetch, web_search, get_skill_info, run_skill]
+    system_prompt_file: mini-system.txt            # 相对 server/templates/（也接受绝对路径）
+  zero:                                            # 纯文本对话：一个工具都不发
+    tools_allow: []
+    system_prompt_file: zero-system.txt
 
-workspace_root: "./data/tasks"
-# 数据根目录：db（默认 .agent.db）与启动 prompt dump（prompt.txt）放这里；相对路径按启动目录展开。
-# 容器部署建议指到挂载卷内（如 /workspace/data），否则重建容器会丢数据。
-data_root: "./data"
-# db_path: "/workspace/data/.agent.db"   # 显式配置优先；缺省为 data_root/.agent.db
+port: 8090                                         # 服务监听端口
+workspace_root: "/workspace/tasks"                 # 任务工作区根目录，AI 文件操作限制在此
+data_root: "/workspace/data"                       # 数据根目录：SQLite 与 prompt dump
+db_path: ""                                        # 留空取 data_root/.agent.db
+log_level: "info"                                  # debug < info < warn < error < none
 
-# agent-executor（独立命令执行容器，见根目录 executor/）：url 非空时 terminal 工具与技能命令
-# 都发到该服务执行（SSE 实时回传），core 镜像不再携带 python 等重工具链；
-# 留空则本地 spawn（裸机开发）。两侧需同路径挂载 ./tasks、./skills；
-# compose 已用环境变量 EXECUTOR_URL/EXECUTOR_TOKEN 注入，通常无需在这里配。
-# executor:
-#   url: "http://agent-executor:9000"
-#   token: "change-me"   # 选填；executor 侧配同值才校验
-
-# 公网临时链接（给"自己来拉文件"的外部服务用：例如智谱视频生成前要下载参考图）。
-# 机制：沙箱里的 AI 调内置工具 mint_public_link（传文件名），core 在进程内直接签出一条
-# 短命的公网下载链接（不可猜 / 会过期 / 绑会话 / 重启即全部失效），外部服务再匿名 GET /p/<id> 取文件。
-# 全程不监听额外端口、不搬字节（文件始终在任务目录里）。
-# base_url 填本服务的对外地址（就是浏览器访问的 http://<服务器IP>:<AGENT_PORT>），只用于拼绝对地址；
-# 留空 = 该功能整体关闭（mint_public_link 会直接报错，对应 MCP 服务里需要公网 URL 的那部分就用不了）。
-# 容器 env 里配了 VIRTUAL_HOST（nginx-proxy 域名 + HTTPS 那套）时，本项会被它盖住：链接前缀直接用
-# https://<第一个域名>，不需要改这里（也避开了“重跑 init 脚本又把它写回 ip:port”的麻烦）。
-public_link:
-  base_url: ""            # 例："http://1.2.3.4:8090"
-  ttl_ms: 1800000         # 选填：链接有效期，默认 30 分钟（代码里夹在 1 分钟 ~ 24 小时）
-
-# 日志等级（改后重启生效）：debug < info < warn < error < none，只输出 ≥ 该等级的日志；none=全部静默。
-# info（默认）=关键动作概述；debug 另加用户/AI 消息全文、工具调用参数/结果等排查细节。
-log_level: info
+executor:                                          # 独立命令执行服务；两侧需同路径挂载 tasks/skills
+  url: ""                                          # 非空走远端执行；留空读 env EXECUTOR_URL 或本地 spawn
+  token: ""                                        # 与 executor 侧同值；留空读 env EXECUTOR_TOKEN
 
 terminal:
-  default_timeout_ms: 30000
-  max_output_chars: 10000
-
-# Skill Manager：技能根目录，所有任务/会话共享（容器内挂 ./skills → /workspace/skills）。
-# skills_root 缺省取 workspace_root 的同级 skills 目录（如 /workspace/tasks → /workspace/skills）；可显式覆盖。
-skills:
-  skills_root: "/workspace/skills"
-  timeout_ms: 120000   # 单个技能执行超时，默认 120 秒
+  default_timeout_ms: 30000                        # 命令默认超时（ms）
+  max_output_chars: 10000                          # 回传模型的最大输出字符数
 
 agent:
-  temperature: 1.0
-  max_tool_iterations: 20
-  max_retries: 2
-  # 回复语言：注入到 system prompt 末尾，强制模型用该语言回复用户
-  # （工具名/代码/命令保持原样）；留空则不限制。改后重启生效。
-  language: "中文"
+  temperature: 1.0                                 # 采样温度
+  max_tool_iterations: 50                          # 单轮最大迭代数（含工具调用）
+  max_retries: 2                                   # 上游失败重试次数
+  language: "Simplified Chinese"                   # 强制回复语言；留空不限
+  auto_compress_tokens: 60000                      # In token 超此值弹「自动压缩」提议；0=关
 
-# 大图上传预处理：图片超过 threshold_kb（默认 1.5M）时，浏览器端询问是否压缩；
-# 同意后在用户本地 canvas 压缩（长边 ≤ image_max_dim，JPEG image_quality）再上传。
-# confirm_size_mb：任意文件最终体积超过该值时再弹一次「继续上传」确认（multer 硬限 50M 不变）。
 upload:
-  image_compress_threshold_kb: 1536
-  image_max_dim: 2000
-  image_quality: 0.85
-  confirm_size_mb: 10
+  image_compress_threshold_kb: 1536                # 大图压缩提示阈值（KB）
+  image_max_dim: 2000                              # 压缩后长边上限（px）
+  image_quality: 0.85                              # JPEG 质量
+  confirm_size_mb: 10                              # 任意文件二次确认阈值（MB）
 
-# 模型保持占用（held）租约：AI 答完后不立即释放模型，用户追问可直接复用。
-# 页面无人观看超过 idle_release_ms 释放；有人观看最长保持 active_max_ms；sweep_ms 巡检间隔。
-# 新建后从未发言的空闲会话也按同一租约自动释放。
+skills:
+  skills_root: ""                                  # 留空取 workspace_root 同级 skills 目录
+  timeout_ms: 120000                               # 单个技能执行超时（ms）
+
 model_hold:
-  idle_release_ms: 180000   # 3 分钟
-  active_max_ms: 1800000    # 30 分钟
-  sweep_ms: 10000           # 10 秒
+  idle_release_ms: 180000                          # 无人观看超时释放（ms）
+  active_max_ms: 1800000                           # 有人观看最长保持（ms）
+  sweep_ms: 10000                                  # 租约巡检间隔（ms）
 
-# 上下文压缩：顶栏「压缩」按钮触发。压缩指令不作为 user 消息插入会话：
-# 压缩回合沿用默认 system prompt + 正常历史，末尾追加一条 user（提示词原文），且该回合不传 tools。
-# 提示词固定在 server/templates/compress-prompt.txt，需要调整压缩策略时直接改该文件。
+auth:                                              # users 留空 = 不启用登录认证
+  secret: ""                                       # 登录态签名密钥；留空则每次重启随机（需重新登录）
+  ttl_ms: 2592000000                               # 登录态有效期（ms，默认 30 天）
+  users:
+    - user: admin                                  # 默认账号
+      password: "admin"                            # 默认密码，请务必修改
 
-# 登录认证（推荐启用）：多用户，用户名/明文密码直接配在这里（自用场景）。
-# 登录页 /login，会话 token 以 HttpOnly cookie 下发（替代 nginx htpasswd：
-# 手机浏览器原生下载不带 Basic 认证头，cookie 则会自动携带，下载不再失败）。
-# 仍兼容 Authorization: Basic 头（curl/API 脚本可用）。
-# secret：签名密钥；留空则启动时随机生成（重启后需重新登录），建议固定随机串。
-# 登录页支持用 localStorage 里的 token 静默恢复登录态（POST /api/login_restore），
-# 兼容 Android WebView 封装 APK 杀进程后 cookie 未落盘的场景。
-# 整段删除或 users 留空则不启用认证。
-# auth:
-#   secret: "change-me"        # 选填；建议固定，避免重启掉登录态
-#   ttl_ms: 2592000000         # 选填，登录态有效期，默认 30 天
-#   users:
-#     - user: admin
-#       password: "change-me"
-#     - user: alice
-#       password: "s3cret"
+# 外部 MCP 服务列表：每项 {name?, url, headers?, enable?(默认 true), timeout_ms?, tools_allow?, tools_deny?}。
+mcp_servers: []
 
-# MCP 服务（可配多个；与内置工具分开）。启动时对每个服务调 tools/list 发现工具，
-# 追加到内置工具之后一起发给模型；调用经 tools/call 转发。headers 是任意请求头（如 Authorization）。
-# enable 选填、默认 true；设为 false 时启动不加载该服务的工具（配置保留，改回 true 重启即恢复）。
-# timeout_ms 选填、默认 60000：该服务单次工具调用的最大等待（毫秒，有 1s~10min 夹限），
-# 像视频生成这类上游就是慢的服务可以调大；握手/工具发现阶段用固定的 15s，不受本项影响。
-# tools_allow / tools_deny 选填：工具名单（字符串数组，按服务端的原始工具名在发现阶段过滤）。
-# allow 是白名单（配了就只保留名单内的），deny 在其后叠加生效（deny 优先）；空名单视作未配。
-# 用于控制发给模型的工具数：单服务动辄二三十个工具（如浏览器类），只放行主循环用得上的。
-# 服务不可用时只在启动日志告警，不影响其他服务与内置工具。
-#
-# 无域名部署：agent-core 与 mcp 仓库的容器共用 agent-mcp-net，这里直接写【容器名:容器内端口】，
-# 别写宿主机映射端口。日后改回域名/反代时，换成对应 https 地址即可。
-mcp_servers:
-  - name: web-search                                   # 选填，缺省取主机名首段
-    url: "http://mcp_web_search:3000/"                 # web_search 无服务端鉴权，不需要 headers
-    enable: true                                       # 选填，默认 true；false 时启动不加载
-    # timeout_ms: 60000                                # 选填，单次工具调用最大等待（毫秒），默认 60s
-  # 智谱系服务：token 由客户端透传（每次请求都要带），值填你的智谱 API Key。
-  # 路径带 /mcp（web_search 是根路径 /，image/video gen 是 /mcp）。
-  # - name: image-gen
-  #   url: "http://mcp_image_gen:3000/mcp"
-  #   headers:
-  #     Authorization: "Bearer <你的智谱 API Key>"
-  # - name: video-gen
-  #   url: "http://mcp_video_gen:3000/mcp"
-  #   headers:
-  #     Authorization: "Bearer <你的智谱 API Key>"
-  # 浏览器（Playwright MCP，需自行起 agent-browser 容器）：工具多、单次操作比普通 MCP 慢，
-  # 典型用法就是白名单只放行要用的那几个 + 调大 timeout。
-  # - name: browser
-  #   url: "http://agent-browser:8931/mcp"
-  #   enable: true
-  #   timeout_ms: 120000
-  #   tools_allow:
-  #     - browser_navigate
-  #     - browser_snapshot
-  #     - browser_click
-  #     - browser_fill_form
-  #     - browser_type
-  #     - browser_press_key
-  #     - browser_select_option
-  #     - browser_wait_for
-  #     - browser_tabs
-  #     - browser_handle_dialog
-  #     - browser_take_screenshot
+public_link:
+  base_url: ""                                     # 留空关闭 mint_public_link；填本服务对外地址
+  ttl_ms: 1800000                                  # 链接有效期（ms）

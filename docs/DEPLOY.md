@@ -14,34 +14,28 @@
 
 > `config.yml` 与 `.env` 推荐交给 `scripts/init.sh` 生成（见第 0 节）；不想用脚本的话也可以自己建（见第 2 节）。
 
-## 0. 一键生成配置并启动（推荐）
+## 0. 一键生成配置（推荐）
 
-`scripts/init.sh` 只读环境变量（不依赖任何外部文件），生成 `.env` 与 `config.yml`，
-然后按顺序起 agent → mcp：
+`scripts/init.sh` 只读环境变量（不依赖任何外部文件），生成 `.env` 与 `config.yml`：
 
 ```bash
-# 什么都不给也能跑：用默认账号 admin/admin、自动探测公网 IP、无模型（platforms: []）
+# 什么都不给也能跑：默认账号 admin/admin、无模型（platforms: []）
 ./scripts/init.sh
 
 # 给几个变量
-BIGMODEL_KEY=xxx DEEPSEEK_KEY=yyy PUBLIC_IP=1.2.3.4 ./scripts/init.sh
-
-# 只生成 .env / config.yml，不起容器（不装 Docker 的机器也能用）
-UP=0 ./scripts/init.sh
-
-# mcp 仓库不在 ../mcp 时指定
-MCP_DIR=/path/to/mcp ./scripts/init.sh
+BIGMODEL_KEY=xxx DEEPSEEK_KEY=yyy ZHIPU_KEY=zzz PUBLIC_IP=1.2.3.4 AUTH_USER=me ./scripts/init.sh
 ```
 
 | 输入变量（均可选） | 说明 |
 |---|---|
 | `BIGMODEL_KEY` / `DEEPSEEK_KEY` / `QWEN_KEY` | 模型平台 key，**填几个启用几个**（0~3 个） |
-| `ZHIPU_KEY` | image-gen / video-gen 用；**留空则这两个服务 `enable: false`**（工具不加载） |
+| `ZHIPU_KEY` | image_gen / video_gen 用；**留空则这两个服务 `enable: false`**（工具不加载） |
 | `AUTH_USER` / `AUTH_PASSWORD` | 登录账号（默认 `admin`/`admin`，记得改） |
-| `PUBLIC_IP` / `AGENT_PORT` | 对外地址与端口（`PUBLIC_IP` 空则尝试自动探测） |
-| `LOG_LEVEL` | 日志级别（默认 `debug`；日常用 `info`） |
-| `MCP_DIR` / `UP` | mcp 仓库位置（默认 `../mcp`）/ `UP=0` 只生成配置 |
+| `PUBLIC_IP` / `AGENT_PORT` | 对外地址与端口，写进 `public_link.base_url`（`PUBLIC_IP` 空则尝试自动探测） |
 | `AUTH_SECRET` / `EXECUTOR_TOKEN` | 一般不用给：不给就自动生成，并**存在 `.env` 里复用**（所以重跑不会掉登录态） |
+
+生成的 `config.yml` **只含 deploy 相关段**：`platforms` / `auth` / `mcp_servers` / `public_link`；其余配置项
+（路径、超时、`model_profiles` 等）走 `server/config.js` 的默认值，完整清单见 `app/config.example.yml`。
 
 ⚠️ **`config.yml` 是生成物，不要再手改**：每次生成都会把旧的备份成 `config.yml.bak.<时间戳>`。
 要改配置请带环境变量重跑该脚本，或者不用脚本、按第 2 节手动维护。
@@ -78,27 +72,23 @@ vi .env         # 填 EXECUTOR_TOKEN，生成：openssl rand -hex 32
 vi config.yml
 ```
 
-`config.yml` 至少改这几处。**容器内必须写绝对路径**——core 与 executor 靠同一份
-`/workspace/tasks` 看到彼此的产物，留成示例里的相对路径（`./data/tasks`）会解析到
-`/app/data/tasks`，命令会因为不在 executor 白名单里而失败：
+`config.example.yml` 与 `server/config.js` 的默认值一一对应，容器内可直接用（路径默认
+`/workspace/tasks`、`/workspace/data`）。`config.yml` 里至少要配：
 
 ```yaml
-platforms: ...                       # 模型池：每个平台 url + keys.api_key
-workspace_root: /workspace/tasks     # 不能留示例里的 ./data/tasks
-data_root: /workspace/data           # SQLite 与 prompt dump 落在这个挂载卷里
-skills:
-  skills_root: /workspace/skills
-public_link:                         # 需要给外部服务公网 URL 时才配（图生视频用）；见第 4.1 节
-  base_url: "http://<服务器IP>:8090"
+platforms: ...                       # 模型池：每个平台 url + keys.api_key + models.id（必填，不能留空）
 auth:                                # 建议启用，否则谁都能访问
   secret: "换一个随机串"
   users:
     - user: admin
       password: "换一个密码"
 mcp_servers:                         # 无域名时按容器名访问（模板已写好，按需启用）
-  - name: web-search
+  - name: web_search
     url: "http://mcp_web_search:3000/"
 ```
+
+> `public_link.base_url` 只在需要给外部服务公网 URL（图生视频取参考图）时才配；纯 IP:端口部署
+> 填 `"http://<服务器IP>:8090"`，容器 env 有 `VIRTUAL_HOST`（nginx-proxy）时以它为准（见第 4.1 节）。
 
 > ⚠️ 必须先有 `config.yml` 再 `up`：compose 挂载的是 `./config.yml:/app/config.yml`，
 > 文件不存在时 Docker 会在宿主机建一个同名**目录**，容器起来会读不到配置。
