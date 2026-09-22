@@ -47,6 +47,9 @@ router.get('/status', wrap((req, res) => {
     port: cfg.port,
     auth_enabled: !!(cfg.auth && cfg.auth.users && cfg.auth.users.length),
     running_sessions: engine.activeRuns(),
+    // 可用的 prompt+tools 组合名（config.yml 顶层 model_profiles）：前端模式选择器据此渲染；
+    // 切换 = 发消息时带 profile 参数（见 routes/messages.js），纯内存选择，不碰配置不重启。
+    model_profiles: Object.keys((engine.getConfig() || {}).model_profiles || {}),
     // 前端上传预处理参数（大图压缩阈值/尺寸/质量、大文件确认阈值），避免前端写死
     upload: cfg.upload || {},
   });

@@ -12,6 +12,7 @@ platforms:
     models:                               # 该平台下所有模型（与 url/type 同级）；多 key 共用
       - id: ds1                           # 上游模型名；只需同平台内唯一（不同平台可同名），内部唯一键 = 平台名/模型id，历史会话按它绑定，页面不可改
         display_name: "AMD DeepSeek 1"    # 显示名，缺省同 id
+        # profile: mini                  # 选填：引用顶层 model_profiles 的 prompt+tools 组合（小模型省上下文），见下方示例；不配 = 默认全量
         # vision: true                   # 选填，默认 false；支持时 read_file 读图会压缩回传（长边≤2000px JPEG），会话上下文会告知 AI
         # enable: false                  # 选填，默认 true；禁用后不进模型池，不参与分配/绑定（重启生效）
         # extra_params:                  # 选填：每次发往上游都会合并进 body 顶层的对象；同 key 覆盖默认（model/messages/stream/temperature/tools）
@@ -41,6 +42,24 @@ platforms:
       - id: glm-4.6
     keys:
       - api_key: "your-key"
+
+# 模型 profile（可选）：预定义多套「prompt + tools 白名单」组合，platforms 里的模型用
+# profile: <名字> 引用，同 id 模型跨平台复用时免重复配置。动机：默认发给模型的
+# 内置工具 schema + system prompt 合计 ~20KB 字符（约 6K token），对特别小的模型会撑爆上下文。
+# - tools_allow：白名单（字符串数组），只保留名单内的工具发给模型；内置名 + MCP 最终名
+#   （含冲突时加的 服务名__ 前缀，与 data/prompt.txt dump 一致可对）。不配 = 全量发。
+#   只影响模型「看得到什么」：名单外但真实存在的工具若被调用，后端照常执行，不拦不误杀。
+# - system_prompt_file：自定义 system prompt 文件，相对 server/templates/（也接受绝对路径），
+#   配置加载时一次性读入常驻内存；设了就完全接管（不拼技能列表段，只保留末尾语言指令）。
+#   文件缺失/为空直接校验报错。两者至少配一个；引用不存在的 profile 名同样直接报错。
+# 改本段需重启；运行期前端可在已定义的 profile 间手动切换（发消息带 profile 参数，
+# 纯内存选择、下一请求即生效，不碰配置文件）；列表随 /api/system/status 的 model_profiles 下发。
+# model_profiles:
+#   mini:                                   # 2B 级小模型：只留文件读写 + 终端
+#     tools_allow: [read_file, write_file, edit_file, list_directory, find_path, grep, terminal]
+#     system_prompt_file: mini-system.txt   # 配套的精简提示词（别留着默认模板里「用 XX 工具…」的段落）
+#   web-only:                               # 只配白名单也行，prompt 沿用默认模板
+#     tools_allow: [read_file, grep, fetch, web-search__search]
 
 workspace_root: "./data/tasks"
 # 数据根目录：db（默认 .agent.db）与启动 prompt dump（prompt.txt）放这里；相对路径按启动目录展开。

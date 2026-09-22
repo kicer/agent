@@ -2,7 +2,7 @@
 // 单进程内存模型：JS 单线程 + better-sqlite3 同步 API，不存在跨进程竞争。
 const fs = require('fs');
 const path = require('path');
-const { buildMessages, callModel, encodeBlocks, compressMessages, titleMessages } = require('./llm');
+const { buildMessages, callModel, encodeBlocks, compressMessages, titleMessages, setProfilePrompts } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const publicFiles = require('./public-files');
 const mcp = require('./mcp');
@@ -155,6 +155,7 @@ function queuePosition(sessionId) {
 
 // ---------- 模型池调度 ----------
 function syncModelPool() {
+  registerProfilePrompts(); // profile 自定义 prompt 注册进 llm（文本已随配置加载读入）
   const stmt = db.prepare(
     'INSERT INTO model_pool (id, display_name, is_busy, current_session_id) VALUES (?,?,0,NULL) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name'
   );
@@ -227,6 +228,43 @@ function chooseModel(platform, preferred) {
 function modelVision(session) {
   const m = session.model_id && (cfg.models || []).find(x => x.id === session.model_id);
   return !!(m && m.vision);
+}
+
+// ---------- 模型 profile（prompt+tools 组合） ----------
+// 把 cfg 里预加载的自定义 prompt 文本注册给 llm（配置加载时已读入，见 config.js）；
+// engine.init 调一次，运行期只按名选取，零 IO。
+function registerProfilePrompts() {
+  const map = {};
+  for (const [name, p] of Object.entries((cfg && cfg.model_profiles) || {})) {
+    if (p && p.prompt) map[name] = p.prompt;
+  }
+  setProfilePrompts(map);
+}
+
+// 本轮生效的 profile 名：前端显式选择（run.profile，与 deepThink 同约定：
+// 每轮迭代取最新值，回合中途切换下一个请求即生效）> 模型配置默认（cfg.models[].profile）> ''（默认全量）。
+// 保留值 'default' = 前端显式切回全量（覆盖配了 profile 的模型的默认组合）。
+function resolveProfileName(session, run) {
+  const manual = run && String(run.profile || '').trim();
+  if (manual) return manual === 'default' ? '' : manual;
+  const m = session.model_id && (cfg.models || []).find(x => x.id === session.model_id);
+  return m && m.profile ? String(m.profile) : '';
+}
+
+// 本轮工具定义集：内置 + MCP 全量；profile 配了 tools_allow 则按最终名过滤
+// （与发给模型的 tools 字段/prompt.txt dump 同源可对）。只影响模型「看得到什么」：
+// 名单外但真实存在的工具若被调用，executor 照常执行（HANDLERS 全表分发），不拦不误杀。
+function effectiveTools(profileName) {
+  const all = TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
+  const prof = profileName && cfg.model_profiles && cfg.model_profiles[profileName];
+  const allow = prof && prof.tools_allow;
+  if (!allow) return all;
+  const set = new Set(allow);
+  return all.filter(t => t && t.function && set.has(t.function.name));
+}
+
+function hasModelProfile(name) {
+  return !!(name && cfg.model_profiles && cfg.model_profiles[String(name)]);
 }
 
 function enqueue(sessionId) {
@@ -530,11 +568,14 @@ async function runLoopInner(sessionId, run) {
       } catch (_) { return null; }
     };
     const compressing = !!run.summarizing;
+    // profile（prompt+tools 组合）：每迭代现解，前端切模式后下一个请求即生效；
+    // 压缩回合同样跟随（小模型会话点「压缩」若回退默认大模板，当场撑爆）。
+    const profileName = resolveProfileName(session, run);
     const messages = compressing
-      ? compressMessages(session, (cfg.agent || {}).language, mintImageUrl)
-      : buildMessages(session, (cfg.agent || {}).language, mintImageUrl);
-    // 内置工具 + 启动时发现的 MCP 工具，一起随 system prompt 发给模型（压缩回合不发）
-    const tools = compressing ? [] : TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
+      ? compressMessages(session, (cfg.agent || {}).language, mintImageUrl, profileName)
+      : buildMessages(session, (cfg.agent || {}).language, mintImageUrl, profileName);
+    // 内置工具 + 启动时发现的 MCP 工具（按 profile 白名单过滤），一起随 system prompt 发给模型（压缩回合不发）
+    const tools = compressing ? [] : effectiveTools(profileName);
 
     let result = null;
     let lastErr = null;
@@ -880,15 +921,17 @@ function createSession(title, preferModelId, assistantType, user) {
 }
 
 // 用户消息（或“开始执行”的模板消息）入口。
-// opts.deepThink: true 时启用深度思考；参数会记在会话 run 上，
+// opts.deepThink: true 时启用深度思考；opts.profile: 本轮 prompt+tools 组合名（model_profiles，
+// 空 = 随模型配置，'default' = 显式全量）；参数都记在会话 run 上，
 // 正在跑的回合下一轮迭代会取到最新值。新建会话需在 runLoop 之前先预建 run 以携带该值。
 function postUserMessage(sessionId, content, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   const messageId = saveMessage(sessionId, { role: 'user', content });
-    // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
+    // 预建/更新 run 记录，记下本轮的 deepThink/profile（被 runLoop / callModel 读取）
     const run = getRun(sessionId, true);
     run.deepThink = !!(opts && opts.deepThink);
+    run.profile = String((opts && opts.profile) || '').trim();
     // 真实用户消息到达：若还有个「已排队但尚未开跑」的压缩回合（见 summarizeContext），
     // 让它作废，避免新消息被误当成压缩回合处理；已在跑（looping）的不动，
     // 由其收尾时自行清空 summarizing。
@@ -1180,4 +1223,6 @@ module.exports = {
   dispatchQueued,
   bindToSession,
   TOOL_DEFINITIONS,
+  effectiveTools,
+  hasModelProfile,
 };

@@ -15,6 +15,45 @@ function normToolNames(v) {
   return out.length ? out : undefined;
 }
 
+// profile 的 prompt 文件查找基准目录：与内置模板同处 server/templates/
+// （compose 已 bind-mount ./app/server，宿主可直接编辑，无需重建镜像）。
+const TEMPLATES_DIR = path.join(__dirname, 'templates');
+
+// model_profiles 归一化：顶层 map {名称: {tools_allow?, system_prompt_file?}}，
+// 供 platforms[].models[].profile 引用（同 id 模型跨平台复用时免重复配置）。
+// - tools_allow 复用 MCP 名单约定（normToolNames）：只按最终发给模型的工具名匹配
+//   （内置名 + MCP 名，含冲突时加的 server__ 前缀）；非数组/空数组 = 未配置不过滤。
+// - system_prompt_file：相对 templates/（也接受绝对路径），配置加载时一次性读入常驻内存，
+//   运行期切换零 IO；缺失/读不到/内容为空直接报校验错——拦在保存/重启预检，不留到运行期降级。
+// - 两样都没配 = 不起任何作用，报错误防误配空壳。
+function normalizeModelProfiles(rawProfiles) {
+  const out = {};
+  if (!rawProfiles || typeof rawProfiles !== 'object' || Array.isArray(rawProfiles)) return out;
+  for (const [name, p] of Object.entries(rawProfiles)) {
+    const key = String(name).trim();
+    if (!key) continue;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) {
+      throw new Error('model_profiles.' + key + ' 必须是对象 {tools_allow, system_prompt_file}');
+    }
+    const tools_allow = normToolNames(p.tools_allow);
+    const file = String(p.system_prompt_file || '').trim();
+    let prompt = '';
+    if (file) {
+      const abs = path.isAbsolute(file) ? file : path.join(TEMPLATES_DIR, file);
+      try { prompt = fs.readFileSync(abs, 'utf8'); } catch (_) {
+        throw new Error('model_profiles.' + key + '.system_prompt_file 读取失败：' + abs);
+      }
+      prompt = prompt.trim();
+      if (!prompt) throw new Error('model_profiles.' + key + '.system_prompt_file 内容为空：' + abs);
+    }
+    if (!tools_allow && !prompt) {
+      throw new Error('model_profiles.' + key + ' 至少需配 tools_allow 或 system_prompt_file 之一');
+    }
+    out[key] = { name: key, tools_allow, system_prompt_file: file, prompt };
+  }
+  return out;
+}
+
 const DEFAULTS = {
   port: 8090,
   // 数据根目录：db、prompt dump 等运行时产物默认放这里（容器内挂 ./data → /workspace/data）。
@@ -50,6 +89,10 @@ const DEFAULTS = {
     // 上下文压缩提示词不再走配置：压缩回合沿用默认 system prompt + 正常历史，
     // 末尾追加一条 user（提示词原文），不传 tools；模板在 server/templates/compress-prompt.txt。
   platforms: [],
+  // 模型 profile（prompt+tools 组合）：顶层定义、platforms 里的模型用 profile: 名称引用（可复用）。
+  // 每项 {tools_allow?, system_prompt_file?}，详见 normalizeModelProfiles；改配置需重启生效。
+  // 运行期前端可在已定义的 profile 间手动切换（纯内存选择），不碰本配置。
+  model_profiles: {},
   // 登录认证：{ users: [{user, password}], secret?, ttl_ms? }，密码明文存配置（自用场景）。
   // users 为空则不启用认证（可交给前置 nginx-proxy，但手机浏览器原生下载不带 Basic 头，不推荐）。
   auth: null,
@@ -107,7 +150,7 @@ function migrateLegacyModels(models) {
 // 新版结构：models 提到平台层（与 url/type 同级），所有 key 共用同一份 models；key 数组里只放
 // {api_key, concurrency}，不再挂 models。旧版 keys[j].models 写法直接报错，让用户改 YAML。
 // 内部唯一键 = 平台名/模型id：不同平台允许同模型 id，同平台内必须唯一（会话/模型池/用量均按该键认模型）。
-function normalizePlatforms(rawPlatforms) {
+function normalizePlatforms(rawPlatforms, profileNames) {
   const seen = new Set(); // 已用唯一键（平台名/模型id）
   const out = [];
   for (let pi = 0; pi < rawPlatforms.length; pi++) {
@@ -135,6 +178,12 @@ function normalizePlatforms(rawPlatforms) {
       const uid = name + '/' + String(m.id);
       if (seen.has(uid)) throw new Error('模型重复：平台「' + name + '」下已有模型 id：' + m.id + '（不同平台可同名，同平台内必须唯一）');
       seen.add(uid);
+      // 选填：引用顶层 model_profiles 的组合名（tools 白名单 + 自定义 system prompt）；
+      // 不配 = 默认全量。引用了不存在的名字直接报错，不静默回退。
+      const profile = m.profile ? String(m.profile).trim() : '';
+      if (profile && !profileNames.has(profile)) {
+        throw new Error('平台「' + name + '」的模型「' + m.id + '」引用了不存在的 profile：' + profile + '（请核对顶层 model_profiles）');
+      }
       models.push({
         id: String(m.id),
         display_name: m.display_name ? String(m.display_name) : String(m.id), // 缺省 = id
@@ -144,6 +193,7 @@ function normalizePlatforms(rawPlatforms) {
         extra_params: (m.extra_params && typeof m.extra_params === 'object' && !Array.isArray(m.extra_params)) ? m.extra_params : {},
         // 选填：前端启用「深度思考」时合并进 body。可覆盖 extra_params 的同名键。
         thinking_params: (m.thinking_params && typeof m.thinking_params === 'object' && !Array.isArray(m.thinking_params)) ? m.thinking_params : {},
+        profile,
       });
     }
     // keys 仅含 api_key/concurrency（不再挂 models）
@@ -175,7 +225,8 @@ function parseAndValidate(rawText, configPath) {
   if (!Array.isArray(raw.platforms) || !raw.platforms.length) {
     throw new Error('配置缺少 platforms：至少需要一个平台 {name, url, keys:[{api_key}], models:[{id}]}')
   }
-  cfg.platforms = normalizePlatforms(raw.platforms);
+  cfg.model_profiles = normalizeModelProfiles(raw.model_profiles);
+  cfg.platforms = normalizePlatforms(raw.platforms, new Set(Object.keys(cfg.model_profiles)));
   cfg.models = [];
   cfg.platforms.forEach((p, pi) => p.keys.forEach((k, ki) => p.models.forEach((m, mi) => {
     cfg.models.push({
@@ -185,6 +236,7 @@ function parseAndValidate(rawText, configPath) {
       id: p.name + '/' + m.id, mid: m.id,
       display_name: m.display_name, vision: m.vision, enable: m.enable,
       extra_params: m.extra_params, thinking_params: m.thinking_params,
+      profile: m.profile,
       url: p.url, api_key: k.api_key, platform: p.name, type: p.type, concurrency: k.concurrency,
       platform_index: pi, key_index: ki, model_index: mi,
     });

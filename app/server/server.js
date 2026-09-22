@@ -83,6 +83,7 @@ app.get('/api/models', (req, res) => {
     rows.push({
       id: m.id, display_name: m.display_name, platform: m.platform, mid: m.mid,
       vision: !!m.vision, type: m.type, key_count: total,
+      profile: m.profile || '', // 模型默认 prompt+tools 组合（model_profiles 名，空 = 全量）
       slots_total: total, slots_busy: busy,
       is_busy: total > 0 && busy >= total ? 1 : 0,
       current_session_id: (sessByPlat[m.platform] || []).join(','),
@@ -106,19 +107,29 @@ app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 const PORT = process.env.PORT || cfg.port;
 
 // 启动成功后把模型实际收到的各部分 dump 到文件方便人工核对（data_root 默认 ./data，
-// 宿主机对应 <repo>/data/prompt.txt，已被 gitignore）。包含两部分：
-//  1) system 消息：模板 + 可用技能段落 + 语言指令（进程内恒定，仅技能增删时变）；
-//  2) tools 数组：内置 definitions.json + 启动时发现的 MCP 工具，与每次请求的 tools 字段一致。
+// 宿主机对应 <repo>/data/prompt.txt，已被 gitignore）。包含：
+//  1) 默认组合：system 消息（模板 + 可用技能段落 + 语言指令）+ tools 数组（内置 + MCP）；
+//  2) 每套 model_profiles 一段：按其白名单过滤后的 tools + 自定义 prompt（未配则回落默认模板）。
 function dumpPromptBundle() {
   const file = path.join(cfg.data_root, 'prompt.txt');
+  const lang = (cfg.agent || {}).language;
   const tools = engine.TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
   const parts = [
-    '# ===== 1. System Prompt（system 消息，进程内恒定）=====\n\n' + llm.systemPromptText((cfg.agent || {}).language),
-    '\n\n# ===== 2. Tools（' + tools.length + ' 个：内置 + MCP，随每次请求的 tools 字段发送）=====\n\n' + JSON.stringify(tools, null, 2),
+    '# ===== 1. System Prompt（默认组合，system 消息，进程内恒定）=====\n\n' + llm.systemPromptText(lang),
+    '\n\n# ===== 2. Tools（默认组合 ' + tools.length + ' 个：内置 + MCP，随每次请求的 tools 字段发送）=====\n\n' + JSON.stringify(tools, null, 2),
   ];
+  for (const name of Object.keys(cfg.model_profiles || {})) {
+    const pTools = engine.effectiveTools(name);
+    parts.push(
+      '\n\n# ===== profile "' + name + '" =====\n\n' +
+      '# --- system prompt ---\n\n' + llm.systemPromptText(lang, name) +
+      '\n\n# --- tools（白名单过滤后 ' + pTools.length + ' / 全量 ' + tools.length + ' 个）---\n\n' + JSON.stringify(pTools, null, 2)
+    );
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, parts.join(''), 'utf8');
-  log.info('startup', '  prompt_dump=' + file + ' (tools=' + tools.length + ')');
+  log.info('startup', '  prompt_dump=' + file + ' (tools=' + tools.length +
+    ', profiles=' + (Object.keys(cfg.model_profiles || {}).join(',') || '-') + ')');
 }
 
 // 启动时先发现各 MCP 服务的工具（单个服务失败只警告，不阻止启动），

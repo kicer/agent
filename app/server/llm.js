@@ -35,35 +35,51 @@ function titleMessages(history, language) {
   return messages;
 }
 
-// system prompt 完全静态：所有会话共用同一份内容，利于上游前缀缓存。
+// system prompt 进程内恒定（利于上游前缀缓存）。多套并存：默认模板 + 每套 model_profiles
+// 的自定义 prompt（文本随配置加载时读入，见 config.js normalizeModelProfiles，经
+// setProfilePrompts 注册）。请求时按 profile 名选取——纯内存指针选择，零 IO。
 function buildSystemPrompt() {
   return SYSTEM_PROMPT_TEMPLATE;
 }
 
+let PROFILE_PROMPTS = {}; // profile 名 -> 自定义 prompt 全文（不含技能段/语言后缀）
+function setProfilePrompts(map) {
+  PROFILE_PROMPTS = map || {};
+  _promptTextCache = new Map(); // 注册表变化后拼接结果需重建
+}
+
 // 部署级回复语言指令：拼在 system prompt 末尾（尾部对弱模型约束力最强）。
 // 同一进程内恒定，不破坏前缀缓存；改配置需重启生效。
-// system prompt 每次请求都随 messages 发出，拼接结果按语言缓存，不重复分配大字符串。
-let _promptTextCache = null; // { lang, text }
+// system prompt 每次请求都随 messages 发出，拼接结果按 (profile, 语言) 缓存，不重复分配大字符串。
+let _promptTextCache = new Map(); // 'profile\u0000lang' -> text
 
 // “可用技能”段落（skills.formatSkillListForPrompt）：启动时快照（server.js）与技能变更后
-// （routes/skills.js）经 setSkillListText 更新，拼在模板之后、语言指令之前。
+// （routes/skills.js）经 setSkillListText 更新，拼在默认模板之后、语言指令之前。
 // 与语言指令同一约定：仅技能增删/描述变化时更新，否则进程内恒定，不破坏前缀缓存。
+// 只拼默认模板：profile 自定义 prompt 完全接管（技能工具若在其白名单内，模型用 list_skills 自取）。
 let SKILL_LIST_TEXT = '';
 function setSkillListText(text) {
   SKILL_LIST_TEXT = text || '';
-  _promptTextCache = null; // 列表变化后拼接结果需重建
+  _promptTextCache = new Map(); // 列表变化后拼接结果需重建
 }
 
-function systemPromptText(language) {
+function systemPromptText(language, profile) {
   const t = String(language || '').trim();
-  if (_promptTextCache && _promptTextCache.lang === t) return _promptTextCache.text;
-  let text = SYSTEM_PROMPT_TEMPLATE;
-  if (SKILL_LIST_TEXT) text += '\n\n' + SKILL_LIST_TEXT;
+  const key = (profile || 'default') + '\u0000' + t;
+  const hit = _promptTextCache.get(key);
+  if (hit) return hit;
+  let text;
+  if (profile && PROFILE_PROMPTS[profile]) {
+    text = PROFILE_PROMPTS[profile];
+  } else {
+    text = SYSTEM_PROMPT_TEMPLATE;
+    if (SKILL_LIST_TEXT) text += '\n\n' + SKILL_LIST_TEXT;
+  }
   if (t) text += '\n\n## Reply Language\n' +
     '- ALWAYS respond to the user in ' + t + '. Tool descriptions, tool outputs and errors are usually in English — ' +
     'never let them switch your reply language. Tool names, parameters, code, file paths and shell commands stay as-is; ' +
     'every sentence addressed to the user MUST be in ' + t + '.';
-  _promptTextCache = { lang: t, text };
+  _promptTextCache.set(key, text);
   return text;
 }
 
@@ -113,8 +129,10 @@ function cachedDecodeBlocks(session, row) {
 // 关联 tool 回执按 id 一并跳过（否则会留下无 tool_call 配对的孤儿 tool 消息，上游拒收）；
 // 改以一条 user 错误提示替代，让模型看到原因后重新生成工具调用 ——
 // 坏样本留在上下文里只会被模型继续模仿，反复报同一个错。
-function buildMessages(session, language, mintUrl) {
-  const messages = [{ role: 'system', content: systemPromptText(language) }];
+// profile：本轮生效的 prompt+tools 组合名（model_profiles，见 engine.resolveProfileName），
+// 空 = 默认全量组合。
+function buildMessages(session, language, mintUrl, profile) {
+  const messages = [{ role: 'system', content: systemPromptText(language, profile) }];
   const history = session.history;
   // 行被删除后清理残留的图片解析缓存条目（只增不清会缓慢泄漏；条数不会超过现存行数）
   if (session.blocksCache && session.blocksCache.size > history.length) {
@@ -204,8 +222,8 @@ function buildMessages(session, language, mintUrl) {
 //（与 buildMessages 同取舍：archived 不发、旧摘要/工具轮照常），末尾追加一条 user
 //（compress-prompt.txt 原文，历史就在它前面的 messages 里，不再填占位符）。
 // 调用方（engine.runLoopInner 的 compressing 分支）需同时不传 tools。
-function compressMessages(session, language, mintUrl) {
-  const messages = buildMessages(session, language, mintUrl);
+function compressMessages(session, language, mintUrl, profile) {
+  const messages = buildMessages(session, language, mintUrl, profile);
   messages.push({ role: 'user', content: COMPRESS_PROMPT_TEMPLATE });
   return messages;
 }
@@ -461,4 +479,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, encodeBlocks, decodeBlocks, compressMessages, titleMessages };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages };

@@ -833,6 +833,16 @@ platforms:
         models:
           - id: ds3
             display_name: "AMD DeepSeek 3"
+            # profile: mini       # 选填,引用顶层 model_profiles 的 prompt+tools 组合(小模型省上下文用)
+
+# 模型 profile(可选):预定义多套「system prompt 文件 + tools 白名单」组合,模型用 profile: <名>
+# 引用(同 id 模型跳平台复用时免重复配置)。不配 profile 的模型照旧全量。动机:默认发给模型的
+# 内置工具 schema + system prompt 约 6K token,特别小的模型会被撑爆上下文。
+# 改后重启生效;运行期前端可在已定义组合间手动切换(发消息带 profile 参数,纯内存选择、不碰配置)。
+# model_profiles:
+#   mini:
+#     tools_allow: [read_file, write_file, edit_file, list_directory, find_path, grep, terminal]  # 白名单（内置名 + MCP 最终名）
+#     system_prompt_file: mini-system.txt   # 相对 server/templates/ 的自定义 prompt
 
 workspace_root: "/workspace/tasks"
 
