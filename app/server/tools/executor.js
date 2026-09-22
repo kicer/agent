@@ -529,6 +529,28 @@ function killGroup(child) {
 
 // fetch：抓取并转 Markdown。超时/取消覆盖到 body 读取完成（非仅响应头）；
 // 流式读取至多 cfg.fetch.max_bytes 字节；按响应 charset 解码（gbk 等依赖内置 full-icu）。
+// undici 网络错误的 message 恒为 "fetch failed"，真因窝在 err.cause 里——不解包模型分不清
+// 域名已死/被拒连/TLS 问题（评审实测：只能靠另跑 curl 才能诊断）。常见码翻成中文直述。
+const FETCH_NET_ERRORS = {
+  ENOTFOUND: '域名无法解析（ENOTFOUND，域名可能已不存在）',
+  EAI_AGAIN: 'DNS 暂时不可用（EAI_AGAIN，可稍后重试）',
+  ECONNREFUSED: '连接被拒绝（ECONNREFUSED，端口未监听）',
+  ECONNRESET: '连接被对端重置（ECONNRESET，多为服务端/中间设备拒服务）',
+  ETIMEDOUT: '连接超时（ETIMEDOUT）',
+  EHOSTUNREACH: '主机不可达（EHOSTUNREACH）',
+  ENETUNREACH: '网络不可达（ENETUNREACH）',
+  EPIPE: '管道断裂（EPIPE）',
+  EPROTO: '协议错误（EPROTO）',
+};
+function describeFetchError(err) {
+  const c = err && err.cause;
+  const code = c && c.code ? String(c.code).toUpperCase() : '';
+  const msg = (c && c.message) ? String(c.message) : String((err && err.message) || err);
+  if (FETCH_NET_ERRORS[code]) return FETCH_NET_ERRORS[code];
+  if (/self.?signed|certificate|CERT_|UNABLE_TO_/i.test(code + ' ' + msg)) return 'TLS 证书校验失败：' + msg;
+  return msg + (code ? '（' + code + '）' : '');
+}
+
 function isTextualContentType(ct) {
   if (!ct) return true; // 未声明：先按文本读，读完用 NUL 字节兜底判定
   if (ct.startsWith('text/')) return true;
@@ -622,11 +644,43 @@ async function toolFetch(ctx, args) {
       if (ctx.run.cancelled) throw new Error('已终止');
       throw new Error('fetch 超时（' + timeoutMs + 'ms）：' + url);
     }
-    throw new Error('fetch 失败：' + (err && err.message || err));
+    throw new Error('fetch 失败：' + describeFetchError(err));
   } finally {
     clearTimeout(timer);
     clearInterval(cancelWatch);
   }
+}
+
+// 单遍实体解码：旧版链式 replace 会把 &amp;lt; 双重解码成 <；HTML5 全量表 2000+ 条，
+// 这里只收网页文本真正常见的命名实体，数字实体（十进制/十六进制）通吃，认不出的原样保留。
+const HTML_ENTITIES = {
+  nbsp: ' ', ensp: '\u2002', emsp: '\u2003', thinsp: '\u2009', zwnj: '\u200c', zwj: '\u200d', shy: '\u00ad',
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
+  copy: '\u00a9', reg: '\u00ae', trade: '\u2122', deg: '\u00b0', hellip: '\u2026',
+  mdash: '\u2014', ndash: '\u2013', lsquo: '\u2018', rsquo: '\u2019', sbquo: '\u2018',
+  ldquo: '\u201c', rdquo: '\u201d', bdquo: '\u201e', laquo: '\u00ab', raquo: '\u00bb',
+  lsaquo: '\u2039', rsaquo: '\u203a', prime: '\u2032', Prime: '\u2033', bull: '\u2022', middot: '\u00b7',
+  times: '\u00d7', divide: '\u00f7', plusmn: '\u00b1', frac12: '\u00bd', frac14: '\u00bc', frac34: '\u00be',
+  sup1: '\u00b9', sup2: '\u00b2', sup3: '\u00b3', micro: '\u00b5', para: '\u00b6', sect: '\u00a7',
+  dagger: '\u2020', Dagger: '\u2021', permil: '\u2030',
+  euro: '\u20ac', pound: '\u00a3', yen: '\u00a5', cent: '\u00a2', curren: '\u00a4',
+  agrave: '\u00e0', aacute: '\u00e1', acirc: '\u00e2', atilde: '\u00e3', auml: '\u00e4', aring: '\u00e5', ccedil: '\u00e7',
+  egrave: '\u00e8', eacute: '\u00e9', ecirc: '\u00ea', euml: '\u00eb',
+  igrave: '\u00ec', iacute: '\u00ed', icirc: '\u00ee', iuml: '\u00ef',
+  ograve: '\u00f2', oacute: '\u00f3', ocirc: '\u00f4', otilde: '\u00f5', ouml: '\u00f6',
+  ugrave: '\u00f9', uacute: '\u00fa', ucirc: '\u00fb', uuml: '\u00fc',
+  yacute: '\u00fd', yuml: '\u00ff', ntilde: '\u00f1', szlig: '\u00df',
+  ne: '\u2260', le: '\u2264', ge: '\u2265', infin: '\u221e', sup: '\u2283', sub: '\u2286',
+};
+function decodeEntities(s) {
+  return s.replace(/&#x([0-9a-f]+);|&#(\d+);|&([a-zA-Z][a-zA-Z0-9]*);/gi, (m, hx, dec, name) => {
+    try {
+      if (hx) return String.fromCodePoint(parseInt(hx, 16));
+      if (dec) return String.fromCodePoint(parseInt(dec, 10));
+      // hasOwnProperty：防 &constructor; 这类名字踩到原型链。
+      return Object.prototype.hasOwnProperty.call(HTML_ENTITIES, name) ? HTML_ENTITIES[name] : m;
+    } catch (_) { return m; } // 码点越界等原样保留
+  });
 }
 
 function htmlToMarkdown(html) {
@@ -639,14 +693,9 @@ function htmlToMarkdown(html) {
     .replace(/<a[^>]*href=["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/a>/gi, (m, href, t) => '[' + strip(t).trim() + '](' + href + ')')
     .replace(/<(br|hr)[^>]*>/gi, '\n')
     .replace(/<\/(p|div|section|article|tr|ul|ol|table|blockquote)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, '\'');
-  return s.replace(/\n{3,}/g, '\n\n').trim();
+    .replace(/<[^>]+>/g, '');
+  // 实体解码放在剥标签之后：&lt;p&gt; 这类转义文本不会被当成标签剥掉。
+  return decodeEntities(s).replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function strip(s) { return s.replace(/<[^>]+>/g, ''); }
@@ -677,7 +726,7 @@ async function toolMintPublicLink(ctx, args) {
   const real = fs.realpathSync(abs);
   const rootReal = fs.realpathSync(ctx.taskDir);
   if (!real.startsWith(rootReal + path.sep)) {
-    throw new Error('path 经符号链接指向了任务目录之外，拒绍签发');
+    throw new Error('path 经符号链接指向了任务目录之外，拒绝签发');
   }
   const id = publicFiles.mint({ sessionId: ctx.sessionId, rel, ttlMs: pl.ttl_ms });
   return pl.base_url + '/p/' + id;

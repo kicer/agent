@@ -725,7 +725,9 @@ async function runLoopInner(sessionId, run) {
       // 先落库再广播：回执带上消息行 id（msg_id），前端工具卡据此挂「删除本条」按钮
       const toolMsgId = saveMessage(sessionId, { role: 'tool', tool_call_id: id, name: tc.function.name, content: toolContent, is_error: isError });
       bus.emit(sessionId, 'tool_result', {
-        tool_call_id: id, name: tc.function.name, content: outText.slice(0, 20000),
+        tool_call_id: id, name: tc.function.name,
+        // 工具卡只是实时预览切片；落库与模型上下文是全文——不加标记会被读成「工具只输出了这么多」。
+        content: outText.length > 20000 ? outText.slice(0, 20000) + '\n…（工具卡仅显示前 20000 字符，完整结果见模型上下文/历史重载）' : outText,
         is_error: isError,
         // 实时工具卡预览图：带 cookie 的会话内下载路由（与历史重渲染同源），非 base64
         image_url: imageRel ? '/api/sessions/' + encodeURIComponent(sessionId) + '/files/download?path=' + encodeURIComponent(imageRel) : undefined,
