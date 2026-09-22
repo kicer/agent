@@ -18,6 +18,26 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { SERVER_NAME, VERSION, dispatch } from './mcp.js';
 
+// ── 优雅退出 ────────────────────────────────────────────────────────────────
+// 容器里 node 以 PID 1 运行且未注册 SIGTERM 处理器时，内核不会对其执行默认
+// 终止动作，docker stop/restart 会白等满 10s 宽限期才被 SIGKILL。
+// 显式注册处理器立即关服务；3s 兜底定时器防止长连接卡住 close 回调。
+let httpServer = null;
+let forceCloseConnections = () => {};
+let shuttingDown = false;
+
+function shutdown(sig) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  process.stdout.write(`[web_search] 收到 ${sig}，停止服务\n`);
+  forceCloseConnections();
+  if (httpServer === null) process.exit(0); // stdio 模式无监听，直接退
+  httpServer.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
 // ── stdio 传输（默认）───────────────────────────────────────────────────────
 function runStdio() {
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -106,6 +126,14 @@ function runHttp(host, port) {
       hint: 'MCP endpoints: POST / (streamable http), GET /sse + POST /messages (legacy sse), GET / (info)',
     }));
   });
+
+  httpServer = server;
+  forceCloseConnections = () => {
+    // 掐掉老式 SSE 长连接与 keep-alive 连接，否则 server.close() 回调不会触发
+    for (const res of sseChannels.values()) res.destroy();
+    sseChannels.clear();
+    server.closeAllConnections?.();
+  };
 
   server.listen(port, host, () => {
     process.stdout.write(`[web_search] HTTP/SSE listening on http://${host}:${port} (MCP: POST /, GET /sse + POST /messages)\n`);

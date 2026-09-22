@@ -19,6 +19,26 @@ const DEFAULT_QUALITY = "speed";       // speed | quality
 const DEFAULT_FPS = 30;               // 30 | 60
 const DEFAULT_WATERMARK_ENABLED = true; // 平台政策默认 true
 
+// ── 优雅退出 ──────────────────────────────────────────────────────────────
+// 容器里 node 以 PID 1 运行且未注册 SIGTERM 处理器时，内核不会对其执行默认
+// 终止动作，docker stop/restart 会白等满 10s 宽限期才被 SIGKILL。
+// 显式注册处理器，关闭 MCP session 与长连接后立即退出；3s 定时器为兑底。
+let httpServer = null;
+let closeAllSessions = () => {};
+let shuttingDown = false;
+
+function shutdown(sig) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[video_gen] 收到 ${sig}，停止服务`);
+  closeAllSessions();
+  if (!httpServer) process.exit(0); // stdio 模式无监听，直接退
+  httpServer.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 function parseArgs(argv) {
   const args = {
     http: false,
@@ -369,6 +389,20 @@ async function startHttp({ port, host }) {
   // session -> { server, transport } 映射
   const sessions = new Map();
 
+  closeAllSessions = () => {
+    for (const { server, transport } of sessions.values()) {
+      try {
+        transport.close();
+      } catch {}
+      try {
+        server.close();
+      } catch {}
+    }
+    sessions.clear();
+    // 掰掉未关闭的 SSE / keep-alive 连接，否则 httpServer.close() 回调不会触发
+    httpServer?.closeAllConnections?.();
+  };
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", service: "video_gen", sessions: sessions.size });
   });
@@ -431,7 +465,7 @@ async function startHttp({ port, host }) {
   app.get("/mcp", handleOther);
   app.delete("/mcp", handleOther);
 
-  app.listen(port, host, () => {
+  httpServer = app.listen(port, host, () => {
     console.log(
       `[video_gen] MCP HTTP server listening on http://${host}:${port}/mcp`
     );
