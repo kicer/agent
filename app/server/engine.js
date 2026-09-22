@@ -252,13 +252,14 @@ function resolveProfileName(session, run) {
 }
 
 // 本轮工具定义集：内置 + MCP 全量；profile 配了 tools_allow 则按最终名过滤
-// （与发给模型的 tools 字段/prompt.txt dump 同源可对）。只影响模型「看得到什么」：
+// （与发给模型的 tools 字段/prompt.txt dump 同源可对）。空数组 = 零工具（纯文本组合，
+// callModel 对空数组不发 tools 字段）；未配 = 全量。只影响模型「看得到什么」：
 // 名单外但真实存在的工具若被调用，executor 照常执行（HANDLERS 全表分发），不拦不误杀。
 function effectiveTools(profileName) {
   const all = TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
   const prof = profileName && cfg.model_profiles && cfg.model_profiles[profileName];
   const allow = prof && prof.tools_allow;
-  if (!allow) return all;
+  if (!Array.isArray(allow)) return all;
   const set = new Set(allow);
   return all.filter(t => t && t.function && set.has(t.function.name));
 }

@@ -335,7 +335,7 @@ stateDiagram-v2
 - 加载：`loadConfig(AGENT_CONFIG)` 读文件 → `parseAndValidate`。
 - 兼容：旧版 `models[]`（扁平）自动迁移到 `platforms[]` 层级；旧版 `web_search.*` 迁移到 `mcp_servers[]`（log.info 提示）。
 - 规范化：`normalizePlatforms` 校验 `name/url/type`，key 层 `concurrency`，model 层 `{id, display_name, vision, enable, extra_params, thinking_params, profile}`；同平台内 model id 必须唯一（内部唯一键 = 平台名/模型id）；`profile` 引用不存在的名字直接报错。
-- `model_profiles`（顶层，`normalizeModelProfiles`）：多套可复用的 prompt+tools 组合，每项 `{tools_allow?, system_prompt_file?}`，两者至少配一个。`tools_allow` 复用 `normToolNames` 约定（非数组/空数组 = 未配），按**最终发给模型的工具名**匹配（含 MCP 的 `服务名__` 前缀，与 prompt.txt dump 同源可对）；`system_prompt_file` 相对 `server/templates/`（compose 已 bind-mount ./app/server，宿主直接可改），**配置加载时一次性读入常驻内存**，缺失/为空报错拦在保存/重启预检。运行期切换（前端传参）零 IO、不碰本配置。
+- `model_profiles`（顶层，`normalizeModelProfiles`）：多套可复用的 prompt+tools 组合，每项 `{tools_allow?, system_prompt_file?}`，两者至少配一个。`tools_allow` 按**最终发给模型的工具名**匹配（内置 + MCP，含 `服务名__` 前缀，与 prompt.txt dump 同源可对）；未配 = 全量，**空数组 `[]` = 零工具（纯文本组合）**——与 MCP 的 `tools_allow`（空名单视作未配）有意不同。`system_prompt_file` 相对 `server/templates/`（compose 已 bind-mount ./app/server，宿主直接可改），**配置加载时一次性读入常驻内存**，缺失/为空报错拦在保存/重启预检。运行期切换（前端传参）零 IO、不碰本配置。
 - 默认值（`DEFAULTS`）：port=8090、log_level=info、terminal default 30s/10K、agent temperature=1.0、max_tool_iterations=20、max_retries=2、model_hold 3min/30min/10s、上传 1.5MB 阈值/2000px/0.85。
 - 读写：`readConfigText` / `writeConfigText`（先校验后写，无原子 rename，因 bind mount 上 rename 会 EBUSY）；`applyEditsToText` 用 `YAML.Document` 保留注释。
 - `getConfig` 是浅引用，路由层拿到的就是运行中实例，**改完 in-memory 不影响**（要重启）。

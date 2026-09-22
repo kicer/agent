@@ -20,9 +20,10 @@ function normToolNames(v) {
 const TEMPLATES_DIR = path.join(__dirname, 'templates');
 
 // model_profiles 归一化：顶层 map {名称: {tools_allow?, system_prompt_file?}}，
-// 供 platforms[].models[].profile 引用（同 id 模型跨平台复用时免重复配置）。
-// - tools_allow 复用 MCP 名单约定（normToolNames）：只按最终发给模型的工具名匹配
-//   （内置名 + MCP 名，含冲突时加的 server__ 前缀）；非数组/空数组 = 未配置不过滤。
+// 供 platforms[].models[].profile 引用（同 id 模型跳平台复用时免重复配置）。
+// - tools_allow 只按最终发给模型的工具名匹配（内置名 + MCP 名，含冲突时加的 server__ 前缀）。
+//   语义与 MCP 的 tools_allow（空数组=未配）有意不同：这里空数组 [] 是有效配置 = 一个工具都不发
+//   （纯文本模式，给弱到不会调工具的小模型用）；只有「没写/非数组」才是「不过滤、发全量」。
 // - system_prompt_file：相对 templates/（也接受绝对路径），配置加载时一次性读入常驻内存，
 //   运行期切换零 IO；缺失/读不到/内容为空直接报校验错——拦在保存/重启预检，不留到运行期降级。
 // - 两样都没配 = 不起任何作用，报错误防误配空壳。
@@ -35,7 +36,10 @@ function normalizeModelProfiles(rawProfiles) {
     if (!p || typeof p !== 'object' || Array.isArray(p)) {
       throw new Error('model_profiles.' + key + ' 必须是对象 {tools_allow, system_prompt_file}');
     }
-    const tools_allow = normToolNames(p.tools_allow);
+    // 不用 normToolNames：那会把空数组吐成 undefined（丢抑「[] = 零工具」语义）；这里只归一字符串项。
+    const tools_allow = Array.isArray(p.tools_allow)
+      ? p.tools_allow.map(x => String(x).trim()).filter(Boolean)
+      : undefined;
     const file = String(p.system_prompt_file || '').trim();
     let prompt = '';
     if (file) {
