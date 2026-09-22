@@ -122,8 +122,10 @@ router.get('/', wrap((req, res) => {
   }
   const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
 
+  // has_schedule:侧边栏定时任务标记用,EXISTS 子查询单条搞定(非 N+1);schedule 详情仍只在单会话接口返回
   const stmt = db.prepare(
-    'SELECT * FROM sessions' + whereSql + ' ORDER BY updated_at DESC, id DESC LIMIT ?'
+    'SELECT *, EXISTS(SELECT 1 FROM scheduled_tasks t WHERE t.session_id = sessions.id) AS has_schedule FROM sessions'
+    + whereSql + ' ORDER BY updated_at DESC, id DESC LIMIT ?'
   );
   const rows = stmt.all.apply(stmt, args.concat([limit]));
 

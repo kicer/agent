@@ -27,7 +27,7 @@
     for (const s of list) {
       const g = groupLabel(s.updated_at);
       if (g !== lastGroup) { html += '<div class="group-label">' + esc(g) + '</div>'; lastGroup = g; }
-      html += '<div class="conv-wrap">' +
+      html += '<div class="conv-wrap' + (s.has_schedule ? ' scheduled' : '') + '">' +
         '<button class="conv-item' + (s.id === state.sessionId ? ' active' : '') + '" data-id="' + esc(s.id) + '">' +
           '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
         '</button>' +

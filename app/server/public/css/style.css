@@ -733,6 +733,13 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   position: relative;
   border-radius: 12px;
 }
+/* 定时任务会话标记:左缘紫色短竖条，绝对定位压在 conv-item 左 padding 区，不吃标题宽度；
+   颜色与 schedule-bar 紫色体系呼应，区别于状态色(蓝/绿/黄) */
+.conv-wrap.scheduled::before {
+  content: ""; position: absolute; left: 2px; top: 24%; bottom: 24%;
+  width: 3px; border-radius: 2px; background: #7048e8;
+  pointer-events: none;
+}
 .conv-item {
   position: relative;
   transition: background .12s;
