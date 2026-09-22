@@ -2,61 +2,6 @@
   {
     "type": "function",
     "function": {
-      "name": "copy_path",
-      "description": "Copies a file or directory to a new location, preserving the original. Directories are copied recursively.\n\nUse this tool when you need to duplicate a file or directory without modifying the original. It is more efficient than reading and writing contents manually. Returns confirmation on success.",
-      "parameters": {
-        "type": "object",
-        "required": ["source_path", "destination_path"],
-        "properties": {
-          "source_path": {
-            "type": "string",
-            "description": "Path of the file or directory to copy, relative to the session working directory. Absolute paths are also accepted."
-          },
-          "destination_path": {
-            "type": "string",
-            "description": "Destination path where the copy should be placed, relative to the session working directory. Absolute paths are also accepted."
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "create_directory",
-      "description": "Creates a new directory (and any missing parent directories) at the specified path. Returns confirmation on success.",
-      "parameters": {
-        "type": "object",
-        "required": ["path"],
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "Path of the directory to create, relative to the session working directory. Absolute paths are also accepted."
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "delete_path",
-      "description": "Deletes a file or directory (recursively) at the specified path. Returns confirmation on success.",
-      "parameters": {
-        "type": "object",
-        "required": ["path"],
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "Path of the file or directory to delete, relative to the session working directory. Absolute paths are also accepted."
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
       "name": "edit_file",
       "description": "This is a tool for applying edits to an existing file.\n\nBefore using this tool, use the `read_file` tool to understand the file's contents and context.\nTo create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.\n\n`read_file` prefixes each line of its output with a line number right-aligned in a\n6-character field followed by a single tab, then the line's actual content. When you\nderive `old_text` or `new_text` from that output, strip this prefix and keep only what\ncomes after the tab, preserving the original indentation (tabs and spaces) exactly.\nNever include any part of the line number prefix in `old_text` or `new_text`.",
       "parameters": {
@@ -109,78 +54,6 @@
   {
     "type": "function",
     "function": {
-      "name": "find_path",
-      "description": "Finds file paths matching a glob pattern.\n\n- Supports patterns like \"**/*.js\" or \"src/**/*.ts\".\n- Returns matching paths sorted alphabetically.\n- Use `grep` instead when searching for file contents.\n- Results are paginated (50 per page); use `offset` to get more.",
-      "parameters": {
-        "type": "object",
-        "required": ["glob"],
-        "properties": {
-          "glob": {
-            "type": "string",
-            "description": "Glob pattern to match against file paths, relative to the session working directory."
-          },
-          "offset": {
-            "type": "integer",
-            "description": "Optional starting position for paginated results (0-based). Defaults to 0.",
-            "default": 0,
-            "minimum": 0
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "grep",
-      "description": "Searches file contents using a regular expression.\n\n- Prefer this tool when looking for symbols or text inside files, rather than guessing paths.\n- Supports full regex syntax.\n- Use `include_pattern` to limit which files are searched.\n- Results are paginated (20 per page); use `offset` for more.\n- Do not use HTML entities to escape characters.",
-      "parameters": {
-        "type": "object",
-        "required": ["regex"],
-        "properties": {
-          "regex": {
-            "type": "string",
-            "description": "Regular expression pattern to search for. Matches against file contents only."
-          },
-          "include_pattern": {
-            "type": "string",
-            "nullable": true,
-            "description": "Optional glob pattern to filter which files are searched (e.g., \"**/*.py\"). If omitted, all files are searched."
-          },
-          "offset": {
-            "type": "integer",
-            "description": "Optional starting position for paginated results (0-based). Defaults to 0.",
-            "default": 0,
-            "minimum": 0
-          },
-          "case_sensitive": {
-            "type": "boolean",
-            "description": "Whether the search is case-sensitive. Defaults to false (case-insensitive).",
-            "default": false
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "list_directory",
-      "description": "Lists files and directories in a given path.\n\nUse this to see the contents of a directory. For searching by name or content, prefer `find_path` or `grep`.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "Path of the directory to list, relative to the session working directory. Absolute paths are also accepted. If empty or omitted, lists the current working directory (like `ls` with no argument)."
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
       "name": "mint_public_link",
       "description": "Create a short-lived, publicly reachable URL for a local file, so an external service that cannot authenticate can download it.\nUse this when another tool or API needs to fetch a local file by URL. Returns the URL as plain text on a single line.",
       "parameters": {
@@ -190,27 +63,6 @@
           "path": {
             "type": "string",
             "description": "Path of the file to publish, relative to the session working directory. Absolute paths inside the session working directory are also accepted."
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "move_path",
-      "description": "Moves or renames a file or directory, and returns confirmation that the move succeeded. If source and destination are in the same directory but with different names, this acts as a rename.",
-      "parameters": {
-        "type": "object",
-        "required": ["source_path", "destination_path"],
-        "properties": {
-          "source_path": {
-            "type": "string",
-            "description": "Path of the file or directory to move or rename, relative to the session working directory. Absolute paths are also accepted."
-          },
-          "destination_path": {
-            "type": "string",
-            "description": "Destination path after the move/rename, relative to the session working directory. Absolute paths are also accepted."
           }
         }
       }
@@ -314,7 +166,7 @@
     "type": "function",
     "function": {
       "name": "write_file",
-      "description": "Creates a new file or overwrites an existing file with the given content.\n\nUse `edit_file` for targeted changes to existing files. Before creating a new file, verify the parent directory exists with `list_directory`.",
+      "description": "Creates a new file or overwrites an existing file with the given content.\n\nUse `edit_file` for targeted changes to existing files. Parent directories are created automatically as needed.",
       "parameters": {
         "type": "object",
         "required": ["path", "content"],

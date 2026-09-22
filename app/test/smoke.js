@@ -205,7 +205,7 @@ async function main() {
     const pool = await api('GET', '/api/models');
     ok(pool.length === 2, '模型池数量', JSON.stringify(pool));
 
-    // ---- 8. 工具单元：terminal 超时 + grep ----
+    // ---- 8. 工具单元：terminal 超时 ----
     console.log('\n[7] terminal 超时');
     const eng = require(path.join(ROOT, 'server/engine.js'));
     // engine 未在本进程初始化（服务在子进程），此处直接单测 executor
@@ -223,10 +223,7 @@ async function main() {
     const toc = await executeTool(ctx, 'terminal', { command: 'echo hello-unit && pwd' });
     ok(toc.includes('hello-unit') && toc.includes('exit code: '), 'terminal 正常执行', toc.slice(0, 120));
     await executeTool(ctx, 'write_file', { path: 'g.txt', content: 'alpha\nbeta\n' });
-    const gres = await executeTool(ctx, 'grep', { regex: 'et' });
-    ok(gres.includes('beta'), 'grep 命中', gres);
-    const fpath = await executeTool(ctx, 'find_path', { glob: '*.txt' });
-    ok(fpath.includes('g.txt'), 'find_path 命中', fpath);
+
     const esc = await executeTool(ctx, 'read_file', { path: '../outside.txt' }).catch(e => 'ERR:' + e.message);
     ok(String(esc).includes('越界'), 'read_file 拒绝越界', String(esc));
     // read_file 读图：非 vision → 文本提示；vision → {text, image_rel}（依赖 sharp；小图压缩无收益时 image_rel 直指原文件，不落 .imgcache）

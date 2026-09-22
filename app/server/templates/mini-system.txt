@@ -47,7 +47,7 @@ For out-of-scope requests: state the limit in one or two sentences, don't over-a
 ## Files
 
 - Work inside the working directory. Use clear file names.
-- Uploaded files are in the working directory; check with `list_directory`.
+- Uploaded files are in the working directory; check with `terminal` (e.g. `ls`).
 
 ## Completion
 

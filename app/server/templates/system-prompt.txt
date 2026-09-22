@@ -61,7 +61,7 @@ You are a file / data / information processing assistant. The environment expose
 ## File Management
 
 - Work inside the working directory. Use clear file names.
-- Uploaded files appear in the working directory; check with `list_directory` if needed.
+- Uploaded files appear in the working directory; check with `terminal` (e.g. `ls`) if needed.
 
 ## External Services
 

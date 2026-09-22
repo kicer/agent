@@ -4,19 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const fsp = require('fs').promises;
 const { spawn } = require('child_process');
-const { Minimatch } = require('minimatch');
 const mcp = require('../mcp');
 const skills = require('./skills');
 const rexec = require('../remote-exec');
 const publicFiles = require('../public-files');
 const scheduler = require('../scheduler'); // 只依赖 log/cron-parser，不成环（engine→executor→scheduler 单向）
-
-function makeMatcher(pattern, opts) {
-  const mm = new Minimatch(pattern, opts || {});
-  return function (p) { return mm.match(p); };
-}
-
-const IGNORED_DIRS = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', '.next', '.cache']);
 
 // ---------- 路径沙箱 ----------
 function resolveInTask(taskDir, p) {
@@ -36,29 +28,6 @@ function resolveInTask(taskDir, p) {
 
 function relOf(taskDir, abs) {
   return path.relative(path.resolve(taskDir), abs) || '.';
-}
-
-// ---------- 文件系统遍历 ----------
-function walk(taskDir, opts) {
-  const out = [];
-  const maxFiles = (opts && opts.maxFiles) || 20000;
-  function rec(dir) {
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
-    for (const ent of entries) {
-      if (out.length >= maxFiles) return;
-      if (ent.name.startsWith('.') && IGNORED_DIRS.has(ent.name)) continue;
-      if (IGNORED_DIRS.has(ent.name)) continue;
-      const abs = path.join(dir, ent.name);
-      if (ent.isDirectory()) {
-        rec(abs);
-      } else if (ent.isFile()) {
-        out.push(abs);
-      }
-    }
-  }
-  rec(taskDir);
-  return out;
 }
 
 function isProbablyBinary(abs) {
@@ -185,7 +154,7 @@ async function toolReadFile(ctx, args) {
   let st;
   try { st = await fsp.stat(abs); }
   catch (_) { throw new Error('文件不存在：' + args.path); }
-  if (st.isDirectory()) throw new Error(args.path + ' 是目录不是文件，请用 list_directory 工具查看目录内容。');
+  if (st.isDirectory()) throw new Error(args.path + ' 是目录不是文件，请用 terminal 执行 ls 查看目录内容。');
   if (IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
     const rel = relOf(ctx.taskDir, abs);
     if (!ctx.vision) {
@@ -439,131 +408,6 @@ async function toolEditFile(ctx, args) {
   return '已成功应用 ' + applied + ' 处编辑到 ' + relOf(ctx.taskDir, abs);
 }
 
-// 对齐 Zed list_directory 的输出格式：
-//   # Folders:
-//   <dir>/<name>
-//
-//   # Files:
-//   <dir>/<name>
-// 条目为相对任务目录的完整路径（不带尾部斜杠），目录/文件分节、各自排序，空节省略。
-async function toolListDirectory(ctx, args) {
-  // 对齐 ls 语义：path 缺省或为空字符串时等同于当前目录（任务目录）。
-  const p = typeof args.path === 'string' && args.path.trim() ? args.path : '.';
-  const abs = resolveInTask(ctx.taskDir, p);
-  const entries = await fsp.readdir(abs, { withFileTypes: true });
-  const rel = relOf(ctx.taskDir, abs);
-  const dirs = []; const files = [];
-  for (const e of entries) {
-    const full = rel === '.' ? e.name : rel + '/' + e.name;
-    if (e.isDirectory()) dirs.push(full);
-    else files.push(full);
-  }
-  dirs.sort(); files.sort();
-  const total = dirs.length + files.length;
-  if (total === 0) return 'Directory is empty';
-  const shownDirs = dirs.slice(0, 500);
-  const shownFiles = files.slice(0, 500 - shownDirs.length);
-  const sections = [];
-  if (shownDirs.length) sections.push('# Folders:\n' + shownDirs.join('\n'));
-  if (shownFiles.length) sections.push('# Files:\n' + shownFiles.join('\n'));
-  let out = sections.join('\n\n');
-  if (shownDirs.length + shownFiles.length < total) out += '\n\n...(' + total + ' entries total, truncated)';
-  return out;
-}
-
-async function toolCreateDirectory(ctx, args) {
-  const abs = resolveInTask(ctx.taskDir, args.path);
-  await fsp.mkdir(abs, { recursive: true });
-  return '已创建目录 ' + relOf(ctx.taskDir, abs);
-}
-
-async function toolDeletePath(ctx, args) {
-  const abs = resolveInTask(ctx.taskDir, args.path);
-  if (path.resolve(abs) === path.resolve(ctx.taskDir)) throw new Error('禁止删除任务目录本身');
-  await fsp.rm(abs, { recursive: true, force: true });
-  return '已删除 ' + relOf(ctx.taskDir, abs);
-}
-
-async function toolMovePath(ctx, args) {
-  const src = resolveInTask(ctx.taskDir, args.source_path);
-  const dst = resolveInTask(ctx.taskDir, args.destination_path);
-  await fsp.mkdir(path.dirname(dst), { recursive: true });
-  await fsp.rename(src, dst);
-  recordFile(ctx, dst);
-  return '已移动/重命名 ' + relOf(ctx.taskDir, src) + ' → ' + relOf(ctx.taskDir, dst);
-}
-
-async function toolCopyPath(ctx, args) {
-  const src = resolveInTask(ctx.taskDir, args.source_path);
-  const dst = resolveInTask(ctx.taskDir, args.destination_path);
-  await fsp.mkdir(path.dirname(dst), { recursive: true });
-  await fsp.cp(src, dst, { recursive: true });
-  recordFile(ctx, dst);
-  return '已复制 ' + relOf(ctx.taskDir, src) + ' → ' + relOf(ctx.taskDir, dst);
-}
-
-async function toolFindPath(ctx, args) {
-  const files = walk(ctx.taskDir).map(f => relOf(ctx.taskDir, f)).sort();
-  // 对齐 Zed：空 glob 视为 *；不含 / 的裸模式按文件名匹配，
-  // 否则 schema 里 "*thing*.txt 匹配 directory1/a/something.txt" 的例子永远命不中。
-  const glob = (args.glob || '').trim() || '*';
-  const bare = !glob.includes('/');
-  const matcher = makeMatcher(glob, { dot: true });
-  const matched = files.filter(bare ? f => matcher(path.basename(f)) : matcher);
-  const offset = args.offset || 0;
-  const page = matched.slice(offset, offset + 50);
-  if (page.length === 0) return '没有匹配 ' + args.glob + ' 的路径';
-  return page.join('\n') + '\n（共 ' + matched.length + ' 个匹配' + (offset + 50 < matched.length ? '，用 offset=' + (offset + 50) + ' 看下一页' : '') + '）';
-}
-
-async function toolGrep(ctx, args) {
-  let re;
-  try { re = new RegExp(args.regex, args.case_sensitive ? '' : 'i'); } catch (e) {
-    return '正则解析失败：' + e.message;
-  }
-  const pattern = args.include_pattern ? makeMatcher(args.include_pattern, { dot: false }) : null;
-  const files = walk(ctx.taskDir);
-  // 对齐 Zed：分页单位是“片段”（匹配行 ±2 行上下文，相邻匹配合并），而非单行。
-  const SNIPPET_CAP = 200; // 防止病态全仓匹配撞大内存
-  const snippets = [];
-  let capped = false;
-  outer:
-  for (const abs of files) {
-    const rel = relOf(ctx.taskDir, abs);
-    if (pattern && !pattern(rel)) continue;
-    if (isProbablyBinary(abs)) continue;
-    let text;
-    try { text = await fsp.readFile(abs, 'utf8'); } catch (_) { continue; }
-    if (text.length > 2 * 1024 * 1024) continue;
-    const lines = text.split('\n');
-    let cur = null;
-    for (let i = 0; i < lines.length; i++) {
-      re.lastIndex = 0;
-      if (!re.test(lines[i])) continue;
-      if (cur && i <= cur.end) { if (i + 2 > cur.end) cur.end = Math.min(lines.length - 1, i + 2); continue; }
-      if (cur) snippets.push(cur);
-      if (snippets.length >= SNIPPET_CAP) { capped = true; cur = null; break outer; }
-      cur = { file: rel, lines, start: Math.max(0, i - 2), end: Math.min(lines.length - 1, i + 2) };
-    }
-    if (cur) snippets.push(cur);
-  }
-  const offset = args.offset || 0;
-  const page = snippets.slice(offset, offset + 20);
-  if (page.length === 0) return '没有匹配';
-  let outText = '';
-  let lastFile = null;
-  for (const s of page) {
-    if (s.file !== lastFile) { outText += '\n## ' + s.file + ' 中的匹配\n'; lastFile = s.file; }
-    const label = s.start === s.end ? 'L' + (s.start + 1) : 'L' + (s.start + 1) + '-' + (s.end + 1);
-    outText += '\n### ' + label + '\n```\n' + s.lines.slice(s.start, s.end + 1).join('\n') + '\n```\n';
-  }
-  const more = capped || offset + 20 < snippets.length;
-  const header = more
-    ? '显示匹配 ' + (offset + 1) + '-' + (offset + page.length) + '（还有更多，用 offset=' + (offset + 20) + ' 看下一页）:\n'
-    : '共找到 ' + snippets.length + ' 处匹配:\n';
-  return header + outText;
-}
-
 // 对齐 Zed select_terminal_output_lines：head/tail 各自取行；同时给时中间空一行；不去重叠；0 合法。
 function selectOutput(text, head, tail) {
   const hasH = typeof head === 'number' && isFinite(head);
@@ -755,14 +599,7 @@ const HANDLERS = {
   read_file: toolReadFile,
   write_file: toolWriteFile,
   edit_file: toolEditFile,
-  list_directory: toolListDirectory,
   mint_public_link: toolMintPublicLink,
-  create_directory: toolCreateDirectory,
-  delete_path: toolDeletePath,
-  move_path: toolMovePath,
-  copy_path: toolCopyPath,
-  find_path: toolFindPath,
-  grep: toolGrep,
   terminal: toolTerminal,
   fetch: toolFetch,
   schedule_task: toolScheduleTask,

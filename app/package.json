@@ -1,6 +1,6 @@
 {
   "name": "agent-app",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "自用通用 Agent 系统：多模型调度 + 任务目录 + 工具调用 + H5 Web UI",
   "main": "server/server.js",
   "scripts": {
@@ -11,7 +11,6 @@
     "better-sqlite3": "11.3.0",
     "cron-parser": "5.10.1",
     "express": "4.21.2",
-    "minimatch": "9.0.5",
     "multer": "1.4.5-lts.1",
     "sharp": "0.35.4",
     "yaml": "2.6.1"
