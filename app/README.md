@@ -33,7 +33,7 @@ app/
 ```bash
 cd app
 npm install
-cp config.example.yml config.yml   # 补 platforms（必填）；本地跑把 workspace_root / data_root 改回 ./data/...
+cp config.example.yml config.yml   # platforms 可先留空（启动后在设置页添加）；本地跑再把 workspace_root / data_root 改回 ./data/...
 npm start                            # http://localhost:8090
 ```
 

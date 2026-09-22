@@ -216,12 +216,11 @@ function parseAndValidate(rawText, configPath) {
     raw = Object.assign({}, raw, { platforms: migrateLegacyModels(raw.models) });
     log.info('config', '检测到旧配置 models[] 扁平格式，已自动迁移为 platforms 层级；建议改写 config.yml 为 platforms 格式');
   }
-  if (!Array.isArray(raw.platforms) || !raw.platforms.length) {
-    throw new Error('配置缺少 platforms：至少需要一个平台 {name, url, keys:[{api_key}], models:[{id}]}')
-  }
+  // platforms 允许为空：可先起服务，再在前端设置页添加平台后重启（无模型时无会话可调度）。
+  const rawPlatforms = Array.isArray(raw.platforms) ? raw.platforms : [];
   // 用 deepMerge 后的 cfg.model_profiles（含内置 mini/zero），故 config.yml 不配也有默认组合。
   cfg.model_profiles = normalizeModelProfiles(cfg.model_profiles);
-  cfg.platforms = normalizePlatforms(raw.platforms, new Set(Object.keys(cfg.model_profiles)));
+  cfg.platforms = normalizePlatforms(rawPlatforms, new Set(Object.keys(cfg.model_profiles)));
   cfg.models = [];
   cfg.platforms.forEach((p, pi) => p.keys.forEach((k, ki) => p.models.forEach((m, mi) => {
     cfg.models.push({
@@ -237,7 +236,7 @@ function parseAndValidate(rawText, configPath) {
     });
   })));
   if (!cfg.models.length) {
-    throw new Error('platforms 下没有任何可用模型：keys[].models 至少需要一个 {id}')
+    log.warn('config', '配置中没有可用模型（platforms 为空或其下模型全被禁用）：可在设置页添加平台后重启。');
   }
 
   cfg.workspace_root = path.resolve(cfg.workspace_root);

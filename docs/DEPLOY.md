@@ -76,7 +76,7 @@ vi config.yml
 `/workspace/tasks`、`/workspace/data`）。`config.yml` 里至少要配：
 
 ```yaml
-platforms: ...                       # 模型池：每个平台 url + keys.api_key + models.id（必填，不能留空）
+platforms: ...                       # 模型池：每个平台 url + keys.api_key + models.id；可留空，启动后到设置页添加
 auth:                                # 建议启用，否则谁都能访问
   secret: "换一个随机串"
   users:

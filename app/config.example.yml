@@ -1,5 +1,5 @@
 # config.example.yml — 配置模板：与 server/config.js 的 DEFAULTS 一一对应。
-# 复制为 config.yml 后补齐 platforms（至少一个平台，否则启动报错），其余可按需覆盖。
+# 复制为 config.yml 即可启动；platforms 为空则无模型可用，可在前端设置页添加后重启。
 
 # 模型平台池：每平台 {name, url, type?, models:[{id, ...}], keys:[{api_key, concurrency?}]}。
 platforms: []
