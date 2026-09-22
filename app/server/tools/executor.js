@@ -512,7 +512,45 @@ function killGroup(child) {
   }
 }
 
-// fetch：抓取并粗略转 Markdown
+// fetch：抓取并转 Markdown。超时/取消覆盖到 body 读取完成（非仅响应头）；
+// 流式读取至多 cfg.fetch.max_bytes 字节；按响应 charset 解码（gbk 等依赖内置 full-icu）。
+function isTextualContentType(ct) {
+  if (!ct) return true; // 未声明：先按文本读，读完用 NUL 字节兜底判定
+  if (ct.startsWith('text/')) return true;
+  if (/^application\/(?:[\w.-]+\+)?(?:json|xml|yaml|x-ndjson|ndjson)\b/.test(ct)) return true;
+  if (/^application\/(?:javascript|ecmascript|xhtml\+xml)\b/.test(ct)) return true;
+  return false;
+}
+
+function charsetOf(ct) {
+  const m = /charset\s*=\s*["']?([\w-]+)/i.exec(ct || '');
+  return m ? m[1].toLowerCase() : '';
+}
+
+// 流式读到 maxBytes 即停；超限 reader.cancel() 主动断开，不再继续下载。
+async function readBodyLimited(stream, maxBytes) {
+  const reader = stream.getReader();
+  const chunks = [];
+  let total = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (total + value.byteLength > maxBytes) {
+        if (maxBytes > total) chunks.push(value.subarray(0, maxBytes - total));
+        truncated = true;
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    if (truncated) { try { await reader.cancel(); } catch (_) {} }
+  }
+  return { buf: Buffer.concat(chunks.map(c => Buffer.from(c))), truncated };
+}
+
 async function toolFetch(ctx, args) {
   if (ctx.run.cancelled) throw new Error('已终止');
   let url = String(args.url || '').trim();
@@ -522,26 +560,58 @@ async function toolFetch(ctx, args) {
     if (/^[a-z0-9+.-]+:\/\//i.test(url)) throw new Error('只支持 http/https URL：' + url);
     url = 'https://' + url;
   }
+  const fcfg = (ctx.cfg && ctx.cfg.fetch) || {};
+  const timeoutMs = fcfg.timeout_ms || 30000;
+  const maxBytes = fcfg.max_bytes || 1024 * 1024;
+
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
-  let res;
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  // 与 toolTerminal 同模式：等待中用户取消也能 abort 掉进行中的请求/读流。
+  const cancelWatch = setInterval(() => { if (ctx.run.cancelled) ctrl.abort(); }, 200);
   try {
-    res = await fetch(url, {
+    const res = await fetch(url, {
       signal: ctrl.signal,
       redirect: 'follow',
       headers: { 'User-Agent': 'Mozilla/5.0 (agent-app)' },
     });
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    // 非文本：不读 body，直接回报元信息（避免二进制白下载 + 乱码）。
+    if (!isTextualContentType(ct)) {
+      const len = Number(res.headers.get('content-length')) || 0;
+      return 'HTTP ' + res.status + '\n[非文本响应] content-type=' + ct +
+        (len ? '，' + len + ' 字节' : '') + '，未读取内容。';
+    }
+    if (!res.body) return 'HTTP ' + res.status + '\n（无响应体）';
+
+    const { buf, truncated } = await readBodyLimited(res.body, maxBytes);
+    // content-type 未声明的兜底：前 8KB 含 NUL 判为二进制（与 read_file 的 isProbablyBinary 同口径）。
+    if (!ct && buf.subarray(0, 8192).includes(0)) {
+      return 'HTTP ' + res.status + '\n[非文本响应] content-type 未声明，body 疑似二进制（' + buf.length + ' 字节），未返回内容。';
+    }
+    // 按 charset 解码；未知/非法编码名退回 UTF-8，不抛错。
+    const charset = charsetOf(ct);
+    let text;
+    if (!charset || charset === 'utf-8' || charset === 'utf8') {
+      text = buf.toString('utf8');
+    } else {
+      try { text = new TextDecoder(charset, { fatal: false }).decode(buf); }
+      catch (_) { text = buf.toString('utf8'); }
+    }
+    let body = ct.includes('html') ? htmlToMarkdown(text) : text;
+    if (truncated) body += '\n（响应超过 ' + maxBytes + ' 字节，已截断）';
+    // 输出字符数兜底：engine 不截工具结果，这是返回值上最后一道护栏。
+    return 'HTTP ' + res.status + '\n' + truncate(body, 1024 * 1024);
+  } catch (err) {
+    // 超时与取消都表现为 signal.aborted（body 读流阶段的报错形态不定，按信号判定最稳）。
+    if (ctrl.signal.aborted) {
+      if (ctx.run.cancelled) throw new Error('已终止');
+      throw new Error('fetch 超时（' + timeoutMs + 'ms）：' + url);
+    }
+    throw new Error('fetch 失败：' + (err && err.message || err));
   } finally {
     clearTimeout(timer);
+    clearInterval(cancelWatch);
   }
-  const text = await res.text();
-  const ct = (res.headers.get('content-type') || '').toLowerCase();
-  let body;
-  if (ct.includes('html')) body = htmlToMarkdown(text);
-  else if (ct.includes('json') || ct.includes('text') || ct.includes('xml') || ct.includes('markdown')) body = text;
-  else return '[非文本响应] HTTP ' + res.status + ' content-type=' + ct + '，' + text.length + ' 字节';
-  if (text.length > 1024 * 1024) body += '\n（响应过大，已截断）';
-  return 'HTTP ' + res.status + '\n' + truncate(body, 1024 * 1024);
 }
 
 function htmlToMarkdown(html) {

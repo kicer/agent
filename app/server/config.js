@@ -70,6 +70,8 @@ const DEFAULTS = {
   // 命令执行服务：url 非空走远端 executor，留空本地 spawn；留空时回退 env EXECUTOR_URL / EXECUTOR_TOKEN。
   executor: { url: '', token: '' },
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
+  // fetch：timeout_ms 覆盖请求发出到 body 读完的全生命周期；max_bytes 为流式抓取字节上限（超限即断开）。
+  fetch: { timeout_ms: 30000, max_bytes: 1048576 },
   // auto_compress_tokens：本轮 In token 峰值 ≥ 此值时推送「自动压缩」提议（0=关）。
   agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000 },
   // 大图上传预处理（浏览器端 canvas 压缩，参数经 /api/system/status 下发前端）。

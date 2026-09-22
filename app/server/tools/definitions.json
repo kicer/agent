@@ -38,14 +38,14 @@
     "type": "function",
     "function": {
       "name": "fetch",
-      "description": "Fetches a URL and returns the content as Markdown. The request may be subject to timeout and response size limits.",
+      "description": "Fetches a URL and returns its content as Markdown. Only http and https are supported; if the scheme is omitted, https is assumed.\n\nHTML pages are converted to Markdown. JSON, XML, plain text, and Markdown responses are returned as-is. Binary responses are not returned — only their HTTP status, content-type, and size.\n\nThe response always starts with a line `HTTP <status>`, followed by the body. Check the status line: a non-2xx status means the fetch did not succeed, even if body content is present.\n\nRequests are subject to a timeout, and oversized responses are truncated. Redirects are followed automatically.",
       "parameters": {
         "type": "object",
         "required": ["url"],
         "properties": {
           "url": {
             "type": "string",
-            "description": "The URL to fetch."
+            "description": "The URL to fetch. Must be http or https; if no scheme is given, https is assumed."
           }
         }
       }

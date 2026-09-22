@@ -27,6 +27,10 @@ terminal:
   default_timeout_ms: 30000                        # 命令默认超时（ms）
   max_output_chars: 10000                          # 回传模型的最大输出字符数
 
+fetch:
+  timeout_ms: 30000                                # 抓取总超时（ms），覆盖响应头到 body 读完
+  max_bytes: 1048576                               # 单次响应最多抓多少字节，超限即断开
+
 agent:
   temperature: 1.0                                 # 采样温度
   max_tool_iterations: 100                         # 单轮最大迭代数（含工具调用）
