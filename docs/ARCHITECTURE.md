@@ -302,7 +302,8 @@ stateDiagram-v2
 - 依赖不由 core 安装（core 只发现与执行）：系统层依赖（apt 等，`install.sh` 的副作用）在镜像 `skills` 阶段烘入 M'（需重建镜像）；pip 依赖与技能资产（如字体提取）在服务启动前由 `agent-executor-init` 一次性落到宿主 `./skills`。
   - init 的 pip 步骤先离线探测（`pip install --no-index --dry-run <逐行>`，不联网）：镜像已带的包直接跳过，只把缺的装进 `deps/`；`.deps_installed` marker（requirements/install.sh 两份 hash）也在那里维护。
   - 外挂层可见性：`skills/deps` 由 compose 放进 executor 容器 env 的 `PYTHONPATH`（`server.js` 白名单同步放行），技能入口与 AI 终端命令都能 import；运行期 skills 与 deps 均 `:ro`，**加包只需改 `requirements.txt` 后 `docker compose up -d`（重跑 init），不需重建镜像**。
-- `runSkill` 流程：`skillDir` 校验 → `absolutizeArgs`（按任务目录 + 启发式判断路径类参数） → `validateArgs`（按 front matter `input_schema.required`） → 选 `python3 run.py '<json>'` 或 `bash run.sh '<json>'` → `runEntry`。
+- `runSkill` 流程：`input_args` 类型守卫（非对象早拒，免得在 Object.entries 里静默错位） → `skillDir` 校验 → `absolutizeArgs`（按任务目录 + 启发式判断路径类参数） → `validateArgs`（按 front matter `input_schema.required`，缺项报错点名字段） → 选 `python3 run.py '<json>'` 或 `bash run.sh '<json>'` → `runEntry`。
+- system prompt 注入（`formatSkillListForPrompt`）只列名字省 token；描述查 `list_skills`、参数查 `get_skill_info`，配合关系写在注入段/模板里。
 - **走 executor**：命令拼成 `shq` 转义后的单条 shell 行（`shellLine`）；env 不额外传，依赖层由容器 env 提供。
 - **cwd 分两类**：`run_skill` 传会话任务目录（`ctx.taskDir`），命中 executor 的 session 隔离与虚拟视图，技能在 `/workspace/tasks/<sid>` 看到的就是本会话数据，`absolutizeArgs` 产出的绝对路径因此有效；入口脚本一律用绝对路径（cwd 已不是技能目录）。
 

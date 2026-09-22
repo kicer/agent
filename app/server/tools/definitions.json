@@ -187,7 +187,7 @@
     "type": "function",
     "function": {
       "name": "list_skills",
-      "description": "Lists all available skills from the skill root directory, returning each skill's name and brief description.\n\nSkills are self-contained directories with a SKILL.md description and an executable entry point (run.py or run.sh). Use this tool to refresh or confirm the current list of available skills, then use get_skill_info for details or run_skill to execute.",
+      "description": "Lists all installed skills with a one-line description each, read live from the skill root directory.\n\nThe system prompt's Available Skills section shows skill names only; use this tool when you need descriptions to choose among them or to confirm what is installed. An empty skill set returns an empty list — that is not an error.",
       "parameters": {
         "type": "object",
         "required": [],
@@ -199,7 +199,7 @@
     "type": "function",
     "function": {
       "name": "get_skill_info",
-      "description": "Returns the full content of the SKILL.md file for a given skill, including its purpose, parameters (input_schema), and usage instructions.",
+      "description": "Returns the full raw SKILL.md of a skill (front matter included): purpose, input_schema (the parameters run_skill accepts), and usage notes. Since the system prompt lists skill names only, call this before running a skill you have not used in this conversation. If the skill does not exist, an error is returned.",
       "parameters": {
         "type": "object",
         "required": ["skill_name"],
@@ -216,7 +216,7 @@
     "type": "function",
     "function": {
       "name": "run_skill",
-      "description": "Executes a specified skill with the provided input arguments. The skill's entry script receives a JSON string as the only command-line argument.\n\n- Required parameters are validated against the skill's input_schema.\n- Default timeout is 120 seconds.\n- Relative paths in arguments are resolved against the session working directory; you may pass relative or absolute paths.",
+      "description": "Executes a skill with the given input arguments, validated against the skill's input_schema (a validation error names the missing fields). The entry script receives a JSON string as its only CLI argument, so input_args must be a JSON object.\n\n- Returns the skill's combined stdout+stderr as plain text after it exits; exit 0 with no output yields '（无输出）'. A non-zero exit raises an error containing the output and [exit code: N].\n- Direct output files via arguments: relative paths in arguments are resolved against the session working directory; do not rely on the skill's cwd.\n- Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
       "parameters": {
         "type": "object",
         "required": ["skill_name", "input_args"],

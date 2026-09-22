@@ -70,14 +70,15 @@ async function listSkills(ctx) {
 }
 
 // ---------- system prompt 注入：可用技能列表 ----------
-// 把技能列表格式化成 “## Available Skills” 段落（每行一个技能：名称 + 描述，描述内换行压成空格）。
+// 把技能列表格式化成 “## Available Skills” 段落（仅名字，每行一个，省 token；
+// 描述查 list_skills，参数查 get_skill_info）。
 // 由 llm.setSkillListText 拼入 system prompt：启动时快照（server.js）与技能变更后
-// （routes/skills.js 的创建/重命名/删除/文件变更）调用，让模型直接感知已有技能，
-// 省掉先 list_skills 探索的往返；list_skills 仍保留作实时兑底查询。
+// （routes/skills.js 的创建/重命名/删除/文件变更）调用，让模型直接感知已装技能，
+// 省掉先 list_skills 探索的往返；list_skills 保留作实时描述/兼容性查询。
 function formatSkillListForPrompt(list) {
   if (!list || !list.length) return '';
-  const lines = list.map(s => '- ' + s.name + ': ' + String(s.description).replace(/\s*\n\s*/g, ' '));
-  return '## Available Skills\nSkills installed on this server (call directly via run_skill; no need to call list_skills first):\n' + lines.join('\n');
+  const lines = list.map(s => '- ' + s.name);
+  return '## Available Skills\nInstalled skills (names only). To use one: `get_skill_info` for its parameters, then `run_skill` to execute. Call `list_skills` for one-line descriptions when choosing among skills.\n' + lines.join('\n');
 }
 
 // ---------- 3.2 get_skill_info ----------
@@ -192,6 +193,10 @@ function runEntry(ctx, entry, args, cwd, timeoutMs) {
 
 // ---------- 3.3 run_skill ----------
 async function runSkill(ctx, skillName, inputArgs) {
+  // 非对象参数会在 absolutizeArgs 的 Object.entries 里静默错位成垃圾键值（如字符串→索引对象），显式拦下。
+  if (inputArgs != null && (typeof inputArgs !== 'object' || Array.isArray(inputArgs))) {
+    throw new SkillExecutionError('input_args 必须是对象（键值参数），收到：' + JSON.stringify(inputArgs).slice(0, 80), 1);
+  }
   const dir = skillDir(ctx, skillName);
   if (!fs.existsSync(dir)) throw new SkillNotFoundError('技能不存在：' + skillName);
 

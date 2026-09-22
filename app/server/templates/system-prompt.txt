@@ -50,7 +50,7 @@ You are a file / data / information processing assistant. The environment expose
 ## Skill Usage
 
 - Prefer using available skills when they match the task.
-- The "Available Skills" list below shows the currently installed skills; use it directly without calling `list_skills` first. If the list is empty or seems stale (e.g. a listed skill does not exist), call `list_skills` to check live.
+- The "Available Skills" list below shows installed skill names only. Pick a skill by name, call `get_skill_info` for its parameters, then `run_skill`. Call `list_skills` for one-line descriptions (e.g. to choose among several skills) or to confirm a stale/empty list.
 - Use `get_skill_info` to understand a skill's parameters, then `run_skill` to execute it.
 - Only if no skill matches, proceed with other tools or write your own solution.
 - The listed skills are prepared and ready at server startup; do not try to install dependencies for a skill yourself.
