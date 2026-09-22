@@ -162,3 +162,16 @@ mcp.init(cfg).then(async () => {
       }
     });
 });
+
+// 优雅退出（照抄 executor/server.js 的 shutdown 形态）：node 在容器里是 PID 1，
+// 不显式注册监听时 SIGTERM 会被直接忽略，docker stop/restart 只能白等满
+// stop_grace_period（默认 10s）后被 SIGKILL。scheduler/holdSweeper 的 timer
+// 均已 unref，退出只需收掉监听与 SSE 长连接。
+function shutdown(sig) {
+  log.info('shutdown', '收到 ' + sig + '，停止服务');
+  bus.closeAllSessions(); // 给前端干净的流结束（走重连/回放），而不是 TCP reset
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref(); // 关不掉的连接 3s 后兑底硬退
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

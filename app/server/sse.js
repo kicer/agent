@@ -38,7 +38,13 @@ function createBus() {
     return set ? set.size : 0;
   }
 
-  return { addClient, removeClient, emit, closeAll, clientCount };
+  // 进程退出前用：掐断所有会话的 SSE 流，让 server.close() 能等到连接清零
+  // （SSE 是长连接，不主动结束的话 close 回调永远不来）。
+  function closeAllSessions() {
+    for (const sessionId of Array.from(clients.keys())) closeAll(sessionId);
+  }
+
+  return { addClient, removeClient, emit, closeAll, closeAllSessions, clientCount };
 }
 
 module.exports = { createBus };
