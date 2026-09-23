@@ -4,11 +4,16 @@
 # 模型平台池：每平台 {name, url, type?, models:[{id, ...}], keys:[{api_key, concurrency?}]}。
 platforms: []
 
-# 模型 profile：prompt + tools 白名单组合，模型用 profile: <名> 引用（不配 = 全量）。
+# 全局工具黑名单：profile 未配 tools_deny 时继承它；allow 先、deny 后叠加（deny 赢，与 mcp_servers 同构）。
+# 写数组即整体覆盖默认值，写 [] 即清空。默认屏蔽元工具 lab。
+tools_deny: [lab]
+
+# 模型 profile：prompt + tools 名单组合，模型用 profile: <名> 引用（不配 = 全量）。
 model_profiles:
-  mini:                                            # 小模型：只留核心工具，省上下文
-    tools_allow: [read_file, write_file, edit_file, terminal, fetch, web_search, skill]
-    system_prompt_file: mini-system.txt            # 相对 server/templates/（也接受绝对路径）
+  lab:                                             # 统一入口自测：tools 只有 lab，其余能力经 lab(help) 现场发现
+    tools_allow: [lab]
+    tools_deny: []                                 # 必须显式清空全局黑名单，否则 lab 自己也被 deny → 零工具
+    system_prompt_file: lab-system.txt             # 相对 server/templates/（也接受绝对路径）
   zero:                                            # 纯文本对话：一个工具都不发
     tools_allow: []
     system_prompt_file: zero-system.txt

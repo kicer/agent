@@ -251,17 +251,25 @@ function resolveProfileName(session, run) {
   return m && m.profile ? String(m.profile) : '';
 }
 
-// 本轮工具定义集：内置 + MCP 全量；profile 配了 tools_allow 则按最终名过滤
-// （与发给模型的 tools 字段/prompt.txt dump 同源可对）。空数组 = 零工具（纯文本组合，
+// 本轮工具定义集：内置 + MCP 全量；先 profile 的 tools_allow 白名单、再叠 tools_deny 黑名单
+// （deny 赢，与 mcp_servers 同构；profile 未配 deny = 继承全局 cfg.tools_deny，DEFAULTS 默认屏蔽元工具 lab），
+// 按最终名过滤（与发给模型的 tools 字段/prompt.txt dump 同源可对）。allow 空数组 = 零工具（纯文本组合，
 // callModel 对空数组不发 tools 字段）；未配 = 全量。只影响模型「看得到什么」：
 // 名单外但真实存在的工具若被调用，executor 照常执行（HANDLERS 全表分发），不拦不误杀。
 function effectiveTools(profileName) {
-  const all = TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
   const prof = profileName && cfg.model_profiles && cfg.model_profiles[profileName];
   const allow = prof && prof.tools_allow;
-  if (!Array.isArray(allow)) return all;
-  const set = new Set(allow);
-  return all.filter(t => t && t.function && set.has(t.function.name));
+  const deny = prof && Array.isArray(prof.tools_deny) ? prof.tools_deny : cfg.tools_deny;
+  let out = TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
+  if (Array.isArray(allow)) {
+    const set = new Set(allow);
+    out = out.filter(t => t && t.function && set.has(t.function.name));
+  }
+  if (Array.isArray(deny) && deny.length) {
+    const dset = new Set(deny);
+    out = out.filter(t => !t || !t.function || !dset.has(t.function.name));
+  }
+  return out;
 }
 
 function hasModelProfile(name) {

@@ -19,14 +19,17 @@ function normToolNames(v) {
 // （compose 已 bind-mount ./app/server，宿主可直接编辑，无需重建镜像）。
 const TEMPLATES_DIR = path.join(__dirname, 'templates');
 
-// model_profiles 归一化：顶层 map {名称: {tools_allow?, system_prompt_file?}}，
+// model_profiles 归一化：顶层 map {名称: {tools_allow?, tools_deny?, system_prompt_file?}}，
 // 供 platforms[].models[].profile 引用（同 id 模型跳平台复用时免重复配置）。
 // - tools_allow 只按最终发给模型的工具名匹配（内置名 + MCP 名，含冲突时加的 server__ 前缀）。
 //   语义与 MCP 的 tools_allow（空数组=未配）有意不同：这里空数组 [] 是有效配置 = 一个工具都不发
 //   （纯文本模式，给弱到不会调工具的小模型用）；只有「没写/非数组」才是「不过滤、发全量」。
+// - tools_deny：profile 级黑名单，在 allow 之后叠加生效（deny 赢，与 MCP 同构）。未配/非数组 =
+//   继承全局 tools_deny（DEFAULTS 默认屏蔽 lab）；[] = 显式清空（lab profile 靠它把元工具换回来）；
+//   非空 = 替换全局。同样只按最终名匹配。
 // - system_prompt_file：相对 templates/（也接受绝对路径），配置加载时一次性读入常驻内存，
 //   运行期切换零 IO；缺失/读不到/内容为空直接报校验错——拦在保存/重启预检，不留到运行期降级。
-// - 两样都没配 = 不起任何作用，报错误防误配空壳。
+// - 三样都没配 = 不起任何作用，报错误防误配空壳。
 function normalizeModelProfiles(rawProfiles) {
   const out = {};
   if (!rawProfiles || typeof rawProfiles !== 'object' || Array.isArray(rawProfiles)) return out;
@@ -34,11 +37,15 @@ function normalizeModelProfiles(rawProfiles) {
     const key = String(name).trim();
     if (!key) continue;
     if (!p || typeof p !== 'object' || Array.isArray(p)) {
-      throw new Error('model_profiles.' + key + ' 必须是对象 {tools_allow, system_prompt_file}');
+      throw new Error('model_profiles.' + key + ' 必须是对象 {tools_allow, tools_deny, system_prompt_file}');
     }
     // 不用 normToolNames：那会把空数组吐成 undefined（丢抑「[] = 零工具」语义）；这里只归一字符串项。
     const tools_allow = Array.isArray(p.tools_allow)
       ? p.tools_allow.map(x => String(x).trim()).filter(Boolean)
+      : undefined;
+    // tools_deny 与 allow 同款手工归一：[] 是有效配置（显式清空全局黑名单），不能被当「未配」。
+    const tools_deny = Array.isArray(p.tools_deny)
+      ? p.tools_deny.map(x => String(x).trim()).filter(Boolean)
       : undefined;
     const file = String(p.system_prompt_file || '').trim();
     let prompt = '';
@@ -50,10 +57,10 @@ function normalizeModelProfiles(rawProfiles) {
       prompt = prompt.trim();
       if (!prompt) throw new Error('model_profiles.' + key + '.system_prompt_file 内容为空：' + abs);
     }
-    if (!tools_allow && !prompt) {
-      throw new Error('model_profiles.' + key + ' 至少需配 tools_allow 或 system_prompt_file 之一');
+    if (!tools_allow && !tools_deny && !prompt) {
+      throw new Error('model_profiles.' + key + ' 至少需配 tools_allow / tools_deny / system_prompt_file 之一');
     }
-    out[key] = { name: key, tools_allow, system_prompt_file: file, prompt };
+    out[key] = { name: key, tools_allow, tools_deny, system_prompt_file: file, prompt };
   }
   return out;
 }
@@ -84,13 +91,14 @@ const DEFAULTS = {
   log_level: 'info',
   // 模型平台池（无默认值，结构见 config.example.yml）。
   platforms: [],
-  // 模型 profile（prompt + tools 白名单组合）：platforms 里的模型用 profile: <名> 引用。
+  // 全局工具黑名单：profile 未配 tools_deny 时继承它；allow 先、deny 后叠加（deny 赢，与 mcp_servers 同构）。
+  // 默认屏蔽元工具 lab：它只该出现在显式清空 deny 的 profile 里，不进任何常规请求的 tools 数组。
+  tools_deny: ['lab'],
+  // 模型 profile（prompt + tools 名单组合）：platforms 里的模型用 profile: <名> 引用。
   model_profiles: {
-    // 小模型：只留文件/终端/网页等核心工具，省上下文。
-    mini: {
-      tools_allow: ['read_file', 'write_file', 'edit_file', 'terminal', 'fetch', 'web_search', 'skill'],
-      system_prompt_file: 'mini-system.txt',
-    },
+    // lab：统一入口元工具自测组合——tools 收缩到 1 个，其余能力经 lab(help) 现场发现。
+    // tools_deny 必须显式清空：不配 = 继承全局 ['lab']，deny 后叠加会把 lab 自己禁掉 → 零工具。
+    lab: { tools_allow: ['lab'], tools_deny: [], system_prompt_file: 'lab-system.txt' },
     // 纯文本对话：一个工具都不发。
     zero: { tools_allow: [], system_prompt_file: 'zero-system.txt' },
   },
@@ -220,7 +228,11 @@ function parseAndValidate(rawText, configPath) {
   }
   // platforms 允许为空：可先起服务，再在前端设置页添加平台后重启（无模型时无会话可调度）。
   const rawPlatforms = Array.isArray(raw.platforms) ? raw.platforms : [];
-  // 用 deepMerge 后的 cfg.model_profiles（含内置 mini/zero），故 config.yml 不配也有默认组合。
+  // 全局黑名单归一：非数组视作未配；deepMerge 对数组整体替换，config.yml 写了即覆盖 DEFAULTS。
+  cfg.tools_deny = Array.isArray(cfg.tools_deny)
+    ? cfg.tools_deny.map(x => String(x).trim()).filter(Boolean)
+    : undefined;
+  // 用 deepMerge 后的 cfg.model_profiles（含内置 lab/zero），故 config.yml 不配也有默认组合。
   cfg.model_profiles = normalizeModelProfiles(cfg.model_profiles);
   cfg.platforms = normalizePlatforms(rawPlatforms, new Set(Object.keys(cfg.model_profiles)));
   cfg.models = [];
