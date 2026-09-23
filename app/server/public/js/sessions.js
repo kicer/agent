@@ -29,7 +29,7 @@
       if (g !== lastGroup) { html += '<div class="group-label">' + esc(g) + '</div>'; lastGroup = g; }
       html += '<div class="conv-wrap' + (s.has_schedule ? ' scheduled' : '') + '">' +
         '<button class="conv-item' + (s.id === state.sessionId ? ' active' : '') + '" data-id="' + esc(s.id) + '">' +
-          '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
+          profileBadgeHtml(s.profile) + '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
         '</button>' +
         '<button class="conv-del" data-del="' + esc(s.id) + '" title="删除会话" aria-label="删除会话">' +
           '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
@@ -78,6 +78,9 @@
         state.sessionId = null;
         state.sessionTitle = '';
         state.sessionType = 'secretary';
+        state.profile = '';
+        state.pendingModel = '';
+        state.pendingProfile = '';
         state.streamEl = null;
         state.streamText = '';
         state.toolCards = {};
@@ -159,6 +162,7 @@
       // 先从抽屉列表缓存取会话类型，让顶部 icon 立即正确；详情回来后由 renderDetail 纠正
       const cached = (state.sessions || []).find(x => x.id === id);
       state.sessionType = (cached && cached.assistant_type) || 'secretary';
+      state.profile = (cached && cached.profile) || ''; // 先从列表缓存取模式徽标，renderDetail 回来后纠正
       state.streamEl = null;
       state.streamText = '';
       state.streamWrap = null;
@@ -186,13 +190,21 @@
     }
   }
 
-  // 确保存在当前会话:首条消息自动建档(POST /api/sessions)；助手类型此时锁定，后续不可变更
+  // 确保存在当前会话：首条消息自动建档(POST /api/sessions)；助手类型此时锁定，后续不可变更。
+  // welcome 经弹窗预选的模型/模式在这里兑现：model_id 建档透传，pendingProfile 建完会话立即 bind（早于首条消息）。
   async function ensureSession() {
     if (state.sessionId) return state.sessionId;
-    const s = await req('POST', '/api/sessions', { title: '', model_id: '', assistant_type: state.mode });
+    const s = await req('POST', '/api/sessions', { title: '', model_id: state.pendingModel || '', assistant_type: state.mode });
     state.sessionId = s.id;
     state.sessionTitle = (s && s.title) || '';
     state.sessionType = (s && s.assistant_type) || state.mode;
+    if (state.pendingProfile) {
+      try {
+        await req('POST', '/api/sessions/' + s.id + '/bind', { profile: state.pendingProfile });
+      } catch (e) { toast('模式绑定失败：' + e.message); state.profile = ''; }
+    }
+    state.pendingModel = '';
+    state.pendingProfile = '';
     setView('chat');
     renderHeader();
     updatePhaseBar();
@@ -209,6 +221,9 @@
     state.sessionType = 'secretary';
     state.status = '';
     state.schedule = null;
+    state.profile = '';
+    state.pendingModel = '';
+    state.pendingProfile = '';
     state.attachments = [];
     state.streamEl = null;
     state.streamText = '';
@@ -416,20 +431,21 @@
     } catch (e) { toast((held ? '断开失败:' : '终止失败:') + e.message); }
   }
   async function openModelSwitch() {
-    if (!state.sessionId) return;
+    // welcome（无会话）也可开：模型/模式选择记为预选项，ensureSession 建档时兑现。有会话则即点即绑，行为与原逻辑一致。
     const list = $('bind-model-list');
     const footer = $('bind-model-footer');
     list.innerHTML = '<div class="empty-tip">加载中…</div>';
     footer.textContent = '';
     $('bind-model-modal').classList.remove('hidden');
+    let modelsHtml = '';
+    let avail = 0;
     try {
       // /api/models 已按平台补齐 platform/mid/vision/key_count（见 server.js）；行本身按模型 id 唯一。
       // 已删除但重启前仍在运行池里的模型不再展示,避免误绑到重启后就消失的模型
       const rows = ((await req('GET', '/api/models')) || []).filter(m => !SET.deletedModels[m.id]);
       if (!rows.length) {
-        list.innerHTML = '<div class="empty-tip">还没有配置模型。</div>';
-        return;
-      }
+        modelsHtml = '<div class="empty-tip">还没有配置模型。</div>';
+      } else {
       // 平台颜色盘(循环使用)
       const DOT_COLORS = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#06B6D4','#F97316'];
       // 按平台分组;/api/models 已按模型聚合槽位:slots_total/slots_busy = 该模型的 key 总数/被占数,
@@ -444,21 +460,23 @@
       }
       const groups = [...platMap.values()];
       // 可选 = 模型还有空闲 key 槽位;统计可用数供底部提示
-      let avail = 0;
       for (const g of groups) for (const m of g.models) if (!m.is_busy) avail++;
-      list.innerHTML = groups.map((g, gi) => {
+      modelsHtml = groups.map((g, gi) => {
         const dotColor = DOT_COLORS[gi % DOT_COLORS.length];
         const itemHtml = g.models.map(m => {
           const total = m.slots_total || g.keyCount || 1;
           const free = total - (m.slots_busy || 0);
           const disabled = !!m.is_busy;
           const title = m.is_busy ? ' 占用中' : ((m.slots_busy || 0) > 0 ? ' ' + free + '/' + total + ' key 空闲' : '');
+          // 无会话 = welcome 入口：点模型只记预选（建档时透传 model_id），不直接绑定
+          const act = state.sessionId ? 'bindModel' : 'choosePendingModel';
+          const pre = !state.sessionId && state.pendingModel === m.id ? ' <span class="msw-busy">预选</span>' : '';
           return '<div class="msw-item' + (disabled ? ' disabled' : '') + '"' +
-            (disabled ? '' : ' onclick="bindModel(\'' + esc(m.id) + '\')"') + '>' +
+            (disabled ? '' : ' onclick="' + act + '(\'' + esc(m.id) + '\')"') + '>' +
             '<div class="msw-radio"></div>' +
             '<div class="msw-info">' +
               '<div class="msw-name">' + esc(m.display_name || m.mid || m.id) +
-                (title ? ' <span class="msw-busy">' + title.trim() + '</span>' : '') + '</div>' +
+                (title ? ' <span class="msw-busy">' + title.trim() + '</span>' : '') + pre + '</div>' +
               '<div class="msw-tags">' +
                 (m.vision ? '<span class="msw-tag vision">Vision</span>' : '') +
                 '<span class="msw-tag thinking">Thinking</span>' +
@@ -475,12 +493,61 @@
           itemHtml +
         '</div>';
       }).join('');
-      footer.textContent = '共 ' + avail + ' 个模型可用';
+      }
     } catch (e) {
-      list.innerHTML = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
+      modelsHtml = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
     }
+    // ---------- 模式区：prompt+tools 组合（名单来自 /api/system/status；拉不到 = 整区隐藏，不影响选模型） ----------
+    let profHtml = '';
+    const names = await loadProfileNames();
+    if (names.length) {
+      const cur = state.sessionId ? state.profile : state.pendingProfile;
+      const prow = (p, label) => '<div class="msw-item" onclick="chooseProfile(\'' + esc(p) + '\')">' +
+        '<div class="msw-radio"></div><div class="msw-info"><div class="msw-name">' + label +
+        (cur === p ? ' <span class="msw-busy">当前</span>' : '') + '</div></div></div>';
+      profHtml = '<div class="msw-group"><div class="msw-group-header"><span>模式</span></div>' +
+        prow('', '默认（随模型配置）') + names.map(p => prow(p, esc(p))).join('') + '</div>';
+    }
+    list.innerHTML = modelsHtml + profHtml;
+    footer.textContent = state.sessionId
+      ? '共 ' + avail + ' 个模型可用；模式切换下一轮迭代即生效'
+      : '预选项在首条消息建档时生效';
   }
   function closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); }
+
+  // profile 组合名单缓存（组合列表改动需重启才生效，会话级缓存足够）；status 拉失败 = 空名单 → 模式区隐藏。
+  let PROFILE_NAMES = null;
+  async function loadProfileNames() {
+    if (PROFILE_NAMES) return PROFILE_NAMES;
+    try {
+      const s = await req('GET', '/api/system/status');
+      PROFILE_NAMES = Array.isArray(s && s.model_profiles) ? s.model_profiles.slice() : [];
+    } catch (_) { PROFILE_NAMES = []; }
+    return PROFILE_NAMES;
+  }
+
+  function choosePendingModel(modelId) { // welcome 无会话：记预选，ensureSession 建档时透传；不关窗以便继续挑模式
+    state.pendingModel = modelId;
+    toast('新会话将用 ' + modelId);
+    openModelSwitch(); // 重画「预选」标记
+  }
+
+  async function chooseProfile(name) { // name='' = 默认（解绑随模型配置）
+    if (state.sessionId) {
+      try {
+        await req('POST', '/api/sessions/' + state.sessionId + '/bind', { profile: name });
+        state.profile = name;
+        toast(name ? '会话模式已切换：' + name + '（下一轮迭代即生效）' : '已切回默认模式');
+        renderHeader();
+        loadSessionList(); // 抽屉标题徽标同步
+      } catch (e) { return toast('切换失败:' + e.message); }
+    } else {
+      state.pendingProfile = name;
+      state.profile = name;
+      toast(name ? '新会话模式：' + name : '新会话用默认模式');
+    }
+    openModelSwitch(); // 重画模式区「当前」标记
+  }
   async function bindModel(modelId) {
     if (!state.sessionId) return;
     const id = state.sessionId;

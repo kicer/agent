@@ -88,6 +88,11 @@
         margin-bottom: 10px; background: #fff; color: var(--ink); resize: vertical;
       }
       #schedule-modal textarea:focus { border-color: var(--active); }
+      /* 会话模式徽标（profile 绑定时的标题小图标；尺寸显式定，不依赖 .ic 默认值） */
+      .prof-badge { display: inline-flex; align-items: center; margin-right: 4px; opacity: .62; flex: none; }
+      .prof-badge .ic { width: 13px; height: 13px; }
+      /* welcome 头像兼做「选择模型/模式」入口（与聊天态的「选择模型」同一弹窗） */
+      .logo-badge { cursor: pointer; }
     </style>
   <script>
     // 注册 Service Worker（PWA / 离线缓存）
@@ -131,7 +136,7 @@
       <!-- ================= 未对话状态:欢迎页 ================= -->
       <section id="welcome-view">
         <div class="welcome-head">
-          <div class="logo-badge">
+          <div class="logo-badge" onclick="openModelSwitch()" title="选择模型/模式" role="button" aria-label="选择模型与模式">
             <svg class="ic" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"></rect><line x1="12" y1="4" x2="12" y2="8"></line><circle cx="12" cy="3" r="1.4"></circle><circle cx="9" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><circle cx="15" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><line x1="9.5" y1="17" x2="14.5" y2="17"></line></svg>
           </div>
           <div class="welcome-slogan">随时开始吧</div>

@@ -157,6 +157,9 @@
     mode: 'secretary',          // 新建会话默认助手类型（欢迎页已去掉模式切换，不再可变）
     sessionType: 'secretary',   // 当前会话的助手类型（建档时锁定，后续不随模式切换变更）
     deepThink: false,           // 深度思考开关(仅本地视觉状态,无后端参数)
+    profile: '',                // 当前会话绑定模式（sessions.profile；''=默认随模型；弹窗「模式」区切换）
+    pendingModel: '',           // welcome 预选模型（ensureSession 建档时透传 model_id）
+    pendingProfile: '',         // welcome 预选模式（ensureSession 建会话后立即 bind）
     sessionId: null,            // 当前会话
     sessionTitle: '',           // 当前会话标题
     status: '',                 // 当前会话状态(SSE 更新)
@@ -195,6 +198,18 @@
       updateScrollBottomBtn();
     }
 
+  // ---------- 会话模式徽标 ----------
+  // 会话绑定 profile 时，标题（顶部/抽屉行）前缀小图标；''=默认不显示；未知组合回退圆点。
+  const PROFILE_BADGES = {
+    lab: '<svg viewBox="0 0 24 24" class="ic"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M10 2v6.6L4.8 18.5a1.8 1.8 0 0 0 1.6 2.7h11.2a1.8 1.8 0 0 0 1.6-2.7L14 8.6V2"/><line x1="8.5" y1="2" x2="15.5" y2="2"/></svg>',
+    zero: '<svg viewBox="0 0 24 24" class="ic"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>',
+  };
+  function profileBadgeHtml(p) {
+    if (!p) return '';
+    return '<span class="prof-badge" title="模式：' + esc(p) + '">' +
+      (PROFILE_BADGES[p] || '<svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/></svg>') + '</span>';
+  }
+
   function renderHeader() {
     const c = $('header-center');
     if (state.view !== 'chat' || !state.sessionId) { c.innerHTML = ''; return; }
@@ -204,7 +219,7 @@
     title.className = 'header-title';
     title.style.cursor = 'pointer';
     title.title = '点击重命名';
-    title.innerHTML = modeIcon +
+    title.innerHTML = modeIcon + profileBadgeHtml(state.profile) +
       '<span class="header-title-text">' + esc(state.sessionTitle || state.sessionId) + '</span>';
     title.addEventListener('click', renameSession); // 点标题重命名(同步 index)
     c.innerHTML = '';
