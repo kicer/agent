@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>数据看板</title>
+<style>
+:root {
+  --bg: #f5f5f7; --surface: #fff; --border: #e8e8ed; --text: #1d1d1f;
+  --text-2: #6e6e73; --accent: #0071e3; --accent-2: #5ac8fa; --accent-3: #af52de;
+  --r: 12px; --shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom));
+}
+.container { max-width: 820px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 4px 0 20px; letter-spacing: -0.02em; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stat { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow); padding: 16px 18px; }
+.stat .lbl { color: var(--text-2); font-size: 12px; margin-bottom: 4px; }
+.stat .val { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.card { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
+.card h2 { font-size: 14px; font-weight: 600; margin: 0 0 14px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.05em; }
+.bars { display: flex; flex-direction: column; gap: 10px; }
+.bar-row { display: grid; grid-template-columns: minmax(80px, 140px) 1fr auto; gap: 12px; align-items: center; }
+.bar-row .k { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-row .bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.bar-row .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s ease; }
+.bar-row:nth-child(3n+2) .bar > i { background: var(--accent-2); }
+.bar-row:nth-child(3n) .bar > i { background: var(--accent-3); }
+.bar-row .v { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text-2); min-width: 40px; text-align: right; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 0; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--text-2); font-weight: 500; font-size: 12px; }
+tr:last-child td { border-bottom: none; }
+.msg { text-align: center; padding: 40px 20px; color: var(--text-2); }
+.msg.err { color: #d70015; }
+@media (max-width: 480px) {
+  body { padding: 8px; }
+  h1 { font-size: 18px; margin-bottom: 14px; }
+  .stat .val { font-size: 20px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1 id="title">数据看板</h1>
+  <div class="stats" id="stats"></div>
+  <div class="card" id="chartCard">
+    <h2 id="chartTitle">分布</h2>
+    <div class="bars" id="bars"></div>
+  </div>
+  <div class="card" id="tableCard">
+    <h2>明细</h2>
+    <div id="table"></div>
+  </div>
+</div>
+
+<script>
+const CONFIG = {
+  table: 'items',
+  pk: 'id',
+  title: '数据看板',
+  groupBy: 'category',        // 分组维度（柱状图用）
+  sumColumn: 'qty',           // 求和的数值列
+  sumLabel: '总量',
+  detailColumns: ['name', 'category', 'qty'],  // 明细表展示的列
+  detailLimit: 20,
+};
+
+const API = `/api/db/${location.pathname.split('/').filter(Boolean)[1]}/query`;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function q(sql, params = []) {
+  const r = await fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql, params }),
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error);
+  return d;
+}
+
+async function init() {
+  document.getElementById('title').textContent = CONFIG.title;
+  try {
+    const [cnt, sum, group, detail] = await Promise.all([
+      q(`SELECT COUNT(*) AS v FROM ${CONFIG.table}`),
+      q(`SELECT SUM(${CONFIG.sumColumn}) AS v FROM ${CONFIG.table}`),
+      q(`SELECT ${CONFIG.groupBy} AS k, SUM(${CONFIG.sumColumn}) AS v
+         FROM ${CONFIG.table} GROUP BY ${CONFIG.groupBy} ORDER BY v DESC LIMIT 20`),
+      q(`SELECT * FROM ${CONFIG.table} LIMIT ${CONFIG.detailLimit}`),
+    ]);
+
+    document.getElementById('stats').innerHTML = `
+      <div class="stat"><div class="lbl">总条数</div><div class="val">${cnt[0]?.v ?? 0}</div></div>
+      <div class="stat"><div class="lbl">${esc(CONFIG.sumLabel)}</div><div class="val">${sum[0]?.v ?? 0}</div></div>
+      <div class="stat"><div class="lbl">分组数</div><div class="val">${group.length}</div></div>
+    `;
+
+    document.getElementById('chartTitle').textContent = `按 ${CONFIG.groupBy} 分布`;
+    const max = Math.max(...group.map(g => g.v || 0), 1);
+    document.getElementById('bars').innerHTML = group.length
+      ? group.map(g => `
+        <div class="bar-row">
+          <div class="k" title="${esc(g.k)}">${esc(g.k ?? '(空)')}</div>
+          <div class="bar"><i style="width:${((g.v || 0) / max * 100).toFixed(1)}%"></i></div>
+          <div class="v">${g.v ?? 0}</div>
+        </div>`).join('')
+      : '<div class="msg">暂无数据</div>';
+
+    document.getElementById('table').innerHTML = detail.length
+      ? `<table><thead><tr>${CONFIG.detailColumns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+         <tbody>${detail.map(r => `<tr>${CONFIG.detailColumns.map(c => `<td>${esc(r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+      : '<div class="msg">暂无数据</div>';
+  } catch (e) {
+    document.getElementById('stats').innerHTML = '';
+    document.getElementById('bars').innerHTML = `<div class="msg err">加载失败：${esc(e.message)}</div>`;
+    document.getElementById('table').innerHTML = '';
+  }
+}
+init();
+</script>
+</body>
+</html>

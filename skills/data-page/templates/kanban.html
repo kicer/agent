@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>看板</title>
+<style>
+:root {
+  --bg: #f5f5f7; --surface: #fff; --border: #e8e8ed; --text: #1d1d1f;
+  --text-2: #6e6e73; --accent: #0071e3; --r: 12px; --shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom));
+}
+h1 { font-size: 20px; margin: 4px 0 20px; letter-spacing: -0.02em; }
+.board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
+.col { flex: 0 0 260px; scroll-snap-align: start; background: var(--surface); border-radius: var(--r);
+  box-shadow: var(--shadow); display: flex; flex-direction: column; max-height: calc(100vh - 140px); }
+.col-hd { display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; }
+.col-hd .n { color: var(--text-2); font-weight: 400; font-size: 12px;
+  background: var(--bg); padding: 1px 8px; border-radius: 999px; }
+.col-bd { padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px; transition: box-shadow .15s, transform .05s; }
+.card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.card .t { font-size: 13px; font-weight: 500; line-height: 1.4; }
+.card .meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.card .meta span { font-size: 11px; color: var(--text-2); background: var(--bg); padding: 2px 7px; border-radius: 999px; }
+.card .mv { display: flex; gap: 6px; margin-top: 2px; }
+.card .mv button { appearance: none; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-2); cursor: pointer; font: inherit; font-size: 12px; padding: 3px 9px;
+  border-radius: 6px; transition: all .15s; }
+.card .mv button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.card .mv button:disabled { opacity: .3; cursor: default; }
+.col-bd .empty { text-align: center; color: var(--text-2); padding: 20px 8px; font-size: 12px; }
+.msg { text-align: center; padding: 40px 20px; color: var(--text-2); }
+.msg.err { color: #d70015; }
+@media (max-width: 480px) { body { padding: 8px; } h1 { font-size: 18px; margin-bottom: 14px; } }
+</style>
+</head>
+<body>
+<h1 id="title">看板</h1>
+<div id="root"><div class="msg">加载中…</div></div>
+
+<script>
+const CONFIG = {
+  table: 'tasks',
+  pk: 'id',
+  title: '任务看板',
+  groupField: 'status',                       // 用来分列的字段
+  groups: ['待办', '进行中', '已完成'],         // 列的顺序
+  titleField: 'title',                        // 卡片主标题字段
+  metaFields: ['assignee', 'due'],            // 卡片上显示的次要字段
+};
+
+const API = `/api/db/${location.pathname.split('/').filter(Boolean)[1]}/query`;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function q(sql, params = []) {
+  const r = await fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql, params }),
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error);
+  return d;
+}
+
+let rows = [];
+
+async function load() {
+  try {
+    rows = await q(`SELECT * FROM ${CONFIG.table}`);
+    render();
+  } catch (e) {
+    document.getElementById('root').innerHTML = `<div class="msg err">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function render() {
+  document.getElementById('title').textContent = CONFIG.title;
+  const groups = CONFIG.groups;
+  const html = `<div class="board">${groups.map((g, i) => {
+    const items = rows.filter(r => String(r[CONFIG.groupField] ?? '') === g);
+    return `<div class="col">
+      <div class="col-hd"><span>${esc(g)}</span><span class="n">${items.length}</span></div>
+      <div class="col-bd">
+        ${items.length ? items.map(r => card(r, i)).join('') : '<div class="empty">暂无</div>'}
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+  document.getElementById('root').innerHTML = html;
+  bind();
+}
+
+function card(r, gi) {
+  const meta = CONFIG.metaFields
+    .filter(f => r[f] != null && r[f] !== '')
+    .map(f => `<span>${esc(r[f])}</span>`).join('');
+  return `<div class="card" data-pk="${esc(r[CONFIG.pk])}">
+    <div class="t">${esc(r[CONFIG.titleField] ?? '(无标题)')}</div>
+    ${meta ? `<div class="meta">${meta}</div>` : ''}
+    <div class="mv">
+      <button data-dir="-1" ${gi === 0 ? 'disabled' : ''}>← 上一列</button>
+      <button data-dir="1" ${gi === CONFIG.groups.length - 1 ? 'disabled' : ''}>下一列 →</button>
+    </div>
+  </div>`;
+}
+
+function bind() {
+  document.querySelectorAll('.card').forEach(cardEl => {
+    const pk = cardEl.dataset.pk;
+    cardEl.querySelectorAll('.mv button').forEach(btn => {
+      btn.onclick = async () => {
+        const dir = Number(btn.dataset.dir);
+        const row = rows.find(r => String(r[CONFIG.pk]) === String(pk));
+        if (!row) return;
+        const cur = CONFIG.groups.indexOf(String(row[CONFIG.groupField] ?? ''));
+        const next = cur + dir;
+        if (next < 0 || next >= CONFIG.groups.length) return;
+        const newGroup = CONFIG.groups[next];
+        btn.disabled = true;
+        try {
+          await q(`UPDATE ${CONFIG.table} SET ${CONFIG.groupField} = ? WHERE ${CONFIG.pk} = ?`, [newGroup, pk]);
+          row[CONFIG.groupField] = newGroup;
+          render();
+        } catch (e) {
+          alert('移动失败：' + e.message);
+          btn.disabled = false;
+        }
+      };
+    });
+  });
+}
+
+load();
+</script>
+</body>
+</html>

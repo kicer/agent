@@ -814,15 +814,19 @@ function toolScheduleTask(ctx, args) {
 // 列名先对 sqlite_master 真实列校验再 quoteIdent 转义，值全部走 ? 绑定。
 // update/delete 不做结构化 op（单行 SQL 本身简单、错误率低，且 AND 等值 where 表达力
 // 不够还要回退 exec）：继续走 exec，入口不拦写语句，兑底通道保持全能力。
+// runTaskSql 是本工具与 routes/data-page.js（/api/db/{task_id}/query，页面前端调）共用的
+// 唯一 SQL 执行入口：prepare/读写分流/事务/DDL 判定两处同一事实源，不漂移。
 const DB_MAX_ROWS = 500;            // query 行数上限（docs 要求：防爆上下文）
 const DB_MAX_BYTES = 100 * 1024;    // query 序列化字节上限
 
-function openTaskDb(ctx) {
-  fs.mkdirSync(ctx.taskDir, { recursive: true });
-  const db = new Database(path.join(ctx.taskDir, 'data.db'));
+function openTaskDbAt(taskDir) {
+  fs.mkdirSync(taskDir, { recursive: true });
+  const db = new Database(path.join(taskDir, 'data.db'));
   db.pragma('busy_timeout = 5000');
   return db;
 }
+
+function openTaskDb(ctx) { return openTaskDbAt(ctx.taskDir); }
 
 // better-sqlite3 不接受 boolean/array/object 绑定；JSON 世界 true/false ↔ SQLite 0/1 是强约定。
 // 所有进入绑定位的值（params / rows / set / where）统一过这里。
@@ -871,10 +875,11 @@ function jsonSafeRows(rows) {
 }
 
 // 500 行 / 100KB 双上限：未超限返回裸数组；超限改 {rows,...} 信封并附截断说明。
-function renderQueryResult(rows) {
+// overflow 由 runTaskSql 的行数截断给出（总行数不再探得，故信封只报 returned_rows 不报 total）；
+// 字节线在此再收。
+function renderQueryResult(rows, overflow) {
   let shown = rows;
-  let truncated = shown.length > DB_MAX_ROWS;
-  if (truncated) shown = shown.slice(0, DB_MAX_ROWS);
+  let truncated = !!overflow;
   if (Buffer.byteLength(JSON.stringify(shown, null, 2)) > DB_MAX_BYTES) {
     truncated = true;
     let bytes = 4; // "[\n]"
@@ -891,10 +896,56 @@ function renderQueryResult(rows) {
   return JSON.stringify({
     rows: shown,
     returned_rows: shown.length,
-    total_rows: rows.length,
     truncated: true,
     note: '结果已截断（上限 ' + DB_MAX_ROWS + ' 行或 ' + Math.floor(DB_MAX_BYTES / 1024) + ' KB）。用 WHERE 收窄列/行，或 LIMIT/OFFSET 分页。',
   }, null, 2);
+}
+
+// 任务库单语句执行的统一入口。mode：'read' 只许读（op=query）| 'write' 只许写（op=exec）|
+// 'any' 按 stmt.reader 自动分流（HTTP API，SKILL.md 契约：任意单语句）。
+// maxRows>0 时读取走 iterate 到量即停（防大表 SELECT * 全量物化），overflow 处置交调用方：
+// 工具截断成信封，API 直接报错引导分页。错误一律抛出，不在此层包装返回形态。
+function runTaskSql(taskDir, sql, params, mode, maxRows) {
+  const text = String(sql || '').trim();
+  if (!text) throw new Error('db: sql 不能为空');
+  const db = openTaskDbAt(taskDir);
+  try {
+    const stmt = db.prepare(text); // 多语句在此抛错（堆叠注入入口即挡）
+    const bound = sanitizeDbParams(params);
+    if (stmt.reader) {
+      if (mode === 'write') throw new Error('db: op=exec 收到只读语句，读取请用 op=query');
+      const rows = [];
+      let overflow = false;
+      if (maxRows > 0) {
+        const it = stmt.iterate(...bound);
+        try {
+          for (const r of it) {
+            if (rows.length >= maxRows) { overflow = true; break; }
+            rows.push(r);
+          }
+        } finally { try { it.return(); } catch (_) {} }
+      } else {
+        for (const r of stmt.all(...bound)) rows.push(r);
+      }
+      return { kind: 'read', rows: jsonSafeRows(rows), overflow };
+    }
+    if (mode === 'read') throw new Error('db: op=query 只允许读语句（SELECT 等），写操作请用 op=exec');
+    db.exec('BEGIN');
+    try {
+      const info = stmt.run(...bound);
+      db.exec('COMMIT');
+      const verb = text.split(/\s+/)[0].toLowerCase();
+      const out = (verb === 'create' || verb === 'alter' || verb === 'drop')
+        ? { ok: true }
+        : { rowsAffected: info.changes, lastInsertRowid: Number(info.lastInsertRowid) };
+      return { kind: 'write', out };
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch (_) {}
+      throw err;
+    }
+  } finally {
+    try { db.close(); } catch (_) {}
+  }
 }
 
 function toolDb(ctx, args) {
@@ -907,28 +958,13 @@ function toolDb(ctx, args) {
     switch (op) {
       case 'exec': {
         if (!sql) throw new Error('db: op=exec 缺少必填参数 sql');
-        db = openTaskDb(ctx);
-        const stmt = db.prepare(sql); // 多语句在此抛错
-        if (stmt.reader) throw new Error('db: op=exec 收到只读语句，读取请用 op=query');
-        const params = sanitizeDbParams(args.params);
-        db.exec('BEGIN');
-        try {
-          const info = stmt.run(...params);
-          db.exec('COMMIT');
-          const verb = sql.split(/\s+/)[0].toLowerCase();
-          if (verb === 'create' || verb === 'alter' || verb === 'drop') return JSON.stringify({ ok: true });
-          return JSON.stringify({ rowsAffected: info.changes, lastInsertRowid: Number(info.lastInsertRowid) });
-        } catch (err) {
-          try { db.exec('ROLLBACK'); } catch (_) {}
-          throw err;
-        }
+        const r = runTaskSql(ctx.taskDir, sql, args.params, 'write', 0);
+        return JSON.stringify(r.out);
       }
       case 'query': {
         if (!sql) throw new Error('db: op=query 缺少必填参数 sql');
-        db = openTaskDb(ctx);
-        const stmt = db.prepare(sql);
-        if (!stmt.reader) throw new Error('db: op=query 只允许读语句（SELECT 等），写操作请用 op=exec');
-        return renderQueryResult(jsonSafeRows(stmt.all(...sanitizeDbParams(args.params))));
+        const r = runTaskSql(ctx.taskDir, sql, args.params, 'read', DB_MAX_ROWS);
+        return renderQueryResult(r.rows, r.overflow);
       }
       case 'insert': {
         if (!table) throw new Error('db: op=insert 缺少必填参数 table');
@@ -1084,4 +1120,4 @@ async function executeTool(baseCtx, name, args) {
   return 'Error: 未知工具 ' + name;
 }
 
-module.exports = { executeTool, resolveInTask, recordFile };
+module.exports = { executeTool, resolveInTask, recordFile, runTaskSql };

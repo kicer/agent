@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>数据表格</title>
+<style>
+:root {
+  --bg: #f5f5f7; --surface: #fff; --border: #e8e8ed; --text: #1d1d1f;
+  --text-2: #6e6e73; --accent: #0071e3; --accent-h: #0077ed; --danger: #d70015;
+  --r: 12px; --r-sm: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom));
+}
+.container { max-width: 820px; margin: 0 auto; }
+.card { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow); overflow: hidden; }
+.hd { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.hd h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.btn { appearance: none; border: none; background: var(--accent); color: #fff; font: inherit; font-weight: 500;
+  padding: 7px 14px; border-radius: 999px; cursor: pointer; transition: background .15s, transform .05s; }
+.btn:hover { background: var(--accent-h); }
+.btn:active { transform: scale(0.97); }
+.tb { padding: 10px 18px; border-bottom: 1px solid var(--border); }
+.search { width: 100%; border: 1px solid var(--border); background: var(--bg); border-radius: var(--r-sm);
+  padding: 8px 12px; font: inherit; outline: none; transition: border-color .15s, background .15s; }
+.search:focus { border-color: var(--accent); background: var(--surface); }
+.tw { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 10px 18px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--text-2); font-weight: 500; font-size: 13px; cursor: pointer; user-select: none; }
+th:hover { color: var(--text); }
+th .ar { font-size: 10px; margin-left: 4px; opacity: .7; }
+td.ed { cursor: text; }
+td.ed:hover { background: rgba(0,113,227,0.04); }
+tr:last-child td { border-bottom: none; }
+.col-ac { width: 40px; }
+.del { appearance: none; background: none; border: none; color: var(--text-2); cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 2px 8px; border-radius: 6px; }
+.del:hover { color: var(--danger); background: rgba(215,0,21,0.08); }
+.msg { text-align: center; padding: 56px 20px; color: var(--text-2); }
+.msg.err { color: var(--danger); }
+.pager { display: flex; align-items: center; justify-content: center; gap: 14px;
+  padding: 12px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-2); }
+.pager button { appearance: none; border: 1px solid var(--border); background: var(--surface); font: inherit;
+  padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+.pager button:disabled { opacity: .4; cursor: default; }
+dialog { border: none; border-radius: var(--r); padding: 0; box-shadow: var(--shadow-lg);
+  width: min(420px, calc(100vw - 32px)); }
+dialog::backdrop { background: rgba(0,0,0,0.35); }
+.form { padding: 22px; }
+.form h3 { margin: 0 0 18px; font-size: 16px; }
+.fld { margin-bottom: 14px; }
+.fld label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+.fld input { width: 100%; border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: 8px 10px; font: inherit; outline: none; transition: border-color .15s; }
+.fld input:focus { border-color: var(--accent); }
+.acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 22px; }
+.acts button { font: inherit; padding: 8px 16px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.acts .pri { background: var(--accent); color: #fff; border-color: var(--accent); }
+.acts .pri:hover { background: var(--accent-h); }
+@media (max-width: 480px) {
+  body { padding: 8px; } th, td { padding: 8px 12px; font-size: 13px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <div class="hd">
+      <h1 id="title">数据表格</h1>
+      <button class="btn" id="addBtn">+ 新增</button>
+    </div>
+    <div class="tb">
+      <input class="search" id="search" placeholder="搜索…" autocomplete="off">
+    </div>
+    <div id="root"></div>
+  </div>
+</div>
+
+<dialog id="dlg">
+  <form class="form" method="dialog" id="dlgForm">
+    <h3>新增记录</h3>
+    <div id="fields"></div>
+    <div class="acts">
+      <button value="cancel">取消</button>
+      <button value="ok" class="pri">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const CONFIG = {
+  table: 'items',      // ← 修改为你的表名
+  pk: 'id',            // ← 修改为主键列名
+  title: '数据表格',    // ← 修改为页面标题
+  pageSize: 10,
+  editable: true,
+};
+
+const API = `/api/db/${location.pathname.split('/').filter(Boolean)[1]}/query`;
+const S = { cols: [], rows: [], sortKey: null, sortDir: 'asc', kw: '', page: 1, loading: true, err: null };
+
+async function q(sql, params = []) {
+  const r = await fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql, params }),
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error);
+  return d;
+}
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function load() {
+  S.loading = true; S.err = null; render();
+  try {
+    const cols = await q(`SELECT name FROM pragma_table_info(?)`, [CONFIG.table]);
+    S.cols = cols.map(c => c.name);
+    S.rows = await q(`SELECT * FROM ${CONFIG.table}`);
+    S.loading = false;
+  } catch (e) { S.loading = false; S.err = e.message; }
+  render();
+}
+
+function view() {
+  let r = S.rows;
+  if (S.kw) {
+    const k = S.kw.toLowerCase();
+    r = r.filter(x => S.cols.some(c => String(x[c] ?? '').toLowerCase().includes(k)));
+  }
+  if (S.sortKey) {
+    r = r.slice().sort((a, b) => {
+      const x = a[S.sortKey], y = b[S.sortKey];
+      if (x == null && y == null) return 0;
+      if (x == null) return 1; if (y == null) return -1;
+      const c = x < y ? -1 : x > y ? 1 : 0;
+      return S.sortDir === 'asc' ? c : -c;
+    });
+  }
+  return r;
+}
+
+function render() {
+  const root = document.getElementById('root');
+  if (S.loading) return void (root.innerHTML = '<div class="msg">加载中…</div>');
+  if (S.err) return void (root.innerHTML = `<div class="msg err">加载失败：${esc(S.err)}</div>`);
+  const rows = view();
+  if (!rows.length) return void (root.innerHTML = `<div class="msg">${S.rows.length ? '没有匹配的记录' : '暂无数据'}</div>`);
+
+  const pages = Math.max(1, Math.ceil(rows.length / CONFIG.pageSize));
+  if (S.page > pages) S.page = pages;
+  const start = (S.page - 1) * CONFIG.pageSize;
+  const cur = rows.slice(start, start + CONFIG.pageSize);
+
+  let h = '<div class="tw"><table><thead><tr>';
+  for (const c of S.cols) {
+    const ar = S.sortKey === c ? (S.sortDir === 'asc' ? '↑' : '↓') : '';
+    h += `<th data-c="${esc(c)}">${esc(c)}<span class="ar">${ar}</span></th>`;
+  }
+  if (CONFIG.editable) h += '<th class="col-ac"></th>';
+  h += '</tr></thead><tbody>';
+
+  for (const r of cur) {
+    h += `<tr data-pk="${esc(r[CONFIG.pk])}">`;
+    for (const c of S.cols) {
+      const ed = CONFIG.editable && c !== CONFIG.pk ? ' class="ed"' : '';
+      h += `<td${ed} data-c="${esc(c)}">${esc(r[c])}</td>`;
+    }
+    if (CONFIG.editable) h += '<td class="col-ac"><button class="del" title="删除">×</button></td>';
+    h += '</tr>';
+  }
+  h += '</tbody></table></div>';
+
+  if (pages > 1) {
+    h += `<div class="pager">
+      <button id="prev" ${S.page === 1 ? 'disabled' : ''}>上一页</button>
+      <span>${S.page} / ${pages}</span>
+      <button id="next" ${S.page === pages ? 'disabled' : ''}>下一页</button>
+    </div>`;
+  }
+  root.innerHTML = h;
+  bind();
+}
+
+function bind() {
+  document.querySelectorAll('th[data-c]').forEach(th => th.onclick = () => {
+    const c = th.dataset.c;
+    if (S.sortKey === c) S.sortDir = S.sortDir === 'asc' ? 'desc' : 'asc';
+    else { S.sortKey = c; S.sortDir = 'asc'; }
+    render();
+  });
+  document.querySelectorAll('td.ed').forEach(td => td.ondblclick = () => edit(td));
+  document.querySelectorAll('.del').forEach(b => b.onclick = () => del(b.closest('tr')));
+  const p = document.getElementById('prev'), n = document.getElementById('next');
+  if (p) p.onclick = () => { S.page--; render(); };
+  if (n) n.onclick = () => { S.page++; render(); };
+}
+
+function edit(td) {
+  if (td.classList.contains('editing')) return;
+  const tr = td.closest('tr'), col = td.dataset.c, pk = tr.dataset.pk, orig = td.textContent;
+  td.classList.add('editing');
+  td.innerHTML = `<input value="${esc(orig)}" style="width:100%;border:1px solid var(--accent);border-radius:4px;padding:2px 6px;font:inherit;outline:none">`;
+  const inp = td.firstChild;
+  inp.focus(); inp.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return; done = true;
+    const v = inp.value;
+    if (!save || v === orig) return void render();
+    try {
+      await q(`UPDATE ${CONFIG.table} SET ${col} = ? WHERE ${CONFIG.pk} = ?`, [v, pk]);
+      const r = S.rows.find(x => String(x[CONFIG.pk]) === String(pk));
+      if (r) r[col] = v;
+      render();
+    } catch (e) { alert('保存失败：' + e.message); render(); }
+  };
+  inp.onblur = () => finish(true);
+  inp.onkeydown = e => {
+    if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  };
+}
+
+async function del(tr) {
+  const pk = tr.dataset.pk;
+  if (!confirm('确定删除这条记录？')) return;
+  try {
+    await q(`DELETE FROM ${CONFIG.table} WHERE ${CONFIG.pk} = ?`, [pk]);
+    S.rows = S.rows.filter(x => String(x[CONFIG.pk]) !== String(pk));
+    render();
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+
+document.getElementById('search').oninput = e => { S.kw = e.target.value.trim(); S.page = 1; render(); };
+document.getElementById('title').textContent = CONFIG.title;
+
+document.getElementById('addBtn').onclick = () => {
+  const dlg = document.getElementById('dlg'), flds = document.getElementById('fields');
+  const cols = S.cols.filter(c => c !== CONFIG.pk);
+  flds.innerHTML = cols.map(c => `<div class="fld"><label>${esc(c)}</label><input name="${esc(c)}" autocomplete="off"></div>`).join('');
+  dlg.showModal();
+};
+
+document.getElementById('dlgForm').onsubmit = async e => {
+  if (e.submitter?.value !== 'ok') return;
+  e.preventDefault();
+  const form = e.target;
+  const cols = S.cols.filter(c => c !== CONFIG.pk);
+  const vals = cols.map(c => form.elements[c].value);
+  try {
+    await q(`INSERT INTO ${CONFIG.table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`, vals);
+    document.getElementById('dlg').close();
+    await load();
+  } catch (e) { alert('新增失败：' + e.message); }
+};
+
+load();
+</script>
+</body>
+</html>

@@ -51,6 +51,9 @@ app.use('/api/skills', require('./routes/skills'));
 app.use('/api/config', require('./routes/config'));
 app.use('/api/platforms', require('./routes/platforms'));
 app.use('/api/system', require('./routes/system'));
+// data-page 技能配套：任务 app/ 子树页面向导 /app/{task_id}/ + 数据 API /api/db/{task_id}/query。
+// 随其余业务路由一样挂在 auth.middleware 之后（登录态才能访问）。
+app.use(require('./routes/data-page'));
 
 // 模型池状态(前端可展示空闲/占用)+ 每模型 token 用量(今日/累计,输入/输出分开)。
 // 从生效配置补齐平台维度字段(platform/mid/vision/type + 平台 key 数 key_count):
