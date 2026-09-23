@@ -1,7 +1,7 @@
 {
-  "name": "mcp_image_gen",
+  "name": "mcp_image_task",
   "version": "1.0.0",
-  "description": "MCP server for image generation via Zhipu BigModel CogView-3-Flash",
+  "description": "MCP server for image generation via Zhipu BigModel CogView (single tool image_task with op=create)",
   "type": "module",
   "main": "src/mcp-server.js",
   "scripts": {

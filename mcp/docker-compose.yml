@@ -12,23 +12,23 @@ services:
     networks:
       - agent-mcp-net
 
-  mcp_image_gen:
-    build: ./image_gen
-    container_name: mcp_image_gen
+  mcp_image_task:
+    build: ./image_task
+    container_name: mcp_image_task
     restart: unless-stopped
     # 调试用（默认关）：
     # ports:
-    #   - "${IMAGE_GEN_PORT:-8082}:3000"
+    #   - "${IMAGE_TASK_PORT:-8082}:3000"
     networks:
       - agent-mcp-net
 
-  mcp_video_gen:
-    build: ./video_gen
-    container_name: mcp_video_gen
+  mcp_video_task:
+    build: ./video_task
+    container_name: mcp_video_task
     restart: unless-stopped
     # 调试用（默认关；这里映的是 MCP 端口，会暴露 /mcp，仅本机短时调试用）：
     # ports:
-    #   - "${VIDEO_GEN_PORT:-8083}:3000"
+    #   - "${VIDEO_TASK_PORT:-8083}:3000"
     networks:
       - agent-mcp-net
 

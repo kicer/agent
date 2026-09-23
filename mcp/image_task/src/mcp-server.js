@@ -13,7 +13,7 @@ const DEFAULT_MODEL = "CogView-3-Flash";
 // ── 优雅退出 ──────────────────────────────────────────────────────────────
 // 容器里 node 以 PID 1 运行且未注册 SIGTERM 处理器时，内核不会对其执行默认
 // 终止动作，docker stop/restart 会白等满 10s 宽限期才被 SIGKILL。
-// 显式注册处理器，关闭 MCP session 与长连接后立即退出；3s 定时器为兑底。
+// 显式注册处理器，关闭 MCP session 与长连接后立即退出；3s 定时器为兜底。
 let httpServer = null;
 let closeAllSessions = () => {};
 let shuttingDown = false;
@@ -21,7 +21,7 @@ let shuttingDown = false;
 function shutdown(sig) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`[image_gen] 收到 ${sig}，停止服务`);
+  console.log(`[image] received ${sig}, shutting down`);
   closeAllSessions();
   if (!httpServer) process.exit(0); // stdio 模式无监听，直接退
   httpServer.close(() => process.exit(0));
@@ -48,7 +48,7 @@ function parseArgs(argv) {
 function pickToken(headers) {
   if (!headers) return null;
   const candidates = [
-    headers["x-image-gen-token"],
+    headers["x-image-task-token"],
     headers["x-mcp-token"],
     headers["authorization"],
   ];
@@ -69,7 +69,7 @@ function pickToken(headers) {
 function pickModel(headers) {
   if (!headers) return null;
   const v =
-    headers["x-image-gen-model"] ||
+    headers["x-image-task-model"] ||
     headers["x-mcp-model"] ||
     headers["x-model"];
   if (!v) return null;
@@ -117,10 +117,64 @@ function extractUrls(data) {
   return [];
 }
 
+// ===== op=create：提交图片生成（同步，直接返回图片 URL）=====
+async function handleCreate({ args, headers, token }) {
+  // model 完全由 HTTP header 控制（X-Image-Task-Model / X-Mcp-Model / X-Model），
+  // 不存进 session，每次从本次请求的 header 读取，未设置则用默认 CogView-3-Flash。
+  // AI 看不到 model 参数（schema 中已删除），避免其误传。
+  const model = pickModel(headers) || DEFAULT_MODEL;
+  const size = args.size;
+
+  try {
+    const data = await callZhipuImagesGenerations({
+      token,
+      model,
+      prompt: args.prompt,
+      size,
+    });
+    const urls = extractUrls(data);
+    if (urls.length === 0) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Returned no image URL. Raw response: ${JSON.stringify(data)}`,
+          },
+        ],
+      };
+    }
+    const summary = urls
+      .map((u, i) => `Image ${i + 1}: ${u}`)
+      .join("\n");
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Model: ${model}\nPrompt: ${args.prompt}\n${summary}`,
+        },
+        ...urls.map((u) => ({ type: "text", text: u })),
+      ],
+    };
+  } catch (e) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `Failed to generate image: ${e.message}${
+            e.detail ? `\nDetails: ${JSON.stringify(e.detail)}` : ""
+          }`,
+        },
+      ],
+    };
+  }
+}
+
 function buildServer() {
   const server = new McpServer(
     {
-      name: "image_gen",
+      name: "image_task",
       version: "1.0.0",
     },
     {
@@ -131,18 +185,27 @@ function buildServer() {
   );
 
   server.tool(
-    "image_gen",
-    "Generate an image from a prompt and return the image URL. Optionally specify size.",
+    "image_task",
+    `Manages image generation. Generation is synchronous: op=create returns the image URLs directly.
+
+op=create  Generate an image from a prompt. Requires prompt; optional size.`,
     {
+      op: z
+        .enum(["create"])
+        .describe(
+          'Operation to perform. Only "create" is supported (generation is synchronous, so there is no task to poll).'
+        ),
       prompt: z
         .string()
         .min(1)
-        .describe("Image generation prompt; describe the desired scene in detail."),
+        .describe(
+          "Image generation prompt; describe the desired scene in detail. Used with op=create."
+        ),
       size: z
         .string()
         .optional()
         .describe(
-          "Image size, Preferred sizes: 1024x1024, 1280x1280, 1536x1024, 1024x1536, Each side must be a multiple of 32."
+          "Image size, Preferred sizes: 1024x1024, 1280x1280, 1536x1024, 1024x1536, Each side must be a multiple of 32. Used with op=create."
         ),
     },
     async (args, extra) => {
@@ -163,55 +226,19 @@ function buildServer() {
         };
       }
 
-      // model 完全由 HTTP header 控制（X-Image-Gen-Model / X-Mcp-Model / X-Model），
-      // 不存进 session，每次从本次请求的 header 读取，未设置则用默认 CogView-3-Flash。
-      // AI 看不到 model 参数（schema 中已删除），避免其误传。
-      const model = pickModel(headers) || DEFAULT_MODEL;
-      const size = args.size;
-
-      try {
-        const data = await callZhipuImagesGenerations({
-          token,
-          model,
-          prompt: args.prompt,
-          size,
-        });
-        const urls = extractUrls(data);
-        if (urls.length === 0) {
+      switch (args.op) {
+        case "create":
+          return await handleCreate({ args, headers, token });
+        default:
           return {
             isError: true,
             content: [
               {
                 type: "text",
-                text: `Returned no image URL. Raw response: ${JSON.stringify(data)}`,
+                text: `Unknown op "${args.op}" (available: create).`,
               },
             ],
           };
-        }
-        const summary = urls
-          .map((u, i) => `Image ${i + 1}: ${u}`)
-          .join("\n");
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Model: ${model}\nPrompt: ${args.prompt}\n${summary}`,
-            },
-            ...urls.map((u) => ({ type: "text", text: u })),
-          ],
-        };
-      } catch (e) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: `Failed to generate image: ${e.message}${
-                e.detail ? `\nDetails: ${JSON.stringify(e.detail)}` : ""
-              }`,
-            },
-          ],
-        };
       }
     }
   );
@@ -241,7 +268,7 @@ async function startHttp({ port, host }) {
   };
 
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", service: "image_gen", sessions: sessions.size });
+    res.json({ status: "ok", service: "image_task", sessions: sessions.size });
   });
 
   async function handleSessionRequest(req, res) {
@@ -304,7 +331,7 @@ async function startHttp({ port, host }) {
 
   httpServer = app.listen(port, host, () => {
     console.log(
-      `[image_gen] MCP HTTP server listening on http://${host}:${port}/mcp`
+      `[image] MCP HTTP server listening on http://${host}:${port}/mcp`
     );
   });
 }
@@ -317,18 +344,18 @@ async function startStdio() {
   );
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[image_gen] MCP stdio server started");
+  console.error("[image] MCP stdio server started");
 }
 
 const args = parseArgs(process.argv.slice(2));
 if (args.http) {
   startHttp({ port: args.port, host: args.host }).catch((e) => {
-    console.error("[image_gen] failed to start http server:", e);
+    console.error("[image] failed to start http server:", e);
     process.exit(1);
   });
 } else {
   startStdio().catch((e) => {
-    console.error("[image_gen] failed to start stdio server:", e);
+    console.error("[image] failed to start stdio server:", e);
     process.exit(1);
   });
 }

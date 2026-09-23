@@ -1,6 +1,6 @@
-# MCP Image Gen
+# MCP Image Task
 
-一个基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 的图片生成服务，对接智谱 BigModel 的 `CogView` 系列模型。每次调用通过 HTTP header 传入智谱 API 的 Bearer Token，支持在工具参数中按需切换模型。
+一个基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 的图片生成服务，对接智谱 BigModel 的 `CogView` 系列模型。每次调用通过 HTTP header 传入智谱 API 的 Bearer Token。只有一个工具 `image_task`，用 `op` 区分动作（图片生成为同步接口，当前仅支持 `op=create`）。
 
 - 协议：MCP **Streamable HTTP**（单端点 `/mcp`，支持 SSE 流）
 - 上游：[智谱 BigModel Images Generations API](https://open.bigmodel.cn/dev/api#images)
@@ -18,17 +18,17 @@
 
 ```bash
 cd /root/workspace/tools/mcp
-docker compose up -d --build mcp_image_gen
+docker compose up -d --build mcp_image_task
 ```
 
-服务容器名 `mcp_image_gen`，容器内端口 3000，**默认不占宿主端口**：agent 走 `agent-mcp-net`
-按容器名访问（`http://mcp_image_gen:3000/mcp`）。需要从宿主机 curl 调试时，去仓库根
-`docker-compose.yml` 把 `mcp_image_gen` 注释掉的 `ports` 两行打开（默认写的是 8082），调试完记得注释回去。
+服务容器名 `mcp_image_task`，容器内端口 3000，**默认不占宿主端口**：agent 走 `agent-mcp-net`
+按容器名访问（`http://mcp_image_task:3000/mcp`）。需要从宿主机 curl 调试时，去仓库根
+`docker-compose.yml` 把 `mcp_image_task` 注释掉的 `ports` 两行打开（默认写的是 8082），调试完记得注释回去。
 
 ```bash
 # 不占端口的健康检查
-docker exec mcp_image_gen node -e "fetch('http://localhost:3000/health').then(r=>r.text()).then(console.log)"
-# {"status":"ok","service":"image_gen","sessions":0}
+docker exec mcp_image_task node -e "fetch('http://localhost:3000/health').then(r=>r.text()).then(console.log)"
+# {"status":"ok","service":"image_task","sessions":0}
 ```
 
 ### MCP 客户端配置
@@ -40,7 +40,7 @@ docker exec mcp_image_gen node -e "fetch('http://localhost:3000/health').then(r=
 // Cursor:       ~/.cursor/mcp.json
 {
   "mcpServers": {
-    "image_gen": {
+    "image_task": {
       "url": "http://localhost:8082/mcp",
       "headers": {
         "Authorization": "Bearer <your-zhipu-api-key>"
@@ -60,16 +60,21 @@ docker exec mcp_image_gen node -e "fetch('http://localhost:3000/health').then(r=
 
 ---
 
-## 工具：image_gen
+## 工具：image_task
 
-调用智谱图片生成接口，返回图片 URL。
+调用智谱图片生成接口，返回图片 URL。生成为**同步**接口，`op=create` 直接出结果，无需轮询。
 
-### 参数
+| op | 作用 | 同步/异步 |
+|---|---|---|
+| `create` | 按 prompt 生成图片，返回图片 URL | 同步（直接返回结果） |
+
+### 参数（AI 可见）
 
 | 名称 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `prompt` | string | ✅ | 图片生成提示词，描述想要的画面内容 |
-| `size` | string | ❌ | 图片尺寸，例如 `1024x1024`、`1280x1280`、`1024x1792`、`1792x1024`、`768x1344`、`1344x768`，遵循智谱 API 规格 |
+| `op` | `"create"` | ✅ | 要执行的操作（当前仅 `create`） |
+| `prompt` | string | ✅ | 图片生成提示词，描述想要的画面内容（仅 op=create 使用） |
+| `size` | string | ❌ | 图片尺寸，例如 `1024x1024`、`1280x1280`、`1024x1792`、`1792x1024`、`768x1344`、`1344x768`，遵循智谱 API 规格（仅 op=create 使用） |
 
 ### Model 控制（不在工具参数中暴露）
 
@@ -77,7 +82,7 @@ docker exec mcp_image_gen node -e "fetch('http://localhost:3000/health').then(r=
 
 | 优先级 | Header |
 |---|---|
-| 1 | `X-Image-Gen-Model` |
+| 1 | `X-Image-Task-Model` |
 | 2 | `X-Mcp-Model` |
 | 3 | `X-Model` |
 
@@ -87,14 +92,12 @@ docker exec mcp_image_gen node -e "fetch('http://localhost:3000/health').then(r=
 
 ### 返回
 
-### 返回
-
 工具成功时返回若干 `text` 块，第一块是摘要，后续每块各包含一张图片的 URL（方便 LLM 直接贴图或下载）：
 
 ```jsonc
 {
   "content": [
-    { "type": "text", "text": "模型: CogView-3-Flash\n提示词: ...\n图片 1: https://maas-watermark-prod-new.cn-wlcb.ufileos.com/..." },
+    { "type": "text", "text": "Model: CogView-3-Flash\nPrompt: ...\nImage 1: https://maas-watermark-prod-new.cn-wlcb.ufileos.com/..." },
     { "type": "text", "text": "https://maas-watermark-prod-new.cn-wlcb.ufileos.com/..." }
   ]
 }
@@ -112,7 +115,7 @@ URL 由智谱签名下发，**带有效期**（通常 24h），如需长期保�
 
 | 优先级 | Header | 说明 |
 |---|---|---|
-| 1 | `X-Image-Gen-Token: <token>` | 直传，避免与客户端自身的 Authorization 冲突 |
+| 1 | `X-Image-Task-Token: <token>` | 直传，避免与客户端自身的 Authorization 冲突 |
 | 2 | `X-Mcp-Token: <token>` | 通用兜底 |
 | 3 | `Authorization: Bearer <token>` | 标准 OAuth 风格（排最后是为避免误用） |
 
@@ -170,7 +173,7 @@ curl -s -X POST http://localhost:8082/mcp \
   -H "Mcp-Session-Id: $SESSION" \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
 
-# 4. 调 image_gen
+# 4. 调 image_task（op=create）
 curl -s -X POST http://localhost:8082/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -181,8 +184,9 @@ curl -s -X POST http://localhost:8082/mcp \
     "id": 3,
     "method": "tools/call",
     "params": {
-      "name": "image_gen",
+      "name": "image_task",
       "arguments": {
+        "op": "create",
         "prompt": "一只可爱的小猫咪，坐在阳光明媚的窗台上，背景是蓝天白云",
         "size": "1280x1280"
       }
@@ -197,20 +201,21 @@ curl -s -X POST http://localhost:8082/mcp \
 ## 架构与文件
 
 ```
-image_gen/
+image_task/
 ├── Dockerfile          # node:22-slim，安装依赖后启动 MCP HTTP server
 ├── .dockerignore       # 排除 node_modules
 ├── package.json        # @modelcontextprotocol/sdk + express + zod
 ├── README.md           # 本文件
 └── src/
-    └── mcp-server.js   # 单文件实现：HTTP server + MCP transport + tool
+    └── mcp-server.js   # 单文件实现：HTTP server + MCP transport + 单工具（op 分发）
 ```
 
 ### 关键设计
 
+- **单工具 + `op` 分发**：`image_task(op=create)`，与 `video_task` 的服务形态保持一致；生成为同步接口，所以 `op` 只有 `create` 一个取值
 - **每 session 一个 transport + server**：通过 `Mcp-Session-Id` 复用，避免每请求重建
-- **Token 闭包注入**：在 Express 入口处从 header 提取 token，闭包传给 `buildServer({ token })`，tool 回调里直接使用；不依赖 SDK 内部字段
-- **模型参数单链**：`arguments.model` → `DEFAULT_MODEL`，无 header 干预
+- **Token 闭包注入**：在 Express 入口处从 header 提取 token，闭包传给 tool 回调；不依赖 SDK 内部字段
+- **模型参数不入 schema**：model 只从 HTTP header 读取（`X-Image-Task-Model` / `X-Mcp-Model` / `X-Model`），AI 不可见
 - **URL 提取**：`response.data[].url` 为准，若返回 `b64_json` 也会一并返回
 
 ### 默认模型
@@ -220,17 +225,20 @@ image_gen/
 const DEFAULT_MODEL = "CogView-3-Flash";
 ```
 
-修改后 `docker compose up -d --build mcp_image_gen` 即可生效。
+修改后 `docker compose up -d --build mcp_image_task` 即可生效。
 
 ---
 
 ## 常见问题
 
 **Q: AI 不知道有哪些 model 可选，怎么办？**
-A: 这是设计意图。模型选择属于路由策略，不让 AI 决策。调用方在 HTTP header `X-Image-Gen-Model` 里注入即可。
+A: 这是设计意图。模型选择属于路由策略，不让 AI 决策。调用方在 HTTP header `X-Image-Task-Model` 里注入即可。
 
 **Q: 换模型需要重连 MCP session 吗？**
 A: 不需要。Model header 在每次 `tools/call` 都从当前请求读取，不需要重建 session。
+
+**Q: 为什么 op 只有 create？**
+A: 图片生成是同步接口，`op=create` 直接返回结果，不存在需要轮询的异步任务。保留 `op` 参数是为了与 `video_task` 等异步任务型服务形态一致；将来若上游出现异步接口再加 `get`。
 
 **Q: 为什么 Model 优先级不是「工具参数 > header」？**
 A: 因为我们故意不在 schema 暴露 model 参数，AI 根本不会传 model，所以「工具参数 > header」这条分支实际上不存在。
@@ -245,4 +253,4 @@ A: 漏发了 `Mcp-Session-Id` header，或调 `tools/call` 前没先 `initialize
 A: 智谱签发 URL 默认 24h 左右，详见响应里的 `Expires` 参数。需要长期使用请自行转存到 OSS/S3。
 
 **Q: 能否限制 `size` 白名单？**
-A: 当前透传给智谱 API，不做强制校验。如需加白名单，修改 `src/mcp-server.js` 中 `image_gen` 的 `size` schema 即可。
+A: 当前透传给智谱 API，不做强制校验。如需加白名单，修改 `src/mcp-server.js` 中 `image_task` 的 `size` schema 即可。

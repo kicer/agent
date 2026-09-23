@@ -1,7 +1,7 @@
 {
-  "name": "mcp_video_gen",
+  "name": "mcp_video_task",
   "version": "1.0.0",
-  "description": "MCP server for video generation via Zhipu BigModel cogvideox-flash (text-to-video / image-to-video, async)",
+  "description": "MCP server for async video generation tasks via Zhipu BigModel cogvideox-flash (single tool video_task with op=create/get)",
   "type": "module",
   "main": "src/mcp-server.js",
   "scripts": {
