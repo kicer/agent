@@ -192,7 +192,7 @@ scheduled_tasks   session_id PK (FK sessions, ON DELETE CASCADE) / cron_expr /
                   prompt / next_run_at / last_run_at / last_status (ok|error|skipped|running) /
                   last_note (给人看的中文说明，UI 原样展示) / created_at
                   # 定时任务：每会话至多一个（session_id 主键兼防重），按 next_run_at 索引；
-                  # 创建只经 AI 工具 schedule_task；频次/提示词可在会话详情弹窗改（PATCH /:id/schedule，
+                  # 创建只经 AI 工具 schedule；频次/提示词可在会话详情弹窗改（PATCH /:id/schedule，
                   # 改频次后端重校验并重算 next_run_at）；删除走 CASCADE 或 DELETE /:id/schedule（见 §5.12）
 ```
 
@@ -292,7 +292,7 @@ stateDiagram-v2
 | `fetch` | `AbortController` 覆盖全生命周期（响应头之后的 body 读流同样被超时/取消打断，取消用与 terminal 同款的 200ms 轮询）；content-type 先行，非文本只回状态/类型/尺寸不读 body；流式读到 `cfg.fetch.max_bytes`（默认 1MB）即断开并标注截断；按响应 charset 解码（full-icu 支持 gbk/gb18030 等，未知编码退回 UTF-8）；HTML 用 `htmlToMarkdown` 转；HTML 实体单遍解码（常见命名实体+数字实体通吃，修 `&amp;` 双重解码）；网络错误解包 `err.cause` 直述 ENOTFOUND/TLS 等真因；engine 不截工具结果，返回值末尾另有 `truncate` 1MB 字符护栏 |
 | `mint_public_link` | **唯一的 mint 入口**：与 core 同进程，直接 `publicFiles.mint()`，不绕任何 HTTP；`ctx.taskDir` 就是会话目录，`relOf` 的结果正是取用侧要的 `rel`。校验：`public_link.base_url` 已配 + `resolveInTask` 沙箱 + 确认是文件 + `realpath` 未沿符号链接跳出任务目录；返回单行 URL |
 | `skill` | op 分派 list/get/run（三件套合并：同一 `skill_name` 标识空间 + 同一生命周期，见 `docs/tool-design.md` §一）；委托 `tools/skills.js`；`input_args` 仅 op=run 且可缺省 `{}`，缺参由各技能 `input_schema` 校验点名报错 |
-| `schedule_task` | **当前会话**（`ctx.sessionId`，AI 不可指定他会话）定时任务的完整生命周期：op 分派 get/create/update/delete（表主键 session_id → 每会话至多一条，无 id 参数）；条件必填在代码里校验、错误回显 op 与缺失字段；数据层在 `scheduler.js`（cron 可解析 → 间隔 ≥1h → prompt ≤20000 → 查重/存在性检查），delete 不落 scheduler_note；描述里限定「仅用户明确要求时调用」（安全缓解，见 §5.12） |
+| `schedule` | **当前会话**（`ctx.sessionId`，AI 不可指定他会话）定时任务的完整生命周期：op 分派 get/create/update/delete（表主键 session_id → 每会话至多一条，无 id 参数）；条件必填在代码里校验、错误回显 op 与缺失字段；数据层在 `scheduler.js`（cron 可解析 → 间隔 ≥1h → prompt ≤20000 → 查重/存在性检查），delete 不落 scheduler_note；描述里限定「仅用户明确要求时调用」（安全缓解，见 §5.12） |
 
 `resolveInTask(taskDir, relOrAbs)`：把相对路径或绝对路径解析为绝对路径并校验落在 `taskDir` 之内（含根），防穿越。
 
@@ -361,7 +361,7 @@ stateDiagram-v2
 
 ### 5.12 `scheduler.js` —— 定时任务调度器
 
-AI 通过 `schedule_task` 工具为所在会话建周期性任务（`scheduled_tasks` 表，生命周期绑定会话），无人值守时（典型是半夜）自动执行，结果留在会话里供用户次日查看。
+AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks` 表，生命周期绑定会话），无人值守时（典型是半夜）自动执行，结果留在会话里供用户次日查看。
 
 - **形态**照抄 `startHoldSweeper`：`start(engine)` 注入 engine（避免 engine→executor→scheduler 顶层循环 require），`setInterval` 30s + `unref`，单次异常只 `log.error` 不中断定时器。周期/最小间隔是模块常量，不进 config.yml。
 - **cron**：`cron-parser@5.10.1`（锁版；v5 API 是 `CronExpressionParser.parse`，与 v4 的 `parseExpression` 不兼容），显式 `tz: 'Asia/Shanghai'`（与容器 TZ 一致，不靠隐式时区）。最小间隔 1h 在创建时校验。

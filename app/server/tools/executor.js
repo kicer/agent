@@ -756,7 +756,7 @@ async function toolMintPublicLink(ctx, args) {
   return pl.base_url + '/p/' + id;
 }
 
-// schedule_task：当前会话定时任务的完整生命周期（op 分派，规范见 docs/tool-design.md）。
+// schedule：当前会话定时任务的完整生命周期（op 分派，规范见 docs/tool-design.md）。
 // sessionId 取自 ctx（AI 无法指定别的会话）；表主键 session_id → 每会话至多一条，
 // 资源即「本会话的任务」，无 id 参数。条件必填在代码里校验（schema 只 required op），
 // 错误回显 op 与缺失字段；delete 不落 scheduler_note（返回文本本身已进会话记录）。
@@ -831,7 +831,7 @@ const HANDLERS = {
   mint_public_link: toolMintPublicLink,
   terminal: toolTerminal,
   fetch: toolFetch,
-  schedule_task: toolScheduleTask,
+  schedule: toolScheduleTask,
   skill: toolSkill,
 };
 

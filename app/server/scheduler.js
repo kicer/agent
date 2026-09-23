@@ -1,4 +1,4 @@
-// 定时任务调度器：AI 通过 schedule_task 工具为所在会话创建一个周期性任务
+// 定时任务调度器：AI 通过 schedule 工具为所在会话创建一个周期性任务
 // （scheduled_tasks 表，生命周期绑定会话，CASCADE 随删），本模块常驻轮询到期任务：
 // 先把会话历史整体存档（type='archived'，llm.buildMessages 会跳过 → AI 只看到本次
 // prompt，等价全新会话），再经 engine.postUserMessage 投递任务 prompt 自动开跑，
@@ -30,7 +30,7 @@ function computeNext(cronExpr) {
   return CronExpressionParser.parse(cronExpr, { tz: TZ }).next().getTime();
 }
 
-// ---------- schedule_task 工具实现（tools/executor.js 调） ----------
+// ---------- schedule 工具实现（tools/executor.js 调） ----------
 // cron 校验：可解析 + 连续两次 next() 间隔 ≥ 1h（防分钟级任务反复烧模型池）；
 // 返回下次到期时间（以 now 为基准）。创建（createTask）与会话详情弹窗改频次（PATCH /:id/schedule）共用。
 // 失败抛中文 Error：工具路径由 engine 转 'Error: ...' 回给 AI，HTTP 路径由 wrap 转 4xx/500 给前端 toast。

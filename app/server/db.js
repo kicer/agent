@@ -81,7 +81,7 @@ function initDb(dbPath) {
       value TEXT
     );
 
-    -- 定时任务：AI 通过 schedule_task 工具为会话创建周期任务（每会话至多一个），
+    -- 定时任务：AI 通过 schedule 工具为会话创建周期任务（每会话至多一个），
     -- 由 scheduler.js 轮询投递。session_id 作主键：一行代码同时实现「1 会话 1 任务」
     -- 与「防重复插入」（重复 INSERT 直接撞主键）；REFERENCES ... ON DELETE CASCADE
     -- 让删会话时任务自动消失（db 已开 foreign_keys）。next_run_at 创建时即算好，

@@ -206,7 +206,7 @@ router.get('/:id', wrap((req, res) => {
   }
 
   const taskDir = engine.taskDirOf(session.id);
-  // 定时任务状态（scheduler.js / schedule_task 工具；每会话至多一行，无则 null）。
+  // 定时任务状态（scheduler.js / schedule 工具；每会话至多一行，无则 null）。
   // 列表接口故意不带此字段，避免 N+1；前端进会话详情时才拉。
   const schedule = db.prepare(
     'SELECT cron_expr, prompt, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
