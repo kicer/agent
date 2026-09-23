@@ -29,7 +29,7 @@
       if (g !== lastGroup) { html += '<div class="group-label">' + esc(g) + '</div>'; lastGroup = g; }
       html += '<div class="conv-wrap' + (s.has_schedule ? ' scheduled' : '') + '">' +
         '<button class="conv-item' + (s.id === state.sessionId ? ' active' : '') + '" data-id="' + esc(s.id) + '">' +
-          profileBadgeHtml(s.profile) + '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
+          '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
         '</button>' +
         '<button class="conv-del" data-del="' + esc(s.id) + '" title="删除会话" aria-label="删除会话">' +
           '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
@@ -541,9 +541,8 @@
         return toast('切换失败:' + e.message);
       }
       state.profile = name;
-      const row = (state.sessions || []).find(x => x.id === state.sessionId); // 同步本地缓存后重画抽屉（纯本地，不重拉网络列表）
+      const row = (state.sessions || []).find(x => x.id === state.sessionId); // 只同步本地缓存保数据一致（抽屉不显模式徽标，无需重画）
       if (row) row.profile = name;
-      renderDrawerList();
     } else {
       state.pendingProfile = name;
       state.profile = name;
