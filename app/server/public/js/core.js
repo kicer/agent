@@ -199,33 +199,34 @@
     }
 
   // ---------- 会话模式徽标 ----------
-  // 会话绑定 profile 时，标题（顶部/抽屉行）前缀小图标；''=默认不显示；未知组合回退圆点。
+  // 会话绑定 profile 时在标题（头部/抽屉行/弹窗下拉旁）显示小图标：''=默认不显示；各模式固定色（CSS .prof-*）；
+  // 未知名兑底圆点（无色）；tooltip 只提示当前模式，不另显文字。
   const PROFILE_BADGES = {
     lab: '<svg viewBox="0 0 24 24" class="ic"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M10 2v6.6L4.8 18.5a1.8 1.8 0 0 0 1.6 2.7h11.2a1.8 1.8 0 0 0 1.6-2.7L14 8.6V2"/><line x1="8.5" y1="2" x2="15.5" y2="2"/></svg>',
-    zero: '<svg viewBox="0 0 24 24" class="ic"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>',
+    zero: '<svg viewBox="0 0 24 24" class="ic"><circle fill="none" stroke="currentColor" stroke-width="1.8" cx="12" cy="12" r="9"/><line stroke="currentColor" stroke-width="1.8" x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>',
   };
   function profileBadgeHtml(p) {
     if (!p) return '';
-    return '<span class="prof-badge" title="模式：' + esc(p) + '">' +
-      (PROFILE_BADGES[p] || '<svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/></svg>') + '</span>';
+    return '<span class="prof-badge prof-' + esc(p) + '" title="当前模式：' + esc(p) + '">' +
+      (PROFILE_BADGES[p] || '<svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>') + '</span>';
   }
 
   function renderHeader() {
     const c = $('header-center');
+    // welcome（含刚 newChat）一律清空：newChat 会停在 welcome，不重刷会残留旧会话标题
     if (state.view !== 'chat' || !state.sessionId) { c.innerHTML = ''; return; }
-    // 顶部 icon 跟随会话自身的助手类型（而非 welcome 当前选中项）
-    const modeIcon = (MODES[state.sessionType] && MODES[state.sessionType].icon) || '';
+    // 顶部只显会话模式徽标（助手类型 icon 退位；''=默认不显），颜色按模式区分，tooltip 提示当前模式
     const title = document.createElement('div');
     title.className = 'header-title';
     title.style.cursor = 'pointer';
     title.title = '点击重命名';
-    title.innerHTML = modeIcon + profileBadgeHtml(state.profile) +
+    title.innerHTML = profileBadgeHtml(state.profile) +
       '<span class="header-title-text">' + esc(state.sessionTitle || state.sessionId) + '</span>';
     title.addEventListener('click', renameSession); // 点标题重命名(同步 index)
     c.innerHTML = '';
     c.appendChild(title);
   }
 
-  // ---------- 模式切换已移除：新建会话固定用 state.mode（secretary），历史会话的
-  // 助手类型由 sessionType 决定（旧 vision 会话仍正常渲染顶部 icon）。 ----------
+  // ---------- 模式切换已移除：新建会话固定用 state.mode（secretary），助手类型不再占顶部 icon
+  // （历史 vision 会话的类型字段保留，仅不再在标题处展示）。 ----------
 

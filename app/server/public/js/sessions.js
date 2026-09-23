@@ -497,20 +497,20 @@
     } catch (e) {
       modelsHtml = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
     }
-    // ---------- 模式区：prompt+tools 组合（名单来自 /api/system/status；拉不到 = 整区隐藏，不影响选模型） ----------
+    // ---------- 模式行：下拉选中（名单来自 /api/system/status；拉不到 = 整行隐藏，不影响选模型） ----------
     let profHtml = '';
     const names = await loadProfileNames();
     if (names.length) {
       const cur = state.sessionId ? state.profile : state.pendingProfile;
-      const prow = (p, label) => '<div class="msw-item" onclick="chooseProfile(\'' + esc(p) + '\')">' +
-        '<div class="msw-radio"></div><div class="msw-info"><div class="msw-name">' + label +
-        (cur === p ? ' <span class="msw-busy">当前</span>' : '') + '</div></div></div>';
-      profHtml = '<div class="msw-group"><div class="msw-group-header"><span>模式</span></div>' +
-        prow('', '默认（随模型配置）') + names.map(p => prow(p, esc(p))).join('') + '</div>';
+      const opts = [''].concat(names).map(p =>
+        '<option value="' + esc(p) + '"' + (p === cur ? ' selected' : '') + '>' + (p ? esc(p) : '默认（随模型配置）') + '</option>').join('');
+      profHtml = '<div class="msw-prof"><span class="msw-prof-label">模式:</span>' +
+        '<span id="bind-prof-ic">' + profileBadgeHtml(cur) + '</span>' +
+        '<select id="bind-prof-select" onchange="chooseProfile(this.value)">' + opts + '</select></div>';
     }
     list.innerHTML = modelsHtml + profHtml;
     footer.textContent = state.sessionId
-      ? '共 ' + avail + ' 个模型可用；模式切换下一轮迭代即生效'
+      ? '共 ' + avail + ' 个模型可用'
       : '预选项在首条消息建档时生效';
   }
   function closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); }
@@ -526,27 +526,34 @@
     return PROFILE_NAMES;
   }
 
-  function choosePendingModel(modelId) { // welcome 无会话：记预选，ensureSession 建档时透传；不关窗以便继续挑模式
+  function choosePendingModel(modelId) { // welcome 无会话：记预选，ensureSession 建档时透传；选完即关窗（toast 提示），重开弹窗靠就地标记显「预选」
     state.pendingModel = modelId;
+    closeModelSwitch();
     toast('新会话将用 ' + modelId);
-    openModelSwitch(); // 重画「预选」标记
   }
 
-  async function chooseProfile(name) { // name='' = 默认（解绑随模型配置）
+  async function chooseProfile(name) { // 下拉选中即绑/即预选；不重开弹窗（下拉天然保持选中项），只就地换旁侧图标
     if (state.sessionId) {
       try {
         await req('POST', '/api/sessions/' + state.sessionId + '/bind', { profile: name });
-        state.profile = name;
-        toast(name ? '会话模式已切换：' + name + '（下一轮迭代即生效）' : '已切回默认模式');
-        renderHeader();
-        loadSessionList(); // 抽屉标题徽标同步
-      } catch (e) { return toast('切换失败:' + e.message); }
+      } catch (e) {
+        const sel = $('bind-prof-select');
+        if (sel) sel.value = state.profile; // 失败回退选项，下拉不谎报
+        return toast('切换失败:' + e.message);
+      }
+      state.profile = name;
+      const row = (state.sessions || []).find(x => x.id === state.sessionId); // 同步本地缓存后重画抽屉（纯本地，不重拉列表）
+      if (row) row.profile = name;
+      renderDrawerList();
+      toast(name ? '会话模式已切换：' + name + '（下一轮迭代即生效）' : '已切回默认模式');
     } else {
       state.pendingProfile = name;
       state.profile = name;
       toast(name ? '新会话模式：' + name : '新会话用默认模式');
     }
-    openModelSwitch(); // 重画模式区「当前」标记
+    renderHeader(); // 头部徽标变化
+    const ic = $('bind-prof-ic'); // 弹窗下拉旁图标就地更新（占位 span 常驻，默认态内容为空）
+    if (ic) ic.innerHTML = profileBadgeHtml(name);
   }
   async function bindModel(modelId) {
     if (!state.sessionId) return;
