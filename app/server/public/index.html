@@ -91,10 +91,9 @@
       /* 会话模式徽标（profile 绑定时的标题小图标；尺寸显式定，不依赖 .ic 默认值） */
       .prof-badge { display: inline-flex; align-items: center; margin-right: 4px; opacity: .62; flex: none; }
       .prof-badge .ic { width: 13px; height: 13px; }
-      /* 各模式固定色（头部/抽屉/弹窗下拉旁同一套） */
-      .prof-badge.prof-lab .ic { color: #8B5CF6; }
-      .prof-badge.prof-zero .ic { color: #EF4444; }
-      /* 弹窗模式行：下拉选中 + 当前模式图标（取代纵向选项组，省垂直空间） */
+      /* 模式徽标统一用主题蓝（lab/zero 同色，靠形状区分） */
+      .prof-badge.prof-lab .ic, .prof-badge.prof-zero .ic { color: var(--active); }
+      /* 弹窗模式行：下拉选中（取代纵向选项组，省垂直空间） */
       .msw-prof { display: flex; align-items: center; gap: 6px; padding: 10px 12px; font-size: 13px; color: var(--ink); border-top: 1px solid #dde1ea; }
       .msw-prof-label { flex: none; }
       .msw-prof select { flex: 1; min-width: 0; border: 1px solid #dde1ea; border-radius: 8px; padding: 5px 8px; font-size: 13px; background: #fff; color: var(--ink); }
@@ -392,14 +391,13 @@
         <div class="msw-header">
           <div class="msw-titles">
             <h3>切换模型</h3>
-            <p class="msw-sub">选择一个模型继续当前会话</p>
+            <p class="msw-sub" id="bind-model-sub">选择一个模型继续当前会话</p>
           </div>
           <button class="modal-close-btn" onclick="closeModelSwitch()">
             <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
           </button>
         </div>
         <div class="msw-list" id="bind-model-list"></div>
-        <div class="msw-footer" id="bind-model-footer"></div>
       </div>
     </div>
 

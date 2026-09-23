@@ -199,11 +199,11 @@
     }
 
   // ---------- 会话模式徽标 ----------
-  // 会话绑定 profile 时在标题（头部/抽屉行/弹窗下拉旁）显示小图标：''=默认不显示；各模式固定色（CSS .prof-*）；
-  // 未知名兑底圆点（无色）；tooltip 只提示当前模式，不另显文字。
+  // 会话绑定 profile 时在标题（头部/抽屉行）显示小图标：''=默认不显示；颜色统一 --active（CSS .prof-*），靠形状区分；
+  // 未知名兑底圆点；tooltip 提示当前模式，不另显文字。
   const PROFILE_BADGES = {
     lab: '<svg viewBox="0 0 24 24" class="ic"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M10 2v6.6L4.8 18.5a1.8 1.8 0 0 0 1.6 2.7h11.2a1.8 1.8 0 0 0 1.6-2.7L14 8.6V2"/><line x1="8.5" y1="2" x2="15.5" y2="2"/></svg>',
-    zero: '<svg viewBox="0 0 24 24" class="ic"><circle fill="none" stroke="currentColor" stroke-width="1.8" cx="12" cy="12" r="9"/><line stroke="currentColor" stroke-width="1.8" x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>',
+    zero: '<svg viewBox="0 0 24 24" class="ic"><circle fill="none" stroke="currentColor" stroke-width="1.8" cx="12" cy="12" r="9"/><line stroke="currentColor" stroke-width="1.8" stroke-linecap="round" x1="8" y1="12" x2="16" y2="12"/></svg>',
   };
   function profileBadgeHtml(p) {
     if (!p) return '';

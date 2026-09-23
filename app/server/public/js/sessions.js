@@ -433,9 +433,9 @@
   async function openModelSwitch() {
     // welcome（无会话）也可开：模型/模式选择记为预选项，ensureSession 建档时兑现。有会话则即点即绑，行为与原逻辑一致。
     const list = $('bind-model-list');
-    const footer = $('bind-model-footer');
+    const sub = $('bind-model-sub');
     list.innerHTML = '<div class="empty-tip">加载中…</div>';
-    footer.textContent = '';
+    if (sub) sub.textContent = state.sessionId ? '选择一个模型继续当前会话' : '选择一个模型用于新会话';
     $('bind-model-modal').classList.remove('hidden');
     let modelsHtml = '';
     let avail = 0;
@@ -505,13 +505,12 @@
       const opts = [''].concat(names).map(p =>
         '<option value="' + esc(p) + '"' + (p === cur ? ' selected' : '') + '>' + (p ? esc(p) : '默认（随模型配置）') + '</option>').join('');
       profHtml = '<div class="msw-prof"><span class="msw-prof-label">模式:</span>' +
-        '<span id="bind-prof-ic">' + profileBadgeHtml(cur) + '</span>' +
         '<select id="bind-prof-select" onchange="chooseProfile(this.value)">' + opts + '</select></div>';
     }
+    // 空闲数并进顶部提示句（原 footer「共 X 个模型可用」不再单独占行）
+    if (sub) sub.textContent = (state.sessionId ? '选择一个模型继续当前会话' : '选择一个模型用于新会话')
+      + (avail ? '（共 ' + avail + ' 个空闲）' : '');
     list.innerHTML = modelsHtml + profHtml;
-    footer.textContent = state.sessionId
-      ? '共 ' + avail + ' 个模型可用'
-      : '预选项在首条消息建档时生效';
   }
   function closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); }
 
@@ -526,13 +525,13 @@
     return PROFILE_NAMES;
   }
 
-  function choosePendingModel(modelId) { // welcome 无会话：记预选，ensureSession 建档时透传；选完即关窗（toast 提示），重开弹窗靠就地标记显「预选」
+  function choosePendingModel(modelId) { // welcome 无会话：记预选，ensureSession 建档时透传；选完即关窗 + toast，重开弹窗时该行带「预选」标记
     state.pendingModel = modelId;
     closeModelSwitch();
     toast('新会话将用 ' + modelId);
   }
 
-  async function chooseProfile(name) { // 下拉选中即绑/即预选；不重开弹窗（下拉天然保持选中项），只就地换旁侧图标
+  async function chooseProfile(name) { // 下拉选中即绑/即预选；无 toast（头部/抽屉徽标即时变化即反馈），失败回退选项并报错
     if (state.sessionId) {
       try {
         await req('POST', '/api/sessions/' + state.sessionId + '/bind', { profile: name });
@@ -542,18 +541,14 @@
         return toast('切换失败:' + e.message);
       }
       state.profile = name;
-      const row = (state.sessions || []).find(x => x.id === state.sessionId); // 同步本地缓存后重画抽屉（纯本地，不重拉列表）
+      const row = (state.sessions || []).find(x => x.id === state.sessionId); // 同步本地缓存后重画抽屉（纯本地，不重拉网络列表）
       if (row) row.profile = name;
       renderDrawerList();
-      toast(name ? '会话模式已切换：' + name + '（下一轮迭代即生效）' : '已切回默认模式');
     } else {
       state.pendingProfile = name;
       state.profile = name;
-      toast(name ? '新会话模式：' + name : '新会话用默认模式');
     }
-    renderHeader(); // 头部徽标变化
-    const ic = $('bind-prof-ic'); // 弹窗下拉旁图标就地更新（占位 span 常驻，默认态内容为空）
-    if (ic) ic.innerHTML = profileBadgeHtml(name);
+    renderHeader(); // 头部徽标即时变化 = 切换成功的反馈
   }
   async function bindModel(modelId) {
     if (!state.sessionId) return;
