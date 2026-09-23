@@ -29,7 +29,7 @@ BIGMODEL_KEY=xxx DEEPSEEK_KEY=yyy ZHIPU_KEY=zzz PUBLIC_IP=1.2.3.4 AUTH_USER=me .
 | 输入变量（均可选） | 说明 |
 |---|---|
 | `BIGMODEL_KEY` / `DEEPSEEK_KEY` / `QWEN_KEY` | 模型平台 key，**填几个启用几个**（0~3 个） |
-| `ZHIPU_KEY` | image_gen / video_gen 用；**留空则这两个服务 `enable: false`**（工具不加载） |
+| `ZHIPU_KEY` | image_task / video_task 用；**留空则这两个服务 `enable: false`**（工具不加载） |
 | `AUTH_USER` / `AUTH_PASSWORD` | 登录账号（默认 `admin`/`admin`，记得改） |
 | `PUBLIC_IP` / `AGENT_PORT` | 对外地址与端口，写进 `public_link.base_url`（`PUBLIC_IP` 空则尝试自动探测） |
 | `AUTH_SECRET` / `EXECUTOR_TOKEN` | 一般不用给：不给就自动生成，并**存在 `.env` 里复用**（所以重跑不会掉登录态） |
@@ -144,12 +144,12 @@ mint_public_link({ path: "_cgi-bin_..._d92292d.jpg" })
 > 太长又难抄，还白烧 token。短 ID 把三个问题一次解决了。
 
 - 必须在 `config.yml` 配 `public_link.base_url = "http://<服务器IP>:8090"`；不配则 `mint_public_link` 直接报错
-  （需要公网 URL 的那部分功能就用不了，例如 video_gen 拉不到参考图）。
+  （需要公网 URL 的那部分功能就用不了，例如 video_task 拉不到参考图）。
   例外：容器 env 里配了 `VIRTUAL_HOST`（nginx-proxy 域名 + HTTPS 那套）时，前缀自动用 `https://<域名>`，
   不用改 `config.yml`（改也盖不住它）。
 - 链接有效期 `public_link.ttl_ms`，默认 30 分钟；签完尽快用掉。
 - 沙箱外的人要用上这条链接，得拿到那个 22 字符随机 ID（猜不出来，也不可能枚举），且过期即废。
-- 这条路不搬字节：文件始终在它原本的位置，也不需要 video_gen 参与上传/落盘。
+- 这条路不搬字节：文件始终在它原本的位置，也不需要 video_task 参与上传/落盘。
 
 ## 5. 没有 HTTPS 的影响（可忽略，仅记录）
 

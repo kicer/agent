@@ -9,7 +9,7 @@
 #
 # 输入（都可选）：
 #   BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY  模型平台 key，填几个启用几个（0~3 个）
-#   ZHIPU_KEY                               image_gen / video_gen 的智谱 key（空 = 这两个服务 enable: false）
+#   ZHIPU_KEY                               image_task / video_task 的智谱 key（空 = 这两个服务 enable: false）
 #   AUTH_USER / AUTH_PASSWORD               登录账号（默认 admin / admin，请自行改掉）
 #   PUBLIC_IP / AGENT_PORT                  对外地址与端口，写进 public_link.base_url（PUBLIC_IP 空则尝试自动探测）
 #   AUTH_SECRET / EXECUTOR_TOKEN            一般不用给：不给就自动生成并复用（见下）
@@ -181,22 +181,22 @@ EOF
 
     if [ -n "$ZHIPU_KEY" ]; then
         cat <<EOF
-  - name: image_gen
-    url: "http://mcp_image_gen:3000/mcp"
+  - name: image_task
+    url: "http://mcp_image_task:3000/mcp"
     headers:
       Authorization: "Bearer $ZHIPU_KEY"
-  - name: video_gen
-    url: "http://mcp_video_gen:3000/mcp"
+  - name: video_task
+    url: "http://mcp_video_task:3000/mcp"
     headers:
       Authorization: "Bearer $ZHIPU_KEY"
 EOF
     else
         cat <<'EOF'
-  - name: image_gen
-    url: "http://mcp_image_gen:3000/mcp"
+  - name: image_task
+    url: "http://mcp_image_task:3000/mcp"
     enable: false          # 未配 ZHIPU_KEY：只注册不加载，工具不发给模型
-  - name: video_gen
-    url: "http://mcp_video_gen:3000/mcp"
+  - name: video_task
+    url: "http://mcp_video_task:3000/mcp"
     enable: false          # 未配 ZHIPU_KEY：只注册不加载，工具不发给模型
 EOF
     fi
@@ -220,6 +220,6 @@ echo " 访问地址 : http://${PUBLIC_IP:-<公网IP>}:${AGENT_PORT}"
 echo " 账号     : $AUTH_USER"
 echo " 密码     : $AUTH_PASSWORD"
 echo " 平台     : ${enabled_plats[*]:-（无）}"
-echo " 智谱 MCP : $([ -n "$ZHIPU_KEY" ] && echo "image_gen / video_gen 已启用" || echo "未配置（enable: false）")"
+echo " 智谱 MCP : $([ -n "$ZHIPU_KEY" ] && echo "image_task / video_task 已启用" || echo "未配置（enable: false）")"
 echo "---------------------------------------------"
 log "完成 ✅"

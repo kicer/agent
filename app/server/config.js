@@ -321,7 +321,7 @@ function parseAndValidate(rawText, configPath) {
 // 对外前缀的取值优先级：
 //   1) 容器 env 的 VIRTUAL_HOST 非空 → https://<第一个域名>
 //      （nginx-proxy 的写法，逗号分隔多域名时取第一个）。只要配了域名 + HTTPS 这一层，
-//      返回给外部服务（video_gen 取参考图）的链接就必须走域名，所以 env 优先；
+//      返回给外部服务（video_task 取参考图）的链接就必须走域名，所以 env 优先；
 //      反之 config.yml 里那个 init 脚本生成的 http://<IP>:8090 会把这个开关盖住。
 //      协议写死 https：前置了 nginx-proxy 一定是 HTTPS（证书由 acme-companion 签）。
 //   2) 否则用 config.yml 的 public_link.base_url（纯 IP:端口部署，init 脚本写 http://<IP>:8090）。
