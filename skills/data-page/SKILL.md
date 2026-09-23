@@ -1,6 +1,6 @@
 ---
 name: data-page
-description: 数据页面脚手架：把 table/dashboard/kanban 模板复制到任务目录 app/templates/，配合 db 工具产出 /app/{task_id}/ 可访问、经 /api/db/{task_id}/query 读写 data.db 的查看/管理页
+description: 数据页面脚手架：把 table/dashboard/kanban 模板复制到任务目录 .app/templates/，配合 db 工具产出 /app/{task_id}/ 可访问、经 /api/db/{task_id}/query 读写 data.db 的查看/管理页
 visit_url: /app/{task_id}/
 ---
 
@@ -22,16 +22,16 @@ visit_url: /app/{task_id}/
 每个会话有独立的任务目录：
 
 - 数据库：任务目录下的 `data.db`
-- 页面目录：任务目录下的 `app/`
-- 页面入口：`app/index.html`
-- 访问地址：`/app/{task_id}/`（完整 URL = 站点地址 + 该路径；run 输出末尾的「访问地址」已拼好，直接转发）
+- 页面目录：任务目录下的 `.app/`（带点目录，任务文件面板默认隐藏；URL 路径与目录名在路由层解耦）
+- 页面入口：`.app/index.html`
+- 访问地址：`/app/{task_id}/`（注意：URL 无点、目录有点，别写错路径；完整 URL = 站点地址 + 该路径，run 输出末尾的「访问地址」已拼好，直接转发）
 - 数据 API：`/api/db/{task_id}/query`
 
 `{task_id}` 是任务目录的名称。页面通过 URL 动态解析，不要硬编码。
 
 ## 初始化
 
-生成页面前，调用 `skill(name="data-page", op="run")`（无需参数，模板固定复制到 `app/templates/`）。已存在则跳过，不会覆盖修改过的文件（重跑幂等）。
+生成页面前，调用 `skill(name="data-page", op="run")`（无需参数，模板固定复制到 `.app/templates/`）。已存在则跳过，不会覆盖修改过的文件（重跑幂等）。
 
 ## 数据 API
 
@@ -74,7 +74,7 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 1. **明确数据结构**：与用户确认字段。如果描述模糊，可以建议合理的结构。
 2. **创建表并录入数据**：用 `db` 工具完成。
 3. **初始化模板**：调用 `skill(name="data-page", op="run")`（无参数）。
-4. **生成页面**：从 `app/templates/` 选合适的模板，根据表结构调整字段和 SQL，写入 `app/index.html`。
+4. **生成页面**：从 `.app/templates/` 选合适的模板，根据表结构调整字段和 SQL，写入 `.app/index.html`。
 5. **告知用户**：把 run 输出末尾「访问地址」那行的**完整 URL**（含域名）发给用户——只给 `/app/...` 相对路径用户打不开；再简要说明页面功能。
 
 页面必须包含：
@@ -83,11 +83,11 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 - 桌面优先、移动兼容的样式：容器宽度按页面类型给足（表格类 1200px、看板类 1400px 或不设、统计类 1080px），不要照搬 800px 级别的移动端尺寸
 - 通过 `fetch` 调用数据 API
 - 错误处理和加载状态
-- **返回应用入口**：右下角 FAB（房子图标），`backToApp()` 跳主界面深链 `/?s=<task_id>`——数据页面的 task_id 就是会话 id，一点直达发起本页的对话；若未来 APK 提供 JS 桥，只需替换 `backToApp()` 一处。**每一个 `app/*.html` 页面（含 index.html）都要带**——用户可能从任意子页直入，缺出口即被困住
+- **返回应用入口**：右下角 FAB（房子图标），`backToApp()` 跳主界面深链 `/?s=<task_id>`——数据页面的 task_id 就是会话 id，一点直达发起本页的对话；若未来 APK 提供 JS 桥，只需替换 `backToApp()` 一处。**每一个 `.app/*.html` 页面（含 index.html）都要带**——用户可能从任意子页直入，缺出口即被困住
 
 ## 模板
 
-模板位于 `app/templates/`。
+模板位于 `.app/templates/`。
 
 - **table.html**：标准表格，适合清单、列表。含排序、搜索、分页。
 - **dashboard.html**：统计看板，顶部卡片 + 简单图表 + 明细表。
@@ -205,16 +205,16 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 3. 没检查 `error` 字段 —— API 错误时仍返回 200
 4. 表名或字段名拼错
 5. 引入 CDN 外部库 —— 容器可能无网络，优先纯原生
-6. 页面文件不在 `app/` 下 —— 无法通过 `/app/{task_id}/` 访问
+6. 页面文件不在 `.app/` 下 —— 无法通过 `/app/{task_id}/` 访问（目录带点、URL 不带点，两者别写反）
 7. SQL 占位符与参数数量不匹配 —— 优先用结构化 insert，避免手写
 
 ## 检查清单
 
 - [ ] 数据库表已创建
 - [ ] 数据已录入
-- [ ] `app/index.html` 已写入
+- [ ] `.app/index.html` 已写入
 - [ ] 页面动态解析 task_id
 - [ ] 包含错误处理和加载状态
 - [ ] 用户输入渲染时已转义
-- [ ] 每个 `app/*.html` 页面右下角都有「返回会话」FAB（backToApp → `/?s=<task_id>` 深链）
+- [ ] 每个 `.app/*.html` 页面右下角都有「返回会话」FAB（backToApp → `/?s=<task_id>` 深链）
 - [ ] 已告知用户完整访问 URL（run 输出「访问地址」那行，含域名，非相对路径）

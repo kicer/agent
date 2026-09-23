@@ -1,6 +1,7 @@
 // data-page 技能的服务端承载，两条通道（配套 skills/data-page/SKILL.md 的契约）：
-// 1. GET  /app/{task_id}/...      —— 静态托管任务目录的 app/ 子树（index.html 兜底，不给列目录）；
-//                                    只暴露 app/ 而非整个任务目录，其余任务文件不从 URL 泄漏。
+// 1. GET  /app/{task_id}/...      —— 静态托管任务目录的 .app/ 子树（index.html 兑底，不给列目录）；
+//                                    目录名刻意带点：任务文件面板默认隐藏（?hidden=1 才列）；
+//                                    只暴露 .app/ 而非整个任务目录，其余任务文件不从 URL 泄漏。
 // 2. POST /api/db/{task_id}/query —— 任务 data.db 的 SQL API（页面前端 fetch 调）：任意单语句，
 //                                    执行核心与 db 工具共用 runTaskSql（executor.js），语义单一事实源。
 // 认证：挂在 server.js 的 auth.middleware 之后——信任模型与 files 路由一致（登录 ≈ 运维，可跨会话）。
@@ -22,17 +23,17 @@ function notFound(res, msg) {
   res.status(404).json({ error: msg });
 }
 
-// ---------- /app/{task_id}/...：任务 app/ 子树静态托管 ----------
+// ---------- /app/{task_id}/...：任务 .app/ 子树静态托管（URL 路径与目录名解耦）----------
 router.use('/app', (req, res) => {
   try {
     const segs = req.path.replace(/^\/+/, '').split('/');
     const sessionId = segs[0];
     if (!sessionId) return notFound(res, '会话不存在');
     if (!engine.getSession(sessionId)) return notFound(res, '会话不存在');
-    const appRoot = path.join(engine.taskDirOf(sessionId), 'app');
+    const appRoot = path.join(engine.taskDirOf(sessionId), '.app');
     let abs;
     try {
-      abs = resolveInTask(appRoot, segs.slice(1).join('/') || 'index.html'); // 越界即挡，限 app/ 子树
+      abs = resolveInTask(appRoot, segs.slice(1).join('/') || 'index.html'); // 越界即挡，限 .app/ 子树
     } catch (_) {
       return notFound(res, '非法路径');
     }
