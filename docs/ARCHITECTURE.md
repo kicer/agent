@@ -140,7 +140,7 @@ graph LR
 
 1. `loadConfig(AGENT_CONFIG)` 读 `config.yml`，跑完整校验与归一化（`config.js` › `parseAndValidate`）。
 2. `log.setLevel(cfg.log_level)` 注入全局日志等级。
-3. `initDb(cfg.db_path)` 建表 + 增量迁移（`db.js`，含 `held_at` / `last_model_id` / `assistant_type` / `user` 等历史升级）。
+3. `initDb(cfg.db_path)` 建表 + 增量迁移（`db.js`，含 `held_at` / `last_model_id` / `assistant_type` / `user` / `profile` 等历史升级）。
 4. `createBus()` 建 SSE 事件总线（`sse.js`）。
 5. `engine.setModelPool(cfg, db, bus); engine.init()`：清空 model_pool busy 状态、把所有 active 会话退回队列、held 会话直接结版、启动 `holdSweeper` 定时器。
 6. `scheduler.start(engine)`：启动定时任务轮询（30s 一次，`unref`）。**必须在 engine.init() 之后**——先让会话状态归位，首轮 tick 才看不到脏状态（见 §5.12）。
@@ -161,7 +161,7 @@ graph LR
 
 ```
 sessions          id (PK='task-YYYYMMDD-NNN') / title / status / phase /
-                  model_id / last_model_id / assistant_type / user /
+                  model_id / last_model_id / assistant_type / user / profile /
                   created_at / updated_at / completed_at / cancelled_at / held_at
 
 messages          id PK / session_id FK / role (system|user|assistant|tool) /
@@ -234,7 +234,7 @@ stateDiagram-v2
 | `bindModel` / `releaseModel` | 标记 `model_pool.is_busy` + 改 `sessions.model_id`/`status` |
 | `enqueue` / `dequeue` / `dispatchQueued` | FIFO 调度，空闲模型分配给队首会话（`pickModelFor` 优先回绑 `last_model_id`） |
 | `getRun` / `killRunProcs` | 每会话的运行控制（`cancelled` / `procs` / `abortController` / `looping`） |
-| `runLoop` / `runLoopInner` | Agent 主循环：解析 profile → buildMessages → callModel → 解包 tool args → 校验 → saveMessage → executeTool → saveMessage(tool) → SSE 广播。每迭代现解 profile（`resolveProfileName`：`run.profile` > 模型配置 > 默认全量），prompt 与 tools 集（`effectiveTools` 按 `tools_allow`/`tools_deny` 过滤）跟着组合切换 |
+| `runLoop` / `runLoopInner` | Agent 主循环：解析 profile → buildMessages → callModel → 解包 tool args → 校验 → saveMessage → executeTool → saveMessage(tool) → SSE 广播。每迭代现解 profile（`resolveProfileName`：`run.profile` > 会话绑定 `sessions.profile` > 模型配置 > 默认全量），prompt 与 tools 集（`effectiveTools` 按 `tools_allow`/`tools_deny` 过滤）跟着组合切换 |
 | `streamAssistant` | 单次上游调用：拿 abortSignal / shouldCancel / 各类回调，把流式 chunk 转 SSE 事件（`assistant_delta` / `reasoning_delta`） |
 | `createSession` | 生成 id（`task-YYYYMMDD-NNN`，序号从历史 + `meta.task_seq` 取大）→ mkdir 任务目录 → 决定立即绑/入队 |
 | `postUserMessage` | 用户消息入口；识别 active/held/queued 路径并决定是 `delivered:'live'` 还是 `'queued'` |
@@ -250,7 +250,7 @@ stateDiagram-v2
 - **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。压缩回合**不插入任何指令消息**：由 `engine.summarizeContext` 在内存 run 上标 `summarizing`，`runLoopInner` 据此走 `llm.compressMessages`：沿用默认 system prompt + 正常历史 messages，末尾追加一条 user（`server/templates/compress-prompt.txt` 原文，参考标题回合的拼法），且不传 tools；回合内首条无 tool_calls 的收尾回复即摘要。（`llm.buildMessages` 仍保留旧库 `summarize_request` 行的处理，仅为历史数据兼容。）
 - **图片（多模态）**：`messages.content` 列是 TEXT，含图时存 `{"__blocks__":[content...]}` 哨兵 JSON。新版 `read_file` 读图：sharp 压缩产物落任务目录 `.imgcache/`（前端文件列表隐带点的项），库里只存 `image_ref` 轻量块；`buildMessages` 发送前经调用方传入的 `mintUrl` 回调现签成公网外链（同 `mint_public_link` 那套 `GET /p/<id>`）填入 `image_url` 块，base64 不进 DB 也不进请求体；签不到降级为文字占位。旧库/用户粘贴附件的 `data:` URL 块原样透传。图块**只保留最后一条 assistant 之后的**（`lastAssistant` 判定），之前的换成"已省略"文字描述；UI 渲染走带 cookie 的会话内下载路由，历史永不裂图。
 - **保持租约**（`holdSweeper`）：sweeper_ms 巡检（默认 10s）；held 会话无观看者 idle_release_ms 释放（默认 3 分钟），有观看者 active_max_ms 强制释放（默认 30 分钟）。active 闲置（绑了模型但无 run 在跑、无未回应消息）按相同租约处理。
-- **profile（prompt+tools 组合）**：顶层 `model_profiles` 定义多套组合，`platforms[].models[].profile` 引用（见 §5.8）；运行期前端发消息带 `profile` 参数覆写（写进 `run.profile`，与 `deepThink` 同约定：回合中途切换、下一迭代即生效；保留值 `default` = 显式全量（仍受全局 `tools_deny` 屏蔽）。名单外工具被调用不拦（`checkToolArgs` 查不到 def 不报错，`executeTool` 全表照跑）；tools schema 只活在请求体不进历史，所以切换不脏化旧消息。压缩回合同跟随（小模型会话点压缩不会回退到默认大模板）。
+- **profile（prompt+tools 组合）**：顶层 `model_profiles` 定义多套组合，`platforms[].models[].profile` 引用（见 §5.8）；运行期前端发消息带 `profile` 参数覆写（写进 `run.profile`，与 `deepThink` 同约定：回合中途切换、下一迭代即生效；保留值 `default` = 显式全量（仍受全局 `tools_deny` 屏蔽）。另有会话级绑定 `sessions.profile`（bind 弹窗「模式」区写入，跨回合/刷新持久；优先级低于每消息参数、高于模型配置默认——定时任务投递不带每消息参数，即跟随所在会话的绑定）。名单外工具被调用不拦（`checkToolArgs` 查不到 def 不报错，`executeTool` 全表照跑）；tools schema 只活在请求体不进历史，所以切换不脏化旧消息。压缩回合同跟随（小模型会话点压缩不会回退到默认大模板）。
 
 ### 5.2 `llm.js` —— 上游调用
 
@@ -421,13 +421,13 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 
 | 路径前缀 | 文件 | 主要端点 |
 |---|---|---|
-| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI）、`PATCH /:id/schedule`（改提示词/频次，cron 经 validateCron 重校验并重算 next_run_at） |
+| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`（双语义：`model_id`=手动占模型仅已结版/已终止；`profile`=会话模式绑定任意状态，`''` 解绑、`'default'` 归一）、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI）、`PATCH /:id/schedule`（改提示词/频次，cron 经 validateCron 重校验并重算 next_run_at） |
 | `/api/sessions/:id/messages` | `routes/messages.js` | `POST /` 发消息（body 可选 `deepThink` / `profile`（model_profiles 名，未知 400；`default`=显式全量；不传=随模型配置）；响应 `delivered:'live'\|'queued'`）、`POST /start` "开始执行" 模板消息、`POST /stop`、`POST /release`（held→completed）、`DELETE /messages`（清空 + ?keep=summary）、`POST /summarize`（压缩）、`DELETE /messages/:mid`、`GET /stream` SSE 事件流 |
 | `/api/sessions/:id/files` | `routes/files.js` | `POST /` 上传（multer，50MB/文件，文件名清洗 sanitizeName）、`GET /` 列表（递归）、`GET /download[-name/...]` 签名下载（5 分钟 TTL）、`GET /zip-token` + `GET /zip[-name/...]` 选中项（含文件夹）打包 zip 流式下载（纯 Node STORE，两遍读：先 CRC 后磁盘流发送）、`DELETE /` 删文件（目录递归删） |
 | `/api/skills` | `routes/skills.js` | 技能列表/创建/重命名/删除 + 技能内文件 CRUD + 上传（`?overwrite=true` 覆盖） |
 | `/api/config` | `routes/config.js` | `GET /` 原文+生效（脱敏）、`POST /validate`、`PUT /` 整文件保存、`PATCH /` 单项修改（path/value/op[delete\|append]） |
 | `/api/platforms` | `routes/platforms.js` | `GET /balance?pi=&ki=` 余额 |
-| `/api/system` | `routes/system.js` | `GET /status`（含 `model_profiles` 可用组合名列表，前端模式选择器据渲染）、`POST /restart?force=...` |
+| `/api/system` | `routes/system.js` | `GET /status`（含 `model_profiles` 可用组合名列表，bind 弹窗「模式」区据此渲染）、`POST /restart?force=...` |
 | `/api/models` | `server.js` | 空闲/占用模型池 + token 用量 |
 | `/api/health` | `server.js` | 健康检查 |
 | `/api/login` `/api/login_restore` `/api/logout` `/api/password` `/api/me` | `auth.js` | 认证路由（认证前） |
