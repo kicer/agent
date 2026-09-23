@@ -1465,5 +1465,13 @@
       }
     } catch (_) { /* 网络错误放过，让后续请求正常走 */ }
     loadSessionList();
-    loadDrawerUser(verifiedUser); // 侧边栏底部展示真实登录用户(未启用认证/拉取失败时静默回退默认占位)
+    loadDrawerUser(verifiedUser); // 侧边栏底部展示真实登录用户(未启用鉴权/拉取失败时静默回退默认占位)
+    // 会话深链 /?s=<session_id>：数据页面（/app/{task_id}/...）的「返回会话」FAB 用——
+    // task_id 即会话 id（engine 里 1:1），启动时消费一次即 replaceState 抹掉参数，
+    // 避免刷新/分享时被钉回该会话；会话已删则 openSession 自行报错，落在 welcome。
+    const deep = new URLSearchParams(location.search).get('s');
+    if (deep) {
+      history.replaceState(null, '', '/');
+      openSession(deep);
+    }
   })();

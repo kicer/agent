@@ -71,7 +71,7 @@ body { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
   </div>
 </div>
 
-<button class="fab" aria-label="返回应用" title="返回应用" onclick="returnToApp()">
+<button class="fab" aria-label="返回对话" title="返回发起本数据的对话" onclick="backToApp()">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
 </button>
 
@@ -140,17 +140,12 @@ async function init() {
     document.getElementById('table').innerHTML = '';
   }
 }
-// 返回应用主界面（APK WebView 场景）：① APK 注册的 JS 桥（Android.backToApp / iOS handler，有则最干净）
-// ② ?from=（限站内绝对路径，防开放重定向）③ history.back ④ 根路径（agent 主界面）。
-// 纯浏览器里 ③④ 恰好落在「回上一页/首页」，无需环境判断也行为合理。
-function returnToApp() {
-  if (window.Android && typeof window.Android.backToApp === 'function') { window.Android.backToApp(); return; }
-  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.backToApp) {
-    window.webkit.messageHandlers.backToApp.postMessage({}); return;
-  }
-  const from = new URLSearchParams(location.search).get('from');
-  if (from && /^\/(?!\/)/.test(from)) { location.href = from; return; }
-  if (history.length > 1) history.back(); else location.href = '/';
+// 返回应用＝回到发起本页的对话：主界面深链 /?s=<会话id>（数据页的 task_id 就是会话 id，
+// engine 里 1:1），前端启动时消费一次打开该会话。刻意不用 history.back()：多页数据应用里
+// back 退的是上一张数据页——那是「上一页」语义，归顶部「返回导航」管。
+function backToApp() {
+  const id = location.pathname.split('/').filter(Boolean)[1];
+  location.href = id ? '/?s=' + encodeURIComponent(id) : '/';
 }
 
 init();

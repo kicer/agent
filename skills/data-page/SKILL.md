@@ -83,7 +83,7 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 - 桌面优先、移动兼容的样式：容器宽度按页面类型给足（表格类 1200px、看板类 1400px 或不设、统计类 1080px），不要照搬 800px 级别的移动端尺寸
 - 通过 `fetch` 调用数据 API
 - 错误处理和加载状态
-- **返回应用入口**：右下角 FAB（.fab，内联 SVG 图标），onclick 走 `returnToApp()`，优先级链：APK 注册的 JS 桥（`window.Android.backToApp` / webkit handler，有则最干净）→ `?from=` 参数（须站内绝对路径，防开放重定向）→ `history.back()` → 根路径。**每一个 `app/*.html` 页面（含 index.html）都要带**——用户可能从任意子页直入，缺入口即被困住
+- **返回应用入口**：右下角 FAB（房子图标），`backToApp()` 跳主界面深链 `/?s=<task_id>`——数据页面的 task_id 就是会话 id，一点直达发起本页的对话；若未来 APK 提供 JS 桥，只需替换 `backToApp()` 一处。**每一个 `app/*.html` 页面（含 index.html）都要带**——用户可能从任意子页直入，缺出口即被困住
 
 ## 模板
 
@@ -216,5 +216,5 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 - [ ] 页面动态解析 task_id
 - [ ] 包含错误处理和加载状态
 - [ ] 用户输入渲染时已转义
-- [ ] 每个 `app/*.html` 页面右下角都有「返回应用」FAB（returnToApp 链完整）
+- [ ] 每个 `app/*.html` 页面右下角都有「返回会话」FAB（backToApp → `/?s=<task_id>` 深链）
 - [ ] 已告知用户完整访问 URL（run 输出「访问地址」那行，含域名，非相对路径）
