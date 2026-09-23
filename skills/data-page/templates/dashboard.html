@@ -18,14 +18,16 @@ body {
   -webkit-font-smoothing: antialiased;
   padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }
-.container { max-width: 820px; margin: 0 auto; }
+.container { max-width: 1080px; margin: 0 auto; }
 h1 { font-size: 20px; margin: 4px 0 20px; letter-spacing: -0.02em; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .stat { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow); padding: 16px 18px; }
 .stat .lbl { color: var(--text-2); font-size: 12px; margin-bottom: 4px; }
 .stat .val { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-.card { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
+.card { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; overflow: hidden; }
 .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 14px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.05em; }
+/* 表格可能横向溢出：滚动容器用负 margin 贴到卡片边缘，不撞破圆角 */
+.table-scroll { overflow-x: auto; margin: 0 -18px; padding: 0 18px; }
 .bars { display: flex; flex-direction: column; gap: 10px; }
 .bar-row { display: grid; grid-template-columns: minmax(80px, 140px) 1fr auto; gap: 12px; align-items: center; }
 .bar-row .k { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -57,7 +59,7 @@ tr:last-child td { border-bottom: none; }
   </div>
   <div class="card" id="tableCard">
     <h2>明细</h2>
-    <div id="table"></div>
+    <div class="table-scroll" id="table"></div>
   </div>
 </div>
 

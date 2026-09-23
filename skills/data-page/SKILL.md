@@ -80,7 +80,7 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 页面必须包含：
 
 - HTML 骨架（`<!DOCTYPE html>`、`<meta viewport>`、UTF-8）
-- 移动端友好的样式
+- 桌面优先、移动兼容的样式：容器宽度按页面类型给足（表格类 1200px、看板类 1400px 或不设、统计类 1080px），不要照搬 800px 级别的移动端尺寸
 - 通过 `fetch` 调用数据 API
 - 错误处理和加载状态
 
@@ -176,7 +176,9 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 - 用原生 JS + fetch，不引入框架
 - 样式用内联 `<style>` 或独立 CSS，不依赖外部 CSS 库
 - 图表用纯 SVG 或 CSS 绘制
-- 移动优先
+- 桌面优先、移动兼容：数据页面主要在电脑上看，窄屏靠横向滚动兑底
+- 所有可能横向溢出的内容（表格、长文本、代码）包一层 `overflow-x: auto` 容器；卡片内滚动可配合负 margin 贴边
+- flex 居中用 `width: fit-content; margin: 0 auto`，不用 `justify-content: center`（内容超出滚动容器时居中会裁掉首屏左侧）
 - 显示加载状态和错误提示
 - 提交类按钮加禁用状态，避免重复点击
 

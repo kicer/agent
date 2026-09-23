@@ -18,7 +18,11 @@ body {
   padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }
 h1 { font-size: 20px; margin: 4px 0 20px; letter-spacing: -0.02em; }
-.board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
+.container { max-width: 1400px; margin: 0 auto; }
+/* 外层滚、内层居中：board 用 fit-content+auto margin——列少居中、列多靠边滚动；
+   若在滚动容器上直接 justify-content:center，溢出时首列会被裁掉（滚动起点落在中间）。 */
+.board-outer { overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
+.board { display: flex; gap: 12px; width: fit-content; margin: 0 auto; }
 .col { flex: 0 0 260px; scroll-snap-align: start; background: var(--surface); border-radius: var(--r);
   box-shadow: var(--shadow); display: flex; flex-direction: column; max-height: calc(100vh - 140px); }
 .col-hd { display: flex; align-items: center; justify-content: space-between;
@@ -45,8 +49,10 @@ h1 { font-size: 20px; margin: 4px 0 20px; letter-spacing: -0.02em; }
 </style>
 </head>
 <body>
+<div class="container">
 <h1 id="title">看板</h1>
-<div id="root"><div class="msg">加载中…</div></div>
+<div class="board-outer" id="outer"><div class="msg">加载中…</div></div>
+</div>
 
 <script>
 const CONFIG = {
@@ -81,7 +87,7 @@ async function load() {
     rows = await q(`SELECT * FROM ${CONFIG.table}`);
     render();
   } catch (e) {
-    document.getElementById('root').innerHTML = `<div class="msg err">加载失败：${esc(e.message)}</div>`;
+    document.getElementById('outer').innerHTML = `<div class="msg err">加载失败：${esc(e.message)}</div>`;
   }
 }
 
@@ -97,7 +103,7 @@ function render() {
       </div>
     </div>`;
   }).join('')}</div>`;
-  document.getElementById('root').innerHTML = html;
+  document.getElementById('outer').innerHTML = html;
   bind();
 }
 
