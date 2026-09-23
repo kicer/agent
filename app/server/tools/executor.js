@@ -6,6 +6,7 @@ const fsp = require('fs').promises;
 const { spawn } = require('child_process');
 const mcp = require('../mcp');
 const skills = require('./skills');
+const Database = require('better-sqlite3'); // db 工具：会话目录下的 data.db（同步 API，与单进程模型契合）
 const rexec = require('../remote-exec');
 const publicFiles = require('../public-files');
 const scheduler = require('../scheduler'); // 只依赖 log/cron-parser，不成环（engine→executor→scheduler 单向）
@@ -802,6 +803,201 @@ function toolScheduleTask(ctx, args) {
   }
 }
 
+// db：会话本地 SQLite（taskDir/data.db，随会话目录隔离，首次使用自动建库建文件）。
+// 连接策略：每次调用 open→用→close，不缓存句柄（会话删目录后不留脏连接）；
+// 单进程 + better-sqlite3 同步 API，同进程内不存在交叠。busy_timeout 兼容
+// terminal/技能里 sqlite3 CLI 的并发访问。
+// 读写分离硬校验：stmt.reader 为真（纯读）拒走 exec，写语句拒走 query；
+// prepare 天然拒绝多语句，堆叠注入在入口即挡下。错误不返 {"error"} JSON 而是抛出，
+// 由 engine 统一包成 "Error: ..." 并置 is_error（本库工具约定，见 engine 调用处）。
+// 结构化 insert 与 exec 同义但免手写 SQL/数占位符（批量行是手写 VALUES 数 ? 的重灾区）：
+// 列名先对 sqlite_master 真实列校验再 quoteIdent 转义，值全部走 ? 绑定。
+// update/delete 不做结构化 op（单行 SQL 本身简单、错误率低，且 AND 等值 where 表达力
+// 不够还要回退 exec）：继续走 exec，入口不拦写语句，兑底通道保持全能力。
+const DB_MAX_ROWS = 500;            // query 行数上限（docs 要求：防爆上下文）
+const DB_MAX_BYTES = 100 * 1024;    // query 序列化字节上限
+
+function openTaskDb(ctx) {
+  fs.mkdirSync(ctx.taskDir, { recursive: true });
+  const db = new Database(path.join(ctx.taskDir, 'data.db'));
+  db.pragma('busy_timeout = 5000');
+  return db;
+}
+
+// better-sqlite3 不接受 boolean/array/object 绑定；JSON 世界 true/false ↔ SQLite 0/1 是强约定。
+// 所有进入绑定位的值（params / rows / set / where）统一过这里。
+function dbValue(v, label) {
+  if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'bigint') return v;
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  throw new Error('db: ' + label + ' 值类型不支持：' + (Array.isArray(v) ? 'array' : typeof v) + '（可用：string/number/null/boolean）');
+}
+
+function sanitizeDbParams(params) {
+  if (params == null) return [];
+  if (!Array.isArray(params)) throw new Error('db: params 必须是数组（按 ? 占位符顺序）');
+  return params.map((v, i) => dbValue(v, 'params[' + i + ']'));
+}
+
+// 表必须存在且取真实列名集合（仅 table，视图不可写）；返回的 Set 同时充当列名白名单。
+function needTaskTableColumns(db, table) {
+  const hit = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(table);
+  if (!hit) throw new Error('db: 表不存在：' + table + '（op=tables 看现有表，op=exec 建新表）');
+  return new Set(db.pragma('table_info(' + quoteIdent(hit.name) + ')').map(c => c.name));
+}
+
+function requireColumns(cols, keys, label) {
+  const bad = keys.filter(k => !cols.has(k));
+  if (bad.length) {
+    throw new Error('db: ' + label + ' 含未知列：' + bad.join(', ') + '（现有列：' + [...cols].join(', ') + '）');
+  }
+}
+
+function quoteIdent(name) {
+  return '"' + String(name).replace(/"/g, '""') + '"';
+}
+
+// BLOB 列（Buffer）直接 JSON.stringify 会展开成 {"type":"Buffer","data":[...]} 天书，换占位符。
+function jsonSafeRows(rows) {
+  return rows.map(row => {
+    const out = {};
+    for (const k of Object.keys(row)) {
+      const v = row[k];
+      out[k] = Buffer.isBuffer(v) ? '<blob ' + v.length + ' bytes>' : v;
+    }
+    return out;
+  });
+}
+
+// 500 行 / 100KB 双上限：未超限返回裸数组；超限改 {rows,...} 信封并附截断说明。
+function renderQueryResult(rows) {
+  let shown = rows;
+  let truncated = shown.length > DB_MAX_ROWS;
+  if (truncated) shown = shown.slice(0, DB_MAX_ROWS);
+  if (Buffer.byteLength(JSON.stringify(shown, null, 2)) > DB_MAX_BYTES) {
+    truncated = true;
+    let bytes = 4; // "[\n]"
+    const kept = [];
+    for (const r of shown) {
+      const s = JSON.stringify(r, null, 2).length + 3; // + 逗号与换行余量
+      if (bytes + s > DB_MAX_BYTES && kept.length) break;
+      kept.push(r);
+      bytes += s;
+    }
+    shown = kept;
+  }
+  if (!truncated) return JSON.stringify(shown, null, 2);
+  return JSON.stringify({
+    rows: shown,
+    returned_rows: shown.length,
+    total_rows: rows.length,
+    truncated: true,
+    note: '结果已截断（上限 ' + DB_MAX_ROWS + ' 行或 ' + Math.floor(DB_MAX_BYTES / 1024) + ' KB）。用 WHERE 收窄列/行，或 LIMIT/OFFSET 分页。',
+  }, null, 2);
+}
+
+function toolDb(ctx, args) {
+  const op = String(args.op || '').trim().toLowerCase();
+  const sql = String(args.sql || '').trim();
+  const table = String(args.table || '').trim();
+
+  let db;
+  try {
+    switch (op) {
+      case 'exec': {
+        if (!sql) throw new Error('db: op=exec 缺少必填参数 sql');
+        db = openTaskDb(ctx);
+        const stmt = db.prepare(sql); // 多语句在此抛错
+        if (stmt.reader) throw new Error('db: op=exec 收到只读语句，读取请用 op=query');
+        const params = sanitizeDbParams(args.params);
+        db.exec('BEGIN');
+        try {
+          const info = stmt.run(...params);
+          db.exec('COMMIT');
+          const verb = sql.split(/\s+/)[0].toLowerCase();
+          if (verb === 'create' || verb === 'alter' || verb === 'drop') return JSON.stringify({ ok: true });
+          return JSON.stringify({ rowsAffected: info.changes, lastInsertRowid: Number(info.lastInsertRowid) });
+        } catch (err) {
+          try { db.exec('ROLLBACK'); } catch (_) {}
+          throw err;
+        }
+      }
+      case 'query': {
+        if (!sql) throw new Error('db: op=query 缺少必填参数 sql');
+        db = openTaskDb(ctx);
+        const stmt = db.prepare(sql);
+        if (!stmt.reader) throw new Error('db: op=query 只允许读语句（SELECT 等），写操作请用 op=exec');
+        return renderQueryResult(jsonSafeRows(stmt.all(...sanitizeDbParams(args.params))));
+      }
+      case 'insert': {
+        if (!table) throw new Error('db: op=insert 缺少必填参数 table');
+        const list = args.rows;
+        if (!Array.isArray(list)) throw new Error('db: op=insert 缺少必填参数 rows（行对象数组，单行也要包成数组）');
+        if (!list.length) throw new Error('db: op=insert rows 是空数组，无事可做');
+        for (let i = 0; i < list.length; i++) {
+          const r = list[i];
+          if (!r || typeof r !== 'object' || Array.isArray(r) || !Object.keys(r).length) {
+            throw new Error('db: op=insert rows[' + i + '] 必须是非空对象 {列名: 值}');
+          }
+        }
+        // 各行 key 必须一致：静默补 NULL 会掩盖模型笔误，宁可点名报错。
+        const cols = Object.keys(list[0]);
+        for (let i = 1; i < list.length; i++) {
+          const ks = Object.keys(list[i]);
+          if (ks.join('\u0000') !== cols.join('\u0000')) {
+            throw new Error('db: op=insert 各行 key 必须一致：rows[0]=' + JSON.stringify(cols) +
+              '，rows[' + i + ']=' + JSON.stringify(ks));
+          }
+        }
+        db = openTaskDb(ctx);
+        requireColumns(needTaskTableColumns(db, table), cols, 'rows');
+        const sqlIns = 'INSERT INTO ' + quoteIdent(table) + ' (' + cols.map(quoteIdent).join(', ') +
+          ') VALUES (' + cols.map(() => '?').join(', ') + ')';
+        const stmtIns = db.prepare(sqlIns);
+        db.exec('BEGIN');
+        try {
+          let firstId = null;
+          for (const r of list) {
+            const info = stmtIns.run(...cols.map(c => dbValue(r[c], 'rows.' + c)));
+            if (firstId === null) firstId = Number(info.lastInsertRowid);
+          }
+          db.exec('COMMIT');
+          return JSON.stringify({ inserted: list.length, firstInsertRowid: firstId });
+        } catch (err) {
+          try { db.exec('ROLLBACK'); } catch (_) {}
+          throw err;
+        }
+      }
+      case 'tables': {
+        db = openTaskDb(ctx);
+        const names = db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+          .all().map(r => r.name);
+        const out = names.map(n => ({ name: n, rows: db.prepare('SELECT COUNT(*) AS c FROM ' + quoteIdent(n)).get().c }));
+        return JSON.stringify(out, null, 2);
+      }
+      case 'schema': {
+        if (!table) throw new Error('db: op=schema 缺少必填参数 table');
+        db = openTaskDb(ctx);
+        // PRAGMA 不支持 ? 绑定：先参数化确认表存在，再用转义标识符拼入（不存在即报错，拼入的必是真实名）。
+        const hit = db
+          .prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?")
+          .get(table);
+        if (!hit) throw new Error('db: 表不存在：' + table);
+        const cols = db.pragma('table_info(' + quoteIdent(hit.name) + ')');
+        return JSON.stringify(cols.map(c => ({
+          name: c.name, type: c.type, notnull: !!c.notnull, dflt_value: c.dflt_value, pk: !!c.pk,
+        })), null, 2);
+      }
+      default:
+        throw new Error('db: 未知的 op："' + op + '"。可用：exec（需 sql，params 可选）/ query（需 sql，params 可选）/ insert（需 table、rows）/ tables / schema（需 table）');
+    }
+  } finally {
+    if (db) try { db.close(); } catch (_) {}
+  }
+}
+
 // skill：技能三件套（list_skills/get_skill_info/run_skill）合并后的单工具（op 分派）。
 // 同一标识空间（skill_name）+ 同一生命周期（live 扫目录，无常驻状态可增删）→ 合并，
 // 依据 docs/tool-design.md §一；技能不是「无持久状态」的动作，run 不必单独成工具。
@@ -873,6 +1069,7 @@ const HANDLERS = {
   terminal: toolTerminal,
   fetch: toolFetch,
   schedule: toolScheduleTask,
+  db: toolDb,
   skill: toolSkill,
   lab: toolLab,
 };

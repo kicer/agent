@@ -2,6 +2,42 @@
   {
     "type": "function",
     "function": {
+      "name": "db",
+      "description": "Execute operations on the session's SQLite database (data.db in the session working directory). The database file is isolated per session and auto-created on first use. For inserting rows (especially batches), prefer op=insert which avoids writing SQL by hand; use exec/query for DDL, updates, deletes and complex SQL.\n\nop=exec     需要 sql（params 可选）。\nop=query    需要 sql（params 可选）。\nop=insert   需要 table 和 rows（行对象数组，单行也要包成数组）。\nop=tables   无参数。\nop=schema   需要 table。",
+      "parameters": {
+        "type": "object",
+        "required": ["op"],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": ["exec", "query", "insert", "tables", "schema"],
+            "description": "Operation type:\n- exec: run a write statement (CREATE / INSERT / UPDATE / DELETE / ALTER / DROP), in a transaction\n- query: run a read statement (SELECT), returns an array of rows\n- insert: insert one or more rows from row objects (structured, no SQL needed, one transaction)\n- tables: list all tables with row counts\n- schema: show column definitions for a table"
+          },
+          "sql": {
+            "type": "string",
+            "description": "A single SQL statement. Required when op is exec or query. Use ? placeholders for parameterized queries to avoid SQL injection; multiple statements are rejected."
+          },
+          "params": {
+            "type": "array",
+            "description": "Values bound to the ? placeholders in order. Used by op=exec/query only. Booleans are stored as 0/1.",
+            "items": {}
+          },
+          "table": {
+            "type": "string",
+            "description": "Table name. Required for insert/schema."
+          },
+          "rows": {
+            "type": "array",
+            "description": "Array of row objects for op=insert. Each object maps column names to values; all objects must have the same keys.",
+            "items": { "type": "object" }
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "edit_file",
       "description": "This is a tool for applying edits to an existing file.\n\nBefore using this tool, use the `read_file` tool to understand the file's contents and context.\nTo create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.\n\nWhen copying text from `read_file` output into `old_text` or `new_text`, strip the line-number prefix and the tab after it, and keep the original indentation exactly.\n\nMatching rules:\n- `old_text` is first matched exactly. If there is no exact match, a fuzzy match tolerating minor whitespace and formatting differences is attempted.\n- If `old_text` matches more than one location (overlapping matches count as separate locations), the edit fails. Include enough surrounding context to make it unique; avoid very short or repetitive `old_text`.\n- If no match is found at all, the edit fails. For very large files the fuzzy stage degrades to per-line whitespace-insensitive exact matching; the error message says so — do not retry the same text, locate with `read_file` by line numbers or use `terminal` with sed.\n\nTo delete whole lines, put the exact line(s) in `old_text` and set `new_text` to an empty string — matched whole lines are removed cleanly together with their line endings (a trailing newline in `old_text` makes no difference).\n\nEdits are applied in order. If one edit fails, the edits before it are already written to disk and the file has changed: the error message tells you how many were applied. You must call `read_file` again before retrying; do not reuse the previous `old_text` values.",
       "parameters": {
