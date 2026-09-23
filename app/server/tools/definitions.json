@@ -228,7 +228,7 @@
     "type": "function",
     "function": {
       "name": "skill",
-      "description": "Use the skills installed on this server. A skill is a directory under the skill root whose SKILL.md defines its purpose and input_schema.\n\nop=list  No arguments.\nop=get   Requires skill_name.\nop=run   Requires skill_name; input_args optional (default {}).\n\nop=list: lists all installed skills with a one-line description each, read live from the skill root; use it to choose among skills or to confirm what is installed. An empty skill set returns an empty list — that is not an error.\nop=get: returns the full raw SKILL.md (front matter included): purpose, input_schema, and usage notes. Call it before op=run with a skill you have not used in this conversation. A nonexistent skill returns an error.\nop=run: executes the skill with input_args validated against its input_schema (a validation error names the missing fields). The entry script receives a JSON string as its only CLI argument, so input_args must be a JSON object.\n- Returns the skill's combined stdout+stderr as plain text after it exits; exit 0 with no output yields '（无输出）'. A non-zero exit raises an error containing the output and [exit code: N].\n- Direct output files via arguments: relative paths in arguments are resolved against the session working directory; do not rely on the skill's cwd.\n- Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
+      "description": "Use the skills installed on this server. A skill is a directory under the skill root whose SKILL.md defines its purpose and input_schema.\n\nop=list  No arguments.\nop=get   Requires name.\nop=run   Requires name; input_args optional (default {}).\n\nop=list: lists all installed skills with a one-line description each, read live from the skill root; use it to choose among skills or to confirm what is installed. An empty skill set returns an empty list — that is not an error.\nop=get: returns the full raw SKILL.md (front matter included): purpose, input_schema, and usage notes. Call it before op=run with a skill you have not used in this conversation. A nonexistent skill returns an error.\nop=run: executes the skill with input_args validated against its input_schema (a validation error names the missing fields). The entry script receives a JSON string as its only CLI argument, so input_args must be a JSON object.\n- Returns the skill's combined stdout+stderr as plain text after it exits; exit 0 with no output yields '（无输出）'. A non-zero exit raises an error containing the output and [exit code: N].\n- Direct output files via arguments: relative paths in arguments are resolved against the session working directory; do not rely on the skill's cwd.\n- Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
       "parameters": {
         "type": "object",
         "required": ["op"],
@@ -238,7 +238,7 @@
             "enum": ["list", "get", "run"],
             "description": "Operation to perform on skills."
           },
-          "skill_name": {
+          "name": {
             "type": "string",
             "description": "Name of the skill (subdirectory name under the skill root directory). Required with op=get and op=run."
           },
