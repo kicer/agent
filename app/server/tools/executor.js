@@ -9,6 +9,8 @@ const skills = require('./skills');
 const rexec = require('../remote-exec');
 const publicFiles = require('../public-files');
 const scheduler = require('../scheduler'); // 只依赖 log/cron-parser，不成环（engine→executor→scheduler 单向）
+// lab 的 help 伪工具要读全量定义：与 engine 同路径 require → node 缓存同一对象，单一事实源。
+const BUILTIN_TOOL_DEFS = require('./definitions.json');
 
 // ---------- 路径沙箱 ----------
 function resolveInTask(taskDir, p) {
@@ -824,6 +826,45 @@ async function toolSkill(ctx, args) {
   }
 }
 
+// lab：全工具统一入口（元工具，tools 数组收缩到 1 个仍可达内置 + MCP 全部能力）。
+// args 为自由对象——目标 schema 定义期不可知（docs/tool-design.md §三 的合法例外），
+// 条件校验归内层 handler；错误冒泡不包装（只有一层）。help 是伪工具：不进 HANDLERS，
+// 只在本函数早退。默认被全局 tools_deny 屏蔽，仅 lab profile 显式清空 deny 后下发。
+async function toolLab(ctx, args) {
+  const name = String(args.tool || '').trim();
+  if (!name) throw new Error('lab: 缺少参数 tool。可用：' + listCallableTools().join(', '));
+  if (name === 'lab') throw new Error('lab: 不允许嵌套调用 lab。');
+  if (name === 'help') return runLabHelp(args.args);
+  const inner = args.args;
+  if (inner != null && (typeof inner !== 'object' || Array.isArray(inner))) {
+    throw new Error('lab: args 必须是对象（目标工具的键值参数），收到：' + JSON.stringify(inner).slice(0, 80));
+  }
+  // 先自查再转发：未知名要带全清单回显（§五 报错回显），executeTool 的兑底文案没这个待遇。
+  if (!HANDLERS[name] && !mcp.hasTool(name)) {
+    throw new Error('未知工具 "' + name + '"。可用：' + listCallableTools().join(', '));
+  }
+  return executeTool(ctx, name, inner || {});
+}
+
+function listCallableTools() {
+  // help 不在 HANDLERS（伪工具）；lab 自身不列（嵌套已被拒，列了只会诱导模型绕圈）。
+  // MCP 侧用 toolDefinitions() 现成取名——含冲突重命名的 server__ 前缀，与实际可调用名严格一致。
+  return Object.keys(HANDLERS).filter(n => n !== 'lab')
+    .concat(mcp.toolDefinitions().map(t => t.function.name));
+}
+
+function runLabHelp(args) {
+  const all = BUILTIN_TOOL_DEFS.concat(mcp.toolDefinitions())
+    .filter(t => t && t.function && t.function.name !== 'lab');
+  const target = args && String(args.tool || '').trim();
+  if (!target) {
+    return all.map(t => t.function.name + ' — ' + String(t.function.description || '').split('\n')[0].trim()).join('\n');
+  }
+  const def = all.find(t => t.function.name === target);
+  if (!def) throw new Error('未知工具 "' + target + '"。可用：' + all.map(t => t.function.name).join(', '));
+  return JSON.stringify(def.function, null, 2);
+}
+
 const HANDLERS = {
   read_file: toolReadFile,
   write_file: toolWriteFile,
@@ -833,6 +874,7 @@ const HANDLERS = {
   fetch: toolFetch,
   schedule: toolScheduleTask,
   skill: toolSkill,
+  lab: toolLab,
 };
 
 // ctx: {sessionId, taskDir, run, cfg, db, vision}

@@ -213,5 +213,26 @@
         }
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lab",
+      "description": "Unified entry point for all available tools (a meta tool; only present for profiles that opt in).\n\nCall a tool:\n  lab(tool: \"<name>\", args: {<arguments>})\n\nThe target tool's arguments go inside `args` as a JSON object. Omit `args` for tools that take no arguments.\n\nDiscovering tools:\n  lab(tool: \"help\")                          → list all tools with a one-line description each\n  lab(tool: \"help\", args: {tool: \"<name>\"})  → full description and parameter schema of <name>\n\nAn unknown tool name also returns the list of available tools.\nNested lab calls are rejected; inner tool errors surface unchanged.\n\nPrefer calling a tool directly when its name and parameters are clear from the task. Use \"help\" when unsure — it costs one extra round-trip.",
+      "parameters": {
+        "type": "object",
+        "required": ["tool"],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "description": "Name of the tool to call, or \"help\"."
+          },
+          "args": {
+            "type": "object",
+            "description": "Arguments for the target tool, matching its own schema (look it up with lab(tool: \"help\", args: {tool: \"<name>\"}) if unsure). Omit for tools that take no arguments."
+          }
+        }
+      }
+    }
   }
 ]
