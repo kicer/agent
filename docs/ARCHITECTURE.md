@@ -41,7 +41,7 @@ agent/
 │   │   ├── balance.js             余额查询适配器（按 platform.type 分发）
 │   │   ├── version.js             版本信息（package.json + git 短提交号）
 │   │   ├── tools/
-│   │   │   ├── definitions.json   内置 8 个工具的 OpenAI function 格式定义
+│   │   │   ├── definitions.json   内置 9 个工具的 OpenAI function 格式定义（含元工具 lab）
 │   │   │   ├── executor.js        工具执行器（文件类 + terminal + skill 委托）
 │   │   │   └── skills.js          Skill Manager（skill 工具的 list/get/run + 路径预处理）
 │   │   ├── download-token.js      下载链接签名（浏览器原生下载用；密钥进程内随机）
@@ -234,7 +234,7 @@ stateDiagram-v2
 | `bindModel` / `releaseModel` | 标记 `model_pool.is_busy` + 改 `sessions.model_id`/`status` |
 | `enqueue` / `dequeue` / `dispatchQueued` | FIFO 调度，空闲模型分配给队首会话（`pickModelFor` 优先回绑 `last_model_id`） |
 | `getRun` / `killRunProcs` | 每会话的运行控制（`cancelled` / `procs` / `abortController` / `looping`） |
-| `runLoop` / `runLoopInner` | Agent 主循环：解析 profile → buildMessages → callModel → 解包 tool args → 校验 → saveMessage → executeTool → saveMessage(tool) → SSE 广播。每迭代现解 profile（`resolveProfileName`：`run.profile` > 模型配置 > 默认全量），prompt 与 tools 集（`effectiveTools` 按 `tools_allow` 过滤）跟着组合切换 |
+| `runLoop` / `runLoopInner` | Agent 主循环：解析 profile → buildMessages → callModel → 解包 tool args → 校验 → saveMessage → executeTool → saveMessage(tool) → SSE 广播。每迭代现解 profile（`resolveProfileName`：`run.profile` > 模型配置 > 默认全量），prompt 与 tools 集（`effectiveTools` 按 `tools_allow`/`tools_deny` 过滤）跟着组合切换 |
 | `streamAssistant` | 单次上游调用：拿 abortSignal / shouldCancel / 各类回调，把流式 chunk 转 SSE 事件（`assistant_delta` / `reasoning_delta`） |
 | `createSession` | 生成 id（`task-YYYYMMDD-NNN`，序号从历史 + `meta.task_seq` 取大）→ mkdir 任务目录 → 决定立即绑/入队 |
 | `postUserMessage` | 用户消息入口；识别 active/held/queued 路径并决定是 `delivered:'live'` 还是 `'queued'` |
@@ -250,7 +250,7 @@ stateDiagram-v2
 - **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。压缩回合**不插入任何指令消息**：由 `engine.summarizeContext` 在内存 run 上标 `summarizing`，`runLoopInner` 据此走 `llm.compressMessages`：沿用默认 system prompt + 正常历史 messages，末尾追加一条 user（`server/templates/compress-prompt.txt` 原文，参考标题回合的拼法），且不传 tools；回合内首条无 tool_calls 的收尾回复即摘要。（`llm.buildMessages` 仍保留旧库 `summarize_request` 行的处理，仅为历史数据兼容。）
 - **图片（多模态）**：`messages.content` 列是 TEXT，含图时存 `{"__blocks__":[content...]}` 哨兵 JSON。新版 `read_file` 读图：sharp 压缩产物落任务目录 `.imgcache/`（前端文件列表隐带点的项），库里只存 `image_ref` 轻量块；`buildMessages` 发送前经调用方传入的 `mintUrl` 回调现签成公网外链（同 `mint_public_link` 那套 `GET /p/<id>`）填入 `image_url` 块，base64 不进 DB 也不进请求体；签不到降级为文字占位。旧库/用户粘贴附件的 `data:` URL 块原样透传。图块**只保留最后一条 assistant 之后的**（`lastAssistant` 判定），之前的换成"已省略"文字描述；UI 渲染走带 cookie 的会话内下载路由，历史永不裂图。
 - **保持租约**（`holdSweeper`）：sweeper_ms 巡检（默认 10s）；held 会话无观看者 idle_release_ms 释放（默认 3 分钟），有观看者 active_max_ms 强制释放（默认 30 分钟）。active 闲置（绑了模型但无 run 在跑、无未回应消息）按相同租约处理。
-- **profile（prompt+tools 组合）**：顶层 `model_profiles` 定义多套组合，`platforms[].models[].profile` 引用（见 §5.8）；运行期前端发消息带 `profile` 参数覆写（写进 `run.profile`，与 `deepThink` 同约定：回合中途切换、下一迭代即生效；保留值 `default` = 显式全量）。名单外工具被调用不拦（`checkToolArgs` 查不到 def 不报错，`executeTool` 全表照跑）；tools schema 只活在请求体不进历史，所以切换不脏化旧消息。压缩回合同跟随（小模型会话点压缩不会回退到默认大模板）。
+- **profile（prompt+tools 组合）**：顶层 `model_profiles` 定义多套组合，`platforms[].models[].profile` 引用（见 §5.8）；运行期前端发消息带 `profile` 参数覆写（写进 `run.profile`，与 `deepThink` 同约定：回合中途切换、下一迭代即生效；保留值 `default` = 显式全量（仍受全局 `tools_deny` 屏蔽）。名单外工具被调用不拦（`checkToolArgs` 查不到 def 不报错，`executeTool` 全表照跑）；tools schema 只活在请求体不进历史，所以切换不脏化旧消息。压缩回合同跟随（小模型会话点压缩不会回退到默认大模板）。
 
 ### 5.2 `llm.js` —— 上游调用
 
@@ -279,7 +279,7 @@ stateDiagram-v2
 - session 补偿：MCP 规范的 `Mcp-Session-Id` 缓存在 `server.sessionId`；过期（400 + 含 "session" 字样）自动重 initialize 后重试一次。
 - 某些老服务无 `initialize` → catch `Method not found` 不阻断。
 
-### 5.4 `tools/executor.js` —— 内置 8 工具的派发器
+### 5.4 `tools/executor.js` —— 内置 9 工具（含元工具 `lab`）的派发器
 
 `HANDLERS` 是 `name → async(ctx, args) → result` 的表；`executeTool(ctx, name, args)` 按 `name` 派发；**未知名直接转发给 MCP**（若 `mcp.hasTool(name)`，调 `mcp.callTool`）。
 
@@ -287,12 +287,13 @@ stateDiagram-v2
 |---|---|
 | `read_file` | 走 `resolveInTask` 防路径穿越；图像（PNG/JPEG/WebP/GIF/BMP/TIFF）按 vision 能力走 `sharp` 压缩后落盘 `.imgcache/` 并回传 `image_rel`（长边 ≤ 2000px，JPEG q=80；文件名带源文件 mtime+size 指纹，重读复用不增殖；重编码无收益时不落盘、直指原文件），发送前由 `llm.buildMessages` 现签成公网外链（engine 侧 mint 前 realpath 复核）；大文本/二进制给 outline，超 32MB 拒读并引导 terminal；行号前缀格式 "`<6位右对齐行号>\\t<原文>`"（`edit_file` 用） |
 | `write_file` / `edit_file` | `edit_file` 用模糊定位（Zed 风格）：先精确匹配，失败后用 Levenshtein DP 找最相似行；超 32MB 拒绝整文件读写（OOM 防护）；DP 候选区间不连续（中间跳过无关 buffer 行）即弃用，防静默吞行；空 `new_text` = 整行干净删除（精确/模糊两层统一，对齐 `"".lines()` 零行语义）；`old_text`/`new_text` 协议见 `definitions.json` |
-| 已移除的工具 | `list_directory` / `create_directory` / `delete_path` / `move_path` / `copy_path` / `find_path` / `grep`：环境固定，文件操作与检索统一走 `terminal`（ls / mkdir / rm / mv / cp / find / rg），内置工具 17 → 10；技能三件套又并为 `skill` 后为 8 |
+| 已移除的工具 | `list_directory` / `create_directory` / `delete_path` / `move_path` / `copy_path` / `find_path` / `grep`：环境固定，文件操作与检索统一走 `terminal`（ls / mkdir / rm / mv / cp / find / rg），内置工具 17 → 10；技能三件套又并为 `skill` 后为 8；再增元工具 `lab` 为 9（默认被全局 `tools_deny` 屏蔽） |
 | `terminal` | **唯一一个走 executor 的内置工具**（当 `rexec.isRemote(cfg)`）；本地分支用 `spawn` + `detached` + 进程组 kill；远端分支 `rexec.run` SSE 收流，结果套上超时/截断/取消注解后 `truncate(text, cfg.terminal.max_output_chars)` 返回 |
 | `fetch` | `AbortController` 覆盖全生命周期（响应头之后的 body 读流同样被超时/取消打断，取消用与 terminal 同款的 200ms 轮询）；content-type 先行，非文本只回状态/类型/尺寸不读 body；流式读到 `cfg.fetch.max_bytes`（默认 1MB）即断开并标注截断；按响应 charset 解码（full-icu 支持 gbk/gb18030 等，未知编码退回 UTF-8）；HTML 用 `htmlToMarkdown` 转；HTML 实体单遍解码（常见命名实体+数字实体通吃，修 `&amp;` 双重解码）；网络错误解包 `err.cause` 直述 ENOTFOUND/TLS 等真因；engine 不截工具结果，返回值末尾另有 `truncate` 1MB 字符护栏 |
 | `mint_public_link` | **唯一的 mint 入口**：与 core 同进程，直接 `publicFiles.mint()`，不绕任何 HTTP；`ctx.taskDir` 就是会话目录，`relOf` 的结果正是取用侧要的 `rel`。校验：`public_link.base_url` 已配 + `resolveInTask` 沙箱 + 确认是文件 + `realpath` 未沿符号链接跳出任务目录；返回单行 URL |
 | `skill` | op 分派 list/get/run（三件套合并：同一 `skill_name` 标识空间 + 同一生命周期，见 `docs/tool-design.md` §一）；委托 `tools/skills.js`；`input_args` 仅 op=run 且可缺省 `{}`，缺参由各技能 `input_schema` 校验点名报错 |
 | `schedule` | **当前会话**（`ctx.sessionId`，AI 不可指定他会话）定时任务的完整生命周期：op 分派 get/create/update/delete（表主键 session_id → 每会话至多一条，无 id 参数）；条件必填在代码里校验、错误回显 op 与缺失字段；数据层在 `scheduler.js`（cron 可解析 → 间隔 ≥1h → prompt ≤20000 → 查重/存在性检查），delete 不落 scheduler_note；描述里限定「仅用户明确要求时调用」（安全缓解，见 §5.12） |
+| `lab` | 元工具统一入口：`tool` + 自由 `args` 转发内置 + MCP 全部能力（目标 schema 定义期不可知，条件校验归内层 handler）；`help` 伪工具做现场发现（无参列名单、带 `args.tool` 出完整 schema），未知名回显全清单，禁嵌套、内层错误冒泡不包装。默认被全局 `tools_deny: ['lab']` 屏蔽，仅 `lab` profile（allow `[lab]` + deny `[]` 清空）下发，见 §5.8 |
 
 `resolveInTask(taskDir, relOrAbs)`：把相对路径或绝对路径解析为绝对路径并校验落在 `taskDir` 之内（含根），防穿越。
 
@@ -336,8 +337,8 @@ stateDiagram-v2
 - 加载：`loadConfig(AGENT_CONFIG)` 读文件 → `parseAndValidate`。
 - 兼容：旧版 `models[]`（扁平）自动迁移到 `platforms[]` 层级；旧版 `web_search.*` 迁移到 `mcp_servers[]`（log.info 提示）。
 - 规范化：`normalizePlatforms` 校验 `name/url/type`，key 层 `concurrency`，model 层 `{id, display_name, vision, enable, extra_params, thinking_params, profile}`；同平台内 model id 必须唯一（内部唯一键 = 平台名/模型id）；`profile` 引用不存在的名字直接报错。
-- `model_profiles`（顶层，`normalizeModelProfiles`）：多套可复用的 prompt+tools 组合，每项 `{tools_allow?, system_prompt_file?}`，两者至少配一个。`tools_allow` 按**最终发给模型的工具名**匹配（内置 + MCP，含 `服务名__` 前缀，与 prompt.txt dump 同源可对）；未配 = 全量，**空数组 `[]` = 零工具（纯文本组合）**——与 MCP 的 `tools_allow`（空名单视作未配）有意不同。`system_prompt_file` 相对 `server/templates/`（compose 已 bind-mount ./app/server，宿主直接可改），**配置加载时一次性读入常驻内存**，缺失/为空报错拦在保存/重启预检；自定义文件 = 完全接管模板正文，技能清单靠模板内 `{APP_SKILLS}` 占位符就地插入（不放 = 无技能段；默认模板同机制，见 §5.2），语言指令始终尾拼。运行期切换（前端传参）零 IO、不碰本配置。
-- 默认值（`DEFAULTS`）：port=8090、workspace_root/data_root=`/workspace/tasks` `/workspace/data`、log_level=info、terminal 30s/10K、fetch 30s/1MB、agent temperature=1.0、max_tool_iterations=100、max_retries=2、model_hold 3min/30min/10s、上传 1.5MB/2000px/0.85；内置 `model_profiles` 含 `mini`（文件/终端/网页白名单 + `mini-system.txt`）与 `zero`（零工具 + `zero-system.txt`）。`config.yml` 只覆盖 deploy 相关段，其余走默认值；整份清单见 `app/config.example.yml`。
+- `model_profiles`（顶层，`normalizeModelProfiles`）：多套可复用的 prompt+tools 组合，每项 `{tools_allow?, tools_deny?, system_prompt_file?}`，三者至少配一个。`tools_allow` 按**最终发给模型的工具名**匹配（内置 + MCP，含 `服务名__` 前缀，与 prompt.txt dump 同源可对）；未配 = 全量，**空数组 `[]` = 零工具（纯文本组合）**——与 MCP 的 `tools_allow`（空名单视作未配）有意不同。`tools_deny` 在 allow 之后叠加生效（deny 赢）；profile 未配 = 继承全局 `tools_deny`（DEFAULTS 屏蔽元工具 `lab`），`[]` = 显式清空（lab profile 靠它换回元工具），非空 = 替换全局。`system_prompt_file` 相对 `server/templates/`（compose 已 bind-mount ./app/server，宿主直接可改），**配置加载时一次性读入常驻内存**，缺失/为空报错拦在保存/重启预检；自定义文件 = 完全接管模板正文，技能清单靠模板内 `{APP_SKILLS}` 占位符就地插入（不放 = 无技能段；默认模板同机制，见 §5.2），语言指令始终尾拼。运行期切换（前端传参）零 IO、不碰本配置。
+- 默认值（`DEFAULTS`）：port=8090、workspace_root/data_root=`/workspace/tasks` `/workspace/data`、log_level=info、terminal 30s/10K、fetch 30s/1MB、agent temperature=1.0、max_tool_iterations=100、max_retries=2、model_hold 3min/30min/10s、上传 1.5MB/2000px/0.85；顶层默认 `tools_deny: [lab]`；内置 `model_profiles` 含 `lab`（元工具自测：`tools_allow:[lab]` + 显式清空 deny + `lab-system.txt`）与 `zero`（零工具 + `zero-system.txt`）。`config.yml` 只覆盖 deploy 相关段，其余走默认值；整份清单见 `app/config.example.yml`。
 - 读写：`readConfigText` / `writeConfigText`（先校验后写，无原子 rename，因 bind mount 上 rename 会 EBUSY）；`applyEditsToText` 用 `YAML.Document` 保留注释。
 - `getConfig` 是浅引用，路由层拿到的就是运行中实例，**改完 in-memory 不影响**（要重启）。
 
@@ -473,7 +474,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 详见 `app/config.example.yml`（字段与 `server/config.js` 的 `DEFAULTS` 一一对应；顶层 `config.yml` 由 `scripts/init.sh` 生成或手建，**已 gitignore**）。要点：
 
 - `platforms[].keys[].models[]` —— 三层层级。内部唯一键 = `平台名/模型id`（用于历史会话回绑、用量统计），**改名等于重建其下所有模型**。
-- `model_profiles`（顶层）—— 多套可复用的 prompt+tools 组合（`{tools_allow?, system_prompt_file?}`）；模型层用 `profile: <名>` 引用，不配 = 默认全量。内置 `mini`/`zero` 两套默认组合，可用同名覆盖。小模型省上下文用，详见 §5.8；运行期可前端切换（见 §5.1）。
+- `model_profiles`（顶层）—— 多套可复用的 prompt+tools 组合（`{tools_allow?, tools_deny?, system_prompt_file?}`）；模型层用 `profile: <名>` 引用，不配 = 默认全量（仍受顶层 `tools_deny` 屏蔽）。内置 `lab`/`zero` 两套默认组合，可用同名覆盖。元工具自测/纯文本场景用，详见 §5.8；运行期可前端切换（见 §5.1）。
 - `agent.max_tool_iterations`（默认 100）—— 单轮迭代上限（含工具调用），到顶自动停止并提示用户继续输入。
 - `terminal.max_output_chars`（默认 10000）—— AI 看到的命令输出上限；executor 侧另有 `EXECUTOR_MAX_OUTPUT_CHARS=200000` 兕底。
 - `fetch.timeout_ms`（默认 30000）/ `fetch.max_bytes`（默认 1MB）—— 网页抓取的全生命周期超时与流式抓取字节上限；返回值另有 1MB 字符 `truncate` 护栏。
