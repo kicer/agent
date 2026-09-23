@@ -77,9 +77,8 @@ function pickModel(headers) {
   return s || null;
 }
 
-async function callZhipuImagesGenerations({ token, model, prompt, size }) {
+async function callZhipuImagesGenerations({ token, model, prompt }) {
   const body = { model, prompt };
-  if (size) body.size = size;
   const resp = await fetch(ZHIPU_API_URL, {
     method: "POST",
     headers: {
@@ -123,14 +122,12 @@ async function handleCreate({ args, headers, token }) {
   // 不存进 session，每次从本次请求的 header 读取，未设置则用默认 CogView-3-Flash。
   // AI 看不到 model 参数（schema 中已删除），避免其误传。
   const model = pickModel(headers) || DEFAULT_MODEL;
-  const size = args.size;
 
   try {
     const data = await callZhipuImagesGenerations({
       token,
       model,
       prompt: args.prompt,
-      size,
     });
     const urls = extractUrls(data);
     if (urls.length === 0) {
@@ -188,7 +185,7 @@ function buildServer() {
     "image_task",
     `Manages image generation. Generation is synchronous: op=create returns the image URLs directly.
 
-op=create  Generate an image from a prompt. Requires prompt; optional size.`,
+op=create  Generate an image from a prompt. Requires prompt.`,
     {
       op: z
         .enum(["create"])
@@ -200,12 +197,6 @@ op=create  Generate an image from a prompt. Requires prompt; optional size.`,
         .min(1)
         .describe(
           "Image generation prompt; describe the desired scene in detail. Used with op=create."
-        ),
-      size: z
-        .string()
-        .optional()
-        .describe(
-          "Image size, Preferred sizes: 1024x1024, 1280x1280, 1536x1024, 1024x1536, Each side must be a multiple of 32. Used with op=create."
         ),
     },
     async (args, extra) => {

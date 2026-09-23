@@ -74,7 +74,8 @@ docker exec mcp_image_task node -e "fetch('http://localhost:3000/health').then(r
 |---|---|---|---|
 | `op` | `"create"` | ✅ | 要执行的操作（当前仅 `create`） |
 | `prompt` | string | ✅ | 图片生成提示词，描述想要的画面内容（仅 op=create 使用） |
-| `size` | string | ❌ | 图片尺寸，例如 `1024x1024`、`1280x1280`、`1024x1792`、`1792x1024`、`768x1344`、`1344x768`，遵循智谱 API 规格（仅 op=create 使用） |
+
+> 图片尺寸不再透传，走上游默认；尺寸档位与成本/成功率挂钩，AI 传错值经常直接报错。
 
 ### Model 控制（不在工具参数中暴露）
 
@@ -187,8 +188,7 @@ curl -s -X POST http://localhost:8082/mcp \
       "name": "image_task",
       "arguments": {
         "op": "create",
-        "prompt": "一只可爱的小猫咪，坐在阳光明媚的窗台上，背景是蓝天白云",
-        "size": "1280x1280"
+        "prompt": "一只可爱的小猫咪，坐在阳光明媚的窗台上，背景是蓝天白云"
       }
     }
   }'
@@ -251,6 +251,3 @@ A: 漏发了 `Mcp-Session-Id` header，或调 `tools/call` 前没先 `initialize
 
 **Q: URL 多久过期？**
 A: 智谱签发 URL 默认 24h 左右，详见响应里的 `Expires` 参数。需要长期使用请自行转存到 OSS/S3。
-
-**Q: 能否限制 `size` 白名单？**
-A: 当前透传给智谱 API，不做强制校验。如需加白名单，修改 `src/mcp-server.js` 中 `image_task` 的 `size` schema 即可。
