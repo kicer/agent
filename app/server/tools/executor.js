@@ -1039,6 +1039,27 @@ function toolDb(ctx, args) {
 // 依据 docs/tool-design.md §一；技能不是「无持久状态」的动作，run 不必单独成工具。
 // input_args 仅 op=run 用且可缺省：runSkill 把 null 视作 {}，真正缺哪些字段由
 // 各技能 input_schema 校验点名报错（工具层再 gate 一层是双重门槛，无益）。
+// visit_url（front matter 可选）：页面产物类技能声明访问路径模板，run 成功后在本层拼
+// public_link.base_url（与 mint_public_link 同源）追加完整「访问地址」——技能进程跑在
+// executor 隔离视图里不知道公网前缀，AI 拿到相对路径就会原样转给用户，而相对路径打不开。
+async function runSkillWithVisit(ctx, name, inputArgs) {
+  const out = await skills.runSkill(ctx, name, inputArgs);
+  let fm;
+  try {
+    fm = skills.parseFrontMatter(await skills.getSkillInfo(ctx, name));
+  } catch (_) {
+    return out; // 描述文件异常不该废掉一次成功的 run
+  }
+  const tpl = fm && fm.visit_url ? String(fm.visit_url).trim() : '';
+  if (!tpl) return out;
+  const rel = tpl.replace(/\{task_id\}/g, ctx.sessionId || path.basename(path.resolve(ctx.taskDir || '')));
+  const pl = (ctx.cfg && ctx.cfg.public_link) || {};
+  const base = String(pl.base_url || '').trim().replace(/\/+$/, '');
+  return out + '\n访问地址：' + (base
+    ? base + rel
+    : rel + '（站内路径：public_link.base_url 未配置，拼不出公网前缀）');
+}
+
 async function toolSkill(ctx, args) {
   const op = String(args.op || '').trim().toLowerCase();
   const name = String(args.name || '').trim();
@@ -1051,7 +1072,7 @@ async function toolSkill(ctx, args) {
     }
     case 'run': {
       if (!name) throw new Error('op=run 缺少必填参数 name');
-      return skills.runSkill(ctx, name, args.input_args);
+      return runSkillWithVisit(ctx, name, args.input_args);
     }
     default:
       throw new Error('未知的 op："' + op + '"。可用：list / get（需 name）/ run（需 name，input_args 可选）');

@@ -1,12 +1,7 @@
 ---
 name: data-page
 description: 数据页面脚手架：把 table/dashboard/kanban 模板复制到任务目录 app/templates/，配合 db 工具产出 /app/{task_id}/ 可访问、经 /api/db/{task_id}/query 读写 data.db 的查看/管理页
-input_schema:
-  type: object
-  properties:
-    dest:
-      type: string
-      description: 模板输出目录（相对会话任务目录，自动预转绝对路径；缺省 app/templates，已存在的文件跳过不覆盖）
+visit_url: /app/{task_id}/
 ---
 
 # data-page
@@ -29,14 +24,14 @@ input_schema:
 - 数据库：任务目录下的 `data.db`
 - 页面目录：任务目录下的 `app/`
 - 页面入口：`app/index.html`
-- 访问地址：`/app/{task_id}/`
+- 访问地址：`/app/{task_id}/`（完整 URL = 站点地址 + 该路径；run 输出末尾的「访问地址」已拼好，直接转发）
 - 数据 API：`/api/db/{task_id}/query`
 
 `{task_id}` 是任务目录的名称。页面通过 URL 动态解析，不要硬编码。
 
 ## 初始化
 
-生成页面前，调用 `skill(name="data-page", op="run", input_args={"dest": "app/templates"})` 复制模板到任务目录的 `app/templates/`。已存在则跳过，不会覆盖修改过的文件（重跑幂等）。
+生成页面前，调用 `skill(name="data-page", op="run")`（无需参数，模板固定复制到 `app/templates/`）。已存在则跳过，不会覆盖修改过的文件（重跑幂等）。
 
 ## 数据 API
 
@@ -78,9 +73,9 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 
 1. **明确数据结构**：与用户确认字段。如果描述模糊，可以建议合理的结构。
 2. **创建表并录入数据**：用 `db` 工具完成。
-3. **初始化模板**：调用 `skill(name="data-page", op="run", input_args={"dest": "app/templates"})`。
+3. **初始化模板**：调用 `skill(name="data-page", op="run")`（无参数）。
 4. **生成页面**：从 `app/templates/` 选合适的模板，根据表结构调整字段和 SQL，写入 `app/index.html`。
-5. **告知用户**：访问地址为 `/app/{task_id}/`，简要说明页面功能。
+5. **告知用户**：把 run 输出末尾「访问地址」那行的**完整 URL**（含域名）发给用户——只给 `/app/...` 相对路径用户打不开；再简要说明页面功能。
 
 页面必须包含：
 
@@ -218,4 +213,4 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 - [ ] 页面动态解析 task_id
 - [ ] 包含错误处理和加载状态
 - [ ] 用户输入渲染时已转义
-- [ ] 已告知用户访问地址 `/app/{task_id}/`
+- [ ] 已告知用户完整访问 URL（run 输出「访问地址」那行，含域名，非相对路径）
