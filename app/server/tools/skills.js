@@ -48,7 +48,7 @@ function extractDescription(content) {
   return line || '(无描述)';
 }
 
-// ---------- 3.1 list_skills ----------
+// ---------- 3.1 skill op=list ----------
 async function listSkills(ctx) {
   const root = skillsRoot(ctx);
   if (!fs.existsSync(root)) {
@@ -71,17 +71,17 @@ async function listSkills(ctx) {
 
 // ---------- system prompt 注入：可用技能列表 ----------
 // 把技能列表格式化成 “## Available Skills” 段落（仅名字，每行一个，省 token；
-// 描述查 list_skills，参数查 get_skill_info）。
+// 描述查 op=list，参数查 op=get）。
 // 由 llm.setSkillListText 拼入 system prompt：启动时快照（server.js）与技能变更后
 // （routes/skills.js 的创建/重命名/删除/文件变更）调用，让模型直接感知已装技能，
-// 省掉先 list_skills 探索的往返；list_skills 保留作实时描述/兼容性查询。
+// 省掉先 op=list 探索的往返；op=list 保留作实时描述/兼容性查询。
 function formatSkillListForPrompt(list) {
   if (!list || !list.length) return '';
   const lines = list.map(s => '- ' + s.name);
-  return '## Available Skills\nInstalled skills (names only). To use one: `get_skill_info` for its parameters, then `run_skill` to execute. Call `list_skills` for one-line descriptions when choosing among skills.\n' + lines.join('\n');
+  return '## Available Skills\nInstalled skills (names only). Use the `skill` tool: op=get for its parameters, op=run to execute; op=list gives one-line descriptions when choosing among skills.\n' + lines.join('\n');
 }
 
-// ---------- 3.2 get_skill_info ----------
+// ---------- 3.2 skill op=get ----------
 async function getSkillInfo(ctx, skillName) {
   const dir = skillDir(ctx, skillName);
   const mdPath = path.join(dir, 'SKILL.md');
@@ -127,7 +127,7 @@ function validateArgs(fm, inputArgs, skillName) {
 
 // 前台执行技能入口，带超时与取消支持；成功 resolve stdout，失败 reject SkillExecutionError。
 // 配了 executor：入口命令拼成单条 shell 行（参数单引号转义，JSON payload 安全）交远端执行，
-// cwd 由调用方给出（run_skill 传会话目录以命中 session 隔离与虚拟视图）；
+// cwd 由调用方给出（op=run 传会话目录以命中 session 隔离与虚拟视图）；
 // 技能依赖的 PYTHONPATH 由 executor 容器 env 提供，core 不感知依赖层。
 function runEntry(ctx, entry, args, cwd, timeoutMs) {
   const cfg = ctx.cfg;
@@ -191,7 +191,7 @@ function runEntry(ctx, entry, args, cwd, timeoutMs) {
   });
 }
 
-// ---------- 3.3 run_skill ----------
+// ---------- 3.3 skill op=run ----------
 async function runSkill(ctx, skillName, inputArgs) {
   // 非对象参数会在 absolutizeArgs 的 Object.entries 里静默错位成垃圾键值（如字符串→索引对象），显式拦下。
   if (inputArgs != null && (typeof inputArgs !== 'object' || Array.isArray(inputArgs))) {

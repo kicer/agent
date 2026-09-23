@@ -88,7 +88,7 @@ const DEFAULTS = {
   model_profiles: {
     // 小模型：只留文件/终端/网页等核心工具，省上下文。
     mini: {
-      tools_allow: ['read_file', 'write_file', 'edit_file', 'terminal', 'fetch', 'web_search', 'get_skill_info', 'run_skill'],
+      tools_allow: ['read_file', 'write_file', 'edit_file', 'terminal', 'fetch', 'web_search', 'skill'],
       system_prompt_file: 'mini-system.txt',
     },
     // 纯文本对话：一个工具都不发。

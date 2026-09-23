@@ -191,48 +191,24 @@
   {
     "type": "function",
     "function": {
-      "name": "list_skills",
-      "description": "Lists all installed skills with a one-line description each, read live from the skill root directory.\n\nThe system prompt's Available Skills section shows skill names only; use this tool when you need descriptions to choose among them or to confirm what is installed. An empty skill set returns an empty list — that is not an error.",
+      "name": "skill",
+      "description": "Use the skills installed on this server. A skill is a directory under the skill root whose SKILL.md defines its purpose and input_schema.\n\nop=list  No arguments.\nop=get   Requires skill_name.\nop=run   Requires skill_name; input_args optional (default {}).\n\nop=list: lists all installed skills with a one-line description each, read live from the skill root; use it to choose among skills or to confirm what is installed. An empty skill set returns an empty list — that is not an error.\nop=get: returns the full raw SKILL.md (front matter included): purpose, input_schema, and usage notes. Call it before op=run with a skill you have not used in this conversation. A nonexistent skill returns an error.\nop=run: executes the skill with input_args validated against its input_schema (a validation error names the missing fields). The entry script receives a JSON string as its only CLI argument, so input_args must be a JSON object.\n- Returns the skill's combined stdout+stderr as plain text after it exits; exit 0 with no output yields '（无输出）'. A non-zero exit raises an error containing the output and [exit code: N].\n- Direct output files via arguments: relative paths in arguments are resolved against the session working directory; do not rely on the skill's cwd.\n- Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
       "parameters": {
         "type": "object",
-        "required": [],
-        "properties": {}
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "get_skill_info",
-      "description": "Returns the full raw SKILL.md of a skill (front matter included): purpose, input_schema (the parameters run_skill accepts), and usage notes. Since the system prompt lists skill names only, call this before running a skill you have not used in this conversation. If the skill does not exist, an error is returned.",
-      "parameters": {
-        "type": "object",
-        "required": ["skill_name"],
+        "required": ["op"],
         "properties": {
+          "op": {
+            "type": "string",
+            "enum": ["list", "get", "run"],
+            "description": "Operation to perform on skills."
+          },
           "skill_name": {
             "type": "string",
-            "description": "Name of the skill (subdirectory name under the skill root directory)."
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "run_skill",
-      "description": "Executes a skill with the given input arguments, validated against the skill's input_schema (a validation error names the missing fields). The entry script receives a JSON string as its only CLI argument, so input_args must be a JSON object.\n\n- Returns the skill's combined stdout+stderr as plain text after it exits; exit 0 with no output yields '（无输出）'. A non-zero exit raises an error containing the output and [exit code: N].\n- Direct output files via arguments: relative paths in arguments are resolved against the session working directory; do not rely on the skill's cwd.\n- Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
-      "parameters": {
-        "type": "object",
-        "required": ["skill_name", "input_args"],
-        "properties": {
-          "skill_name": {
-            "type": "string",
-            "description": "Name of the skill to execute."
+            "description": "Name of the skill (subdirectory name under the skill root directory). Required with op=get and op=run."
           },
           "input_args": {
             "type": "object",
-            "description": "Dictionary of input arguments for the skill. Keys and values should match the skill's input_schema. Example: {\"input\": \"file.md\", \"output\": \"out.pdf\"}."
+            "description": "Dictionary of input arguments for the skill. Keys and values should match the skill's input_schema (call op=get first if unsure). Example: {\"input\": \"file.md\", \"output\": \"out.pdf\"}. Used only with op=run; omit it for skills that take no arguments."
           }
         }
       }

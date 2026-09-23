@@ -8,9 +8,9 @@
 
 技能是一个自包含的目录，通常存放在技能根目录（默认为 `skills/`）下。每个技能包含一个描述文件（`SKILL.md`）和一个可执行入口（`run.py` 或 `run.sh`）。Agent 通过以下流程使用技能：
 
-1. 调用 `list_skills` 查看所有可用技能的名称和简介；
-2. 调用 `get_skill_info` 获取某个技能的详细说明；
-3. 调用 `run_skill` 执行技能，传入所需参数。
+1. 调用 `skill`（op=list）查看所有可用技能的名称和简介；
+2. 调用 `skill`（op=get）获取某个技能的详细说明；
+3. 调用 `skill`（op=run）执行技能，传入所需参数。
 
 技能可以处理任何任务，例如文件格式转换、数据处理、网页抓取等。
 
@@ -56,7 +56,7 @@ output_schema:
 ```
 
 - `name`：技能名称，应与目录名一致。
-- `description`：一句话描述技能功能，用于 `list_skills` 展示。
+- `description`：一句话描述技能功能，用于 `skill` op=list 展示。
 - `input_schema`：输入参数的 JSON Schema 定义，用于参数校验和文档生成。
 - `output_schema`：输出结果的描述（可选）。
 - 若未提供 Front Matter，系统会尝试从正文第一行提取描述。
@@ -78,7 +78,7 @@ output_schema:
 - 自动处理某某
 
 ## 使用说明
-通过 `run_skill` 调用，参数：
+通过 `skill`（op=run）调用，参数：
 - `input`：某某路径（必填）
 - `output`：某某路径（可选，默认与输入同名）
 ```
@@ -226,7 +226,7 @@ input_schema:
 ---
 
 ## 使用说明
-通过 `run_skill` 调用，参数：
+通过 `skill`（op=run）调用，参数：
 - `text`：要回显的文本（必填）
 ```
 

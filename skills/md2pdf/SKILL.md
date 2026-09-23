@@ -29,6 +29,6 @@ output_schema:
 - 自动处理中文字体
 
 ## 调用方式
-通过 `run_skill` 调用，参数：
+通过 `skill`（op=run）调用，参数：
 - `input`：Markdown 文件路径（必填）
 - `output`：PDF 输出路径（可选，默认与输入同名）

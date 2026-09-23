@@ -7,7 +7,7 @@ platforms: []
 # 模型 profile：prompt + tools 白名单组合，模型用 profile: <名> 引用（不配 = 全量）。
 model_profiles:
   mini:                                            # 小模型：只留核心工具，省上下文
-    tools_allow: [read_file, write_file, edit_file, terminal, fetch, web_search, get_skill_info, run_skill]
+    tools_allow: [read_file, write_file, edit_file, terminal, fetch, web_search, skill]
     system_prompt_file: mini-system.txt            # 相对 server/templates/（也接受绝对路径）
   zero:                                            # 纯文本对话：一个工具都不发
     tools_allow: []

@@ -800,6 +800,30 @@ function toolScheduleTask(ctx, args) {
   }
 }
 
+// skill：技能三件套（list_skills/get_skill_info/run_skill）合并后的单工具（op 分派）。
+// 同一标识空间（skill_name）+ 同一生命周期（live 扫目录，无常驻状态可增删）→ 合并，
+// 依据 docs/tool-design.md §一；技能不是「无持久状态」的动作，run 不必单独成工具。
+// input_args 仅 op=run 用且可缺省：runSkill 把 null 视作 {}，真正缺哪些字段由
+// 各技能 input_schema 校验点名报错（工具层再 gate 一层是双重门槛，无益）。
+async function toolSkill(ctx, args) {
+  const op = String(args.op || '').trim().toLowerCase();
+  const name = String(args.skill_name || '').trim();
+  switch (op) {
+    case 'list':
+      return JSON.stringify(await skills.listSkills(ctx), null, 2);
+    case 'get': {
+      if (!name) throw new Error('op=get 缺少必填参数 skill_name');
+      return skills.getSkillInfo(ctx, name);
+    }
+    case 'run': {
+      if (!name) throw new Error('op=run 缺少必填参数 skill_name');
+      return skills.runSkill(ctx, name, args.input_args);
+    }
+    default:
+      throw new Error('未知的 op："' + op + '"。可用：list / get（需 skill_name）/ run（需 skill_name，input_args 可选）');
+  }
+}
+
 const HANDLERS = {
   read_file: toolReadFile,
   write_file: toolWriteFile,
@@ -808,9 +832,7 @@ const HANDLERS = {
   terminal: toolTerminal,
   fetch: toolFetch,
   schedule_task: toolScheduleTask,
-  list_skills: async (ctx, args) => JSON.stringify(await skills.listSkills(ctx), null, 2),
-  get_skill_info: (ctx, args) => skills.getSkillInfo(ctx, args.skill_name),
-  run_skill: (ctx, args) => skills.runSkill(ctx, args.skill_name, args.input_args),
+  skill: toolSkill,
 };
 
 // ctx: {sessionId, taskDir, run, cfg, db, vision}

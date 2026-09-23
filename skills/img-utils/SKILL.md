@@ -87,7 +87,7 @@ output_schema:
 - `grid`：把同一目录下多张图拼成一张 contact sheet（缩略图网格）
 
 ## 使用说明
-通过 `run_skill` 调用，参数 `input_args`：
+通过 `skill`（op=run）调用，参数 `input_args`：
 - `action`：操作类型（必填）
 - `input`：输入图片或目录（必填；相对会话工作目录的路径即可，会自动转绝对路径）
 - `output`：输出路径（建议给全；不给时自动生成 `<原名>_<动作>.<原扩展名>`，绝不覆盖原图）

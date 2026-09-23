@@ -41,9 +41,9 @@ agent/
 │   │   ├── balance.js             余额查询适配器（按 platform.type 分发）
 │   │   ├── version.js             版本信息（package.json + git 短提交号）
 │   │   ├── tools/
-│   │   │   ├── definitions.json   内置 10 个工具的 OpenAI function 格式定义
+│   │   │   ├── definitions.json   内置 8 个工具的 OpenAI function 格式定义
 │   │   │   ├── executor.js        工具执行器（文件类 + terminal + skill 委托）
-│   │   │   └── skills.js          Skill Manager（list/info/run + 路径预处理）
+│   │   │   └── skills.js          Skill Manager（skill 工具的 list/get/run + 路径预处理）
 │   │   ├── download-token.js      下载链接签名（浏览器原生下载用；密钥进程内随机）
 │   │   ├── download-send.js       单文件下载响应（Content-Disposition / 缓存策略）
 │   │   ├── public-files.js        公网临时文件短 ID 表（mint/resolve + 过期）
@@ -279,7 +279,7 @@ stateDiagram-v2
 - session 补偿：MCP 规范的 `Mcp-Session-Id` 缓存在 `server.sessionId`；过期（400 + 含 "session" 字样）自动重 initialize 后重试一次。
 - 某些老服务无 `initialize` → catch `Method not found` 不阻断。
 
-### 5.4 `tools/executor.js` —— 内置 10 工具的派发器
+### 5.4 `tools/executor.js` —— 内置 8 工具的派发器
 
 `HANDLERS` 是 `name → async(ctx, args) → result` 的表；`executeTool(ctx, name, args)` 按 `name` 派发；**未知名直接转发给 MCP**（若 `mcp.hasTool(name)`，调 `mcp.callTool`）。
 
@@ -287,12 +287,12 @@ stateDiagram-v2
 |---|---|
 | `read_file` | 走 `resolveInTask` 防路径穿越；图像（PNG/JPEG/WebP/GIF/BMP/TIFF）按 vision 能力走 `sharp` 压缩后落盘 `.imgcache/` 并回传 `image_rel`（长边 ≤ 2000px，JPEG q=80；文件名带源文件 mtime+size 指纹，重读复用不增殖；重编码无收益时不落盘、直指原文件），发送前由 `llm.buildMessages` 现签成公网外链（engine 侧 mint 前 realpath 复核）；大文本/二进制给 outline，超 32MB 拒读并引导 terminal；行号前缀格式 "`<6位右对齐行号>\\t<原文>`"（`edit_file` 用） |
 | `write_file` / `edit_file` | `edit_file` 用模糊定位（Zed 风格）：先精确匹配，失败后用 Levenshtein DP 找最相似行；超 32MB 拒绝整文件读写（OOM 防护）；DP 候选区间不连续（中间跳过无关 buffer 行）即弃用，防静默吞行；空 `new_text` = 整行干净删除（精确/模糊两层统一，对齐 `"".lines()` 零行语义）；`old_text`/`new_text` 协议见 `definitions.json` |
-| 已移除的工具 | `list_directory` / `create_directory` / `delete_path` / `move_path` / `copy_path` / `find_path` / `grep`：环境固定，文件操作与检索统一走 `terminal`（ls / mkdir / rm / mv / cp / find / rg），内置工具 17 → 10 |
+| 已移除的工具 | `list_directory` / `create_directory` / `delete_path` / `move_path` / `copy_path` / `find_path` / `grep`：环境固定，文件操作与检索统一走 `terminal`（ls / mkdir / rm / mv / cp / find / rg），内置工具 17 → 10；技能三件套又并为 `skill` 后为 8 |
 | `terminal` | **唯一一个走 executor 的内置工具**（当 `rexec.isRemote(cfg)`）；本地分支用 `spawn` + `detached` + 进程组 kill；远端分支 `rexec.run` SSE 收流，结果套上超时/截断/取消注解后 `truncate(text, cfg.terminal.max_output_chars)` 返回 |
 | `fetch` | `AbortController` 覆盖全生命周期（响应头之后的 body 读流同样被超时/取消打断，取消用与 terminal 同款的 200ms 轮询）；content-type 先行，非文本只回状态/类型/尺寸不读 body；流式读到 `cfg.fetch.max_bytes`（默认 1MB）即断开并标注截断；按响应 charset 解码（full-icu 支持 gbk/gb18030 等，未知编码退回 UTF-8）；HTML 用 `htmlToMarkdown` 转；HTML 实体单遍解码（常见命名实体+数字实体通吃，修 `&amp;` 双重解码）；网络错误解包 `err.cause` 直述 ENOTFOUND/TLS 等真因；engine 不截工具结果，返回值末尾另有 `truncate` 1MB 字符护栏 |
 | `mint_public_link` | **唯一的 mint 入口**：与 core 同进程，直接 `publicFiles.mint()`，不绕任何 HTTP；`ctx.taskDir` 就是会话目录，`relOf` 的结果正是取用侧要的 `rel`。校验：`public_link.base_url` 已配 + `resolveInTask` 沙箱 + 确认是文件 + `realpath` 未沿符号链接跳出任务目录；返回单行 URL |
-| `list_skills` / `get_skill_info` / `run_skill` | 委托 `tools/skills.js` |
-| `schedule_task` | 为**当前会话**（`ctx.sessionId`，AI 不可指定他会话）建定时任务；校验/写入全在 `scheduler.createTask`（cron 可解析 → 连续两次 `next()` 间隔 ≥ 1h → 查重 → INSERT 主键兑底），失败抛中文 Error 回给 AI；描述里限定「仅用户明确要求时调用」（安全缓解，见 §5.12） |
+| `skill` | op 分派 list/get/run（三件套合并：同一 `skill_name` 标识空间 + 同一生命周期，见 `docs/tool-design.md` §一）；委托 `tools/skills.js`；`input_args` 仅 op=run 且可缺省 `{}`，缺参由各技能 `input_schema` 校验点名报错 |
+| `schedule_task` | **当前会话**（`ctx.sessionId`，AI 不可指定他会话）定时任务的完整生命周期：op 分派 get/create/update/delete（表主键 session_id → 每会话至多一条，无 id 参数）；条件必填在代码里校验、错误回显 op 与缺失字段；数据层在 `scheduler.js`（cron 可解析 → 间隔 ≥1h → prompt ≤20000 → 查重/存在性检查），delete 不落 scheduler_note；描述里限定「仅用户明确要求时调用」（安全缓解，见 §5.12） |
 
 `resolveInTask(taskDir, relOrAbs)`：把相对路径或绝对路径解析为绝对路径并校验落在 `taskDir` 之内（含根），防穿越。
 
@@ -303,9 +303,9 @@ stateDiagram-v2
   - init 的 pip 步骤先离线探测（`pip install --no-index --dry-run <逐行>`，不联网）：镜像已带的包直接跳过，只把缺的装进 `deps/`；`.deps_installed` marker（requirements/install.sh 两份 hash）也在那里维护。
   - 外挂层可见性：`skills/deps` 由 compose 放进 executor 容器 env 的 `PYTHONPATH`（`server.js` 白名单同步放行），技能入口与 AI 终端命令都能 import；运行期 skills 与 deps 均 `:ro`，**加包只需改 `requirements.txt` 后 `docker compose up -d`（重跑 init），不需重建镜像**。
 - `runSkill` 流程：`input_args` 类型守卫（非对象早拒，免得在 Object.entries 里静默错位） → `skillDir` 校验 → `absolutizeArgs`（按任务目录 + 启发式判断路径类参数） → `validateArgs`（按 front matter `input_schema.required`，缺项报错点名字段） → 选 `python3 run.py '<json>'` 或 `bash run.sh '<json>'` → `runEntry`。
-- system prompt 注入（`formatSkillListForPrompt`）只列名字省 token；描述查 `list_skills`、参数查 `get_skill_info`，配合关系写在注入段/模板里。
+- system prompt 注入（`formatSkillListForPrompt`）只列名字省 token；描述查 op=list、参数查 op=get、执行 op=run（`skill` 工具），op 间依赖写进工具 description。
 - **走 executor**：命令拼成 `shq` 转义后的单条 shell 行（`shellLine`）；env 不额外传，依赖层由容器 env 提供。
-- **cwd 分两类**：`run_skill` 传会话任务目录（`ctx.taskDir`），命中 executor 的 session 隔离与虚拟视图，技能在 `/workspace/tasks/<sid>` 看到的就是本会话数据，`absolutizeArgs` 产出的绝对路径因此有效；入口脚本一律用绝对路径（cwd 已不是技能目录）。
+- **cwd 分两类**：`skill` op=run 传会话任务目录（`ctx.taskDir`），命中 executor 的 session 隔离与虚拟视图，技能在 `/workspace/tasks/<sid>` 看到的就是本会话数据，`absolutizeArgs` 产出的绝对路径因此有效；入口脚本一律用绝对路径（cwd 已不是技能目录）。
 
 ### 5.6 `remote-exec.js` —— 远端 executor 客户端
 
