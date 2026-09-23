@@ -19,6 +19,7 @@ function initDb(dbPath) {
       last_model_id TEXT,
       assistant_type TEXT DEFAULT 'secretary',
       user TEXT DEFAULT '',
+      profile TEXT DEFAULT '',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       completed_at INTEGER,
@@ -141,6 +142,11 @@ function initDb(dbPath) {
   // 存量老会话与未启用认证时建的会话为空串（见 routes/sessions.js 列表过滤）
   if (!cols.some(c => c.name === 'user')) {
     db.exec("ALTER TABLE sessions ADD COLUMN user TEXT DEFAULT ''");
+  }
+  // 迁移：profile 记会话绑定的 prompt+tools 组合名（config.yml 顶层 model_profiles；''=随模型配置）。
+  // 选取优先级见 engine.resolveProfileName，切换入口见 routes/sessions.js bind 路由（弹窗「模式」区）。
+  if (!cols.some(c => c.name === 'profile')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN profile TEXT DEFAULT ''");
   }
   return db;
 }

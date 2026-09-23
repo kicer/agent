@@ -241,12 +241,14 @@ function registerProfilePrompts() {
   setProfilePrompts(map);
 }
 
-// 本轮生效的 profile 名：前端显式选择（run.profile，与 deepThink 同约定：
-// 每轮迭代取最新值，回合中途切换下一个请求即生效）> 模型配置默认（cfg.models[].profile）> ''（默认全量）。
-// 保留值 'default' = 前端显式切回全量（覆盖配了 profile 的模型的默认组合）。
+// 本轮生效的 profile 名：每消息参数（run.profile，与 deepThink 同约定：每轮迭代取最新值）
+// > 会话绑定（sessions.profile，弹窗「模式」区写入，跨回合/刷新持久）> 模型配置默认（cfg.models[].profile）
+// > ''（默认全量）。保留值 'default' 归一为 ''（显式摆脱模型默认组合；无 profile 模型下二者等效）。
 function resolveProfileName(session, run) {
   const manual = run && String(run.profile || '').trim();
   if (manual) return manual === 'default' ? '' : manual;
+  const bound = String((session && session.profile) || '').trim();
+  if (bound) return bound === 'default' ? '' : bound;
   const m = session.model_id && (cfg.models || []).find(x => x.id === session.model_id);
   return m && m.profile ? String(m.profile) : '';
 }
@@ -326,6 +328,18 @@ function bindToSession(sessionId, modelId) {
   log.info('model', sessionId + ' 手动绑定模型 ' + want + '（key ' + key.id + '）');
   if (pending) runLoop(sessionId);
   return { ok: true, model_id: want };
+}
+
+// 会话级 profile 绑定（bind 弹窗「模式」区）：''=解绑回随模型配置；保留值 'default' 归一为 ''。
+// 不设会话状态门槛——模式是每轮选择，切换下一轮迭代/下条消息即生效；不碰模型槽位占用。
+// 名字存在性由路由校验（hasModelProfile，与 messages 路由同款 400），这里只管落库。
+function setSessionProfile(sessionId, profile) {
+  const s = getSession(sessionId);
+  if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const name = profile === 'default' ? '' : String(profile || '').trim();
+  db.prepare('UPDATE sessions SET profile = ?, updated_at = ? WHERE id = ?').run(name, now(), sessionId);
+  log.info('model', sessionId + ' 会话模式绑定 → ' + (name || '默认(随模型配置)'));
+  return name;
 }
 
 // 是否还有待回应的新用户消息（最后一条非 tool 消息是 user）。
@@ -1235,6 +1249,7 @@ module.exports = {
   modelUsageStats,
   dispatchQueued,
   bindToSession,
+  setSessionProfile,
   TOOL_DEFINITIONS,
   effectiveTools,
   hasModelProfile,
