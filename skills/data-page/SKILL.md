@@ -83,8 +83,8 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 3. **初始化**：调用 `skill(name="data-page", op="run")`。
 4. **为每个要生成的页面写 config 文件**（见下一节）。**不要读也不要改模板本身**。
 5. **选定入口页 `.app/index.html`**（index 是副本，允许编辑；模板本体不动）：
-   - **用到 ≥2 个模板页** → `cp .app/nav.html .app/index.html`，改标题为业务名，并把未启用页面的卡片删掉（没配过的页点开会报 no such table）。子页顶部的「← 首页」链回此导航页。
-   - **只用 1 个模板** → `cp .app/<模板>.html .app/index.html`（同目录复制，引用路径不变）。副本指向自身时「← 首页」会被页面脚本自动隐藏，无需处理。
+   - **用到 ≥2 个模板页** → `cp .app/nav.html .app/index.html`，改标题为业务名，并把未启用页面的卡片删掉（没配过的页点开会报 no such table）。子页标题左侧的「‹」返回键链回此导航页。
+   - **只用 1 个模板** → `cp .app/<模板>.html .app/index.html`（同目录复制，引用路径不变）。副本指向自身时「‹」返回键会被页面脚本自动移除，无需处理。
 6. **告知用户**：把 run 输出末尾「访问地址」那行的完整 URL 发给用户，再简要说明页面功能。
 
 默认只写 config 就够。模板无法覆盖需求时，才走自定义路径（见「自定义页面」一节）。

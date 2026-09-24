@@ -11,8 +11,10 @@
 </head>
 <body>
 <div class="container">
-<a class="crumb" href="./">← 首页</a>
+<div class="page-hd">
+<a class="crumb" href="./" title="返回导航">‹</a>
 <h1 id="title">看板</h1>
+</div>
 <div class="board-outer" id="outer"><div class="msg">加载中…</div></div>
 </div>
 
@@ -118,7 +120,7 @@ function backToApp() {
   location.href = id ? '/?s=' + encodeURIComponent(id) : '/';
 }
 
-// 单页场景：本页的副本就是 index.html，「← 首页」指向自身 → 移除（多页导航不受影响）
+// 单页场景：本页的副本就是 index.html，标题行返回键指向自身 → 移除（多页导航不受影响）
 if (/\/(index\.html)?$/.test(location.pathname)) { const c = document.querySelector('.crumb'); if (c) c.remove(); }
 
 load();

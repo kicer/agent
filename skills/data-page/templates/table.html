@@ -8,9 +8,9 @@
 </head>
 <body>
 <div class="container">
-  <a class="crumb" href="./">← 首页</a>
   <div class="card">
     <div class="hd">
+      <a class="crumb" href="./" title="返回导航">‹</a>
       <h1 id="title">数据表格</h1>
       <button class="btn" id="addBtn">+ 新增</button>
     </div>
@@ -39,7 +39,7 @@
 <style>
 /* 表格页面特有样式 */
 .hd { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
-.hd h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.hd h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; flex: 1; }
 .tb { padding: 10px 18px; border-bottom: 1px solid var(--border); }
 </style>
 
@@ -241,7 +241,7 @@ function backToApp() {
   location.href = id ? '/?s=' + encodeURIComponent(id) : '/';
 }
 
-// 单页场景：本页的副本就是 index.html，「← 首页」指向自身 → 移除（多页导航不受影响）
+// 单页场景：本页的副本就是 index.html，标题行返回键指向自身 → 移除（多页导航不受影响）
 if (/\/(index\.html)?$/.test(location.pathname)) { const c = document.querySelector('.crumb'); if (c) c.remove(); }
 
 load();

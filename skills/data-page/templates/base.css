@@ -19,9 +19,13 @@ body {
   padding: 16px; padding-bottom: calc(72px + env(safe-area-inset-bottom));
 }
 .container { max-width: 1200px; margin: 0 auto; }
-/* 子页→首页面包屑（单页场景脚本会自动移除，见各模板尾部守卫） */
-.crumb { display: inline-block; color: var(--text-2); text-decoration: none; font-size: 13px; margin: 0 0 8px; }
-.crumb:hover { color: var(--accent); }
+/* 子页→首页返回键：贴在标题同一行，不占额外行高（单页场景脚本自动移除，见各模板尾部守卫） */
+.crumb { flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; margin-left: -6px; border-radius: 50%;
+  color: var(--text-2); text-decoration: none; font-size: 20px; line-height: 1; }
+.crumb:hover { color: var(--accent); background: rgba(0,113,227,0.08); }
+.page-hd { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; }
+.page-hd h1 { margin: 0; }
 h1 { font-size: 20px; margin: 4px 0 20px; letter-spacing: -0.02em; }
 
 /* ── 卡片 ─────────────────────────────────────────────── */
