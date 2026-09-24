@@ -38,7 +38,7 @@ visit_url: /app/{task_id}/
 - `base.css` —— 共用样式
 - `config-table.js` / `config-dashboard.js` / `config-kanban.js` —— 配置骨架
 
-已存在则跳过，不会覆盖（重跑幂等）。
+重跑行为按资产所有权分流：`table/dashboard/kanban/nav.html` 与 `base.css` 每次**覆盖刷新**（模板修复自动到达旧会话；这些文件契约禁止修改，覆盖无副作用）；`config-*.js` 仅缺失时补默认骨架，不覆盖已写好的配置；`.app/index.html` 永不被碰。
 
 ## 数据 API
 
