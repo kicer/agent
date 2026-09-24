@@ -12,7 +12,7 @@ const DEFAULT_MODEL = "CogView-3-Flash";
 
 // 上游同步调用耗时上限（出图几十秒量级，留足余量）。
 // 超时后任务记为 FAIL，避免上游挂而不回时永远卡在 PROCESSING。
-const UPSTREAM_TIMEOUT_MS = 120_000;
+const UPSTREAM_TIMEOUT_MS = 180_000;
 
 // ── 优雅退出 ──────────────────────────────────────────────────────────────
 // 容器里 node 以 PID 1 运行且未注册 SIGTERM 处理器时，内核不会对其执行默认
