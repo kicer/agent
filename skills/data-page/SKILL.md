@@ -143,7 +143,7 @@ window.PAGE_CONFIG = {
 5. HTML 骨架完整：`<!DOCTYPE html>`、`<meta charset="UTF-8">`、`<meta name="viewport" content="width=device-width, initial-scale=1">`
 6. 用户数据渲染必转义：优先 `textContent`；用 `innerHTML` 先过 `esc()`（照抄模板里的实现），绝不把 API 查询结果裸拼进 HTML——模板自带转义，手写页面没有这层保护
 7. 所有 SQL 参数化（`?`）；fetch 结果检查 `error` 字段（失败仍是 HTTP 200），并有加载态/错误提示
-8. 大表查询加 `LIMIT`：服务端单次超 2000 行直接报 error
+8. 大表查询加 `LIMIT`：页面数据 API 单次超 2000 行直接返回 `error`（注意与 `db` 工具不同——工具是截断到 500 行/100KB 仍返数据，API 无截断返回形态，静默少返会让页面统计/分页失真，所以显式报错）
 
 `.app/` 下每个 HTML 页面（含 index.html）都要有返回会话入口——用户可能从任意子页直入，缺出口即被困住。
 
