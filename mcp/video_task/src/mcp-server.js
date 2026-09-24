@@ -19,6 +19,9 @@ const DEFAULT_QUALITY = "speed";       // speed | quality
 const DEFAULT_FPS = 30;                // 30 | 60
 const DEFAULT_WATERMARK_ENABLED = true; // 平台政策默认 true
 
+// submit/query 都是快接口，卡住基本等于上游挂了；限时避免工具调用被拖死
+const UPSTREAM_TIMEOUT_MS = 30_000;
+
 // ── 优雅退出 ──────────────────────────────────────────────────────────────
 // 容器里 node 以 PID 1 运行且未注册 SIGTERM 处理器时，内核不会对其执行默认
 // 终止动作，docker stop/restart 会白等满 10s 宽限期才被 SIGKILL。
@@ -119,9 +122,19 @@ async function callZhipu({ url, token, method = "POST", body }) {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   };
   if (body !== undefined) init.body = JSON.stringify(body);
-  const resp = await fetch(url, init);
+  let resp;
+  try {
+    resp = await fetch(url, init);
+  } catch (e) {
+    // AbortSignal.timeout 中止时抛 TimeoutError/AbortError，转成明确的超时错误
+    if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+      throw new Error(`Upstream request timed out after ${UPSTREAM_TIMEOUT_MS} ms`);
+    }
+    throw e;
+  }
   const text = await resp.text();
   let data;
   try {

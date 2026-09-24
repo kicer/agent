@@ -149,6 +149,7 @@ Token 仅在每次 tool call 时从 header 读取，不写入任何存储、不�
 | initialize 时缺 token | `401` | JSON-RPC `error.message` 提示补充 header |
 | 智谱 API 4xx/5xx | `200`（MCP 工具返回） | `isError: true`，正文含智谱返回的状态码和 body |
 | 网络失败 | `200`（MCP 工具返回） | `isError: true`，正文含 `fetch` 错误信息 |
+| 上游挂住不回（超时 >30s） | `200`（MCP 工具返回） | `isError: true`，正文提示 timed out；`fetch` 带 `AbortSignal.timeout`，不会无限卡住工具调用 |
 
 ---
 
