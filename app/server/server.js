@@ -111,27 +111,30 @@ const PORT = process.env.PORT || cfg.port;
 
 // 启动成功后把模型实际收到的各部分 dump 到文件方便人工核对（data_root 默认 ./data，
 // 宿主机对应 <repo>/data/prompt.txt，已被 gitignore）。包含：
-//  1) 默认组合：system 消息（模板 + 可用技能段落 + 语言指令）+ tools 数组（内置 + MCP）；
+//  1) 默认组合：system 消息（模板 + 可用技能段落 + 语言指令）+ tools 数组（内置 + MCP 过滤全局 tools_deny）；
 //  2) 每套 model_profiles 一段：按其白名单过滤后的 tools + 自定义 prompt（未配则回落默认模板）。
 function dumpPromptBundle() {
   const file = path.join(cfg.data_root, 'prompt.txt');
   const lang = (cfg.agent || {}).language;
-  const tools = engine.TOOL_DEFINITIONS.concat(mcp.toolDefinitions());
+  // 默认组合必须走 effectiveTools()（无 profile 分支 = 全局 deny 过滤），与 engine 每轮实际发送同源：
+  // 直接 concat 全量会把 lab 这类被 deny 的工具也 dump 进去——模型其实收不到，人工核实时误导。
+  const tools = engine.effectiveTools();
+  const allCount = engine.TOOL_DEFINITIONS.concat(mcp.toolDefinitions()).length;
   const parts = [
     '# ===== 1. System Prompt（默认组合，system 消息，进程内恒定）=====\n\n' + llm.systemPromptText(lang),
-    '\n\n# ===== 2. Tools（默认组合 ' + tools.length + ' 个：内置 + MCP，随每次请求的 tools 字段发送）=====\n\n' + JSON.stringify(tools, null, 2),
+    '\n\n# ===== 2. Tools（默认组合 ' + tools.length + ' 个：内置 + MCP 过滤全局 tools_deny 后，随每次请求的 tools 字段发送）=====\n\n' + JSON.stringify(tools, null, 2),
   ];
   for (const name of Object.keys(cfg.model_profiles || {})) {
     const pTools = engine.effectiveTools(name);
     parts.push(
       '\n\n# ===== profile "' + name + '" =====\n\n' +
       '# --- system prompt ---\n\n' + llm.systemPromptText(lang, name) +
-      '\n\n# --- tools（白名单过滤后 ' + pTools.length + ' / 全量 ' + tools.length + ' 个）---\n\n' + JSON.stringify(pTools, null, 2)
+      '\n\n# --- tools（allow/deny 过滤后 ' + pTools.length + ' / 原始全量 ' + allCount + ' 个）---\n\n' + JSON.stringify(pTools, null, 2)
     );
   }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, parts.join(''), 'utf8');
-  log.info('startup', '  prompt_dump=' + file + ' (tools=' + tools.length +
+  log.info('startup', '  prompt_dump=' + file + ' (tools=' + tools.length + '/' + allCount +
     ', profiles=' + (Object.keys(cfg.model_profiles || {}).join(',') || '-') + ')');
 }
 
