@@ -116,56 +116,161 @@ function extractUrls(data) {
   return [];
 }
 
-// ===== op=create：提交图片生成（同步，直接返回图片 URL）=====
+// ===== 自维护任务表（异步语义全靠这层模拟） =====
+// 上游智谱 images 接口是同步阻塞的，但对外要和 video_task 一样提供
+// create（立即返回 task_id）+ get（轮询结果）的异步契约：
+// create 登记 PROCESSING 后把同步调用丢到后台跑，get 从表里读最新状态。
+//
+// 已知取舍：
+// - 表在进程内存里：容器重启/重建后任务丢失，get 会报 unknown task_id；
+//   图片生成只跑几秒，窗口很小，不值得为此引入持久化。
+// - 只适用于单实例部署：多副本时 create 和 get 可能打到不同进程，表不互通。
+const TASK_TTL_MS = 60 * 60 * 1000; // 已完成（SUCCESS/FAIL）任务保留 1 小时
+const MAX_TASKS = 1000;             // 表容量上限，超出从最老的已完成任务开始淘汰
+
+// task_id -> { status, model, prompt, createdAt, urls?, error? }
+const tasks = new Map();
+
+function pruneTasks() {
+  const now = Date.now();
+  for (const [id, t] of tasks) {
+    if (t.status !== "PROCESSING" && now - t.createdAt > TASK_TTL_MS) {
+      tasks.delete(id);
+    }
+  }
+  if (tasks.size > MAX_TASKS) {
+    // Map 按插入序迭代；PROCESSING 永不主动淘汰
+    for (const [id, t] of tasks) {
+      if (tasks.size <= MAX_TASKS) break;
+      if (t.status !== "PROCESSING") tasks.delete(id);
+    }
+  }
+}
+
+// 后台跑同步上游调用，结果回写任务表（fire-and-forget，不 await）
+function runImageTask({ task, token, model, prompt }) {
+  callZhipuImagesGenerations({ token, model, prompt })
+    .then((data) => {
+      const urls = extractUrls(data);
+      if (urls.length === 0) {
+        task.status = "FAIL";
+        task.error = `Zhipu returned no image URL. Raw response: ${JSON.stringify(data)}`;
+      } else {
+        task.status = "SUCCESS";
+        task.urls = urls;
+      }
+    })
+    .catch((e) => {
+      task.status = "FAIL";
+      task.error = `${e.message}${
+        e.detail ? ` Details: ${JSON.stringify(e.detail)}` : ""
+      }`;
+    });
+}
+
+// ===== op=create：提交图片生成（立即返回 task_id，后台执行）=====
 async function handleCreate({ args, headers, token }) {
+  if (!args.prompt) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: 'op=create requires "prompt".' }],
+    };
+  }
+
   // model 完全由 HTTP header 控制（X-Image-Task-Model / X-Mcp-Model / X-Model），
   // 不存进 session，每次从本次请求的 header 读取，未设置则用默认 CogView-3-Flash。
   // AI 看不到 model 参数（schema 中已删除），避免其误传。
   const model = pickModel(headers) || DEFAULT_MODEL;
 
-  try {
-    const data = await callZhipuImagesGenerations({
-      token,
-      model,
-      prompt: args.prompt,
-    });
-    const urls = extractUrls(data);
-    if (urls.length === 0) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: `Returned no image URL. Raw response: ${JSON.stringify(data)}`,
-          },
-        ],
-      };
-    }
-    const summary = urls
-      .map((u, i) => `Image ${i + 1}: ${u}`)
-      .join("\n");
+  pruneTasks();
+  const taskId = randomUUID();
+  const task = {
+    status: "PROCESSING",
+    model,
+    prompt: args.prompt,
+    createdAt: Date.now(),
+  };
+  tasks.set(taskId, task);
+
+  // token/model 在此刻从本次请求 header 捕获进闭包，后台完成前无需再取
+  runImageTask({ task, token, model, prompt: args.prompt });
+
+  const summary =
+    `Model: ${model}\n` +
+    `task_id: ${taskId}\n` +
+    `task_status: PROCESSING\n` +
+    `\n` +
+    `Image generation is running in background. ` +
+    `Call this tool again with op="get" and task_id="${taskId}" to fetch the result.`;
+
+  return { content: [{ type: "text", text: summary }] };
+}
+
+// ===== op=get：查询任务状态（只读本地表，不碰上游）=====
+async function handleGet({ args }) {
+  if (!args.task_id) {
     return {
-      content: [
-        {
-          type: "text",
-          text: `Model: ${model}\nPrompt: ${args.prompt}\n${summary}`,
-        },
-        ...urls.map((u) => ({ type: "text", text: u })),
-      ],
+      isError: true,
+      content: [{ type: "text", text: 'op=get requires "task_id".' }],
     };
-  } catch (e) {
+  }
+
+  const task = tasks.get(args.task_id);
+  if (!task) {
     return {
       isError: true,
       content: [
         {
           type: "text",
-          text: `Failed to generate image: ${e.message}${
-            e.detail ? `\nDetails: ${JSON.stringify(e.detail)}` : ""
-          }`,
+          text:
+            `Unknown task_id "${args.task_id}". ` +
+            `Finished tasks are kept for 1 hour and are lost on service restart.`,
         },
       ],
     };
   }
+
+  if (task.status === "PROCESSING") {
+    return {
+      content: [
+        {
+          type: "text",
+          text:
+            `task_id: ${args.task_id}\n` +
+            `model: ${task.model}\n` +
+            `task_status: PROCESSING\n` +
+            `\n` +
+            `Call op="get" again in a few seconds.`,
+        },
+      ],
+    };
+  }
+
+  if (task.status === "FAIL") {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `task_id: ${args.task_id}\ntask_status: FAIL\nerror: ${task.error}`,
+        },
+      ],
+    };
+  }
+
+  // SUCCESS：输出格式与原同步版 create 一致（摘要块 + 每张图一个 URL 块）
+  const lines = task.urls.map((u, i) => `Image ${i + 1}: ${u}`).join("\n");
+  const summary =
+    `task_id: ${args.task_id}\n` +
+    `model: ${task.model}\n` +
+    `task_status: SUCCESS\n` +
+    `${lines}`;
+  return {
+    content: [
+      { type: "text", text: summary },
+      ...task.urls.map((u) => ({ type: "text", text: u })),
+    ],
+  };
 }
 
 function buildServer() {
@@ -183,21 +288,28 @@ function buildServer() {
 
   server.tool(
     "image_task",
-    `Manages image generation. Generation is synchronous: op=create returns the image URLs directly.
+    `Manages asynchronous image generation tasks.
 
-op=create  Generate an image from a prompt. Requires prompt.`,
+op=create  Submit a new task. Returns a task_id immediately; generation runs in background.
+           Requires prompt.
+op=get     Fetch the status of a previously submitted task. Requires task_id.
+           On SUCCESS, returns the image URLs.
+
+Typical flow: call op=create, then call op=get with the returned task_id until task_status is SUCCESS or FAIL.`,
     {
-      op: z
-        .enum(["create"])
-        .describe(
-          'Operation to perform. Only "create" is supported (generation is synchronous, so there is no task to poll).'
-        ),
+      op: z.enum(["create", "get"]).describe("Operation to perform."),
       prompt: z
         .string()
         .min(1)
+        .optional()
         .describe(
-          "Image generation prompt; describe the desired scene in detail. Used with op=create."
+          "Image generation prompt; describe the desired scene in detail. Required when op=create."
         ),
+      task_id: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("task_id returned by op=create. Required when op=get."),
     },
     async (args, extra) => {
       // SDK 在 tool callback 的 extra.requestInfo.headers 里会透传当前 HTTP 请求的 headers
@@ -220,13 +332,15 @@ op=create  Generate an image from a prompt. Requires prompt.`,
       switch (args.op) {
         case "create":
           return await handleCreate({ args, headers, token });
+        case "get":
+          return await handleGet({ args });
         default:
           return {
             isError: true,
             content: [
               {
                 type: "text",
-                text: `Unknown op "${args.op}" (available: create).`,
+                text: `Unknown op "${args.op}" (available: create, get).`,
               },
             ],
           };
@@ -259,7 +373,12 @@ async function startHttp({ port, host }) {
   };
 
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", service: "image_task", sessions: sessions.size });
+    res.json({
+      status: "ok",
+      service: "image_task",
+      sessions: sessions.size,
+      tasks: tasks.size,
+    });
   });
 
   async function handleSessionRequest(req, res) {
