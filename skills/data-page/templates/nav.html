@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>数据导航</title>
+<link rel="stylesheet" href="./base.css">
+<style>
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+a.navcard { display: block; background: var(--surface); border-radius: var(--r); padding: 18px;
+  text-decoration: none; color: inherit; box-shadow: var(--shadow);
+  border: 1px solid transparent; transition: border-color .15s, transform .05s; }
+a.navcard:hover { border-color: var(--accent); }
+a.navcard:active { transform: scale(0.99); }
+a.navcard .t { font-weight: 600; margin-bottom: 4px; }
+a.navcard .d { color: var(--text-2); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>数据导航</h1>
+  <div class="grid">
+    <a class="navcard" href="./table.html"><div class="t">📋 明细表格</div><div class="d">浏览、搜索、在线增删改</div></a>
+    <a class="navcard" href="./dashboard.html"><div class="t">📊 统计看板</div><div class="d">汇总指标与分组分布</div></a>
+    <a class="navcard" href="./kanban.html"><div class="t">🗂️ 分组看板</div><div class="d">按状态分列流转</div></a>
+  </div>
+</div>
+
+<button class="fab" aria-label="返回对话" title="返回发起本数据的对话" onclick="backToApp()">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+</button>
+
+<script>
+// 静态导航页，无 config：卡片文字/链接允许在 .app/index.html 副本上按场景编辑（模板本体不动）。
+function backToApp() {
+  const id = location.pathname.split('/').filter(Boolean)[1];
+  location.href = id ? '/?s=' + encodeURIComponent(id) : '/';
+}
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 # 目标目录固定为 <任务目录>/.app/（不带 dest 参数：manager 对绝对路径参数不做沙箱
 # 校验，开放 dest 等于开放任意目录写入；路径也已写死在文档流程里，可配置只会造成漂移）。
 # 复制内容：
-#   *.html        → .app/   页面模板（table / dashboard / kanban）
+#   *.html        → .app/   页面模板（table / dashboard / kanban / nav 导航首页）
 #   base.css      → .app/   共用样式
 #   config-*.js   → .app/   配置骨架（AI 只改这些）
 # 已存在的同名文件跳过不覆盖（重跑幂等，AI 改过的 config 不会被覆盖回默认）。

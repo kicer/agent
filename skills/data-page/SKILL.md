@@ -33,7 +33,8 @@ visit_url: /app/{task_id}/
 
 调用 `skill(name="data-page", op="run")`，无需参数。它会把以下文件复制到 `.app/`：
 
-- `table.html` / `dashboard.html` / `kanban.html` —— 三个页面模板
+- `table.html` / `dashboard.html` / `kanban.html` —— 三个数据页模板
+- `nav.html` —— 多页导航首页模板（静态卡片，无 config）
 - `base.css` —— 共用样式
 - `config-table.js` / `config-dashboard.js` / `config-kanban.js` —— 配置骨架
 
@@ -81,14 +82,16 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 2. **创建表并录入数据**：用 `db` 工具完成。
 3. **初始化**：调用 `skill(name="data-page", op="run")`。
 4. **为每个要生成的页面写 config 文件**（见下一节）。**不要读也不要改模板本身**。
-5. **选定入口页**：把要作为首页的模板复制为 `.app/index.html`（同目录复制，引用路径不变），或直接保留多个页面并在 index.html 里做导航。
+5. **选定入口页 `.app/index.html`**（index 是副本，允许编辑；模板本体不动）：
+   - **用到 ≥2 个模板页** → `cp .app/nav.html .app/index.html`，改标题为业务名，并把未启用页面的卡片删掉（没配过的页点开会报 no such table）。子页顶部的「← 首页」链回此导航页。
+   - **只用 1 个模板** → `cp .app/<模板>.html .app/index.html`（同目录复制，引用路径不变）。副本指向自身时「← 首页」会被页面脚本自动隐藏，无需处理。
 6. **告知用户**：把 run 输出末尾「访问地址」那行的完整 URL 发给用户，再简要说明页面功能。
 
 默认只写 config 就够。模板无法覆盖需求时，才走自定义路径（见「自定义页面」一节）。
 
 ## 页面配置
 
-三个模板对应三份 config：
+三个数据页模板对应三份 config（`nav.html` 为静态导航，无 config）：
 
 | 模板 | config 文件 | 用途 |
 |---|---|---|
@@ -168,7 +171,8 @@ window.PAGE_CONFIG = {
 - [ ] 数据库表已创建、数据已录入
 - [ ] 调用了 `skill run`
 - [ ] 写好了对应的 `config-*.js`
-- [ ] 选定入口页（复制为 `.app/index.html` 或保留多页 + 导航）
+- [ ] 选定入口页：多页用 nav 副本且卡片只留启用页；单页用模板副本
+- [ ] 启用页互相连通：首页 ≤1 击可达每页，每页可回首页
 - [ ] 页面动态解析 task_id
 - [ ] 每个 `.app/*.html` 都有返回会话入口
 - [ ] 自定义页面：引用了 `base.css`、数据渲染已转义、SQL 参数化、大表加 LIMIT
