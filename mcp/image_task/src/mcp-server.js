@@ -10,6 +10,10 @@ const ZHIPU_API_URL =
   "https://open.bigmodel.cn/api/paas/v4/images/generations";
 const DEFAULT_MODEL = "CogView-3-Flash";
 
+// 上游同步调用耗时上限（出图几十秒量级，留足余量）。
+// 超时后任务记为 FAIL，避免上游挂而不回时永远卡在 PROCESSING。
+const UPSTREAM_TIMEOUT_MS = 120_000;
+
 // ── 优雅退出 ──────────────────────────────────────────────────────────────
 // 容器里 node 以 PID 1 运行且未注册 SIGTERM 处理器时，内核不会对其执行默认
 // 终止动作，docker stop/restart 会白等满 10s 宽限期才被 SIGKILL。
@@ -79,14 +83,25 @@ function pickModel(headers) {
 
 async function callZhipuImagesGenerations({ token, model, prompt }) {
   const body = { model, prompt };
-  const resp = await fetch(ZHIPU_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  let resp;
+  try {
+    resp = await fetch(ZHIPU_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (e) {
+    // AbortSignal.timeout 中止时抛 TimeoutError/AbortError，
+    // 转成普通错误后由 runImageTask 回写 FAIL
+    if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+      throw new Error(`Upstream request timed out after ${UPSTREAM_TIMEOUT_MS} ms`);
+    }
+    throw e;
+  }
   const text = await resp.text();
   let data;
   try {

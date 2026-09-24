@@ -148,6 +148,7 @@ Token 仅在每次 tool call 时从 header 读取，不写入任何存储、不�
 | op=get 查不到任务（ID 错/已过期/服务重启过） | `200`（MCP 工具返回） | `isError: true`，提示 unknown task_id |
 | 智谱 API 4xx/5xx | `200`（MCP 工具返回） | 在 `op=get` 中以 `isError: true` + `task_status: FAIL` 呈现，正文含智谱返回的状态码和 body |
 | 网络失败 | `200`（MCP 工具返回） | 同上，`task_status: FAIL`，正文含 `fetch` 错误信息 |
+| 上游挂住不回（超时 >120s） | `200`（MCP 工具返回） | 同上，`task_status: FAIL`，正文提示 timed out；不会出现永久 PROCESSING 的僵尸任务 |
 
 ---
 
@@ -253,7 +254,7 @@ image_task/
 - **单工具 + `op` 分发**：`image_task(op=create|get)`，与 `video_task` 的服务形态完全一致，agent 侧一套轮询逻辑通吃图片/视频
 - **同步上游 → 异步契约**：智谱 images 接口只支持同步，所以服务自维护一张任务表来模拟异步：
   - `create` 本地生成 `task_id`（`randomUUID`），登记 `PROCESSING`，把同步调用丢后台（fire-and-forget），立即返回
-  - 后台完成时回写 `SUCCESS`（含 URLs）或 `FAIL`（含错误）
+  - 后台完成时回写 `SUCCESS`（含 URLs）或 `FAIL`（含错误）；上游同步调用带 120s 超时（`AbortSignal.timeout`），超时记 `FAIL`，杜绝僵尸 `PROCESSING`
   - `get` 只读本地表，不碰上游
   - 表为进程内存 Map：已完成任务保留 1 小时（TTL）、容量上限 1000，每次 `create` 顺带淘汰；**容器重启后任务丢失**，`get` 会报 unknown task_id；**不适用于多副本部署**（表不互通）
   - token/model 在 `create` 那一刻从请求 header 捕获进闭包，后台完成前不再读取，保持「每请求读 header」的无状态设计
@@ -282,6 +283,9 @@ A: 不需要。Model header 在每次 `tools/call` 都从当前请求读取，�
 
 **Q: 上游是同步接口，为什么对外做成异步？**
 A: 为了和 `video_task` 保持同一套任务型契约，agent 侧只需维护一种「create 后轮询 get」的调用模式。同步调用被放到后台执行，对 AI 而言表现为标准异步任务。
+
+**Q: 任务一直 PROCESSING 会不会没完没了？**
+A: 不会。上游同步调用封顶 120s（`AbortSignal.timeout`），超时直接记 `FAIL`，`get` 会拿到明确的 timed out 错误；不存在僵尸任务。
 
 **Q: create 之后服务容器重启了，get 会怎样？**
 A: 任务表在进程内存里，重启即丢失，`get` 会返回 unknown task_id 的 `isError`。需要重新 `create`。图片生成只跑几秒，受影响窗口很小；若将来要上多副本或需要可靠恢复，再把表换成持久化存储。
