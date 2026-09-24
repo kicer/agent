@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-# data-page 技能入口：把技能自带 templates/*.html 复制到会话任务目录的 .app/templates/。
-# 目标目录固定（SKILL.md 环境约定：页面必须在 .app/ 下才能被 /app/{task_id}/ 访问；
-# 带点是为了任务文件面板默认隐藏，URL 路径与目录名已在路由层解耦）。
-# 不开 dest 参数：manager 对已是绝对路径的参数不做沙箱校验，开放 dest = 开放任意目录写入；
-# 且路径写死在文档流程里，可配置只会造成漂移。
-# 已存在的同名文件跳过不覆盖（AI 改过的模板要能经受重跑）；纯 stdlib，无 requirements。
-# cwd 契约：远端模式（生产）cwd 即会话任务目录；本地模式 cwd 是技能目录——
-# 那会把模板抄进技能家，检测到直接报错拒跑（手动调试请 cd 到任务目录再运行）。
+# data-page 技能入口：把技能自带 templates/ 下的文件复制到会话任务目录的 .app/。
+# 目标目录固定为 <任务目录>/.app/（不带 dest 参数：manager 对绝对路径参数不做沙箱
+# 校验，开放 dest 等于开放任意目录写入；路径也已写死在文档流程里，可配置只会造成漂移）。
+# 复制内容：
+#   *.html        → .app/   页面模板（table / dashboard / kanban）
+#   base.css      → .app/   共用样式
+#   config-*.js   → .app/   配置骨架（AI 只改这些）
+# 已存在的同名文件跳过不覆盖（重跑幂等，AI 改过的 config 不会被覆盖回默认）。
+# 纯 stdlib，无 requirements。
+# cwd 契约：生产模式下 cwd 即会话任务目录；本地直跑时 cwd 是技能目录——
+# 那会把模板抄进技能家，检测到直接报错拒跑（手动调试请 cd 到任务目录再跑）。
 import json
 import os
 import shutil
@@ -15,48 +18,62 @@ from pathlib import Path
 
 
 def main():
+    # ── 参数校验：本技能无参数 ─────────────────────────────
     if len(sys.argv) >= 2 and sys.argv[1].strip():
         try:
             args = json.loads(sys.argv[1])
             if not isinstance(args, dict):
                 raise ValueError('input_args 必须是 JSON 对象')
             if args:
-                print('本技能无参数（模板固定复制到任务目录 .app/templates/），收到：'
-                      + json.dumps(args, ensure_ascii=False), file=sys.stderr)
+                print('本技能无参数，收到：' + json.dumps(args, ensure_ascii=False),
+                      file=sys.stderr)
                 return 1
         except (ValueError, json.JSONDecodeError) as e:
             print('参数解析失败：' + str(e), file=sys.stderr)
             return 1
 
+    # ── 源目录：技能自带的 templates/ ──────────────────────
     skill_dir = Path(__file__).resolve().parent
     src = skill_dir / 'templates'
     if not src.is_dir():
         print('技能自身缺少 templates/ 目录：' + str(src), file=sys.stderr)
         return 1
-    tpl = sorted(src.glob('*.html'))
-    if not tpl:
-        print('templates/ 下没有 .html 模板', file=sys.stderr)
+
+    files = sorted(
+        list(src.glob('*.html')) +
+        list(src.glob('*.css')) +
+        list(src.glob('config-*.js'))
+    )
+    if not files:
+        print('templates/ 下没有可复制的文件', file=sys.stderr)
         return 1
 
-    dest = (Path.cwd() / '.app' / 'templates').resolve()
-    if str(dest) == str(skill_dir) or str(dest).startswith(str(skill_dir) + os.sep):
+    # ── 目标目录：<任务目录>/.app/ ─────────────────────────
+    app_dir = (Path.cwd() / '.app').resolve()
+    if str(app_dir) == str(skill_dir) or str(app_dir).startswith(str(skill_dir) + os.sep):
         print('当前工作目录不是会话任务目录（本地直跑 cwd=技能目录会污染技能；'
-              '生产经 executor 运行天然正确，手动调试请 cd 到任务目录再跑）', file=sys.stderr)
+              '生产经 executor 运行天然正确，手动调试请 cd 到任务目录再跑）',
+              file=sys.stderr)
         return 1
 
-    dest.mkdir(parents=True, exist_ok=True)
+    app_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── 逐个复制，已存在则跳过 ─────────────────────────────
     copied, skipped = [], []
-    for f in tpl:
-        target = dest / f.name
+    for f in files:
+        target = app_dir / f.name
         if target.exists():
             skipped.append(f.name)
         else:
             shutil.copy2(f, target)
             copied.append(f.name)
 
-    print('模板目录：' + str(dest))
-    print('新复制 ' + str(len(copied)) + ' 个：' + (', '.join(copied) if copied else '无'))
-    print('跳过（已存在，不覆盖）' + str(len(skipped)) + ' 个：' + (', '.join(skipped) if skipped else '无'))
+    # ── 输出结果 ───────────────────────────────────────────
+    print('页面目录：' + str(app_dir))
+    print('新复制 ' + str(len(copied)) + ' 个：'
+          + (', '.join(copied) if copied else '无'))
+    print('跳过（已存在，不覆盖）' + str(len(skipped)) + ' 个：'
+          + (', '.join(skipped) if skipped else '无'))
     return 0
 
 

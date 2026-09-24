@@ -4,57 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>看板</title>
+<link rel="stylesheet" href="./base.css">
 <style>
-:root {
-  --bg: #f5f5f7; --surface: #fff; --border: #e8e8ed; --text: #1d1d1f;
-  --text-2: #6e6e73; --accent: #0071e3; --r: 12px; --shadow: 0 1px 3px rgba(0,0,0,0.04);
-}
-* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
-  background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom));
-}
-h1 { font-size: 20px; margin: 4px 0 20px; letter-spacing: -0.02em; }
-.container { max-width: 1400px; margin: 0 auto; }
-/* 外层滚、内层居中：board 用 fit-content+auto margin——列少居中、列多靠边滚动；
-   若在滚动容器上直接 justify-content:center，溢出时首列会被裁掉（滚动起点落在中间）。 */
-.board-outer { overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
-.board { display: flex; gap: 12px; width: fit-content; margin: 0 auto; }
-.col { flex: 0 0 260px; scroll-snap-align: start; background: var(--surface); border-radius: var(--r);
-  box-shadow: var(--shadow); display: flex; flex-direction: column; max-height: calc(100vh - 140px); }
-.col-hd { display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; }
-.col-hd .n { color: var(--text-2); font-weight: 400; font-size: 12px;
-  background: var(--bg); padding: 1px 8px; border-radius: 999px; }
-.col-bd { padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 8px; transition: box-shadow .15s, transform .05s; }
-.card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-.card .t { font-size: 13px; font-weight: 500; line-height: 1.4; }
-.card .meta { display: flex; flex-wrap: wrap; gap: 6px; }
-.card .meta span { font-size: 11px; color: var(--text-2); background: var(--bg); padding: 2px 7px; border-radius: 999px; }
-.card .mv { display: flex; gap: 6px; margin-top: 2px; }
-.card .mv button { appearance: none; border: 1px solid var(--border); background: var(--surface);
-  color: var(--text-2); cursor: pointer; font: inherit; font-size: 12px; padding: 3px 9px;
-  border-radius: 6px; transition: all .15s; }
-.card .mv button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.card .mv button:disabled { opacity: .3; cursor: default; }
-.col-bd .empty { text-align: center; color: var(--text-2); padding: 20px 8px; font-size: 12px; }
-.msg { text-align: center; padding: 40px 20px; color: var(--text-2); }
-.msg.err { color: #d70015; }
-@media (max-width: 480px) { body { padding: 8px; padding-bottom: calc(64px + env(safe-area-inset-bottom)); } h1 { font-size: 18px; margin-bottom: 14px; } }
-/* 返回应用 FAB：固定右下、零版面占用（看板列高按视口算，footer 会直接吃掉一截）；
-   图标用内联 SVG 不用 ⌂ 字符（WebView 字体不保证有该码位） */
-.fab { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
-  width: 48px; height: 48px; border-radius: 50%; background: var(--accent); color: #fff;
-  border: none; box-shadow: 0 4px 12px rgba(0,113,227,0.3); cursor: pointer; z-index: 100;
-  display: flex; align-items: center; justify-content: center; }
-.fab:hover { filter: brightness(1.08); }
-.fab:active { transform: scale(0.94); }
-body { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+.container { max-width: 1400px; }
 </style>
 </head>
 <body>
@@ -67,16 +19,16 @@ body { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
 </button>
 
+<script src="./config-kanban.js"></script>
 <script>
-const CONFIG = {
-  table: 'tasks',
-  pk: 'id',
-  title: '任务看板',
-  groupField: 'status',                       // 用来分列的字段
-  groups: ['待办', '进行中', '已完成'],         // 列的顺序
-  titleField: 'title',                        // 卡片主标题字段
-  metaFields: ['assignee', 'due'],            // 卡片上显示的次要字段
+const DEFAULT = {
+  table: 'tasks', pk: 'id', title: '任务看板',
+  groupField: 'status',
+  groups: ['待办', '进行中', '已完成'],
+  titleField: 'title',
+  metaFields: ['assignee', 'due'],
 };
+const CONFIG = Object.assign({}, DEFAULT, window.PAGE_CONFIG || {});
 
 const API = `/api/db/${location.pathname.split('/').filter(Boolean)[1]}/query`;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -124,7 +76,7 @@ function card(r, gi) {
   const meta = CONFIG.metaFields
     .filter(f => r[f] != null && r[f] !== '')
     .map(f => `<span>${esc(r[f])}</span>`).join('');
-  return `<div class="card" data-pk="${esc(r[CONFIG.pk])}">
+  return `<div class="kanban-card" data-pk="${esc(r[CONFIG.pk])}">
     <div class="t">${esc(r[CONFIG.titleField] ?? '(无标题)')}</div>
     ${meta ? `<div class="meta">${meta}</div>` : ''}
     <div class="mv">
@@ -135,7 +87,7 @@ function card(r, gi) {
 }
 
 function bind() {
-  document.querySelectorAll('.card').forEach(cardEl => {
+  document.querySelectorAll('.kanban-card').forEach(cardEl => {
     const pk = cardEl.dataset.pk;
     cardEl.querySelectorAll('.mv button').forEach(btn => {
       btn.onclick = async () => {
@@ -160,9 +112,6 @@ function bind() {
   });
 }
 
-// 返回应用＝回到发起本页的对话：主界面深链 /?s=<会话id>（数据页的 task_id 就是会话 id，
-// engine 里 1:1），前端启动时消费一次打开该会话。刻意不用 history.back()：多页数据应用里
-// back 退的是上一张数据页——那是「上一页」语义，归顶部「返回导航」管。
 function backToApp() {
   const id = location.pathname.split('/').filter(Boolean)[1];
   location.href = id ? '/?s=' + encodeURIComponent(id) : '/';
