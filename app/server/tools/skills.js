@@ -78,7 +78,7 @@ async function listSkills(ctx) {
 function formatSkillListForPrompt(list) {
   if (!list || !list.length) return '';
   const lines = list.map(s => '- ' + s.name);
-  return '## Available Skills\nInstalled skills (names only). Use the `skill` tool: op=get for its parameters, op=run to execute; op=list gives one-line descriptions when choosing among skills.\n' + lines.join('\n');
+  return '## Available Skills\n' + lines.join('\n');
 }
 
 // ---------- 3.2 skill op=get ----------

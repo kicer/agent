@@ -3,7 +3,7 @@
     "type": "function",
     "function": {
       "name": "db",
-      "description": "Execute operations on the session's SQLite database (data.db in the session working directory). The database file is isolated per session and auto-created on first use. For inserting rows (especially batches), prefer op=insert which avoids writing SQL by hand; use exec/query for DDL, updates, deletes and complex SQL.\n\nop=exec     需要 sql（params 可选）。\nop=query    需要 sql（params 可选）。\nop=insert   需要 table 和 rows（行对象数组，单行也要包成数组）。\nop=tables   无参数。\nop=schema   需要 table。",
+      "description": "Execute operations on the session's SQLite database (data.db in the session working directory). The database file is isolated per session and auto-created on first use. For inserting rows (especially batches), prefer op=insert which avoids writing SQL by hand; use exec/query for DDL, updates, deletes and complex SQL.",
       "parameters": {
         "type": "object",
         "required": ["op"],
@@ -11,7 +11,7 @@
           "op": {
             "type": "string",
             "enum": ["exec", "query", "insert", "tables", "schema"],
-            "description": "Operation type:\n- exec: run a write statement (CREATE / INSERT / UPDATE / DELETE / ALTER / DROP), in a transaction\n- query: run a read statement (SELECT), returns an array of rows\n- insert: insert one or more rows from row objects (structured, no SQL needed, one transaction)\n- tables: list all tables with row counts\n- schema: show column definitions for a table"
+            "description": "Operation type:\n- exec: run a write statement (CREATE / UPDATE / DELETE / ALTER / DROP), in a transaction\n- query: run a read statement (SELECT), returns an array of rows\n- insert: insert one or more rows from row objects (structured, no SQL needed, one transaction)\n- tables: list all tables with row counts\n- schema: show column definitions for a table"
           },
           "sql": {
             "type": "string",
@@ -254,8 +254,7 @@
     "type": "function",
     "function": {
       "name": "lab",
-      "description": "Unified entry point for all available tools (a meta tool; only present for profiles that opt in).\n\nCall a tool:\n  lab(tool: \"<name>\", args: {<arguments>})\n\nThe target tool's arguments go inside `args` as a JSON object. Omit `args` for tools that take no arguments.\n\nDiscovering tools:\n  lab(tool: \"help\")                          → list all tools with a one-line description each\n  lab(tool: \"help\", args: {tool: \"<name>\"})  → full description and parameter schema of <name>\n\nAn unknown tool name also returns the list of available tools.\nNested lab calls are rejected; inner tool errors surface unchanged.\n\nPrefer calling a tool directly when its name and parameters are clear from the task. Use \"help\" when unsure — it costs one extra round-trip.",
-      "parameters": {
+      "description": "Unified entry point for calling any available tool by name.\n\nCall a tool:\n  lab(tool: \"<name>\", args: {<arguments>})\n\nThe target tool's arguments go inside `args` as a JSON object. Omit `args` for tools that take no arguments.\n\nDiscovering tools:\n  lab(tool: \"help\")                          → list all tools with a one-line description each\n  lab(tool: \"help\", args: {tool: \"<name>\"})  → full description and parameter schema of <name>\n\nAn unknown tool name also returns the list of available tools.\nNested lab calls are rejected; inner tool errors surface unchanged.\n\nCalling a tool directly and calling it through lab are equivalent. When the tool you need is already in your tool list, call it directly. Use lab to discover or reach tools that are not in the current list.",      "parameters": {
         "type": "object",
         "required": ["tool"],
         "properties": {

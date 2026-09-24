@@ -54,12 +54,12 @@ function setProfilePrompts(map) {
 let _promptTextCache = new Map(); // 'profile\u0000lang' -> text
 
 // “可用技能”段落（skills.formatSkillListForPrompt）：启动时快照（server.js）与技能变更后
-//（routes/skills.js）经 setSkillListText 更新。插入位置由模板内的 {APP_SKILLS} 占位符决定
+//（routes/skills.js）经 setSkillListText 更新。插入位置由模板内的 {APP_SKILLS_SECTION} 占位符决定
 //（拼在技能规则旁边，模型一眼看到清单，不再盲猜尾部多出来的孤儿段落）：
 // - 模板含占位符 → 就地替换（默认模板与自定义 prompt 同机制）；
 // - 默认模板没占位符 → 兑底尾拼（兼容手改模板时删掉了占位行）；自定义 prompt 没占位符 → 无技能段（完全接管）。
 // 仅技能增删/描述变化时更新，否则进程内恒定，不破坏前缀缓存。
-const APP_SKILLS_TOKEN = '{APP_SKILLS}';
+const APP_SKILLS_TOKEN = '{APP_SKILLS_SECTION}';
 let SKILL_LIST_TEXT = '';
 function setSkillListText(text) {
   SKILL_LIST_TEXT = text || '';
