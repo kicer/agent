@@ -250,7 +250,6 @@
     const ctx = () => tok === setTok && setTop() === p; // 异步回包时页面可能已切走
     if (p === 'home') return setPageHome(ctx);
     if (p === 'account') return setPageAccount(ctx);
-    if (p === 'profile') return setPageProfile(ctx);
     if (p === 'service') return setPageService(ctx);
     if (p === 'cfg-editor') return setPageCfgEditor(ctx);
     if (p === 'skills') return setPageSkills(ctx);
@@ -339,27 +338,19 @@
     setTitle('账户');
     setActions('');
     setBody('<div class="set-scroll"><div class="empty-tip">加载中…</div></div>');
-    // 单个 /api/me 即可判认证开关:启用认证时中间件保证已登录,user 必有;
-    // 未启用时 createAuth 提前返回,该路由不存在 → 404。无需再拉 /api/system/status
-    let me;
-    try {
-      me = await req('GET', '/api/me');
-    } catch (e) {
-      if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">' +
-        (e.status === 404 ? '未启用登录认证,无账户设置。' : '加载失败:' + esc(e.message)) + '</div></div>');
-      return;
-    }
+    // 单个 /api/me 判认证开关:启用时中间件保证已登录,user 必有;
+    // 未启用时该路由 404 → 只是没有密码/登出卡,画像仍渲染(未认证 = 空串键隐式单用户)。
+    let me = null;
+    try { const r = await req('GET', '/api/me'); if (r && r.user) me = r; } catch (_) { /* 404 等一律按无账户信息处理 */ }
+    let p = null, pErr = '';
+    try { p = await req('GET', '/api/profile'); } catch (e) { pErr = String((e && e.message) || e); }
     if (!ctx()) return;
-    if (!me || !me.user) {
-      setBody('<div class="set-scroll"><div class="empty-tip">未启用登录认证,无账户设置。</div></div>');
-      return;
-    }
-    setBody('<div class="set-scroll">' + userCardHtml(me.user) +
-      '<button class="set-card" data-go="profile"><span class="set-ico">' +
-      '<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="8" cy="11" r="2"></circle><path d="M5.5 16.5c0-1.8 1.2-2.8 2.5-2.8s2.5 1 2.5 2.8"></path><line x1="14" y1="10" x2="18" y2="10"></line><line x1="14" y1="14" x2="18" y2="14"></line></svg>' +
-      '</span><span class="set-tt"><span class="set-name">用户画像</span><span class="set-desc">称谓 · 行业 · 偏好 · 开关</span></span>' +
-      '<svg class="ic sm set-arrow" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg></button>' +
-      '</div>');
+    let html = '<div class="set-scroll">';
+    if (me) html += userCardHtml(me.user);
+    html += pErr
+      ? '<div class="settings-card"><h4>用户画像</h4><div class="empty-tip">加载失败:' + esc(pErr) + '</div></div>'
+      : profileCardHtml(p);
+    setBody(html + '</div>');
   }
   async function changePassword() {
     try {
@@ -370,21 +361,14 @@
       toast('密码已修改,立即生效');
     } catch (e) { toast('修改失败:' + e.message); }
   }
-  // ---------- 页:用户画像(三字段 + 总开关;「近期关注」注入时现取会话标题,不展示不维护) ----------
+  // ---------- 页:账户——用户画像编辑卡直接渲染在账户页(无二级页;保存后 renderSetPage 重拉刷新停用徽标) ----------
   const PROFILE_FIELDS = [
     ['honorific', '称谓', '希望被怎么称呼'],
     ['industry', '行业', '影响术语与默认假设'],
     ['preference', '偏好', '语言 / 交付格式等输出要求'],
   ];
-  async function setPageProfile(ctx) {
-    setTitle('用户画像');
-    setActions('');
-    setBody('<div class="set-scroll"><div class="empty-tip">加载中…</div></div>');
-    let p;
-    try { p = await req('GET', '/api/profile'); }
-    catch (e) { if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">加载失败:' + esc(e.message) + '</div></div>'); return; }
-    if (!ctx()) return;
-    let html = '<div class="set-scroll"><div class="settings-card"><h4>用户画像' +
+  function profileCardHtml(p) {
+    let html = '<div class="settings-card"><h4>用户画像' +
       (p.enabled === false ? ' <span class="badge held">已停用</span>' : '') + '</h4>' +
       '<div class="cfg-kv"><label>启用</label><input type="checkbox" id="prof-enabled"' + (p.enabled === false ? '' : ' checked') + '></div>';
     for (const [k, name, ph] of PROFILE_FIELDS) {
@@ -394,13 +378,13 @@
     }
     html += '<button class="primary-btn" style="margin-top:8px" onclick="sUI.saveProfile()">保存</button>' +
       '<div class="cfg-note">画像只记「不知道就会做错」的信息，新会话开始时作为背景注入（会话内不更新；清空字段保存即抹除）。' +
-      '停用后不再注入也不再更新，重新启用仅对新会话/清空后的会话生效。近期关注（最近会话标题）自动带入背景，无需维护。</div></div></div>';
-    setBody(html);
+      '停用后不再注入也不再更新，重新启用仅对新会话/清空后的会话生效。近期关注（最近会话标题）自动带入背景，无需维护。</div></div>';
+    return html;
   }
   async function saveProfile() {
     const body = { enabled: $('prof-enabled').checked };
     for (const [k] of PROFILE_FIELDS) { const el = $('prof-' + k); if (el) body[k] = el.value.trim(); }
-    try { await req('PUT', '/api/profile', body); toast('已保存，新会话生效'); }
+    try { await req('PUT', '/api/profile', body); toast('已保存，新会话生效'); renderSetPage(); }
     catch (e) { toast('保存失败:' + e.message); }
   }
 
