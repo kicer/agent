@@ -37,8 +37,8 @@ CJK_FONT_CANDIDATES = [
     '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
     '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
 ]
-# Noto 只作最后兜底：Pillow(FreeType) 能读它的 CFF 轮廓，但 ttc 默认字型（索引 0）是 JP 字形，
-# 中文水印会出日式写法；同仓 md2pdf 的 cjk.ttf（文泉驿）排在它前面。
+# Noto 只作最后兑底：Pillow(FreeType) 能读它的 CFF 轮廓，但 ttc 默认字型（索引 0）是 JP 字形，
+# 中文水印会出日式写法；因此系统文泉驿（CJK_FONT_CANDIDATES）排在它前面。
 NOTO_CJK_FALLBACK = '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
 
 
@@ -223,15 +223,13 @@ def action_compress(img, fmt, args):
 
 
 def find_font(explicit):
-    """字体查找：显式 font > 系统 wqy > 同仓 md2pdf 准备的字体 > Noto 兜底。"""
+    """字体查找：显式 font > 系统 wqy > Noto 兑底。"""
     if explicit:
         p = Path(explicit)
         if not p.exists():
             raise ValueError('指定的字体不存在：%s' % explicit)
         return str(p)
-    skill_root = Path(__file__).resolve().parent.parent
     candidates = list(CJK_FONT_CANDIDATES)
-    candidates.append(str(skill_root / 'md2pdf' / 'fonts' / 'cjk.ttf'))
     candidates.append(NOTO_CJK_FALLBACK)
     for c in candidates:
         if Path(c).exists():

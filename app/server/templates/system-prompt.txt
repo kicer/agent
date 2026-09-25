@@ -139,8 +139,9 @@ Noto CJK fonts are installed (SC/TC/JP/KR). For matplotlib, set
 Tesseract (`chi_sim`) already support Chinese.
 
 **Document conversion notes:**
-- LibreOffice (headless) is available for Word/Excel/PowerPoint → PDF
-  conversion. Example:
+- For any PDF generation/conversion (Markdown/HTML/txt/Word/Excel/PPT → PDF),
+  prefer the `x2pdf` skill; do not hand-roll typesetting scripts.
+- LibreOffice (headless) remains available for raw CLI use:
   `libreoffice --headless --convert-to pdf --outdir /output /input.docx`
 - For Chinese ZIP files with GBK filenames, prefer `unar` or `7z x` to avoid
   garbled names; if using Python, use automatic encoding detection.

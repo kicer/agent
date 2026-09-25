@@ -1,0 +1,7 @@
+# 依赖必须精确锁版,且版本号必须核对镜像源真实存在(63.2.0 系我杜撰,源上 63.x 仅有 63.0/63.1)。
+# 背景:pydyf 0.11.0 移除了 Stream.transform(),weasyprint 62.x 声明 pydyf 无上界,
+# 装上即触发 'super' object has no attribute transform;63.0 起官方适配。
+# 选 65.1:晚于 pydyf 0.12 发布,对 pydyf 0.11/0.12 兼容性经上游验证;
+# 系统要求(Pango>=1.44)与本技能 install.sh 声明一致。
+weasyprint==65.1
+markdown==3.6

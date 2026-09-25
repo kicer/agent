@@ -39,9 +39,10 @@ ENV MPLBACKEND=Agg \
 # util-linux 提供 unshare/mount/umount（隔离 wrapper 必需）；sudo 已刻意不装。
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
     ca-certificates curl git python3 python3-pip python3-venv python3-dev \
-    ripgrep wget jq p7zip-full unzip unar file tree \
+    ripgrep wget jq p7zip-full unzip unar zip file tree \
     libreoffice-writer libreoffice-calc libreoffice-impress \
     fonts-noto-cjk fonts-dejavu fonts-stix \
+    fonts-wqy-microhei fonts-wqy-zenhei \
     poppler-utils qpdf ghostscript imagemagick \
     tesseract-ocr tesseract-ocr-chi-sim \
     ffmpeg sqlite3 libsqlite3-dev \

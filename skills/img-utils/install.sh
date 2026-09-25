@@ -1,13 +1,10 @@
 #!/bin/bash
 set -e
 
-# 确保存在可用的中文字体（watermark 中文水印需要），Pillow 读字体无 reportlab 的 CFF 限制，
+# 确保存在可用的中文字体（watermark 中文水印需要）：Pillow 能读 wqy/Noto 任意字体，
 # 但 NotoSansCJK ttc 的默认字型（索引 0）是 JP，中文水印会出日式字形，
-# 因此就绪判定只认文泉驿（系统 wqy 或同仓 md2pdf 提取的 fonts/cjk.ttf），Noto 仅作兜底。
+# 因此就绪判定优先文泉驿（镜像已预装，缺失时 apt 兑底），Noto 仅作告警兑底。
 # 命中即幂等退出；依赖缓存由 Skill Manager 依据本脚本内容哈希管理。
-
-SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MD2PDF_FONT="$SKILL_DIR/../md2pdf/fonts/cjk.ttf"
 
 has_wqy() {
     for f in /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc \
@@ -22,11 +19,6 @@ if has_wqy; then
     exit 0
 fi
 
-if [ -s "$MD2PDF_FONT" ]; then
-    echo "使用同仓 md2pdf 准备的中文字体：$MD2PDF_FONT"
-    exit 0
-fi
-
 if [ "$(id -u)" -eq 0 ]; then
     echo "未找到中文字体，安装 fonts-wqy-zenhei..."
     # best-effort：apt 失败不直接报错，交给下面的就绪判定兜底
@@ -34,7 +26,7 @@ if [ "$(id -u)" -eq 0 ]; then
     apt-get install -y -qq fonts-wqy-zenhei || true
 fi
 
-if has_wqy || [ -s "$MD2PDF_FONT" ]; then
+if has_wqy; then
     echo "中文字体就绪"
 elif [ -f /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc ]; then
     # Noto 兜底：中文能显示，只是默认字型偏日式；不算失败
