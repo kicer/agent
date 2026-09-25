@@ -163,6 +163,9 @@ function tick() {
       // 顺序不可调换：先存档、后投递。postUserMessage 的 held/空闲分支会同步起 runLoop，
       // 存档晚一步，回合就会带着旧上下文开跑。
       archiveHistory(db, t.session_id);
+      // 无人值守的是执行型任务：投递前强制 phase='executing'——新会话可能还停在 advising，
+      // 顾问 profile 会把半夜的 prompt 当白天聊天「引导澄清并等用户回答」，永远出不了活。
+      db.prepare("UPDATE sessions SET phase='executing', updated_at=? WHERE id=?").run(now, t.session_id);
       const r = deliver(t.session_id, t.prompt);
       db.prepare(
         "UPDATE scheduled_tasks SET last_run_at=?, last_status='running', last_note=NULL, next_run_at=? WHERE session_id=?"

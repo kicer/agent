@@ -96,6 +96,9 @@ const DEFAULTS = {
   tools_deny: ['lab'],
   // 模型 profile（prompt + tools 名单组合）：platforms 里的模型用 profile: <名> 引用。
   model_profiles: {
+    // advising：顾问阶段（sessions.phase）专用组合——不由模型配置引用，而是 resolveProfileName 在
+    // advising 时强制命中：只留问答/调研/写任务书所需工具（terminal 不进名单），配专用顾问提示词模板。
+    advising: { tools_allow: ['read_file', 'fetch', 'write_file'], system_prompt_file: 'advising-system.txt' },
     // lab：统一入口元工具自测组合——tools 收缩到 1 个，其余能力经 lab(help) 现场发现。
     // tools_deny 必须显式清空：不配 = 继承全局 ['lab']，deny 后叠加会把 lab 自己禁掉 → 零工具。
     lab: { tools_allow: ['lab'], tools_deny: [], system_prompt_file: 'lab-system.txt' },

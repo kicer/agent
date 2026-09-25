@@ -106,9 +106,8 @@ router.get('/status', wrap((req, res) => {
     sys: { mem: collectMem(), cpu: collectCpu(), disks: collectDisks(cfg) },
     auth_enabled: !!(cfg.auth && cfg.auth.users && cfg.auth.users.length),
     running_sessions: engine.activeRuns(),
-    // 可用的 prompt+tools 组合名（config.yml 顶层 model_profiles）：前端模式选择器据此渲染；
-    // 切换 = 发消息时带 profile 参数（见 routes/messages.js），纯内存选择，不碰配置不重启。
-    model_profiles: Object.keys((engine.getConfig() || {}).model_profiles || {}),
+    // 曾有的 model_profiles 可用名单字段已删：前端手动切换模式入口全部移除，名单再无消费方
+    //（组合只经模型配置 profile: <名> 引用，或 advising 阶段强制命中，见 engine.resolveProfileName）。
     // 前端上传预处理参数（大图压缩阈值/尺寸/质量、大文件确认阈值），避免前端写死
     upload: cfg.upload || {},
   });

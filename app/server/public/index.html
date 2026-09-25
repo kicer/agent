@@ -54,7 +54,7 @@
       /* 状态栏「压缩」图标按钮：主操作色（蓝色），与其他 stop-link 区分（终止/选择模型是灰） */
       .stop-link.icon-only.icon-primary { color: var(--active); }
       .stop-link.icon-only.icon-primary:hover { color: #2854d6; }
-      /* 推到 phase-bar 最右侧（独立动作，与左侧状态区分；「选择模型/模式」与压缩同列右靠） */
+      /* 推到 phase-bar 最右侧（独立动作，与左侧状态区分；「选择模型」与压缩同列右靠） */
       .phase-bar .phase-bar-right { margin-left: auto; }
       /* 定时任务状态条：整条可点，弹详情窗（改频次/提示词、删除；创建走 AI 的 schedule 工具），紫色调区别于状态栏；
          左侧 3px 竖条与侧边栏定时任务会话的紫色标记同一语义。
@@ -88,16 +88,10 @@
         margin-bottom: 10px; background: #fff; color: var(--ink); resize: vertical;
       }
       #schedule-modal textarea:focus { border-color: var(--active); }
-      /* 会话模式徽标（profile 绑定时的标题小图标；尺寸显式定，不依赖 .ic 默认值） */
+      /* 会话阶段徽标（advising 顾问态的标题小图标；executing 不显；尺寸显式定，不依赖 .ic 默认值） */
       .prof-badge { display: inline-flex; align-items: center; margin-right: 4px; opacity: .62; flex: none; }
-      .prof-badge .ic { width: 13px; height: 13px; }
-      /* 模式徽标统一用主题蓝（lab/zero 同色，靠形状区分） */
-      .prof-badge.prof-lab .ic, .prof-badge.prof-zero .ic { color: var(--active); }
-      /* 弹窗模式行：下拉选中（取代纵向选项组，省垂直空间） */
-      .msw-prof { display: flex; align-items: center; gap: 6px; padding: 10px 12px; font-size: 13px; color: var(--ink); border-top: 1px solid #dde1ea; }
-      .msw-prof-label { flex: none; line-height: 30px; }
-      .msw-prof select { flex: 1; min-width: 0; height: 30px; box-sizing: border-box; border: 1px solid #dde1ea; border-radius: 8px; padding: 0 8px; font-size: 13px; line-height: 28px; background: #fff; color: var(--ink); }
-      /* welcome 头像兼做「选择模型/模式」入口（与聊天态的「选择模型」同一弹窗） */
+      .prof-badge .ic { width: 13px; height: 13px; color: var(--active); }
+      /* welcome 头像兼做「选择模型」入口（与聊天态的「选择模型」同一弹窗） */
       .logo-badge { cursor: pointer; }
     </style>
   <script>
@@ -129,7 +123,7 @@
     <div id="phase-bar" class="phase-bar hidden">
       <span class="status-pill" id="status-pill">--</span>
       <button class="stop-link hidden" id="stop-btn" onclick="stopSession()">终止</button>
-      <button class="stop-link hidden phase-bar-right" id="model-switch-btn" onclick="openModelSwitch()">选择模型/模式</button>
+      <button class="stop-link hidden phase-bar-right" id="model-switch-btn" onclick="openModelSwitch()">选择模型</button>
       <button class="stop-link icon-only icon-primary phase-bar-right hidden" id="compress-btn" title="压缩上下文" aria-label="压缩上下文" onclick="summarizeChat()">
         <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path></svg>
       </button>
@@ -142,7 +136,7 @@
       <!-- ================= 未对话状态:欢迎页 ================= -->
       <section id="welcome-view">
         <div class="welcome-head">
-          <div class="logo-badge" onclick="openModelSwitch()" title="选择模型/模式" role="button" aria-label="选择模型与模式">
+          <div class="logo-badge" onclick="openModelSwitch()" title="选择模型" role="button" aria-label="选择模型">
             <svg class="ic" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"></rect><line x1="12" y1="4" x2="12" y2="8"></line><circle cx="12" cy="3" r="1.4"></circle><circle cx="9" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><circle cx="15" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><line x1="9.5" y1="17" x2="14.5" y2="17"></line></svg>
           </div>
           <div class="welcome-slogan">随时开始吧</div>

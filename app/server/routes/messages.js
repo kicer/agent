@@ -21,13 +21,7 @@ router.post('/:id/messages', wrap((req, res) => {
   if (!content) return res.status(400).json({ error: 'content 不能为空' });
   // deepThink：是否启用模型该「深度思考」参数（thinking_params 合并进上游请求体）
   const deepThink = !!(req.body && req.body.deepThink);
-  // profile：本轮 prompt+tools 组合（config.yml 顶层 model_profiles 的名字；保留值 'default' = 显式全量（仍受全局 tools_deny 屏蔽）；
-  // 不传 = 随模型配置的 profile）。名字不存在直接 400 打回，不静默回退（难排查）。
-  const profile = String((req.body && req.body.profile) || '').trim();
-  if (profile && profile !== 'default' && !engine.hasModelProfile(profile)) {
-    return res.status(400).json({ error: 'profile 不存在：' + profile + '（可选：' + Object.keys(engine.getConfig().model_profiles || {}).join(', ') + '）' });
-  }
-  const r = engine.postUserMessage(req.params.id, content, { deepThink, profile });
+  const r = engine.postUserMessage(req.params.id, content, { deepThink });
   log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
       content.slice(0, 60).replace(/\s+/g, ' '));
   res.json(r);

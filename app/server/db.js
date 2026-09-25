@@ -14,7 +14,7 @@ function initDb(dbPath) {
       id TEXT PRIMARY KEY,
       title TEXT DEFAULT '',
       status TEXT NOT NULL,
-      phase TEXT NOT NULL DEFAULT 'planning',
+      phase TEXT NOT NULL DEFAULT 'advising',
       model_id TEXT,
       last_model_id TEXT,
       assistant_type TEXT DEFAULT 'secretary',
@@ -143,11 +143,16 @@ function initDb(dbPath) {
   if (!cols.some(c => c.name === 'user')) {
     db.exec("ALTER TABLE sessions ADD COLUMN user TEXT DEFAULT ''");
   }
-  // 迁移：profile 记会话绑定的 prompt+tools 组合名（config.yml 顶层 model_profiles；''=随模型配置）。
-  // 选取优先级见 engine.resolveProfileName，切换入口见 routes/sessions.js bind 路由（弹窗「模式」区）。
+  // 迁移：profile 曾记会话绑定的 prompt+tools 组合名（bind 弹窗「模式」区）。已废弃：
+  // 前端手动切换模式全部移除，profile 选取收敛为「phase 强制 + 模型配置默认」两档（见 engine.resolveProfileName）；
+  // 列保留（SQLite 删列不值得），代码不再读写。
   if (!cols.some(c => c.name === 'profile')) {
     db.exec("ALTER TABLE sessions ADD COLUMN profile TEXT DEFAULT ''");
   }
+  // 迁移：phase 语义重定义为 advising（顾问：澄清需求/规划）/ executing（执行）。
+  // 存量会话（旧值 planning/NULL）统一回填 executing——它们都有历史，行为与改造前一致、零打扰；
+  // 只有新建会话进 advising（createSession 显式写入）。幂等，每次启动一条廉价 UPDATE。
+  db.exec("UPDATE sessions SET phase='executing' WHERE phase IS NULL OR phase NOT IN ('advising','executing')");
   return db;
 }
 

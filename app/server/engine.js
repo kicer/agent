@@ -241,15 +241,13 @@ function registerProfilePrompts() {
   setProfilePrompts(map);
 }
 
-// 本轮生效的 profile 名：每消息参数（run.profile，与 deepThink 同约定：每轮迭代取最新值）
-// > 会话绑定（sessions.profile，弹窗「模式」区写入，跨回合/刷新持久）> 模型配置默认（cfg.models[].profile）
-// > ''（默认全量）。保留值 'default' 归一为 ''（显式摆脱模型默认组合；无 profile 模型下二者等效）。
-function resolveProfileName(session, run) {
-  const manual = run && String(run.profile || '').trim();
-  if (manual) return manual === 'default' ? '' : manual;
-  const bound = String((session && session.profile) || '').trim();
-  if (bound) return bound === 'default' ? '' : bound;
-  const m = session.model_id && (cfg.models || []).find(x => x.id === session.model_id);
+// 本轮生效的 profile 名（两档）：advising 阶段强制命中内置 'advising' 组合（顾问只该看到顾问的工具）；
+// 否则 = 模型配置默认（cfg.models[].profile）> ''（默认全量）。
+// 运行期手动切换已全部移除（消息级 profile 参数、sessions.profile 会话绑定均已废弃），
+// 顾问/执行的节奏由 sessions.phase 单一状态机控制，见 enterExecuting / archiveTaskBrief。
+function resolveProfileName(session) {
+  if (session && session.phase === 'advising') return 'advising';
+  const m = session && session.model_id && (cfg.models || []).find(x => x.id === session.model_id);
   return m && m.profile ? String(m.profile) : '';
 }
 
@@ -274,8 +272,75 @@ function effectiveTools(profileName) {
   return out;
 }
 
-function hasModelProfile(name) {
-  return !!(name && cfg.model_profiles && cfg.model_profiles[String(name)]);
+// ---------- 阶段（sessions.phase：advising 顾问 / executing 执行） ----------
+// advising：新建会话与「清空」的落点。profile 被 resolveProfileName 强制为 'advising'，
+// 只问答/判意图/引导澄清；唯一出口是 write_file/edit_file 把任务书 task.md 落在任务目录根（正门判定）。
+// executing：一路走到底，只有清空才回 advising；压缩不碰 phase（压完仍回原模式）。
+
+// 写类工具（write_file/edit_file）的参数是否恰好落在任务目录根的 task.md——阶段切换的正门判定。
+// resolveInTask 统一解相对/绝对路径并拦越界；子目录 task.md 不算。
+// 不扫文件存在性：用户随时上传同名素材不算承诺，只有 AI 亲自写一次才算（上传也永远覆盖不了
+// task.md：files.js 同名自动加后缀）。
+function argsHitTaskBrief(taskDir, args) {
+  try {
+    const abs = path.resolve(resolveInTask(taskDir, String((args && args.path) || '')));
+    return abs === path.resolve(taskDir, 'task.md');
+  } catch (_) { return false; }
+}
+
+// advising → executing：任务书落地，当场重建上下文——
+// 全部历史标 archived（UI 照常展示、不再发模型，与压缩/定时投递同机制），
+// 插一条 type='task_brief' 的 user 行（内容 = 此刻 task.md 磁盘快照，非引用：后续文件怎么改都不动锚点）
+// 作为执行阶段唯一上下文起点；runLoopInner 下一迭代重读历史 + 重解 profile，天然已在执行态，AI 同回合开工。
+// 幂等：phase 已是 executing 直接返回（执行中再改 task.md 只是普通文件编辑，不重存档、不重插快照）。
+function enterExecuting(sessionId) {
+  const session = getSession(sessionId);
+  if (!session || session.phase !== 'advising') return;
+  const briefPath = path.join(taskDirOf(sessionId), 'task.md');
+  let snapshot;
+  try {
+    snapshot = fs.readFileSync(briefPath, 'utf8');
+  } catch (e) {
+    log.warn('engine', sessionId + ' 阶段切换放弃：读不回 task.md — ' + (e && e.message || e));
+    return;
+  }
+  if (!snapshot.trim()) return; // 空任务书不构成承诺，继续留在顾问模式
+  const n = db.prepare(
+    "UPDATE messages SET type = 'archived' WHERE session_id = ? AND (type IS NULL OR type != 'archived')"
+  ).run(sessionId).changes;
+  saveMessage(sessionId, {
+    role: 'user', type: 'task_brief',
+    content: '【任务书】需求澄清完毕，会话已进入执行模式。以下任务书快照（task.md）是唯一目标依据；'
+      + '之前的顾问对话已存档、不再发送。执行中可修订 task.md（以文件现状为准）；'
+      + '上一轮任务书归档在 .task-history/，仅限用户明确要求时查阅。\n\n' + snapshot,
+  });
+  db.prepare("UPDATE sessions SET phase='executing', updated_at=? WHERE id=?").run(now(), sessionId);
+  bus.emit(sessionId, 'phase', { phase: 'executing' });
+  emitStatus(sessionId);
+  log.info('engine', sessionId + ' advising → executing：task.md 落地，存档 ' + n + ' 条消息，上下文重建为任务书快照');
+}
+
+// 清空即回 advising：上一轮任务书 mv 进 .task-history/（带时间戳名，撞名再加 -N，同上传风格），
+// 防旧约定污染新一轮规划。点前缀目录在文件列表默认隐藏（同 .imgcache 约定），AI/用户显式请求可查；
+// 同步清掉 files 元数据表的 task.md 行（列表读磁盘不读表，清行只为不留孤儿记录）。
+function archiveTaskBrief(sessionId) {
+  try {
+    const dir = taskDirOf(sessionId);
+    const src = path.join(dir, 'task.md');
+    if (!fs.existsSync(src)) return;
+    const hist = path.join(dir, '.task-history');
+    fs.mkdirSync(hist, { recursive: true });
+    const d = new Date();
+    const pad = x => String(x).padStart(2, '0');
+    const stamp = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+    let dest = path.join(hist, 'task-' + stamp + '.md');
+    for (let i = 1; fs.existsSync(dest); i++) dest = path.join(hist, 'task-' + stamp + '-' + i + '.md');
+    fs.renameSync(src, dest);
+    db.prepare("DELETE FROM files WHERE session_id = ? AND filename = 'task.md'").run(sessionId);
+    log.info('task', sessionId + ' 旧任务书归档 → ' + path.relative(dir, dest));
+  } catch (e) {
+    log.warn('task', sessionId + ' 旧任务书归档失败：' + (e && e.message || e));
+  }
 }
 
 function enqueue(sessionId) {
@@ -330,17 +395,7 @@ function bindToSession(sessionId, modelId) {
   return { ok: true, model_id: want };
 }
 
-// 会话级 profile 绑定（bind 弹窗「模式」区）：''=解绑回随模型配置；保留值 'default' 归一为 ''。
-// 不设会话状态门槛——模式是每轮选择，切换下一轮迭代/下条消息即生效；不碰模型槽位占用。
-// 名字存在性由路由校验（hasModelProfile，与 messages 路由同款 400），这里只管落库。
-function setSessionProfile(sessionId, profile) {
-  const s = getSession(sessionId);
-  if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
-  const name = profile === 'default' ? '' : String(profile || '').trim();
-  db.prepare('UPDATE sessions SET profile = ?, updated_at = ? WHERE id = ?').run(name, now(), sessionId);
-  log.info('model', sessionId + ' 会话模式绑定 → ' + (name || '默认(随模型配置)'));
-  return name;
-}
+
 
 // 是否还有待回应的新用户消息（最后一条非 tool 消息是 user）。
 function hasPendingUser(sessionId) {
@@ -593,7 +648,7 @@ async function runLoopInner(sessionId, run) {
     const compressing = !!run.summarizing;
     // profile（prompt+tools 组合）：每迭代现解，前端切模式后下一个请求即生效；
     // 压缩回合同样跟随（小模型会话点「压缩」若回退默认大模板，当场撑爆）。
-    const profileName = resolveProfileName(session, run);
+    const profileName = resolveProfileName(session);
     const messages = compressing
       ? compressMessages(session, (cfg.agent || {}).language, mintImageUrl, profileName)
       : buildMessages(session, (cfg.agent || {}).language, mintImageUrl, profileName);
@@ -703,6 +758,7 @@ async function runLoopInner(sessionId, run) {
 
     // 执行工具
     const vision = modelVision(session);
+    let taskBriefWritten = false; // 本批工具里是否有「正门落 task.md」（批量跑完统一切换，见循环尾注释）
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
       const id = tc.id;
@@ -755,7 +811,15 @@ async function runLoopInner(sessionId, run) {
         image_url: imageRel ? '/api/sessions/' + encodeURIComponent(sessionId) + '/files/download?path=' + encodeURIComponent(imageRel) : undefined,
         msg_id: toolMsgId,
       });
+      // 阶段切换正门：advising 回合里 write_file/edit_file 成功且路径恰为根 task.md → 标记待切换。
+      // 不在这里就地切：同批可能还有其它 tool_calls，其父 assistant 行若先被存档、
+      // 后落库的回执就成了无主孤儿行（上游拒收）——整批跑完再统一重建上下文。
+      if (!isError && (tc.function.name === 'write_file' || tc.function.name === 'edit_file')
+          && argsHitTaskBrief(taskDirOf(sessionId), chk.args)) {
+        taskBriefWritten = true;
+      }
     }
+    if (taskBriefWritten) enterExecuting(sessionId);
     iter++;
   }
   if (iter >= maxIter && !run.cancelled) {
@@ -927,8 +991,9 @@ function createSession(title, preferModelId, assistantType, user) {
   const dir = taskDirOf(id);
   fs.mkdirSync(dir, { recursive: true });
   db.prepare(
-    "INSERT INTO sessions (id, title, status, phase, model_id, assistant_type, user, created_at, updated_at) VALUES (?,?,'queued','planning',NULL,?,?,?,?)"
+    "INSERT INTO sessions (id, title, status, phase, model_id, assistant_type, user, created_at, updated_at) VALUES (?,?,'queued','advising',NULL,?,?,?,?)"
   ).run(id, title || '', assistantType || 'secretary', user || '', now(), now());
+  // 新会话一律落 advising（顾问模式）：先聊天判意图，任务书 task.md 落地才转 executing（见 enterExecuting）
   // 指定了模型且其平台恰好有空闲 key → 直接绑定，跳过排队；否则回退到 FIFO 队列
   const prefer = preferModelId && platformModels(platformOf(preferModelId)).includes(preferModelId)
     ? freeKeyOf(platformOf(preferModelId))
@@ -947,18 +1012,16 @@ function createSession(title, preferModelId, assistantType, user) {
   return session;
 }
 
-// 用户消息（或“开始执行”的模板消息）入口。
-// opts.deepThink: true 时启用深度思考；opts.profile: 本轮 prompt+tools 组合名（model_profiles，
-// 空 = 随模型配置，'default' = 显式全量）；参数都记在会话 run 上，
-// 正在跑的回合下一轮迭代会取到最新值。新建会话需在 runLoop 之前先预建 run 以携带该值。
+// 用户消息入口。
+// opts.deepThink: true 时启用模型该「深度思考」参数（记在会话 run 上，正在跑的回合下一轮迭代会取到最新值）。
+// 新建会话需在 runLoop 之前先预建 run 以携带该值。
 function postUserMessage(sessionId, content, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   const messageId = saveMessage(sessionId, { role: 'user', content });
-    // 预建/更新 run 记录，记下本轮的 deepThink/profile（被 runLoop / callModel 读取）
+    // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
     const run = getRun(sessionId, true);
     run.deepThink = !!(opts && opts.deepThink);
-    run.profile = String((opts && opts.profile) || '').trim();
     // 真实用户消息到达：若还有个「已排队但尚未开跑」的压缩回合（见 summarizeContext），
     // 让它作废，避免新消息被误当成压缩回合处理；已在跑（looping）的不动，
     // 由其收尾时自行清空 summarizing。
@@ -1142,6 +1205,8 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
 // 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件。
 // 状态收尾为 completed（释放模型占用、移出等待队列）；此后再次发言从零开始，
 // 不再携带旧历史。执行中的会话不允许清空，需先「终止」。
+// 阶段语义：清空是 executing 唯一回头路——回到 advising 重新规划（单会话只解决一个问题），
+// 旧任务书 mv 进 .task-history/ 防污染（archiveTaskBrief）；压缩不碰 phase，不在此列。
 function clearSessionMessages(sessionId) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -1158,12 +1223,14 @@ function clearSessionMessages(sessionId) {
   dequeue(sessionId);
   releaseModel(sessionId);
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+  archiveTaskBrief(sessionId); // 旧任务书先归档（mv），新一轮 advising 不会被上一问题的约定污染
   autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
   // 标题随历史一并清零：旧标题描述的是已删除的对话，留着会让新对话文不对题；
   // 新一轮交互结束后 maybeGenerateTitle 见 title 为空会自动重新生成。
-  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null, title: null });
+  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null, title: null, phase: 'advising' });
   bus.emit(sessionId, 'done', { status: 'completed' });
   bus.emit(sessionId, 'title', { title: null }); // 供其他打开同一会话的窗口同步清掉旧标题
+  bus.emit(sessionId, 'phase', { phase: 'advising' });
   emitStatus(sessionId);
   dispatchQueued();
   return { ok: true };
@@ -1249,8 +1316,6 @@ module.exports = {
   modelUsageStats,
   dispatchQueued,
   bindToSession,
-  setSessionProfile,
   TOOL_DEFINITIONS,
   effectiveTools,
-  hasModelProfile,
 };

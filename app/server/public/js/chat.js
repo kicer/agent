@@ -329,7 +329,7 @@
     const s = detail.session;
     state.sessionTitle = (s && s.title) || '';
     state.sessionType = (s && s.assistant_type) || 'secretary'; // 顶部 icon 跟随会话类型
-    state.profile = (s && s.profile) || ''; // 会话绑定模式（头部徽标/弹窗当前态同源）
+    state.phase = s && s.phase || ''; // 会话阶段（advising/executing）：头部徽标与 SSE status/phase 事件同源
     state.status = (s && s.status) || '';
     state.schedule = detail.schedule || null; // 定时任务状态条数据（随 updatePhaseBar 一并渲染）
     state.toolCards = {};

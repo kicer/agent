@@ -226,26 +226,14 @@ router.get('/:id', wrap((req, res) => {
 // 按需加载单条消息的完整内容（用于 tool 消息的懒加载）
 router.get('/:id/messages/:mid', wrap(getMessage));
 
-// 一路由双语义（弹窗内模型/模式两套选择共用）：model_id=手动占模型（仅已结版/已终止，见 bindToSession）；
-// profile=会话模式绑定（任意状态，''解绑，'default' 归一为 ''）。各传各的，同传先模式后模型。
+// 手动占用空闲模型（仅已结版/已终止可绑，见 bindToSession）：状态栏「选择模型」弹窗发起。
+// 曾有的 profile 会话模式绑定已废弃：profile 只由「阶段强制 + 模型配置默认」决定（见 engine.resolveProfileName）。
 router.post('/:id/bind', wrap((req, res) => {
-  const body = req.body || {};
-  let prof;
-  if (body.profile !== undefined && body.profile !== null) {
-    const p = String(body.profile).trim();
-    if (p && p !== 'default' && !engine.hasModelProfile(p)) {
-      throw Object.assign(new Error('profile 不存在：' + p + '（可选：' + Object.keys(engine.getConfig().model_profiles || {}).join(', ') + '）'), { status_code: 400 });
-    }
-    prof = engine.setSessionProfile(req.params.id, p);
-  }
-  const mid = body.model_id;
+  const mid = (req.body || {}).model_id;
   if (mid === undefined || mid === null || String(mid).trim() === '') {
-    if (prof === undefined) throw Object.assign(new Error('model_id / profile 至少传一项'), { status_code: 400 });
-    return res.json({ ok: true, profile: prof });
+    throw Object.assign(new Error('model_id 不能为空'), { status_code: 400 });
   }
-  const r = engine.bindToSession(req.params.id, mid);
-  if (prof !== undefined) r.profile = prof;
-  res.json(r);
+  res.json(engine.bindToSession(req.params.id, mid));
 }));
 
 router.patch('/:id', wrap((req, res) => {

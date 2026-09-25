@@ -157,9 +157,8 @@
     mode: 'secretary',          // 新建会话默认助手类型（欢迎页已去掉模式切换，不再可变）
     sessionType: 'secretary',   // 当前会话的助手类型（建档时锁定，后续不随模式切换变更）
     deepThink: false,           // 深度思考开关(仅本地视觉状态,无后端参数)
-    profile: '',                // 当前会话绑定模式（sessions.profile；''=默认随模型；弹窗「模式」区切换）
+    phase: '',                  // 当前会话阶段（sessions.phase: advising=顾问 / executing=执行；徽标据此渲染）
     pendingModel: '',           // welcome 预选模型（ensureSession 建档时透传 model_id）
-    pendingProfile: '',         // welcome 预选模式（ensureSession 建会话后立即 bind）
     sessionId: null,            // 当前会话
     sessionTitle: '',           // 当前会话标题
     status: '',                 // 当前会话状态(SSE 更新)
@@ -198,29 +197,31 @@
       updateScrollBottomBtn();
     }
 
-  // ---------- 会话模式徽标 ----------
-  // 会话绑定 profile 时仅头部标题前显示小图标（抽屉列表不显，避免画蛇添足）：''=默认不显示；
-  // 颜色统一 --active（CSS .prof-*），靠形状区分；未知名兑底圆点；tooltip 提示当前模式，不另显文字。
-  const PROFILE_BADGES = {
-    lab: '<svg viewBox="0 0 24 24" class="ic"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M10 2v6.6L4.8 18.5a1.8 1.8 0 0 0 1.6 2.7h11.2a1.8 1.8 0 0 0 1.6-2.7L14 8.6V2"/><line x1="8.5" y1="2" x2="15.5" y2="2"/></svg>',
-    zero: '<svg viewBox="0 0 24 24" class="ic"><circle fill="none" stroke="currentColor" stroke-width="1.8" cx="12" cy="12" r="9"/><line stroke="currentColor" stroke-width="1.8" stroke-linecap="round" x1="8" y1="12" x2="16" y2="12"/></svg>',
+  // ---------- 会话阶段徽标 ----------
+  // 头部标题前小图标：advising（顾问：澄清需求/规划）才显示（tooltip 说明），
+  // executing 是主干状态不显示、减噪。原 profile 模式徽标机位改造而来（手动切换模式已移除）。
+  const PHASE_BADGES = {
+    advising: {
+      label: '顾问模式：澄清需求、规划任务；写定任务书后自动开始执行',
+      icon: '<svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2h5c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg>',
+    },
   };
-  function profileBadgeHtml(p) {
-    if (!p) return '';
-    return '<span class="prof-badge prof-' + esc(p) + '" title="当前模式：' + esc(p) + '">' +
-      (PROFILE_BADGES[p] || '<svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>') + '</span>';
+  function phaseBadgeHtml(p) {
+    const b = PHASE_BADGES[p];
+    if (!b) return '';
+    return '<span class="prof-badge phase-' + esc(p) + '" title="' + esc(b.label) + '">' + b.icon + '</span>';
   }
 
   function renderHeader() {
     const c = $('header-center');
     // welcome（含刚 newChat）一律清空：newChat 会停在 welcome，不重刷会残留旧会话标题
     if (state.view !== 'chat' || !state.sessionId) { c.innerHTML = ''; return; }
-    // 顶部只显会话模式徽标（助手类型 icon 退位；''=默认不显），颜色按模式区分，tooltip 提示当前模式
+    // 顶部只显会话阶段徽标（advising 才显）+ 标题；助手类型 icon 早已退位
     const title = document.createElement('div');
     title.className = 'header-title';
     title.style.cursor = 'pointer';
     title.title = '点击重命名';
-    title.innerHTML = profileBadgeHtml(state.profile) +
+    title.innerHTML = phaseBadgeHtml(state.phase) +
       '<span class="header-title-text">' + esc(state.sessionTitle || state.sessionId) + '</span>';
     title.addEventListener('click', renameSession); // 点标题重命名(同步 index)
     c.innerHTML = '';

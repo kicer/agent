@@ -78,9 +78,8 @@
         state.sessionId = null;
         state.sessionTitle = '';
         state.sessionType = 'secretary';
-        state.profile = '';
+        state.phase = '';
         state.pendingModel = '';
-        state.pendingProfile = '';
         state.streamEl = null;
         state.streamText = '';
         state.toolCards = {};
@@ -162,7 +161,7 @@
       // 先从抽屉列表缓存取会话类型，让顶部 icon 立即正确；详情回来后由 renderDetail 纠正
       const cached = (state.sessions || []).find(x => x.id === id);
       state.sessionType = (cached && cached.assistant_type) || 'secretary';
-      state.profile = (cached && cached.profile) || ''; // 先从列表缓存取模式徽标，renderDetail 回来后纠正
+      state.phase = (cached && cached.phase) || ''; // 先从列表缓存取阶段徽标，renderDetail 回来后纠正
       state.streamEl = null;
       state.streamText = '';
       state.streamWrap = null;
@@ -191,20 +190,14 @@
   }
 
   // 确保存在当前会话：首条消息自动建档(POST /api/sessions)；助手类型此时锁定，后续不可变更。
-  // welcome 经弹窗预选的模型/模式在这里兑现：model_id 建档透传，pendingProfile 建完会话立即 bind（早于首条消息）。
+  // welcome 经弹窗预选的模型在这里兑现：model_id 建档透传。
   async function ensureSession() {
     if (state.sessionId) return state.sessionId;
     const s = await req('POST', '/api/sessions', { title: '', model_id: state.pendingModel || '', assistant_type: state.mode });
     state.sessionId = s.id;
     state.sessionTitle = (s && s.title) || '';
     state.sessionType = (s && s.assistant_type) || state.mode;
-    if (state.pendingProfile) {
-      try {
-        await req('POST', '/api/sessions/' + s.id + '/bind', { profile: state.pendingProfile });
-      } catch (e) { toast('模式绑定失败：' + e.message); state.profile = ''; }
-    }
     state.pendingModel = '';
-    state.pendingProfile = '';
     setView('chat');
     renderHeader();
     updatePhaseBar();
@@ -221,9 +214,8 @@
     state.sessionType = 'secretary';
     state.status = '';
     state.schedule = null;
-    state.profile = '';
+    state.phase = '';
     state.pendingModel = '';
-    state.pendingProfile = '';
     state.attachments = [];
     state.streamEl = null;
     state.streamText = '';
@@ -431,7 +423,7 @@
     } catch (e) { toast((held ? '断开失败:' : '终止失败:') + e.message); }
   }
   async function openModelSwitch() {
-    // welcome（无会话）也可开：模型/模式选择记为预选项，ensureSession 建档时兑现。有会话则即点即绑，行为与原逻辑一致。
+    // welcome（无会话）也可开：模型选择记为预选项，ensureSession 建档时兑现。有会话则即点即绑，行为与原逻辑一致。
     const list = $('bind-model-list');
     const sub = $('bind-model-sub');
     list.innerHTML = '<div class="empty-tip">加载中…</div>';
@@ -497,33 +489,12 @@
     } catch (e) {
       modelsHtml = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
     }
-    // ---------- 模式行：下拉选中（名单来自 /api/system/status；拉不到 = 整行隐藏，不影响选模型） ----------
-    let profHtml = '';
-    const names = await loadProfileNames();
-    if (names.length) {
-      const cur = state.sessionId ? state.profile : state.pendingProfile;
-      const opts = [''].concat(names).map(p =>
-        '<option value="' + esc(p) + '"' + (p === cur ? ' selected' : '') + '>' + (p ? esc(p) : '默认（随模型配置）') + '</option>').join('');
-      profHtml = '<div class="msw-prof"><span class="msw-prof-label">模式:</span>' +
-        '<select id="bind-prof-select" onchange="chooseProfile(this.value)">' + opts + '</select></div>';
-    }
     // 空闲数并进顶部提示句（原 footer「共 X 个模型可用」不再单独占行）
     if (sub) sub.textContent = (state.sessionId ? '选择一个模型继续当前会话' : '选择一个模型用于新会话')
       + (avail ? '（共 ' + avail + ' 个空闲）' : '');
-    list.innerHTML = modelsHtml + profHtml;
+    list.innerHTML = modelsHtml;
   }
   function closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); }
-
-  // profile 组合名单缓存（组合列表改动需重启才生效，会话级缓存足够）；status 拉失败 = 空名单 → 模式区隐藏。
-  let PROFILE_NAMES = null;
-  async function loadProfileNames() {
-    if (PROFILE_NAMES) return PROFILE_NAMES;
-    try {
-      const s = await req('GET', '/api/system/status');
-      PROFILE_NAMES = Array.isArray(s && s.model_profiles) ? s.model_profiles.slice() : [];
-    } catch (_) { PROFILE_NAMES = []; }
-    return PROFILE_NAMES;
-  }
 
   function choosePendingModel(modelId) { // welcome 无会话：记预选，ensureSession 建档时透传；选完即关窗 + toast，重开弹窗时该行带「预选」标记
     state.pendingModel = modelId;
@@ -531,24 +502,6 @@
     toast('新会话将用 ' + modelId);
   }
 
-  async function chooseProfile(name) { // 下拉选中即绑/即预选；无 toast（头部/抽屉徽标即时变化即反馈），失败回退选项并报错
-    if (state.sessionId) {
-      try {
-        await req('POST', '/api/sessions/' + state.sessionId + '/bind', { profile: name });
-      } catch (e) {
-        const sel = $('bind-prof-select');
-        if (sel) sel.value = state.profile; // 失败回退选项，下拉不谎报
-        return toast('切换失败:' + e.message);
-      }
-      state.profile = name;
-      const row = (state.sessions || []).find(x => x.id === state.sessionId); // 只同步本地缓存保数据一致（抽屉不显模式徽标，无需重画）
-      if (row) row.profile = name;
-    } else {
-      state.pendingProfile = name;
-      state.profile = name;
-    }
-    renderHeader(); // 头部徽标即时变化 = 切换成功的反馈
-  }
   async function bindModel(modelId) {
     if (!state.sessionId) return;
     const id = state.sessionId;
