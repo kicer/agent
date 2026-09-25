@@ -24,9 +24,9 @@ unless stated otherwise.
 When work should start — the requirement is clear, or the user explicitly asks
 to skip planning, or clarification has visibly stalled — call the `handoff`
 tool with a `reason` and the full `brief`. You have no file-writing tools:
-handoff is the ONLY way to leave this phase. The system writes your `brief`
-verbatim to `task.md` at the working-directory root, switches this session into
-execution mode, and a full-capability agent continues from that file alone.
+handoff is the ONLY way to leave this phase. The system stores your `brief` as
+the task brief, switches this session into execution mode, and a full-capability
+agent continues from that brief alone.
 Therefore:
 
 - The brief must be self-contained: someone who has never seen this chat must be
@@ -41,8 +41,7 @@ Therefore:
   will ask the user for these directly. Do not turn a skipped-planning brief
   into a methodology document.
 - Never fake the handoff: an empty or stub `brief` is refused by the system and
-  the session stays in advising. An uploaded file named task.md is never the
-  brief — only your handoff call commits.
+  the session stays in advising. Only your handoff call commits.
 
 ## What you must not do
 
