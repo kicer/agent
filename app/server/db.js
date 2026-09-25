@@ -113,6 +113,16 @@ function initDb(dbPath) {
       created_at INTEGER NOT NULL
     );
 
+    -- 用户画像（user-profile.js）：一行一个登录用户，跨会话共享；未启用认证时为空串键的隐式单用户。
+    -- data = {honorific,industry,preference} JSON（只记「不知道就会做错」的信息，封闭 schema）；
+    -- enabled 用户级开关：关 = 新会话不冻结注入快照、也不再提取更新。
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      user TEXT PRIMARY KEY,
+      data TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
     CREATE INDEX IF NOT EXISTS idx_files_session ON files(session_id);
     CREATE INDEX IF NOT EXISTS idx_model_usage_model_time ON model_usage(model_id, created_at);
@@ -149,6 +159,9 @@ function initDb(dbPath) {
   if (!cols.some(c => c.name === 'profile')) {
     db.exec("ALTER TABLE sessions ADD COLUMN profile TEXT DEFAULT ''");
   }
+  // 迁移：profile_snapshot 存会话创建/清空时冻结的用户画像注入文本（buildMessages 每轮首条 user 注入，
+  // 字节恒定不破坏前缀缓存；不入 messages 表，阶段切换/压缩动不到它，见 user-profile.js）。
+  if (!cols.some(c => c.name === 'profile_snapshot')) db.exec("ALTER TABLE sessions ADD COLUMN profile_snapshot TEXT DEFAULT ''");
   // 迁移：phase 语义重定义为 advising（顾问：澄清需求/规划）/ executing（执行）。
   // 存量会话（旧值 planning/NULL）统一回填 executing——它们都有历史，行为与改造前一致、零打扰；
   // 只有新建会话进 advising（createSession 显式写入）。幂等，每次启动一条廉价 UPDATE。

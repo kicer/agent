@@ -23,6 +23,7 @@
    *   GET    /api/models | GET /api/platforms/balance                     模型·模型池与余额
    *   GET/POST/PUT/DELETE /api/skills[/:name][/file|/upload|/rename]      技能·技能与文件管理
    *   GET    /api/me | POST /api/password | GET /logout                    账户·信息/改密/退出
+   *   GET/PUT /api/profile                                                  账户·用户画像(可见/可改/可关)
    *
    * 后端已有但 v2 尚未接入 UI 的接口(先列出,不实现):
    *   PATCH  /api/sessions/:id                                重命名(后端已支持)

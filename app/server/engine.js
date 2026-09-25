@@ -7,6 +7,7 @@ const { executeTool, resolveInTask } = require('./tools/executor');
 const publicFiles = require('./public-files');
 const mcp = require('./mcp');
 const log = require('./log');
+const profile = require('./user-profile');
 
 const TOOL_DEFINITIONS = require('./tools/definitions.json');
 
@@ -305,6 +306,8 @@ function enterExecuting(sessionId) {
     return;
   }
   if (!snapshot.trim()) return; // 空任务书不构成承诺，继续留在顾问模式
+  // 画像提取的输入：归档前的 advising 轮全量历史（归档后就拿不到了，先抓引用）
+  const adviceRows = loadHistory(sessionId);
   const n = db.prepare(
     "UPDATE messages SET type = 'archived' WHERE session_id = ? AND (type IS NULL OR type != 'archived')"
   ).run(sessionId).changes;
@@ -318,6 +321,8 @@ function enterExecuting(sessionId) {
   bus.emit(sessionId, 'phase', { phase: 'executing' });
   emitStatus(sessionId);
   log.info('engine', sessionId + ' advising → executing：task.md 落地，存档 ' + n + ' 条消息，上下文重建为任务书快照');
+  // 用户画像唯一更新时机：一轮需求尘埃落定时异步提取（fire-and-forget，永不抛出，见 user-profile.js）
+  profile.runExtraction(db, cfg, { sessionId, user: session.user, modelId: session.model_id, historyRows: adviceRows, briefText: snapshot });
 }
 
 // 清空即回 advising：上一轮任务书 mv 进 .task-history/（带时间戳名，撞名再加 -N，同上传风格），
@@ -993,6 +998,7 @@ function createSession(title, preferModelId, assistantType, user) {
   db.prepare(
     "INSERT INTO sessions (id, title, status, phase, model_id, assistant_type, user, created_at, updated_at) VALUES (?,?,'queued','advising',NULL,?,?,?,?)"
   ).run(id, title || '', assistantType || 'secretary', user || '', now(), now());
+  profile.freezeSnapshot(db, id); // 冻结画像快照：仅创建/清空时点注入，会话内恒定（见 user-profile.js）
   // 新会话一律落 advising（顾问模式）：先聊天判意图，任务书 task.md 落地才转 executing（见 enterExecuting）
   // 指定了模型且其平台恰好有空闲 key → 直接绑定，跳过排队；否则回退到 FIFO 队列
   const prefer = preferModelId && platformModels(platformOf(preferModelId)).includes(preferModelId)
@@ -1228,6 +1234,7 @@ function clearSessionMessages(sessionId) {
   // 标题随历史一并清零：旧标题描述的是已删除的对话，留着会让新对话文不对题；
   // 新一轮交互结束后 maybeGenerateTitle 见 title 为空会自动重新生成。
   touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null, title: null, phase: 'advising' });
+  profile.freezeSnapshot(db, sessionId); // 回 advising 重新规划：画像快照随新一轮重新冻结
   bus.emit(sessionId, 'done', { status: 'completed' });
   bus.emit(sessionId, 'title', { title: null }); // 供其他打开同一会话的窗口同步清掉旧标题
   bus.emit(sessionId, 'phase', { phase: 'advising' });

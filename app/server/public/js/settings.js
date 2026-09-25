@@ -250,6 +250,7 @@
     const ctx = () => tok === setTok && setTop() === p; // 异步回包时页面可能已切走
     if (p === 'home') return setPageHome(ctx);
     if (p === 'account') return setPageAccount(ctx);
+    if (p === 'profile') return setPageProfile(ctx);
     if (p === 'service') return setPageService(ctx);
     if (p === 'cfg-editor') return setPageCfgEditor(ctx);
     if (p === 'skills') return setPageSkills(ctx);
@@ -272,7 +273,7 @@
 
   // ---------- 页:设置主页(卡片入口) ----------
   const SET_CARDS = [
-    { go: 'account', name: '账户', desc: '修改密码 · 退出登录',
+    { go: 'account', name: '账户', desc: '修改密码 · 用户画像 · 退出登录',
       icon: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 4-6 8-6s8 2 8 6"></path></svg>' },
     { go: 'service', name: '服务', desc: '服务状态 · 系统配置',
       icon: '<svg class="ic" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>' },
@@ -353,7 +354,12 @@
       setBody('<div class="set-scroll"><div class="empty-tip">未启用登录认证,无账户设置。</div></div>');
       return;
     }
-    setBody('<div class="set-scroll">' + userCardHtml(me.user) + '</div>');
+    setBody('<div class="set-scroll">' + userCardHtml(me.user) +
+      '<button class="set-card" data-go="profile"><span class="set-ico">' +
+      '<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="8" cy="11" r="2"></circle><path d="M5.5 16.5c0-1.8 1.2-2.8 2.5-2.8s2.5 1 2.5 2.8"></path><line x1="14" y1="10" x2="18" y2="10"></line><line x1="14" y1="14" x2="18" y2="14"></line></svg>' +
+      '</span><span class="set-tt"><span class="set-name">用户画像</span><span class="set-desc">称谓 · 行业 · 偏好 · 开关</span></span>' +
+      '<svg class="ic sm set-arrow" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg></button>' +
+      '</div>');
   }
   async function changePassword() {
     try {
@@ -363,6 +369,39 @@
       await req('POST', '/api/password', { new_password: newP });
       toast('密码已修改,立即生效');
     } catch (e) { toast('修改失败:' + e.message); }
+  }
+  // ---------- 页:用户画像(三字段 + 总开关;「近期关注」注入时现取会话标题,不展示不维护) ----------
+  const PROFILE_FIELDS = [
+    ['honorific', '称谓', '希望被怎么称呼'],
+    ['industry', '行业', '影响术语与默认假设'],
+    ['preference', '偏好', '语言 / 交付格式等输出要求'],
+  ];
+  async function setPageProfile(ctx) {
+    setTitle('用户画像');
+    setActions('');
+    setBody('<div class="set-scroll"><div class="empty-tip">加载中…</div></div>');
+    let p;
+    try { p = await req('GET', '/api/profile'); }
+    catch (e) { if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">加载失败:' + esc(e.message) + '</div></div>'); return; }
+    if (!ctx()) return;
+    let html = '<div class="set-scroll"><div class="settings-card"><h4>用户画像' +
+      (p.enabled === false ? ' <span class="badge held">已停用</span>' : '') + '</h4>' +
+      '<div class="cfg-kv"><label>启用</label><input type="checkbox" id="prof-enabled"' + (p.enabled === false ? '' : ' checked') + '></div>';
+    for (const [k, name, ph] of PROFILE_FIELDS) {
+      const v = String(p[k] || '');
+      html += '<div class="cfg-kv"><label>' + esc(name) + '</label>' +
+        '<input class="cfg-input" id="prof-' + k + '" type="text" maxlength="80" data-orig="' + att(v) + '" value="' + att(v) + '" placeholder="' + esc(ph) + '"></div>';
+    }
+    html += '<button class="primary-btn" style="margin-top:8px" onclick="sUI.saveProfile()">保存</button>' +
+      '<div class="cfg-note">画像只记「不知道就会做错」的信息，新会话开始时作为背景注入（会话内不更新；清空字段保存即抹除）。' +
+      '停用后不再注入也不再更新，重新启用仅对新会话/清空后的会话生效。近期关注（最近会话标题）自动带入背景，无需维护。</div></div></div>';
+    setBody(html);
+  }
+  async function saveProfile() {
+    const body = { enabled: $('prof-enabled').checked };
+    for (const [k] of PROFILE_FIELDS) { const el = $('prof-' + k); if (el) body[k] = el.value.trim(); }
+    try { await req('PUT', '/api/profile', body); toast('已保存，新会话生效'); }
+    catch (e) { toast('保存失败:' + e.message); }
   }
 
   // ---------- 页:服务(服务状态 + 系统配置;搬自 settings.js) ----------
@@ -1399,6 +1438,7 @@
   window.sUI = {
     // 账户
     changePassword: changePassword,
+    saveProfile: saveProfile,
     logout: async function () {
       sessionStorage.removeItem('agent_creds'); // 旧版本遗留的 Basic 凭据，顺带清理
       localStorage.removeItem('agent_token');  // 清 autoRestore token，防止自动恢复旧用户

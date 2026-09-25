@@ -16,6 +16,11 @@ const COMPRESS_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates
 // 末尾追加一条 user（本模板，{{language}} 占位符替换为配置语言），见 titleMessages。
 const TITLE_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'title-prompt.txt'), 'utf8');
 
+// 用户画像提取提示词（templates/profile-prompt.txt）：advising→executing 落槌（enterExecuting）时触发一次。
+// 与 titleMessages 同构：advising 轮历史 + 末条 user（任务书快照 + 本模板，{{language}} 替换为配置语言），
+// 见 profileMessages；拼装后的回合不传 tools，只收一段 JSON（解析/合并在 user-profile.js）。
+const PROFILE_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'profile-prompt.txt'), 'utf8');
+
 // 拼标题回合的 messages：历史原样（只留 user/assistant 纯文本行）+ 末尾一条标题指令 user。
 // 与 buildMessages 同取舍：archived 行不进；__blocks__ 哨兵 JSON 还原为文字，图片以 [图片] 占位；
 // 含 tool_calls 的 assistant 行无文本内容则跳过，tool 回执行整体跳过（只要对话主干）。
@@ -32,6 +37,30 @@ function titleMessages(history, language) {
   }
   const lang = String(language || '').trim() || 'the same language as the conversation';
   messages.push({ role: 'user', content: TITLE_PROMPT_TEMPLATE.replaceAll('{{language}}', () => lang) });
+  return messages;
+}
+
+// 拼画像提取回合的 messages（同 titleMessages 的取行口径）：历史主干 + 末条 user
+//（当前画像 + 任务书快照截 4000 字 + 本模板）。当前画像随证据一起给到，提取按全量覆写输出
+//（见 profile-prompt.txt）；画像文本的渲染在 user-profile.js，此处只拼接。
+function profileMessages(history, language, currentProfileText, briefText) {
+  const messages = [];
+  for (const row of history || []) {
+    if (row.type === 'archived') continue;
+    if (row.role !== 'user' && row.role !== 'assistant') continue;
+    let content = row.content || '';
+    const blocks = decodeBlocks(content);
+    if (blocks) content = blocks.map(b => (b && b.type === 'text' ? b.text : '[图片]')).join('\n');
+    if (!content.trim()) continue;
+    messages.push({ role: row.role, content });
+  }
+  const lang = String(language || '').trim() || 'the same language as the conversation';
+  const brief = String(briefText || '').slice(0, 4000);
+  messages.push({
+    role: 'user',
+    content: '【Current profile】\n' + String(currentProfileText || '').trim() +
+      '\n\n【Task brief】\n' + brief + '\n\n' + PROFILE_PROMPT_TEMPLATE.replaceAll('{{language}}', () => lang),
+  });
   return messages;
 }
 
@@ -144,6 +173,10 @@ function cachedDecodeBlocks(session, row) {
 // 空 = 默认全量组合。
 function buildMessages(session, language, mintUrl, profile) {
   const messages = [{ role: 'system', content: systemPromptText(language, profile) }];
+  // 用户画像快照（sessions.profile_snapshot，建会话/清空时冻结，见 user-profile.js）：
+  // 作为 system 后首条 user 注入，会话内字节恒定不破坏前缀缓存；
+  // 刻意不落 messages 表：阶段切换归档、压缩摘要都只动 messages 表，碰不到它。
+  if (session.profile_snapshot) messages.push({ role: 'user', content: session.profile_snapshot });
   const history = session.history;
   // 行被删除后清理残留的图片解析缓存条目（只增不清会缓慢泄漏；条数不会超过现存行数）
   if (session.blocksCache && session.blocksCache.size > history.length) {
@@ -490,4 +523,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages, profileMessages };

@@ -51,6 +51,8 @@ app.use('/api/skills', require('./routes/skills'));
 app.use('/api/config', require('./routes/config'));
 app.use('/api/platforms', require('./routes/platforms'));
 app.use('/api/system', require('./routes/system'));
+// 用户画像（账户设置）：读写按登录用户隔离，逻辑在 user-profile.js
+app.use('/api/profile', require('./routes/profile'));
 // data-page 技能配套：任务 app/ 子树页面向导 /app/{task_id}/ + 数据 API /api/db/{task_id}/query。
 // 随其余业务路由一样挂在 auth.middleware 之后（登录态才能访问）。
 app.use(require('./routes/data-page'));
