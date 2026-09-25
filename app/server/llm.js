@@ -171,12 +171,13 @@ function cachedDecodeBlocks(session, row) {
 // 坏样本留在上下文里只会被模型继续模仿，反复报同一个错。
 // profile：本轮生效的 prompt+tools 组合名（model_profiles，见 engine.resolveProfileName），
 // 空 = 默认全量组合。
-function buildMessages(session, language, mintUrl, profile) {
+// withProfile=false 时跳过画像快照注入（压缩回合专用，见 compressMessages）。
+function buildMessages(session, language, mintUrl, profile, withProfile) {
   const messages = [{ role: 'system', content: systemPromptText(language, profile) }];
   // 用户画像快照（sessions.profile_snapshot，建会话/清空时冻结，见 user-profile.js）：
   // 作为 system 后首条 user 注入，会话内字节恒定不破坏前缀缓存；
   // 刻意不落 messages 表：阶段切换归档、压缩摘要都只动 messages 表，碰不到它。
-  if (session.profile_snapshot) messages.push({ role: 'user', content: session.profile_snapshot });
+  if (withProfile !== false && session.profile_snapshot) messages.push({ role: 'user', content: session.profile_snapshot });
   const history = session.history;
   // 行被删除后清理残留的图片解析缓存条目（只增不清会缓慢泄漏；条数不会超过现存行数）
   if (session.blocksCache && session.blocksCache.size > history.length) {
@@ -266,8 +267,11 @@ function buildMessages(session, language, mintUrl, profile) {
 //（与 buildMessages 同取舍：archived 不发、旧摘要/工具轮照常），末尾追加一条 user
 //（compress-prompt.txt 原文，历史就在它前面的 messages 里，不再填占位符）。
 // 调用方（engine.runLoopInner 的 compressing 分支）需同时不传 tools。
+// 不注入画像快照（withProfile=false）：画像是每轮瞬态注入的，压缩后照常带上，
+// 无需烧进摘要；一旦模型把画像转述进摘要，摘要会以 type='summary' 落库，
+// 再经 titleMessages（只排 archived）混进标题生成的输入里。
 function compressMessages(session, language, mintUrl, profile) {
-  const messages = buildMessages(session, language, mintUrl, profile);
+  const messages = buildMessages(session, language, mintUrl, profile, false);
   messages.push({ role: 'user', content: COMPRESS_PROMPT_TEMPLATE });
   return messages;
 }
