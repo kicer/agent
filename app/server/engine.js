@@ -304,7 +304,8 @@ function enterExecuting(sessionId) {
   saveMessage(sessionId, {
     role: 'user', type: 'task_brief',
     content: '【任务书】顾问阶段结束，会话已进入执行模式。以下任务书快照（task.md）是唯一目标依据；'
-      + '之前的顾问对话已存档、不再发送。若正文列有 Missing/未澄清事项，先向用户提问确认再动手；'
+      + '之前的顾问对话已存档、不再发送。若任务书列有 Missing/待确认事项：开工前逐项向用户提问并等待答复——'
+      + '用户跳过的只是顾问阶段，不是确认环节，不得据此自行拍板；只有用户明确说过「别问，直接做」才可用默认值，且须把每个默认决定列出供用户检查；禁止把待确认项改写成「按默认执行」。'
       + '执行中可修订 task.md（以文件现状为准）；上一轮任务书归档在 .task-history/，仅限用户明确要求时查阅。\n\n' + snapshot,
   });
   db.prepare("UPDATE sessions SET phase='executing', updated_at=? WHERE id=?").run(now(), sessionId);

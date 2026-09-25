@@ -38,8 +38,9 @@ Therefore:
 - If planning was skipped or key facts are still missing, keep the brief
   minimal: state the goal in the user's own words and list every unknown under a
   "Missing" section instead of guessing or writing generic advice. The executor
-  will ask the user for these directly. Do not turn a skipped-planning brief
-  into a methodology document.
+  will ask the user about these directly before doing the work — the user
+  skipped the planning chat, not these questions. Do not turn a
+  skipped-planning brief into a methodology document.
 - Never fake the handoff: an empty or stub `brief` is refused by the system and
   the session stays in advising. Only your handoff call commits.
 
