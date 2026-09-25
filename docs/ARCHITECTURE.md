@@ -323,7 +323,7 @@ stateDiagram-v2
   - init 的 pip 步骤先离线探测（`pip install --no-index --dry-run <逐行>`，不联网）：镜像已带的包直接跳过，只把缺的装进 `deps/`；`.deps_installed` marker（requirements/install.sh 两份 hash）也在那里维护。
   - 外挂层可见性：`skills/deps` 由 compose 放进 executor 容器 env 的 `PYTHONPATH`（`server.js` 白名单同步放行），技能入口与 AI 终端命令都能 import；运行期 skills 与 deps 均 `:ro`，**加包只需改 `requirements.txt` 后 `docker compose up -d`（重跑 init），不需重建镜像**。
 - `runSkill` 流程：`input_args` 类型守卫（非对象早拒，免得在 Object.entries 里静默错位） → `skillDir` 校验 → `absolutizeArgs`（按任务目录 + 启发式判断路径类参数） → `validateArgs`（按 front matter `input_schema.required`，缺项报错点名字段） → 选 `python3 run.py '<json>'` 或 `bash run.sh '<json>'` → `runEntry`。
-- system prompt 注入（`formatSkillListForPrompt`）只列名字省 token；描述查 op=list、参数查 op=get、执行 op=run（`skill` 工具），op 间依赖写进工具 description。
+- system prompt 注入（`formatSkillListForPrompt`）按 `- 名字: 描述` 每行一个（listSkills 已按名字排序，行序恒定不破坏前缀缓存；描述压单行）；参数查 op=get、执行 op=run（`skill` 工具），op 间依赖写进工具 description。
 - **走 executor**：命令拼成 `shq` 转义后的单条 shell 行（`shellLine`）；env 不额外传，依赖层由容器 env 提供。
 - **cwd 分两类**：`skill` op=run 传会话任务目录（`ctx.taskDir`），命中 executor 的 session 隔离与虚拟视图，技能在 `/workspace/tasks/<sid>` 看到的就是本会话数据，`absolutizeArgs` 产出的绝对路径因此有效；入口脚本一律用绝对路径（cwd 已不是技能目录）。
 

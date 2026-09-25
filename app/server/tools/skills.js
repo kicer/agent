@@ -70,14 +70,19 @@ async function listSkills(ctx) {
 }
 
 // ---------- system prompt 注入：可用技能列表 ----------
-// 把技能列表格式化成 “## Available Skills” 段落（仅名字，每行一个，省 token；
-// 描述查 op=list，参数查 op=get）。
+// 把技能列表格式化成 “## Available Skills” 段落（每行 `- 名字: 描述`；
+// listSkills 已按名字 localeCompare 排序，行序恒定，不破坏前缀缓存；
+// 参数查 op=get，执行 op=run；描述如需实时复核仍可查 op=list）。
 // 由 llm.setSkillListText 拼入 system prompt：启动时快照（server.js）与技能变更后
 // （routes/skills.js 的创建/重命名/删除/文件变更）调用，让模型直接感知已装技能，
-// 省掉先 op=list 探索的往返；op=list 保留作实时描述/兼容性查询。
+// 省掉先 op=list 探索的往返。
 function formatSkillListForPrompt(list) {
   if (!list || !list.length) return '';
-  const lines = list.map(s => '- ' + s.name);
+  const lines = list.map(s => {
+    // 描述压成单行：YAML 块标量可能带换行，不能让它撞破列表结构
+    const desc = String(s.description || '').replace(/\s*\n\s*/g, ' ').trim();
+    return '- ' + s.name + (desc ? ': ' + desc : '');
+  });
   return '## Available Skills\n' + lines.join('\n');
 }
 
