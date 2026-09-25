@@ -275,19 +275,9 @@ function effectiveTools(profileName) {
 
 // ---------- 阶段（sessions.phase：advising 顾问 / executing 执行） ----------
 // advising：新建会话与「清空」的落点。profile 被 resolveProfileName 强制为 'advising'，
-// 只问答/判意图/引导澄清；唯一出口是 write_file/edit_file 把任务书 task.md 落在任务目录根（正门判定）。
+// 只聊和读不写（write_file/edit_file 不在其 schema，批内幻觉调用也在 runLoopInner 挡下）；
+// 唯一出口 = handoff 工具成功返回（brief 由 handler 落盘任务目录根 task.md，见 tools/executor.js）。
 // executing：一路走到底，只有清空才回 advising；压缩不碰 phase（压完仍回原模式）。
-
-// 写类工具（write_file/edit_file）的参数是否恰好落在任务目录根的 task.md——阶段切换的正门判定。
-// resolveInTask 统一解相对/绝对路径并拦越界；子目录 task.md 不算。
-// 不扫文件存在性：用户随时上传同名素材不算承诺，只有 AI 亲自写一次才算（上传也永远覆盖不了
-// task.md：files.js 同名自动加后缀）。
-function argsHitTaskBrief(taskDir, args) {
-  try {
-    const abs = path.resolve(resolveInTask(taskDir, String((args && args.path) || '')));
-    return abs === path.resolve(taskDir, 'task.md');
-  } catch (_) { return false; }
-}
 
 // advising → executing：任务书落地，当场重建上下文——
 // 全部历史标 archived（UI 照常展示、不再发模型，与压缩/定时投递同机制），
@@ -313,9 +303,9 @@ function enterExecuting(sessionId) {
   ).run(sessionId).changes;
   saveMessage(sessionId, {
     role: 'user', type: 'task_brief',
-    content: '【任务书】需求澄清完毕，会话已进入执行模式。以下任务书快照（task.md）是唯一目标依据；'
-      + '之前的顾问对话已存档、不再发送。执行中可修订 task.md（以文件现状为准）；'
-      + '上一轮任务书归档在 .task-history/，仅限用户明确要求时查阅。\n\n' + snapshot,
+    content: '【任务书】顾问阶段结束，会话已进入执行模式。以下任务书快照（task.md）是唯一目标依据；'
+      + '之前的顾问对话已存档、不再发送。若正文列有 Missing/未澄清事项，先向用户提问确认再动手；'
+      + '执行中可修订 task.md（以文件现状为准）；上一轮任务书归档在 .task-history/，仅限用户明确要求时查阅。\n\n' + snapshot,
   });
   db.prepare("UPDATE sessions SET phase='executing', updated_at=? WHERE id=?").run(now(), sessionId);
   bus.emit(sessionId, 'phase', { phase: 'executing' });
@@ -763,7 +753,7 @@ async function runLoopInner(sessionId, run) {
 
     // 执行工具
     const vision = modelVision(session);
-    let taskBriefWritten = false; // 本批工具里是否有「正门落 task.md」（批量跑完统一切换，见循环尾注释）
+    let handoffDone = false; // 本批工具里是否有 handoff 成功返回（批量跑完统一切换，见循环尾注释）
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
       const id = tc.id;
@@ -776,6 +766,12 @@ async function runLoopInner(sessionId, run) {
       if (chk.error) {
         // 把正确形状告诉模型，替它纠正包装习惯
         output = chk.error;
+        isError = true;
+      } else if (session.phase === 'advising'
+          && (tc.function.name === 'write_file' || tc.function.name === 'edit_file')) {
+        // 顾问单入口硬约束：写类工具不在其 schema，但「名单外照跑」是全局策略（executeTool 全表），
+        // 幻觉调用会真写文件、绕过出口制造假承诺——阶段契约优先，挡下并指向 handoff。
+        output = 'Error: 顾问阶段不能写文件。任务书请通过 handoff 工具的 brief 参数提交。';
         isError = true;
       } else {
         try {
@@ -816,15 +812,14 @@ async function runLoopInner(sessionId, run) {
         image_url: imageRel ? '/api/sessions/' + encodeURIComponent(sessionId) + '/files/download?path=' + encodeURIComponent(imageRel) : undefined,
         msg_id: toolMsgId,
       });
-      // 阶段切换正门：advising 回合里 write_file/edit_file 成功且路径恰为根 task.md → 标记待切换。
+      // 阶段切换入口：advising 回合里 handoff 成功返回（brief 已由 handler 落盘 task.md）→ 标记待切换。
       // 不在这里就地切：同批可能还有其它 tool_calls，其父 assistant 行若先被存档、
       // 后落库的回执就成了无主孤儿行（上游拒收）——整批跑完再统一重建上下文。
-      if (!isError && (tc.function.name === 'write_file' || tc.function.name === 'edit_file')
-          && argsHitTaskBrief(taskDirOf(sessionId), chk.args)) {
-        taskBriefWritten = true;
+      if (!isError && tc.function.name === 'handoff') {
+        handoffDone = true;
       }
     }
-    if (taskBriefWritten) enterExecuting(sessionId);
+    if (handoffDone) enterExecuting(sessionId);
     iter++;
   }
   if (iter >= maxIter && !run.cancelled) {

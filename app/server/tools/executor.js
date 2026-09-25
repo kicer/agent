@@ -1118,8 +1118,29 @@ function runLabHelp(args) {
   return JSON.stringify(def.function, null, 2);
 }
 
+// handoff：顾问阶段唯一出口（advising 组合见 config.js）。brief 原样落盘任务目录根 task.md；
+// 切换不在此发生——executeTool 只落盘与回执，runLoopInner 在工具批尾接成功回执触发 enterExecuting
+//（其读盘取快照作锚点，幂等防重切）。phase 守卫不可省：「名单外工具照跑」是全局策略，
+// 执行期幻觉调用不得覆写修订中的 task.md；reason 枚举与 brief 非空也在此兑底（checkToolArgs 只查必填键）。
+async function toolHandoff(ctx, args) {
+  const sess = ctx.db.prepare('SELECT phase FROM sessions WHERE id = ?').get(ctx.sessionId);
+  if (!sess || sess.phase !== 'advising') return 'Error: 当前不在顾问阶段，handoff 仅在 advising 可用';
+  const reason = String((args && args.reason) || '');
+  if (['ready', 'user_skip', 'user_stuck'].indexOf(reason) < 0) {
+    return 'Error: reason 需为 ready / user_skip / user_stuck 之一';
+  }
+  const brief = typeof args.brief === 'string' ? args.brief : '';
+  if (!brief.trim()) return 'Error: brief 不能为空，任务书需完整带上（user_skip/user_stuck 至少含用户原话与 Missing 清单）';
+  const abs = path.join(ctx.taskDir, 'task.md');
+  await fsp.writeFile(abs, brief, 'utf8');
+  recordFile(ctx, abs); // 同步 files 元数据表（与 write_file 同轨，任务目录列表/清理逻辑一致）
+  // 同批多次 handoff：后写覆盖（last-wins），批尾的切换只发生一次（enterExecuting 幂等）。
+  return '任务书已写入 task.md（reason: ' + reason + '），本批工具跑完后系统将切换到执行模式。请在给用户的回复里带一句「已切换到执行阶段」。';
+}
+
 const HANDLERS = {
   read_file: toolReadFile,
+  handoff: toolHandoff,
   write_file: toolWriteFile,
   edit_file: toolEditFile,
   mint_public_link: toolMintPublicLink,

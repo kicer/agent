@@ -92,13 +92,16 @@ const DEFAULTS = {
   // 模型平台池（无默认值，结构见 config.example.yml）。
   platforms: [],
   // 全局工具黑名单：profile 未配 tools_deny 时继承它；allow 先、deny 后叠加（deny 赢，与 mcp_servers 同构）。
-  // 默认屏蔽元工具 lab：它只该出现在显式清空 deny 的 profile 里，不进任何常规请求的 tools 数组。
-  tools_deny: ['lab'],
+  // 默认屏蔽元工具 lab 与阶段出口 handoff：它们只该出现在显式清空 deny 的 profile 里，
+  // 不进任何常规请求的 tools 数组（lab → lab 组合；handoff → advising 组合）。
+  tools_deny: ['lab', 'handoff'],
   // 模型 profile（prompt + tools 名单组合）：platforms 里的模型用 profile: <名> 引用。
   model_profiles: {
     // advising：顾问阶段（sessions.phase）专用组合——不由模型配置引用，而是 resolveProfileName 在
-    // advising 时强制命中：只留问答/调研/写任务书所需工具（terminal 不进名单），配专用顾问提示词模板。
-    advising: { tools_allow: ['read_file', 'fetch', 'write_file'], system_prompt_file: 'advising-system.txt' },
+    // advising 时强制命中：顾问只聊和读、不写（write_file 已移除，批内幻觉调用另由引擎挡下），
+    // 唯一出口是 handoff；tools_deny 必须显式清空：不配 = 继承全局 ['lab','handoff']，
+    // allow 滤完再叠 deny 会把 handoff 自己禁掉（同 lab 组合的教训）。
+    advising: { tools_allow: ['read_file', 'fetch', 'handoff'], tools_deny: [], system_prompt_file: 'advising-system.txt' },
     // lab：统一入口元工具自测组合——tools 收缩到 1 个，其余能力经 lab(help) 现场发现。
     // tools_deny 必须显式清空：不配 = 继承全局 ['lab']，deny 后叠加会把 lab 自己禁掉 → 零工具。
     lab: { tools_allow: ['lab'], tools_deny: [], system_prompt_file: 'lab-system.txt' },

@@ -6,11 +6,19 @@
       "description": "Execute operations on the session's SQLite database (data.db in the session working directory). The database file is isolated per session and auto-created on first use. For inserting rows (especially batches), prefer op=insert which avoids writing SQL by hand; use exec/query for DDL, updates, deletes and complex SQL.",
       "parameters": {
         "type": "object",
-        "required": ["op"],
+        "required": [
+          "op"
+        ],
         "properties": {
           "op": {
             "type": "string",
-            "enum": ["exec", "query", "insert", "tables", "schema"],
+            "enum": [
+              "exec",
+              "query",
+              "insert",
+              "tables",
+              "schema"
+            ],
             "description": "Operation type:\n- exec: run a write statement (CREATE / UPDATE / DELETE / ALTER / DROP), in a transaction\n- query: run a read statement (SELECT), returns an array of rows\n- insert: insert one or more rows from row objects (structured, no SQL needed, one transaction)\n- tables: list all tables with row counts\n- schema: show column definitions for a table"
           },
           "sql": {
@@ -29,7 +37,9 @@
           "rows": {
             "type": "array",
             "description": "Array of row objects for op=insert. Each object maps column names to values; all objects must have the same keys.",
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           }
         }
       }
@@ -42,7 +52,10 @@
       "description": "This is a tool for applying edits to an existing file.\n\nBefore using this tool, use the `read_file` tool to understand the file's contents and context.\nTo create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.\n\nWhen copying text from `read_file` output into `old_text` or `new_text`, strip the line-number prefix and the tab after it, and keep the original indentation exactly.\n\nMatching rules:\n- `old_text` is first matched exactly. If there is no exact match, a fuzzy match tolerating minor whitespace and formatting differences is attempted.\n- If `old_text` matches more than one location (overlapping matches count as separate locations), the edit fails. Include enough surrounding context to make it unique; avoid very short or repetitive `old_text`.\n- If no match is found at all, the edit fails. For very large files the fuzzy stage degrades to per-line whitespace-insensitive exact matching; the error message says so — do not retry the same text, locate with `read_file` by line numbers or use `terminal` with sed.\n\nTo delete whole lines, put the exact line(s) in `old_text` and set `new_text` to an empty string — matched whole lines are removed cleanly together with their line endings (a trailing newline in `old_text` makes no difference).\n\nEdits are applied in order. If one edit fails, the edits before it are already written to disk and the file has changed: the error message tells you how many were applied. You must call `read_file` again before retrying; do not reuse the previous `old_text` values.",
       "parameters": {
         "type": "object",
-        "required": ["path", "edits"],
+        "required": [
+          "path",
+          "edits"
+        ],
         "properties": {
           "path": {
             "type": "string",
@@ -53,7 +66,10 @@
             "description": "List of edit operations to apply sequentially. Each edit finds `old_text` in the file and replaces it with `new_text`. If any edit fails, the edits before it remain applied.",
             "items": {
               "type": "object",
-              "required": ["old_text", "new_text"],
+              "required": [
+                "old_text",
+                "new_text"
+              ],
               "properties": {
                 "old_text": {
                   "type": "string",
@@ -77,7 +93,9 @@
       "description": "Fetches a URL and returns its content as Markdown. Only http and https are supported; if the scheme is omitted, https is assumed.\n\nHTML pages are converted to Markdown. JSON, XML, plain text, and Markdown responses are returned as-is. Binary responses are not returned — only their HTTP status, content-type, and size.\n\nThe response always starts with a line `HTTP <status>`, followed by the body. Check the status line: a non-2xx status means the fetch did not succeed, even if body content is present.\n\nRequests are subject to a timeout, and oversized responses are truncated. Redirects are followed automatically.",
       "parameters": {
         "type": "object",
-        "required": ["url"],
+        "required": [
+          "url"
+        ],
         "properties": {
           "url": {
             "type": "string",
@@ -90,11 +108,65 @@
   {
     "type": "function",
     "function": {
+      "name": "handoff",
+      "description": "Hand off from the advising phase to the execution phase. Call this when the task brief is ready. The system will write your `brief` to task.md and switch to execution. There are three cases:\n\n- ready: The requirement is clear enough to execute.\n- user_skip: The user explicitly asks to skip planning (\"just do it\", \"别问了\", \"换个 agent\", \"直接开始\", or similar). Do not call this on tone or mood alone — only on explicit signals.\n- user_stuck: You have asked 2-3 rounds and the user is still not providing key information, and they seem to want to move on.\n\nWhen reason is not \"ready\", pass the user's own words as `brief` and leave it at that. Do not invent a methodology or generic plan. The executor will ask the user for missing information directly.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "reason",
+          "brief"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "user_skip",
+              "user_stuck"
+            ],
+            "description": "Why the handoff is happening."
+          },
+          "brief": {
+            "type": "string",
+            "description": "The task brief content, in Markdown. This is written to task.md verbatim. Follow the structure described in your system prompt."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lab",
+      "description": "Unified entry point for calling any available tool by name.\n\nCall a tool:\n  lab(tool: \"<name>\", args: {<arguments>})\n\nThe target tool's arguments go inside `args` as a JSON object. Omit `args` for tools that take no arguments.\n\nDiscovering tools:\n  lab(tool: \"help\")                          → list all tools with a one-line description each\n  lab(tool: \"help\", args: {tool: \"<name>\"})  → full description and parameter schema of <name>\n\nAn unknown tool name also returns the list of available tools.\nNested lab calls are rejected; inner tool errors surface unchanged.\n\nCalling a tool directly and calling it through lab are equivalent. When the tool you need is already in your tool list, call it directly. Use lab to discover or reach tools that are not in the current list.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "tool"
+        ],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "description": "Name of the tool to call, or \"help\"."
+          },
+          "args": {
+            "type": "object",
+            "description": "Arguments for the target tool, matching its own schema (look it up with lab(tool: \"help\", args: {tool: \"<name>\"}) if unsure). Omit for tools that take no arguments."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "mint_public_link",
       "description": "Create a short-lived, publicly reachable URL for a local file, so an external service that cannot authenticate can download it.\nUse this when another tool or API needs to fetch a local file by URL. Returns the URL as plain text on a single line.",
       "parameters": {
         "type": "object",
-        "required": ["path"],
+        "required": [
+          "path"
+        ],
         "properties": {
           "path": {
             "type": "string",
@@ -111,7 +183,9 @@
       "description": "Reads the content of a file.\n\nText files: each returned line is prefixed with a line number right-aligned in a 6-character field, followed by a tab, then the line content.\n\nLarge text files (roughly over 16 KB) are not returned in full: you get an outline listing top-level symbols (or Markdown headings) with line numbers instead. The outline IS a successful response — do NOT retry the same call without a line range; use the outline line numbers with `start_line` / `end_line` to read specific sections. If no outline can be extracted, a first-1KB excerpt is returned instead. Supplying `start_line` or `end_line` disables outline mode.\n\nImage files (PNG, JPEG, WebP, GIF, BMP, TIFF) are returned as visual content you can analyze directly, but only if the current model supports vision; otherwise a text placeholder is returned — that placeholder is not an error. Very large images (roughly over 50 MB) are skipped, and images may be downscaled (long edge ~2000 px, re-encoded as JPEG) before being returned.\n\nBinary files are not returned as text; a short notice is returned instead. Text files over 32 MB cannot be read by this tool — use `terminal` (grep -n / head / sed -n).",
       "parameters": {
         "type": "object",
-        "required": ["path"],
+        "required": [
+          "path"
+        ],
         "properties": {
           "path": {
             "type": "string",
@@ -142,11 +216,18 @@
       "description": "Manage the recurring scheduled task bound to the CURRENT session. At most one task per session; it is deleted together with the session. At each trigger, the prompt is sent to this session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get     No arguments.\nop=create  Requires cron_expr and prompt.\nop=update  Requires at least one of cron_expr, prompt; only the given fields change.\nop=delete  No arguments.",
       "parameters": {
         "type": "object",
-        "required": ["op"],
+        "required": [
+          "op"
+        ],
         "properties": {
           "op": {
             "type": "string",
-            "enum": ["get", "create", "update", "delete"],
+            "enum": [
+              "get",
+              "create",
+              "update",
+              "delete"
+            ],
             "description": "Operation to perform on the current session's scheduled task."
           },
           "cron_expr": {
@@ -164,11 +245,45 @@
   {
     "type": "function",
     "function": {
+      "name": "skill",
+      "description": "Use the skills installed on this server. A skill is a directory under the skill root whose SKILL.md defines its purpose and input_schema.\n\nop=list  No arguments.\nop=get   Requires name.\nop=run   Requires name; input_args optional (default {}).\n\nop=list: lists all installed skills with a one-line description each, read live from the skill root; use it to choose among skills or to confirm what is installed. An empty skill set returns an empty list — that is not an error.\nop=get: returns the full raw SKILL.md (front matter included): purpose, input_schema, and usage notes. Call it before op=run with a skill you have not used in this conversation. A nonexistent skill returns an error.\nop=run: executes the skill with input_args validated against its input_schema (a validation error names the missing fields). The entry script receives a JSON string as its only CLI argument, so input_args must be a JSON object.\n- Returns the skill's combined stdout+stderr as plain text after it exits; exit 0 with no output yields '（无输出）'. A non-zero exit raises an error containing the output and [exit code: N].\n- Direct output files via arguments: relative paths in arguments are resolved against the session working directory; do not rely on the skill's cwd.\n- Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "list",
+              "get",
+              "run"
+            ],
+            "description": "Operation to perform on skills."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the skill (subdirectory name under the skill root directory). Required with op=get and op=run."
+          },
+          "input_args": {
+            "type": "object",
+            "description": "Dictionary of input arguments for the skill. Keys and values should match the skill's input_schema (call op=get first if unsure). Example: {\"input\": \"file.md\", \"output\": \"out.pdf\"}. Used only with op=run; omit it for skills that take no arguments."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "terminal",
       "description": "Executes a shell one-liner and returns combined stdout/stderr output.\n\n- Run commands relative to the session working directory. Use the `cd` parameter to specify a different directory if needed.\n- Do not use shell substitutions or interpolations (e.g., `$VAR`, `${VAR}`, `$(...)`, backticks). Resolve values yourself first.\n- Do not pipe output to `head` or `tail`; use the `head_lines` and `tail_lines` parameters to limit what is returned while keeping full output visible to the user.\n- Avoid commands that run indefinitely (servers, watchers). For long-running commands, set `timeout_ms`.\n- Each invocation starts a new shell; do not rely on state from previous calls.\n- If a command may open a pager or editor, disable it using environment variables (e.g., `GIT_PAGER=cat`, `EDITOR=true`).",
       "parameters": {
         "type": "object",
-        "required": ["command"],
+        "required": [
+          "command"
+        ],
         "properties": {
           "command": {
             "type": "string",
@@ -210,7 +325,10 @@
       "description": "Creates a new file or overwrites an existing file with the given content.\n\nParent directories are created automatically, so the path does not need to exist beforehand.\n\nOverwriting replaces the file's entire content irreversibly. If the file already exists, read it first, or use `edit_file` for targeted changes instead.\n\nText is written as UTF-8. To produce binary files, use `terminal` instead.",
       "parameters": {
         "type": "object",
-        "required": ["path", "content"],
+        "required": [
+          "path",
+          "content"
+        ],
         "properties": {
           "path": {
             "type": "string",
@@ -219,52 +337,6 @@
           "content": {
             "type": "string",
             "description": "The entire content to write. Required — pass an empty string to create an empty file; omitting it is an error."
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "skill",
-      "description": "Use the skills installed on this server. A skill is a directory under the skill root whose SKILL.md defines its purpose and input_schema.\n\nop=list  No arguments.\nop=get   Requires name.\nop=run   Requires name; input_args optional (default {}).\n\nop=list: lists all installed skills with a one-line description each, read live from the skill root; use it to choose among skills or to confirm what is installed. An empty skill set returns an empty list — that is not an error.\nop=get: returns the full raw SKILL.md (front matter included): purpose, input_schema, and usage notes. Call it before op=run with a skill you have not used in this conversation. A nonexistent skill returns an error.\nop=run: executes the skill with input_args validated against its input_schema (a validation error names the missing fields). The entry script receives a JSON string as its only CLI argument, so input_args must be a JSON object.\n- Returns the skill's combined stdout+stderr as plain text after it exits; exit 0 with no output yields '（无输出）'. A non-zero exit raises an error containing the output and [exit code: N].\n- Direct output files via arguments: relative paths in arguments are resolved against the session working directory; do not rely on the skill's cwd.\n- Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
-      "parameters": {
-        "type": "object",
-        "required": ["op"],
-        "properties": {
-          "op": {
-            "type": "string",
-            "enum": ["list", "get", "run"],
-            "description": "Operation to perform on skills."
-          },
-          "name": {
-            "type": "string",
-            "description": "Name of the skill (subdirectory name under the skill root directory). Required with op=get and op=run."
-          },
-          "input_args": {
-            "type": "object",
-            "description": "Dictionary of input arguments for the skill. Keys and values should match the skill's input_schema (call op=get first if unsure). Example: {\"input\": \"file.md\", \"output\": \"out.pdf\"}. Used only with op=run; omit it for skills that take no arguments."
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "lab",
-      "description": "Unified entry point for calling any available tool by name.\n\nCall a tool:\n  lab(tool: \"<name>\", args: {<arguments>})\n\nThe target tool's arguments go inside `args` as a JSON object. Omit `args` for tools that take no arguments.\n\nDiscovering tools:\n  lab(tool: \"help\")                          → list all tools with a one-line description each\n  lab(tool: \"help\", args: {tool: \"<name>\"})  → full description and parameter schema of <name>\n\nAn unknown tool name also returns the list of available tools.\nNested lab calls are rejected; inner tool errors surface unchanged.\n\nCalling a tool directly and calling it through lab are equivalent. When the tool you need is already in your tool list, call it directly. Use lab to discover or reach tools that are not in the current list.",      "parameters": {
-        "type": "object",
-        "required": ["tool"],
-        "properties": {
-          "tool": {
-            "type": "string",
-            "description": "Name of the tool to call, or \"help\"."
-          },
-          "args": {
-            "type": "object",
-            "description": "Arguments for the target tool, matching its own schema (look it up with lab(tool: \"help\", args: {tool: \"<name>\"}) if unsure). Omit for tools that take no arguments."
           }
         }
       }

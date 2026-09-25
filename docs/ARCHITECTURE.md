@@ -220,12 +220,14 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> advising: createSession
-    advising --> executing: write_file/edit_file 落根目录 task.md（enterExecuting，同回合继续开工）
+    advising --> executing: handoff 工具（handler 落盘 task.md → enterExecuting，同回合继续开工）
     executing --> advising: clearSessionMessages（旧 task.md mv 进 .task-history/）
 ```
 
 - advising（顾问）：profile 被 `resolveProfileName` 强制为内置 `advising` 组合（问答/判意图/引导澄清需求），
-  唯一出口是 AI 用 `write_file` 把任务书写到任务目录根的 `task.md`（正门判定，上传/terminal 间接创建不算）。
+  只聊和读不写（`write_file`/`edit_file` 不在其白名单，批内幻觉调用也被 runLoopInner 挡下）；
+  唯一出口是 `handoff` 工具：handler 把 `brief` 原样落盘根 `task.md`（reason ∈ ready/user_skip/user_stuck，
+  空 brief 拒回不切）；`handoff` 与 `lab` 同入全局 `tools_deny`，advising 组合显式 `tools_deny: []` 独享可见。
 - executing（执行）：回到常规 profile 链路（模型配置 > 默认全量）；单会话只解决一个问题，一路走到底，回头路只有「清空」。
 - 上下文压缩对 phase 中性（原来什么模式、压完仍什么模式）；定时任务投递前强制 `executing`（无人值守不能被顾问话术卡住）。
 - 切换瞬间全史标 `archived`、插一条 `type='task_brief'` user 行（task.md 磁盘快照）作执行阶段唯一上下文起点；
@@ -234,7 +236,7 @@ stateDiagram-v2
 
 ### 4.2 文件布局
 
-**任务目录**（`cfg.workspace_root/<session-id>/`）：每个会话一个目录；Core 与 Executor 都可读写；sh 命令默认 cwd 即此目录。`task.md` = 当前轮任务书（phase 切换触发，仅 `write_file` 正门）；`.task-history/` = 清空会话时旧任务书归档（点目录，文件列表默认隐藏，同 `.imgcache` 约定）。
+**任务目录**（`cfg.workspace_root/<session-id>/`）：每个会话一个目录；Core 与 Executor 都可读写；sh 命令默认 cwd 即此目录。`task.md` = 当前轮任务书（由 `handoff` handler 落盘，phase 切换唯一入口）；`.task-history/` = 清空会话时旧任务书归档（点目录，文件列表默认隐藏，同 `.imgcache` 约定）。
 
 **技能目录**（`cfg.skills_root/<skill-name>/`）：所有会话共享；`deps/` 子目录是 pip `--target` 共享的 Python 依赖（只放镜像缺失的包，镜像已带的不重复装），**与技能目录同级**（不是技能子目录）。`RESERVED_DIRS = {deps}` 在 `routes/skills.js` 里被排除以免被当成技能。
 
@@ -257,7 +259,7 @@ stateDiagram-v2
 | `createSession` | 生成 id（`task-YYYYMMDD-NNN`，序号从历史 + `meta.task_seq` 取大）→ mkdir 任务目录 → phase 默认 advising → 决定立即绑/入队 |
 | `postUserMessage` | 用户消息入口；识别 active/held/queued 路径并决定是 `delivered:'live'` 还是 `'queued'` |
 | `summarizeContext` / `clearSessionMessages` / `deleteMessage` | 收尾 + 上下文压缩（清空同时把 phase 打回 advising 并归档旧 task.md） |
-| `enterExecuting` / `argsHitTaskBrief` / `archiveTaskBrief` | 阶段切换：正门判定（根 task.md）→ 全史存档 + 插 task_brief 快照 + phase='executing' + SSE 广播；清空时旧 task.md mv 进 `.task-history/` |
+| `enterExecuting` / `archiveTaskBrief` | 阶段切换：批尾接 `handoff` 成功标记（brief 已由 handler 落盘）→ 全史存档 + 插 task_brief 快照 + phase='executing' + SSE 广播；清空时旧 task.md mv 进 `.task-history/` |
 | `checkToolArgs` / `unwrapToolArgs` | 工具参数校验 + 部分弱模型参数包裹外层自动解包 |
 | `ensureSessionContext` | 注入/刷新"会话上下文"首条 user 消息（日期/任务目录/模型名/vision 能力） |
 
@@ -269,8 +271,8 @@ stateDiagram-v2
 - **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。压缩回合**不插入任何指令消息**：由 `engine.summarizeContext` 在内存 run 上标 `summarizing`，`runLoopInner` 据此走 `llm.compressMessages`：沿用默认 system prompt + 正常历史 messages，末尾追加一条 user（`server/templates/compress-prompt.txt` 原文，参考标题回合的拼法），且不传 tools；回合内首条无 tool_calls 的收尾回复即摘要。（`llm.buildMessages` 仍保留旧库 `summarize_request` 行的处理，仅为历史数据兼容。）
 - **图片（多模态）**：`messages.content` 列是 TEXT，含图时存 `{"__blocks__":[content...]}` 哨兵 JSON。新版 `read_file` 读图：sharp 压缩产物落任务目录 `.imgcache/`（前端文件列表隐带点的项），库里只存 `image_ref` 轻量块；`buildMessages` 发送前经调用方传入的 `mintUrl` 回调现签成公网外链（同 `mint_public_link` 那套 `GET /p/<id>`）填入 `image_url` 块，base64 不进 DB 也不进请求体；签不到降级为文字占位。旧库/用户粘贴附件的 `data:` URL 块原样透传。图块**只保留最后一条 assistant 之后的**（`lastAssistant` 判定），之前的换成"已省略"文字描述；UI 渲染走带 cookie 的会话内下载路由，历史永不裂图。
 - **保持租约**（`holdSweeper`）：sweeper_ms 巡检（默认 10s）；held 会话无观看者 idle_release_ms 释放（默认 3 分钟），有观看者 active_max_ms 强制释放（默认 30 分钟）。active 闲置（绑了模型但无 run 在跑、无未回应消息）按相同租约处理。
-- **task_brief（任务书锚点，advising→executing 切换）**：runLoopInner 工具批跑完后，若 advising 回合内有 `write_file`/`edit_file` 成功落在任务目录根 `task.md`（`argsHitTaskBrief` 正门判定；批量末尾统一切，防父 assistant 先存档、后落库回执成孤儿行被上游拒收），`enterExecuting` 当场重建上下文：全史标 `archived` → 插一条 `type='task_brief'` user 行（内容 = task.md 磁盘快照，非引用）→ phase='executing' + SSE `phase`/`status` 事件；下一迭代重读历史 + 重解 profile，天然切默认组合、同回合开工。压缩不碰 phase（task_brief 与其它历史一样会被后续压缩存档，漂移可控：压缩本就由用户主导）。
-- **profile（prompt+tools 组合）**：顶层 `model_profiles` 定义多套组合，`platforms[].models[].profile` 引用（见 §5.8）——这是唯一的引用来源：运行期手动切换已全部移除（消息级 profile 参数、`sessions.profile` 会话绑定均废弃，列保留不读写）；`advising` 例外，不走引用、由 phase 强制命中。名单外工具被调用不拦（`checkToolArgs` 查不到 def 不报错，`executeTool` 全表照跑）；tools schema 只活在请求体不进历史，所以切换不脏化旧消息。压缩回合同样跟随（小模型会话点压缩不会回退到默认大模板）。
+- **task_brief（任务书锚点，advising→executing 切换）**：runLoopInner 工具批跑完后，若 advising 回合内有 `handoff` 成功返回（brief 已由 handler 原样落盘根 task.md 并记 files 表；批量末尾统一切，防父 assistant 先存档、后落库回执成孤儿行被上游拒收；同批多次 handoff 后写覆盖 last-wins），`enterExecuting` 当场重建上下文：全史标 `archived` → 插一条 `type='task_brief'` user 行（内容 = task.md 磁盘快照，非引用）→ phase='executing' + SSE `phase`/`status` 事件；下一迭代重读历史 + 重解 profile，天然切默认组合、同回合开工。压缩不碰 phase（task_brief 与其它历史一样会被后续压缩存档，漂移可控：压缩本就由用户主导）。
+- **profile（prompt+tools 组合）**：顶层 `model_profiles` 定义多套组合，`platforms[].models[].profile` 引用（见 §5.8）——这是唯一的引用来源：运行期手动切换已全部移除（消息级 profile 参数、`sessions.profile` 会话绑定均废弃，列保留不读写）；`advising` 例外，不走引用、由 phase 强制命中。名单外工具被调用不拦（`checkToolArgs` 查不到 def 不报错，`executeTool` 全表照跑），但阶段契约类例外：advising 内 `write_file`/`edit_file` 在批内挡下、`handoff` 在 handler 里带 phase 守卫；tools schema 只活在请求体不进历史，所以切换不脏化旧消息。压缩回合同样跟随（小模型会话点压缩不会回退到默认大模板）。
 
 ### 5.2 `llm.js` —— 上游调用
 
