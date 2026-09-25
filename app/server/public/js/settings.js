@@ -475,8 +475,10 @@
   }
   async function setPageService(ctx) {
     setTitle('服务');
-    setActions('<button class="icon-btn" title="编辑配置文件" onclick="sUI.openCfg()">' +
-      '<svg class="ic" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"></path></svg></button>');
+    // 临时隐藏右上角"编辑配置文件"按钮(sUI.openCfg),恢复时取消下方注释即可
+    // setActions('<button class="icon-btn" title="编辑配置文件" onclick="sUI.openCfg()">' +
+    //   '<svg class="ic" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"></path></svg></button>');
+    setActions('');
     setBody('<div class="set-scroll" id="svc-body"><div class="empty-tip">加载中…</div></div>');
     try {
       const [st, cg] = await Promise.all([
