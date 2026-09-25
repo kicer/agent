@@ -162,6 +162,9 @@ function initDb(dbPath) {
   // 迁移：profile_snapshot 存会话创建/清空时冻结的用户画像注入文本（buildMessages 每轮首条 user 注入，
   // 字节恒定不破坏前缀缓存；不入 messages 表，阶段切换/压缩动不到它，见 user-profile.js）。
   if (!cols.some(c => c.name === 'profile_snapshot')) db.exec("ALTER TABLE sessions ADD COLUMN profile_snapshot TEXT DEFAULT ''");
+  // 迁移：title_locked 用户手动重命名过标题（renameSession 置 1）：handoff 的自动标题见锁即跳过，
+  // 不得静默冲掉用户给会话起的名字；清空会话时随标题一并复位（旧名字已文不对题）。
+  if (!cols.some(c => c.name === 'title_locked')) db.exec("ALTER TABLE sessions ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0");
   // 迁移：phase 语义重定义为 advising（顾问：澄清需求/规划）/ executing（执行）。
   // 存量会话（旧值 planning/NULL）统一回填 executing——它们都有历史，行为与改造前一致、零打扰；
   // 只有新建会话进 advising（createSession 显式写入）。幂等，每次启动一条廉价 UPDATE。

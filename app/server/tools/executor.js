@@ -1125,7 +1125,7 @@ function runLabHelp(args) {
 //（其读盘取快照作锚点，幂等防重切）。phase 守卫不可省：「名单外工具照跑」是全局策略，
 // 执行期幻觉调用不得覆写修订中的 task.md；reason 枚举与 brief 非空也在此兑底（checkToolArgs 只查必填键）。
 async function toolHandoff(ctx, args) {
-  const sess = ctx.db.prepare('SELECT phase FROM sessions WHERE id = ?').get(ctx.sessionId);
+  const sess = ctx.db.prepare('SELECT phase, title_locked FROM sessions WHERE id = ?').get(ctx.sessionId);
   if (!sess || sess.phase !== 'advising') return 'Error: 当前不在顾问阶段，handoff 仅在 advising 可用';
   const reason = String((args && args.reason) || '');
   if (['ready', 'user_skip', 'user_stuck'].indexOf(reason) < 0) {
@@ -1140,8 +1140,11 @@ async function toolHandoff(ctx, args) {
   const abs = path.join(ctx.taskDir, 'task.md');
   await fsp.writeFile(abs, brief, 'utf8');
   recordFile(ctx, abs); // 同步 files 元数据表（与 write_file 同轨，任务目录列表/清理逻辑一致）
-  // task.md 落盘成功后才改标题：切换半途失败不留「有名无书」的残局
-  ctx.db.prepare('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?').run(title, Date.now(), ctx.sessionId);
+  // task.md 落盘成功后才改标题：切换半途失败不留「有名无书」的残局；
+  // 用户手动重命名过（title_locked，见 engine.renameSession）则尊重用户的名字，静默跳过。
+  if (!sess.title_locked) {
+    ctx.db.prepare('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?').run(title, Date.now(), ctx.sessionId);
+  }
   // 同批多次 handoff：后写覆盖（last-wins），批尾的切换只发生一次（enterExecuting 幂等）。
   return '任务书已写入 task.md（reason: ' + reason + '），本批工具跑完后系统将切换到执行模式。请在给用户的回复里带一句「已切换到执行阶段」。';
 }

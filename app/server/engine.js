@@ -1092,7 +1092,9 @@ function renameSession(sessionId, title) {
   const t = String(title || '').trim();
   if (!t) throw Object.assign(new Error('名称不能为空'), { status_code: 400 });
   if (t.length > 100) throw Object.assign(new Error('名称不能超过 100 字'), { status_code: 400 });
-  touch(sessionId, { title: t });
+  // 手动改名即上锁：后续 handoff 的自动标题见 title_locked 即跳过，不许冲掉用户起的名字
+  //（maybeGenerateTitle 本就见非空即跳，无需看锁）。
+  touch(sessionId, { title: t, title_locked: 1 });
   log.info('task', sessionId + ' 重命名为「' + t + '」');
   return { ok: true, title: t };
 }
@@ -1235,7 +1237,7 @@ function clearSessionMessages(sessionId) {
   autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
   // 标题随历史一并清零：旧标题描述的是已删除的对话，留着会让新对话文不对题；
   // 新一轮交互结束后 maybeGenerateTitle 见 title 为空会自动重新生成。
-  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null, title: null, phase: 'advising' });
+  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null, title: null, title_locked: 0, phase: 'advising' });
   profile.freezeSnapshot(db, sessionId); // 回 advising 重新规划：画像快照随新一轮重新冻结
   bus.emit(sessionId, 'done', { status: 'completed' });
   bus.emit(sessionId, 'title', { title: null }); // 供其他打开同一会话的窗口同步清掉旧标题
