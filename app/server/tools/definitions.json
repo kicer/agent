@@ -109,7 +109,7 @@
     "type": "function",
     "function": {
       "name": "handoff",
-      "description": "Hand off from the advising phase to the execution phase. Call this when the task brief is ready. The system will write your `brief` to task.md and switch to execution. There are three cases:\n\n- ready: The requirement is clear enough to execute.\n- user_skip: The user explicitly asks to skip planning (\"just do it\", \"别问了\", \"换个 agent\", \"直接开始\", or similar). Do not call this on tone or mood alone — only on explicit signals.\n- user_stuck: You have asked 2-3 rounds and the user is still not providing key information, and they seem to want to move on.\n\nWhen reason is not \"ready\", pass the user's own words as `brief` and leave it at that. Do not invent a methodology or generic plan. The executor will ask the user for missing information directly.",
+      "description": "Hand off from the advising phase to the execution phase. Call this when the task brief is ready. The system stores your `brief` as the task brief and switches to execution. There are three cases:\n\n- ready: The requirement is clear enough to execute.\n- user_skip: The user explicitly asks to skip planning (\"just do it\", or similar). Do not call this on tone or mood alone — only on explicit signals.\n- user_stuck: You have asked 2-3 rounds and the user is still not providing key information, and they seem to want to move on.\n\nWhen reason is not \"ready\", pass the user's own words as `brief` and leave it at that. Do not invent a methodology or generic plan. The executor will ask the user for missing information directly.",
       "parameters": {
         "type": "object",
         "required": [
@@ -128,7 +128,7 @@
           },
           "brief": {
             "type": "string",
-            "description": "The task brief content, in Markdown. This is written to task.md verbatim. Follow the structure described in your system prompt."
+            "description": "The task brief content, in Markdown. Follow the structure described in your system prompt."
           }
         }
       }
