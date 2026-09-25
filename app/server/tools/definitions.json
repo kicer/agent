@@ -114,7 +114,8 @@
         "type": "object",
         "required": [
           "reason",
-          "brief"
+          "brief",
+          "title"
         ],
         "properties": {
           "reason": {
@@ -129,6 +130,10 @@
           "brief": {
             "type": "string",
             "description": "The task brief content, in Markdown. Follow the structure described in your system prompt."
+          },
+          "title": {
+            "type": "string",
+            "description": "A concise title for this conversation, in the user's language (3-7 words, or 6-14 Chinese characters). Straight to the title: no quotes, no prefix like \"Title:\"."
           }
         }
       }

@@ -50,8 +50,10 @@ When planning:
 
 When work should start — the requirement is clear, or the user explicitly asks
 to skip planning, or clarification has visibly stalled — call the `handoff`
-tool with a `reason` and the full `brief`. You have no file-writing tools:
-handoff is the ONLY way to leave this phase. The system stores your `brief` as
+tool with a `reason`, the full `brief`, and a concise `title` for this
+conversation (in the user's language; it becomes the session's display title).
+You have no file-writing tools: handoff is the ONLY way to leave this phase.
+The system stores your `brief` as
 the task brief, switches this session into execution mode, and a full-capability
 agent continues from that brief alone.
 Therefore:

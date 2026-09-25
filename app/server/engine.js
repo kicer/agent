@@ -820,7 +820,13 @@ async function runLoopInner(sessionId, run) {
         handoffDone = true;
       }
     }
-    if (handoffDone) enterExecuting(sessionId);
+    if (handoffDone) {
+      // 顾问标题已由 toolHandoff 直写 sessions.title：广播同 maybeGenerateTitle 的 title 事件，
+      // 已开窗口刷详情页标题 + 重拉会话列表（finalize 的自动标题见非空即跳过，不会覆盖）。
+      const ht = db.prepare('SELECT title FROM sessions WHERE id = ?').get(sessionId);
+      if (ht && ht.title) bus.emit(sessionId, 'title', { title: ht.title });
+      enterExecuting(sessionId);
+    }
     iter++;
   }
   if (iter >= maxIter && !run.cancelled) {
