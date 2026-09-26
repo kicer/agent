@@ -180,10 +180,6 @@ function syncModelPool() {
   }
   // 兑底：queued 会话必须在队列中
   for (const s of db.prepare("SELECT id FROM sessions WHERE status='queued'").all()) enqueue(s.id);
-  // 回收后必须亲手派发一次：dispatchQueued 全是事件驱动（发消息/结版/释租才触发），
-  // 重启后进程零 run 零事件，不点这一下，被退回队列的会话会永远躺在「排队中」——
-  // 池已整池空闲也没人去叫醒它。流式中途重启的会话（最后行是 user）会在此直接续跑。
-  dispatchQueued();
   startHoldSweeper();
 }
 
@@ -307,10 +303,12 @@ function enterExecuting(sessionId) {
   ).run(sessionId).changes;
   saveMessage(sessionId, {
     role: 'user', type: 'task_brief',
-    content: '【任务书】顾问阶段结束，会话已进入执行模式。以下任务书快照（task.md）是唯一目标依据；'
+    // 只报「进入执行模式 + 行为约束 + 任务书本体」：task.md/.task-history 是系统内部传递机制，
+    // 不进模型视野（知道文件名只会引出无谓的读写尝试）；Missing 逐项确认段是 user_skip
+    // 事故（执行者把跳过顾问泛化成跳过确认）的行为约束，不可减。
+    content: '【任务书】顾问阶段结束，会话已进入执行模式，以下任务书是唯一目标依据；'
       + '之前的顾问对话已存档、不再发送。若任务书列有 Missing/待确认事项：开工前逐项向用户提问并等待答复——'
-      + '用户跳过的只是顾问阶段，不是确认环节，不得据此自行拍板；只有用户明确说过「别问，直接做」才可用默认值，且须把每个默认决定列出供用户检查；禁止把待确认项改写成「按默认执行」。'
-      + '执行中可修订 task.md（以文件现状为准）；上一轮任务书归档在 .task-history/，仅限用户明确要求时查阅。\n\n' + snapshot,
+      + '用户跳过的只是顾问阶段，不是确认环节，不得据此自行拍板；只有用户明确说过「别问，直接做」才可用默认值，且须把每个默认决定列出供用户检查；禁止把待确认项改写成「按默认执行」。\n\n' + snapshot,
   });
   db.prepare("UPDATE sessions SET phase='executing', updated_at=? WHERE id=?").run(now(), sessionId);
   bus.emit(sessionId, 'phase', { phase: 'executing' });

@@ -1146,7 +1146,9 @@ async function toolHandoff(ctx, args) {
     ctx.db.prepare('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?').run(title, Date.now(), ctx.sessionId);
   }
   // 同批多次 handoff：后写覆盖（last-wins），批尾的切换只发生一次（enterExecuting 幂等）。
-  return '任务书已写入 task.md（reason: ' + reason + '），本批工具跑完后系统将切换到执行模式。请在给用户的回复里带一句「已切换到执行阶段」。';
+  // 回执只写事实：成功路径下本回执连同父行一起被存档、不会回到任何模型；
+  // 读者只有 enterExecuting 放弃/报错后继续 advising 的模型本身（据此自纠），无行为指令可带。
+  return '已接收交接（reason: ' + reason + '），本批工具跑完后系统将切换到执行阶段。';
 }
 
 const HANDLERS = {
