@@ -496,7 +496,7 @@
   async function previewInFs(name) {
     try {
       const r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
-      if (r.status === 401) { location.href = '/login'; return; }
+      if (r.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search); return; }
       if (!r.ok) { let msg = 'HTTP ' + r.status; try { msg = (await r.json()).error || msg; } catch (_) {} throw new Error(msg); }
       if (/\.html?$/i.test(name)) {
         const html = await r.text();

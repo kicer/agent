@@ -79,6 +79,13 @@ function isPublicPath(p) {
   return false;
 }
 
+// 登录成功后的回跳目标：只允许本站绝对路径，拦掉 //evil.com（协议相对）与反斜杠混淆，防开放重定向。
+function safeNextUrl(u) {
+  const s = String(u || '');
+  if (!s.startsWith('/') || s.startsWith('//') || s.includes('\\')) return '/';
+  return s;
+}
+
 // 带签名 token 的临时下载链接（files.js 自己验签），此处放行由路由层拒绝伪造请求。
 // URL 形态都要认：/files/download?path=…、/files/download-name/<名字>?path=…，
 // 及打包下载 /files/zip?paths=…、/files/zip-name/<名字>?paths=…；
@@ -203,7 +210,8 @@ function createAuth(cfg) {
 
   // ----- 登录页 / 登出跳转 -----
   router.get('/login', (req, res) => {
-    if (sessionUser(req)) return res.redirect('/');
+    // 已登录直接放行：优先回跳 next 指定的原页面（中间件在 302 来 /login 时带上的）
+    if (sessionUser(req)) return res.redirect(safeNextUrl(req.query.next));
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
   });
 
@@ -219,7 +227,8 @@ function createAuth(cfg) {
     if (user) { req.user = user; return next(); }
     if (isPublicPath(req.path) || isSignedDownload(req)) return next();
     if (req.path.startsWith('/api/')) return res.status(401).json({ error: '未登录' });
-    return res.redirect('/login');
+    // 带上原始 URL（含 query），登录页成功后回跳，不再一律进首页
+    return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
   };
 
   return { enabled: true, middleware, router };

@@ -42,11 +42,18 @@
   <script>
     'use strict';
     const TOKEN_KEY = 'agent_token';
+    // 未认证访问页面时，服务端 302 到 /login?next=<原始 URL>；登录/恢复成功后回跳该页。
+    // 只认本站绝对路径，拦掉 //evil.com 与反斜杠混淆，防开放重定向；无/非法则回首页。
+    function redirectTarget() {
+      const n = new URLSearchParams(location.search).get('next') || '';
+      if (!n.startsWith('/') || n.startsWith('//') || n.indexOf('\\') !== -1) return '/';
+      return n;
+    }
     // bfcache(前进/后退缓存)恢复会绕过服务端“已登录访问 /login → 302 回主页”的判定，
-    // 侧滑返回可能直接复活旧登录表单。能走到这里说明 /login 是历史残留条目，立刻踢回主页；
+    // 侧滑返回可能直接复活旧登录表单。能走到这里说明 /login 是历史残留条目，立刻踢回目标页；
     // 若其实已登出，服务端会再 302 回 /login，拿到的也是新鲜表单而非僵尸页。
     window.addEventListener('pageshow', e => {
-      if (e.persisted) location.replace('/');
+      if (e.persisted) location.replace(redirectTarget());
     });
     // WebView 封装 APK 杀进程后 HttpOnly cookie 可能没落盘，但 localStorage 还在：
     // 登录成功后把 token 另存一份，下次进来先尝试用旧 token 静默恢复登录态。
@@ -65,7 +72,7 @@
         if (res.ok) {
           const j = await res.json().catch(() => ({}));
           if (j && j.token) localStorage.setItem(TOKEN_KEY, j.token); // 续期 token
-          location.replace('/');
+          location.replace(redirectTarget());
           return;
         }
       } catch (_) { /* 网络错误交给表单正常登录 */ }
@@ -100,7 +107,7 @@
           // 不再往 sessionStorage 写明文口令——Basic 头与 cookie 作用域不同，会引发多标签页身份分裂
           localStorage.setItem(TOKEN_KEY, j.token);
         }
-        location.replace('/'); // 替换而非压栈：历史里不留 /login 条目，登录后侧滑不会退回登录页
+        location.replace(redirectTarget()); // 替换而非压栈：历史里不留 /login 条目，登录后侧滑不会退回登录页
       } catch (e2) {
         errEl.textContent = e2.message || '登录失败';
         btn.disabled = false;

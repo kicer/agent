@@ -129,7 +129,8 @@
       }
       throw e;
     }
-    if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+    // 运行中登录态失效：带上当前页 URL，重新登录后原页返回
+    if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search); throw new Error('未登录'); }
     if (!res.ok) {
       let msg = 'HTTP ' + res.status;
       try { msg = (await res.json()).error || msg; } catch (_) {}
