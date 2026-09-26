@@ -180,6 +180,10 @@ function syncModelPool() {
   }
   // 兑底：queued 会话必须在队列中
   for (const s of db.prepare("SELECT id FROM sessions WHERE status='queued'").all()) enqueue(s.id);
+  // 回收后必须亲手派发一次：dispatchQueued 全是事件驱动（发消息/结版/释租才触发），
+  // 重启后进程零 run 零事件，不点这一下，被退回队列的会话会永远躺在「排队中」——
+  // 池已整池空闲也没人去叫醒它。流式中途重启的会话（最后行是 user）会在此直接续跑。
+  dispatchQueued();
   startHoldSweeper();
 }
 
