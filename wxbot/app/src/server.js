@@ -333,6 +333,20 @@ app.post("/api/deliver", requireAuth, async (req, res) => {
   }
 });
 
+// core → wxbot「正在输入」心跳（工具调用/回执节奏触发；typing 由微信侧自动过期，无需 stopTyping）
+app.post("/api/typing", requireAuth, async (req, res) => {
+  const { id, to } = req.body || {};
+  const inst = instances.get(String(id || ""));
+  if (!inst) return res.status(404).json({ error: "实例不存在" });
+  if (!to) return res.status(400).json({ error: "to 不能为空" });
+  try {
+    await inst.bot.sendTyping(String(to));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ error: "typing 失败：" + String(e?.message || e).slice(0, 200) });
+  }
+});
+
 // core → wxbot 附件投递（链接→卡片）：core 已把正文里的 /p/ 链接换成本地读好的字节并做
 // 归属/大小/数量校验；这里只转发 SDK——bot.send 的 file 按扩展名自动路由 image/video/file 卡片，
 // CDN 上传 + 加密全在 SDK 内。

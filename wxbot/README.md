@@ -66,6 +66,7 @@ docker compose up -d agent-core       # core 带 WXBOT_URL/WXBOT_TOKEN 重建（
 | DELETE | `/api/instances/:id` | 销毁实例并删登录凭证（解绑） |
 | GET | `/api/instances/:id/qr.svg` | 当前登录二维码（core 设置页代理渲染） |
 | POST | `/api/deliver {id,to,text}` | 文本投递（core 已分段；出口统一 stripMarkdown，微信不渲染 markdown） |
+| POST | `/api/typing {id,to}` | 「正在输入」心跳（core 在工具调用/结果时触发，每绑定 2s 冷却；typing 自然过期无需 stopTyping） |
 | POST | `/api/deliver_media {id,to,filename,b64}` | 附件投递（core 已把正文里的 /p/ 链接换成本地字节并做归属/大小校验；SDK 按扩展名自动路由 image/video/file 卡片） |
 
 ## 本地调试

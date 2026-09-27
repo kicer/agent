@@ -374,11 +374,14 @@ function attachBus() {
   if (busAttached || !bus) return;
   busAttached = true;
   bus.onInternal((sessionId, event, data) => {
-    if (event !== 'assistant_message' || !data) return;
+    if (event === 'assistant_message') { if (!data) return; }
+    else if (event !== 'tool_call' && event !== 'tool_result') return;
     try {
       const cs = db.prepare('SELECT user, channel FROM channel_sessions WHERE session_id = ?').get(sessionId);
       if (!cs || !String(cs.channel || '').startsWith('wx:')) return;
-      enqueueDelivery(cs.channel.slice(3), () => deliverNow(cs.channel.slice(3), data, sessionId));
+      const bid = cs.channel.slice(3);
+      if (event === 'assistant_message') enqueueDelivery(bid, () => deliverNow(bid, data, sessionId));
+      else maybeTypingPing(bid); // 工具调用/回执→「正在输入」心跳：微信端在长工具回合里能看到 AI 还在干活
     } catch (e) {
       log.warn('wechat', '投递监听异常：' + msg(e));
     }
@@ -392,6 +395,20 @@ function enqueueDelivery(key, fn) {
   const next = prev.then(fn, fn).catch(() => {});
   deliveryQ.set(key, next);
   next.then(() => { if (deliveryQ.get(key) === next) deliveryQ.delete(key); });
+}
+
+// sendTyping 心跳：tool_call/tool_result 事件驱动（并行工具批会连发，2s 冷却去重）；
+// 纯 UI 锦上添花，一切失败静默（wxbot 不可达/实例已销都不值得刷日志），不进入投递队列。
+const typingLast = new Map(); // bid -> 上次发出时间戳
+function maybeTypingPing(bid) {
+  try {
+    const b = getBinding(bid);
+    if (!b || b.status !== 'online' || !b.wx_to_user) return;
+    const t = now();
+    if (t - (typingLast.get(bid) || 0) < 2000) return;
+    typingLast.set(bid, t);
+    wxbotApi('POST', '/api/typing', { id: b.id, to: b.wx_to_user }, 5000).catch(() => {});
+  } catch (_) { /* 心跳尽力而为 */ }
 }
 
 async function deliverNow(bid, m, sessionId) {
