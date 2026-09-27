@@ -54,18 +54,23 @@ async function wxbotApi(method, path, body, timeoutMs) {
   try { return JSON.parse(text); } catch (_) { return text; }
 }
 
-// 存活探测（GET /wxbot 面板用）：带 5s 缓存，wxbot 挂掉只表现为 false，绝不外抛。
-let aliveCache = { at: 0, ok: false };
-async function wxbotAlive() {
-  if (!enabled()) return false;
-  if (now() - aliveCache.at < 5000) return aliveCache.ok;
-  let ok = false;
+// 实例快照探测（GET /api/wechat 面板数据 + 探活二合一）：2s 缓存，一次拿齐「活没活 +
+// 每个绑定的实例状态/有无二维码」；wxbot 挂掉只表现为 alive:false，绝不外抛。
+let instCache = { at: 0, alive: false, map: new Map() }; // map: id -> {state, accountId, hasQr}
+async function wxbotInstances(timeoutMs) {
+  if (!enabled()) return instCache;
+  if (now() - instCache.at < 2000) return instCache;
+  const map = new Map();
+  let alive = false;
   try {
-    const r = await fetch(wxUrl() + '/health', { signal: AbortSignal.timeout(2500) });
-    ok = r.ok;
+    const res = await fetch(wxUrl() + '/api/instances', {
+      headers: { Authorization: 'Bearer ' + wxToken() },
+      signal: AbortSignal.timeout(timeoutMs || 2500),
+    });
+    if (res.ok) { for (const r of (await res.json()) || []) map.set(String(r.id), r); alive = true; }
   } catch (_) { /* 不在线 */ }
-  aliveCache = { at: now(), ok };
-  return ok;
+  instCache = { at: now(), alive, map };
+  return instCache;
 }
 
 // ---------- 绑定表 ----------
@@ -92,29 +97,34 @@ async function createBinding(user) {
   db.prepare(
     "INSERT INTO wechat_bindings (id, user, status, last_msg_id, created_at, updated_at) VALUES (?,?,'pending',0,?,?)"
   ).run(id, user, now(), now());
-  try {
-    await wxbotApi('POST', '/api/instances', { id });
-  } catch (e) {
-    touchBinding(id, { status: 'error', note: msg(e) });
-    log.warn('wechat', id + ' 创建绑定成功但 wxbot 实例启动失败：' + msg(e));
-  }
+  // fire-and-forget 建实例：点击秒回——不拿 wxbot 的网络往返卡住按钮（实测 SDK 取码瞬时超时过，
+  // 同步 await 会毁掉整个绑定 UX）。成功由 QR 出现体现；失败落 note，轮询可见、刷新按钮可恢复。
+  wxbotApi('POST', '/api/instances', { id }, 15000).catch(e => {
+    touchBinding(id, { status: 'error', note: '实例启动失败：' + msg(e) });
+    log.warn('wechat', id + ' wxbot 实例启动失败：' + msg(e));
+  });
   log.info('wechat', (user || '-') + ' 新建微信绑定 ' + id);
   return getBinding(id);
 }
 
-// 重发登录（二维码过期/失败后用）：清状态 → wxbot 重起登录流程。
+// 重发登录（二维码过期/失败后用）：本地先置 pending（界面立刻变「正在获取二维码」），
+// wxbot 后台 destroy+recreate（路由幂等，实例不存在时等效新建）；失败落 note 由轮询呈现。
 async function refreshBinding(id) {
   const b = mustBinding(id);
-  await wxbotApi('POST', '/api/instances/' + encodeURIComponent(b.id) + '/refresh');
+  wxbotApi('POST', '/api/instances/' + encodeURIComponent(b.id) + '/refresh', null, 15000).catch(e => {
+    touchBinding(b.id, { status: 'error', note: 'wxbot 刷新失败：' + msg(e) });
+    log.warn('wechat', b.id + ' 刷新失败：' + msg(e));
+  });
   touchBinding(b.id, { status: 'pending', note: null });
   return getBinding(b.id);
 }
 
-// 解绑：wxbot 停实例并删凭证（尽力而为，网络断了本地也必须删干净）。
+// 解绑：本地行秒删（channel 绑定一并清）；通知 wxbot 销毁 fire-and-forget，
+// 通知丢了有两层兑底：inbox 404 → wxbot 自毁孤儿实例；core 启动 restore 双向对账清理。
 async function deleteBinding(id) {
   const b = mustBinding(id);
-  try { await wxbotApi('DELETE', '/api/instances/' + encodeURIComponent(b.id)); }
-  catch (e) { log.warn('wechat', b.id + ' 通知 wxbot 销毁实例失败（本地继续解绑）：' + msg(e)); }
+  wxbotApi('DELETE', '/api/instances/' + encodeURIComponent(b.id), null, 10000)
+    .catch(e => log.warn('wechat', b.id + ' 通知 wxbot 销毁失败（对账/自毁兑底）：' + msg(e)));
   db.prepare('DELETE FROM wechat_bindings WHERE id = ?').run(b.id);
   db.prepare("DELETE FROM channel_sessions WHERE channel = ?").run('wx:' + b.id);
   log.info('wechat', (b.user || '-') + ' 解绑微信 ' + b.id);
@@ -131,33 +141,81 @@ function listBindings(user) {
   return db.prepare('SELECT ' + BIND_COLS + ' FROM wechat_bindings WHERE user = ? ORDER BY created_at DESC').all(user);
 }
 
-// QR 代理：wxbot 的 SVG 原样透传给 core 前端 <img>（cookie 鉴权在路由层，wxbot token 只在内网）。
-// wxbot 404（无待扫二维码）翻译成 {none:true}，前端按状态渲染，避免 img 报错红叉。
+// 面板总览（GET /api/wechat 唯一实现）：{enabled, alive, bindings:[行+has_qr]}，
+// 并向实例快照「静默自愈」——hook 只是尽力而为（core 重启窗口/wxbot 瞬时抖动都会丢事件），
+// 每轮页面访问/轮询顺带纠偏：
+//  - 实例 online 而行未 online → 纠正（不等 inbox 兑底）；
+//  - 实例回退到 qr/scanned 而行还挂着 online（登录态掉了）→ 打回 pending 提示重扫；
+//  - 实例 expired 而行 pending → 标过期（出刷新按钮）；
+//  - 行该有实例而快照没有（wxbot 重启前 core 先起等）→ 后台补建（幂等）。
+async function overview(user) {
+  if (!enabled()) return { enabled: false, alive: false, bindings: [] };
+  const snap = await wxbotInstances();
+  const rows = listBindings(user);
+  for (const b of rows) {
+    const ins = snap.map.get(b.id);
+    b.has_qr = !!(ins && ins.hasQr);
+    if (!snap.alive) continue;
+    if (!ins) {
+      if (b.status === 'pending' || b.status === 'online') {
+        wxbotApi('POST', '/api/instances', { id: b.id }, 15000)
+          .catch(e => log.warn('wechat', b.id + ' 实例补建失败：' + msg(e)));
+      }
+    } else if (ins.state === 'online' && b.status !== 'online') {
+      touchBinding(b.id, { status: 'online', bot_account_id: ins.accountId || b.bot_account_id, note: null });
+      b.status = 'online';
+      if (ins.accountId) b.bot_account_id = ins.accountId;
+    } else if ((ins.state === 'qr' || ins.state === 'scanned') && b.status === 'online') {
+      touchBinding(b.id, { status: 'pending', note: '登录态失效，需重新扫码' });
+      b.status = 'pending';
+    } else if (ins.state === 'expired' && b.status === 'pending') {
+      touchBinding(b.id, { status: 'expired', note: '二维码已过期，点刷新重新获取' });
+      b.status = 'expired';
+    }
+  }
+  return { enabled: true, alive: snap.alive, bindings: rows };
+}
+
+// QR 代理：wxbot 的 SVG 原样透传给账户页内联渲染（cookie 鉴权在路由层，wxbot token 只在内网）。
+// wxbot 404（无待扫二维码）翻译成 {none:true}；前端只在 has_qr 就绪后才拉这个接口，这里短超时即可。
 async function qrSvg(b) {
   if (!enabled()) return { none: true };
   try {
     const res = await fetch(wxUrl() + '/api/instances/' + encodeURIComponent(b.id) + '/qr.svg', {
       headers: { Authorization: 'Bearer ' + wxToken() },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(4000),
     });
     if (!res.ok) return { none: true };
     return { svg: await res.text() };
   } catch (_) { return { none: true }; }
 }
 
-// 启动恢复：把表里的 binding 逐个 POST 到 wxbot（幂等，wxbot 端 Map 去重）。
-// wxbot 不在线只留一行 info（它起来后用户点一次「刷新」或重新绑定即可自愈，不追着重试）。
+// 启动双向对账（fire-and-forget，不阻塞 listen）：core 有行而 wxbot 缺实例 → 补建；
+// wxbot 有实例而 core 无行（解绑通知丢失的孤儿）→ 销毁。wxbot 不可达只留一行 info，
+// 之后 overview() 每轮访问还会自愈补建，这里不求一次成功。
 async function restore() {
   if (!enabled()) return;
   const rows = db.prepare('SELECT id FROM wechat_bindings').all();
-  if (!rows.length) return;
-  let ok = 0, fail = 0;
-  for (const r of rows) {
-    try { await wxbotApi('POST', '/api/instances', { id: r.id }, 4000); ok++; }
-    catch (_) { fail++; }
+  const snap = await wxbotInstances(5000);
+  if (!snap.alive) {
+    if (rows.length) log.info('wechat', '启动对账：wxbot 不可达，跳过（设置页访问时会自动补建实例）');
+    return;
   }
-  if (fail) log.info('wechat', '启动恢复：' + ok + '/' + rows.length + ' 个实例已确保存在，' + fail + ' 个失败（wxbot 未启动？可在设置页刷新重试）');
-  else log.info('wechat', '启动恢复：' + ok + ' 个微信实例已确保存在');
+  const want = new Set(rows.map(r => r.id));
+  let built = 0;
+  for (const r of rows) {
+    if (snap.map.has(r.id)) continue;
+    built++;
+    wxbotApi('POST', '/api/instances', { id: r.id }, 15000).catch(e => log.warn('wechat', r.id + ' 补建失败：' + msg(e)));
+  }
+  let orphan = 0;
+  for (const id of snap.map.keys()) {
+    if (want.has(id)) continue;
+    orphan++;
+    log.info('wechat', '对账清理孤儿微信实例 ' + id);
+    wxbotApi('DELETE', '/api/instances/' + encodeURIComponent(id), null, 10000).catch(() => {});
+  }
+  log.info('wechat', '启动对账：绑定 ' + rows.length + ' / 实例 ' + snap.map.size + '，补建 ' + built + '，清理孤儿 ' + orphan);
 }
 
 // ---------- wxbot → core 回调（/wxhook，Bearer 服务 token，auth.middleware 之前挂载） ----------
@@ -260,7 +318,7 @@ module.exports = {
   init,
   restore,
   enabled,
-  wxbotAlive,
+  overview,
   getBinding,
   listBindings,
   createBinding,

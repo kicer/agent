@@ -250,7 +250,6 @@
     const ctx = () => tok === setTok && setTop() === p; // 异步回包时页面可能已切走
     if (p === 'home') return setPageHome(ctx);
     if (p === 'account') return setPageAccount(ctx);
-    if (p === 'wechat') return setPageWechat(ctx);
     if (p === 'service') return setPageService(ctx);
     if (p === 'cfg-editor') return setPageCfgEditor(ctx);
     if (p === 'skills') return setPageSkills(ctx);
@@ -345,18 +344,16 @@
     try { const r = await req('GET', '/api/me'); if (r && r.user) me = r; } catch (_) { /* 404 等一律按无账户信息处理 */ }
     let p = null, pErr = '';
     try { p = await req('GET', '/api/profile'); } catch (e) { pErr = String((e && e.message) || e); }
-    // 微信入口：未配置（wxbot.url 空）或「未配 wxbot 容器」时整卡隐藏，普通用户零打扰；
-    // 已有绑定时即使 wxbot 没起也要展示（否则用户看不到自己的绑定状态）。
-    let wx = null;
-    try { const r = await req('GET', '/api/wechat'); if (r && r.enabled && (r.alive || (r.bindings || []).length)) wx = r; } catch (_) { /* 旧后端/异常隐藏 */ }
     if (!ctx()) return;
     let html = '<div class="set-scroll">';
     if (me) html += userCardHtml(me.user);
     html += pErr
       ? '<div class="settings-card"><h4>用户画像</h4><div class="empty-tip">加载失败:' + esc(pErr) + '</div></div>'
       : profileCardHtml(p);
-    if (wx) html += wechatCardHtml(wx);
+    // 微信内联卡：占位隐藏，wxInitZone 拉到状态才显形（未配置/未连且无绑定 → 始终隐藏，零打扰）
+    html += '<div class="settings-card" id="wx-zone" style="display:none"></div>';
     setBody(html + '</div>');
+    wxInitZone(ctx);
   }
   async function changePassword() {
     try {
@@ -394,86 +391,97 @@
     catch (e) { toast('保存失败:' + e.message); }
   }
 
-  // ---------- 页:微信绑定（后端 wechat.js + wxbot iLink；一人一绑，扫码后仅本人可与 bot 单线对话） ----------
+  // ---------- 微信绑定（账户页内联卡 #wx-zone；一人一绑无子页，签名比对增量更新防闪烁） ----------
+  // 体验约定：后端绑定/刷新/解绑全 fire-and-forget，点击秒回；QR 只在 has_qr（wxbot 实例快照里码已就绪）
+  // 后才 fetch 内联 SVG——不再有无码必坏的 <img> 首帧；轮询只在渲染串真的变了才动 DOM，pending 之外停表。
   const WX_STATUS = { pending: ['待扫码', 'held'], online: ['已连接', 'active'], expired: ['二维码过期', 'held'], error: ['异常', 'cancelled'] };
-  let wxTimer = null;
-  function stopWxPoll() { if (wxTimer) { clearInterval(wxTimer); wxTimer = null; } }
+  let wxTimer = null, wxLast = null, wxCtx = null;
+  function wxStopTick() { if (wxTimer) { clearInterval(wxTimer); wxTimer = null; } }
 
-  function wechatCardHtml(w) {
-    const n = (w.bindings || []).length;
-    const sum = n ? ('已绑定 ' + n + ' 个 · ' + (w.alive ? '服务在线' : '服务未连接')) : (w.alive ? '未绑定' : '服务未连接');
-    return '<div class="settings-card"><h4>微信绑定 <span class="badge ' + (w.alive && n ? 'active' : 'held') + '">' + esc(sum) + '</span></h4>' +
-      '<button class="ghost-btn" onclick="setPush(\'wechat\')">管理</button>' +
-      '<div class="cfg-note">微信里给 bot 好友发文字即与 Agent 对话；发送 /help 查看全部命令。会话与网页端同源。</div></div>';
+  async function wxFetch() {
+    const w = await req('GET', '/api/wechat'); // {enabled, alive, bindings:[行+has_qr]}
+    const b = (w && w.bindings && w.bindings[0]) || null;
+    let svg = '';
+    if (b && b.status === 'pending' && b.has_qr) {
+      try {
+        const r = await fetch('/api/wechat/' + encodeURIComponent(b.id) + '/qr?ts=' + Date.now());
+        if (r.ok) svg = await r.text();
+      } catch (_) { /* 抖动：本轮无码，下轮再取 */ }
+    }
+    return { w, b, svg };
   }
 
-  async function setPageWechat(ctx) {
-    setTitle('微信绑定');
-    setActions('');
-    setBody('<div class="set-scroll"><div class="empty-tip">加载中…</div></div>');
-    await renderWechatPage(ctx);
+  function wxCardInnerHtml(w, b, svg) {
+    if (!w || !w.enabled) return '';
+    if (!b) {
+      if (!w.alive) return ''; // 未部署 wxbot 的新用户：整卡隐藏，零打扰
+      return '<h4>微信绑定</h4>' +
+        '<button class="primary-btn" onclick="sUI.wxBind()">生成登录二维码</button>' +
+        '<div class="cfg-note">一人一绑（换号先解绑）。扫码登录后微信里会出现 bot 好友，发给它的消息即进入你的 Agent 会话，回复实时推回。</div>';
+    }
+    if (!w.alive) {
+      return '<h4>微信绑定 <span class="badge cancelled">服务未连接</span></h4>' +
+        '<div class="cfg-note">wxbot 未启动或网络不通。绑定与登录凭证都在，服务恢复后自动重连。</div>' +
+        '<div style="margin-top:10px"><button class="ghost-btn" onclick="sUI.wxUnbind(\'' + esc(b.id) + '\')">解绑</button></div>';
+    }
+    const st = WX_STATUS[b.status] || [b.status || '-', 'held'];
+    let html = '<h4>微信绑定 <span class="badge ' + esc(st[1]) + '">' + esc(st[0]) + '</span><span class="wx-id">' + esc(b.id) + '</span></h4>';
+    if (b.note) html += '<div class="cfg-note">' + esc(b.note) + '</div>';
+    if (b.bot_account_id) html += '<div class="cfg-kv"><label>微信账号</label><b>' + esc(b.bot_account_id) + '</b></div>';
+    if (b.status === 'pending') {
+      html += svg
+        ? '<div class="wx-qr">' + svg + '</div><div class="cfg-note" style="text-align:center">微信扫码 → 手机确认；二维码会过期，也可随时点刷新。</div>'
+        : '<div class="wx-qr wx-qr-wait">正在获取二维码…</div>';
+      html += '<button class="ghost-btn" onclick="sUI.wxRefresh(\'' + esc(b.id) + '\')">刷新二维码</button>';
+    } else if (b.status === 'expired' || b.status === 'error') {
+      html += '<button class="primary-btn" onclick="sUI.wxRefresh(\'' + esc(b.id) + '\')">重新获取二维码</button>';
+    } else if (b.status === 'online') {
+      html += '<div class="cfg-note">已在线：给 bot 好友发消息即对话（/help 看命令）。网页端可实时看到同一个会话。</div>';
+    }
+    html += '<div style="margin-top:10px"><button class="ghost-btn" onclick="sUI.wxUnbind(\'' + esc(b.id) + '\')">解绑</button></div>';
+    return html;
   }
 
-  async function renderWechatPage(ctx) {
-    stopWxPoll();
-    let w = null, err = '';
-    try { w = await req('GET', '/api/wechat'); } catch (e) { err = String(e && e.message || e); }
+  function wxPaint(st) {
+    const el = $('wx-zone');
+    if (!el) return;
+    const inner = wxCardInnerHtml(st.w, st.b, st.svg);
+    if (inner === wxLast) return; // 内容没变绝不动 DOM——轮询不闪的根治点
+    wxLast = inner;
+    el.innerHTML = inner;
+    el.style.display = inner ? '' : 'none';
+  }
+
+  async function wxInitZone(ctx) {
+    wxCtx = ctx;
+    wxStopTick();
+    wxLast = null; // 重新挂载 = 新元素，上一帧比对作废
+    let st;
+    try { st = await wxFetch(); } catch (_) { return; }
     if (!ctx()) return;
-    if (!w) { setBody('<div class="set-scroll"><div class="empty-tip">读取失败:' + esc(err) + '</div></div>'); return; }
-    if (!w.enabled) { setBody('<div class="set-scroll"><div class="empty-tip">微信接入未配置（config.yml wxbot.url 或环境变量 WXBOT_URL）。</div></div>'); return; }
-    const bindings = w.bindings || [];
-    let html = '<div class="set-scroll">';
-    if (!w.alive && !bindings.length) {
-      html += '<div class="settings-card"><h4>微信服务未连接 <span class="badge cancelled">离线</span></h4>' +
-        '<div class="cfg-note">wxbot 容器未启动或网络不通；启动后重进本页即可。</div></div>';
-    }
-    if (!bindings.length) {
-      html += '<div class="settings-card"><h4>绑定微信</h4>' +
-        '<button class="primary-btn"' + (w.alive ? '' : ' disabled') + ' onclick="sUI.wxBind()">生成登录二维码</button>' +
-        '<div class="cfg-note">' + (w.alive
-          ? '一人一绑（换号先解绑）。用你自己的微信扫码登录一个 bot 账号，登录后该微信里会出现 bot 好友，发给它的消息即进入你的 Agent 会话，回复实时推回。'
-          : '微信服务当前未连接，无法发起绑定。') + '</div></div>';
-      setBody(html + '</div>');
-      return;
-    }
-    for (const b of bindings) {
-      const st = WX_STATUS[b.status] || [b.status || '-', 'held'];
-      html += '<div class="settings-card"><h4>' + esc(b.id) + ' <span class="badge ' + esc(st[1]) + '">' + esc(st[0]) + '</span></h4>';
-      if (b.note) html += '<div class="cfg-kv"><label>说明</label><b>' + esc(b.note) + '</b></div>';
-      if (b.bot_account_id) html += '<div class="cfg-kv"><label>微信账号</label><b>' + esc(b.bot_account_id) + '</b></div>';
-      if (b.status === 'pending') {
-        // ts 参数防缓存；二维码过期时 wxbot 侧无码 → 404，img 加载失败不致命，轮询到状态变 expired 后换成刷新按钮
-        html += '<div style="text-align:center;padding:6px"><img alt="登录二维码" src="/api/wechat/' + encodeURIComponent(b.id) + '/qr?ts=' + Date.now() + '" style="width:220px;height:220px;background:#fff;border-radius:8px"></div>' +
-          '<div class="cfg-note" style="text-align:center">微信「扫一扫」扫码并在手机上确认；没反应就点下方刷新。</div>';
-      } else if (b.status === 'expired' || b.status === 'error') {
-        html += '<button class="primary-btn" onclick="sUI.wxRefresh(\'' + esc(b.id) + '\')">重新获取二维码</button>';
-      } else if (b.status === 'online') {
-        html += '<div class="cfg-note">已在线：直接给微信里的 bot 好友发消息开始对话（/help 看命令）。在网页端也能看到同一个会话。</div>';
-      }
-      html += '<div style="margin-top:10px"><button class="ghost-btn" onclick="sUI.wxUnbind(\'' + esc(b.id) + '\')">解绑</button></div></div>';
-    }
-    setBody(html + '</div>');
-    // 待扫码时轮询状态（上线/过期都要即时换画面）；页面切走后 ctx 失效自停
-    if (bindings.some(b => b.status === 'pending')) {
-      wxTimer = setInterval(() => {
-        if (!ctx()) { stopWxPoll(); return; }
-        renderWechatPage(ctx);
-      }, 2500);
+    wxPaint(st);
+    if (st.b && st.b.status === 'pending') {
+      wxTimer = setInterval(async () => {
+        if (!ctx()) { wxStopTick(); return; }
+        let s2;
+        try { s2 = await wxFetch(); } catch (_) { return; }
+        if (!ctx()) return;
+        wxPaint(s2);
+        if (!(s2.b && s2.b.status === 'pending')) wxStopTick(); // 出结果即停表
+      }, 2000);
     }
   }
 
-  async function wxBind() {
-    try { await req('POST', '/api/wechat'); toast('已生成，请微信扫码'); renderWechatPage(() => true); }
-    catch (e) { toast('绑定失败:' + e.message); }
+  // 动作统一流：请求（秒回）→ 重绘内联卡（按新状态决定要不要重启轮询）
+  async function wxAct(fn, okToast) {
+    try { await fn(); if (okToast) toast(okToast); } catch (e) { toast(e.message); return; }
+    if (wxCtx) wxInitZone(wxCtx);
   }
-  async function wxRefresh(id) {
-    try { await req('POST', '/api/wechat/' + encodeURIComponent(id) + '/refresh'); renderWechatPage(() => true); }
-    catch (e) { toast('刷新失败:' + e.message); }
-  }
+  function wxBind() { return wxAct(() => req('POST', '/api/wechat'), '已发起登录，二维码就绪后自动显示'); }
+  function wxRefresh(id) { return wxAct(() => req('POST', '/api/wechat/' + encodeURIComponent(id) + '/refresh')); }
   async function wxUnbind(id) {
     if (!await confirmModal('解绑微信', '解绑后该微信 bot 实例与登录凭证将被销毁，需重新扫码才能恢复；会话记录保留。', '解绑', true)) return;
-    try { await req('DELETE', '/api/wechat/' + encodeURIComponent(id)); toast('已解绑'); renderWechatPage(() => true); }
-    catch (e) { toast('解绑失败:' + e.message); }
+    await wxAct(() => req('DELETE', '/api/wechat/' + encodeURIComponent(id)), '已解绑');
   }
 
   // ---------- 页:服务(服务状态 + 系统配置;搬自 settings.js) ----------

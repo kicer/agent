@@ -66,11 +66,10 @@ function rowFor(req) {
   return b;
 }
 
-// 面板总览：enabled=false（wxbot.url 未配）时前端整卡隐藏——没配置就当功能不存在。
+// 面板总览：enabled=false（wxbot.url 未配）时前端整卡隐藏——没配置就当功能不存在；
+// alive/has_qr 与状态自愈全在 wechat.overview()（hook 丢事件也能从实例快照纠回来）。
 router.get('/', wrap(async (req, res) => {
-  const user = String(req.user || '');
-  const alive = await wechat.wxbotAlive();
-  res.json({ enabled: wechat.enabled(), alive, bindings: wechat.listBindings(user) });
+  res.json(await wechat.overview(String(req.user || '')));
 }));
 
 router.post('/', wrap(async (req, res) => {

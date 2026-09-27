@@ -427,9 +427,9 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 背景：仓库内 `wxbot/`（已入库，作为根 compose 的 `wxbot` 服务）是基于官方 iLink 协议 SDK 的微信「调制解调器」，只挂 `agent-mcp-net` 内网、不暴露公网；身份权威与全部会话逻辑在 core，引擎不感知微信。
 
 - **模型**：一条 `wechat_bindings` = 一个 core 用户 = 一个 bot 实例（一人一绑，换号先解绑）。binding id 三用：实例控制/投递的寻址键、wxbot 凭证目录名、channel 键（`channel='wx:'+id`，因此命令层、会话自动新建、投递游标查询全部白借 §5.4 的 channel 机制，零新逻辑）。iLink 协议保证扫码登录后仅本人可与 bot 单线对话，无陌生人入口，故无联系人授权面。
-- **方向三条线**：① Web（设置页→账户→微信绑定）→ `/api/wechat` → wxbot `/api/instances*`（实例控制，QR SVG 代理给页面 `<img>`，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message → 分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`。
+- **方向三条线**：① Web（设置页→账户→微信内联卡）→ `/api/wechat` → wxbot `/api/instances*`（实例控制；QR SVG 代理内联渲染，只在 has_qr 就绪后取码，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message → 分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`。
 - **投递游标** `last_msg_id` 落库 + 每绑定串行队列：重启不重发旧回复，wxbot 短暂不可达不丢（下一条连带补齐）；errAck/纯工具轮（空文本）不进微信，`__blocks__` 图消息降级为占位文案。
-- **降级承诺**：`wxbot.url` 未配 = 功能整体静默关闭（启动零日志噪声、设置页入口隐藏）；配了但 wxbot 没起 = restore 只留一行 info，面板显示未连接，所有外呼失败只 warn，绝不阻塞/抛出未捕获异常影响 Web 主流程（鉴权/探活失败同样只降级）。
+- **降级承诺**：`wxbot.url` 未配 = 功能整体静默关闭（启动零日志噪声、设置页入口隐藏）；配了但 wxbot 没起 = restore 只留一行 info，面板显示未连接，所有外呼失败只 warn，绝不阻塞/抛出未捕获异常影响 Web 主流程（鉴权/探活失败同样只降级）。绑定/刷新/解绑对 wxbot 均 **fire-and-forget**（点击秒回，不拿 wxbot 网络往返卡按钮；失败落 note 由轮询/刷新按钮恢复）；`overview()` 每轮访问拿实例快照双向纠偏（补建缺失实例/纠正丢的 hook），`restore()` 启动对账兼清孤儿实例；前端内联卡按渲染串比对增量更新，QR 只在 has_qr 就绪后才取码，无闪烁无坏图帧。
 - 鉴权：双向共用一个服务 token（根 .env `WXBOT_TOKEN`，init.sh 生成/复用）——core→wxbot 时 wxbot 把该 env 自动并入 /api 白名单；wxbot→core 走 `/wxhook`（挂 auth.middleware 之前，Bearer 哈希后定长比较，token 未配一律 503 fail-closed）。wxbot 零配置文件（同 executor 模式），接线全靠 env，config.yml 仅作可选覆盖。
 
 ---
