@@ -10,7 +10,7 @@
 //   wxbot → core  /wxhook/{inbox,hook}（Bearer 服务 token，挂在 auth.middleware 之前）
 //   core  → wxbot /api/deliver（assistant 最终回复推送；总线内部监听驱动，游标落库不重发）
 //         + /api/deliver_media（正文里的 /p/ 链接→本地读字节→微信文件/图片卡片，尽力而为）
-// 降级承诺：wxbot.url 未配置 = 功能整体静默关闭；配置了但 wxbot 没起 = 启动只留一行日志，
+// 降级承诺：微信接入未配置（env WXBOT_URL 置空或未配 WXBOT_TOKEN）= 功能整体静默关闭；配了但 wxbot 没起 = 启动只留一行日志，
 // 面板显示「未连接」、操作时报可读错误，绝不抛出未捕获异常影响 Web 主流程。
 const crypto = require('crypto');
 const fs = require('fs');
@@ -32,13 +32,13 @@ const now = () => Date.now();
 const msg = e => String((e && e.message) || e || 'unknown');
 
 // ---------- 开关与 wxbot 客户端 ----------
-function enabled() { return !!(cfg && cfg.wxbot && cfg.wxbot.url); }
+function enabled() { return !!(cfg && cfg.wxbot && cfg.wxbot.url && cfg.wxbot.token); }
 
 function wxUrl() { return (cfg.wxbot && cfg.wxbot.url) || ''; }
 function wxToken() { return (cfg.wxbot && cfg.wxbot.token) || ''; }
 
 async function wxbotApi(method, path, body, timeoutMs) {
-  if (!enabled()) throw Object.assign(new Error('微信接入未配置：wxbot.url 为空'), { status_code: 409 });
+  if (!enabled()) throw Object.assign(new Error('微信接入未配置：env WXBOT_URL / WXBOT_TOKEN 未就位'), { status_code: 409 });
   const res = await fetch(wxUrl() + path, {
     method,
     headers: Object.assign(
@@ -94,7 +94,7 @@ function touchBinding(id, fields) {
 
 // 一人一绑（自用形态；换微信号走「解绑→重绑」）；id 兼作 channel 后缀与 wxbot 存储目录名 → 只允许安全字符。
 async function createBinding(user) {
-  if (!enabled()) throw Object.assign(new Error('微信接入未配置（wxbot.url 为空），请联系管理员在 config.yml / 环境变量 WXBOT_URL 启用后重启'), { status_code: 409 });
+  if (!enabled()) throw Object.assign(new Error('微信接入未配置（WXBOT_URL/WXBOT_TOKEN 未就位），请联系管理员运行 scripts/init.sh 后 docker compose up -d 重建'), { status_code: 409 });
   const dup = db.prepare('SELECT id FROM wechat_bindings WHERE user = ?').get(user);
   if (dup) throw Object.assign(new Error('你已绑定微信（' + dup.id + '），请先解绑'), { status_code: 409 });
   const id = 'wx' + crypto.randomBytes(5).toString('hex');

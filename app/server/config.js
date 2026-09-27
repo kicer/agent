@@ -74,11 +74,8 @@ const DEFAULTS = {
   data_root: '/workspace/data',
   // 缺省 data_root/.agent.db。
   db_path: '',
-  // 命令执行服务：url 非空走远端 executor，留空本地 spawn；留空时回退 env EXECUTOR_URL / EXECUTOR_TOKEN。
-  executor: { url: '', token: '' },
-  // 微信接入（可选能力）：url 非空才启用（留空时整个微信功能静默下线，不影响其他一切）；
-  // 留空时回退 env WXBOT_URL / WXBOT_TOKEN（compose 注入，同 executor 模式；wxbot 只在内网，走容器名）。
-  wxbot: { url: '', token: '' },
+  // executor / 微信接入（wxbot）均不占配置字段：两组件接线纯 env（compose 经根 .env 注入，见 parseAndValidate）；
+  // 本配置文件内含密钥，只给 core 进程读，executor/wxbot 一律不挂不读。
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
   // fetch：timeout_ms 覆盖请求发出到 body 读完的全生命周期；max_bytes 为流式抓取字节上限（超限即断开）。
   fetch: { timeout_ms: 30000, max_bytes: 1048576 },
@@ -268,15 +265,20 @@ function parseAndValidate(rawText, configPath) {
   cfg.data_root = path.resolve(cfg.data_root);
   if (!cfg.db_path) cfg.db_path = path.join(cfg.data_root, '.agent.db');
 
-  // executor 远程执行：配置优先，env 兑底（compose 注入 EXECUTOR_URL/EXECUTOR_TOKEN）；url 去尾部斜杠（拼 /exec 用）。
-  if (!cfg.executor || typeof cfg.executor !== 'object') cfg.executor = {};
-  cfg.executor.url = String(cfg.executor.url || process.env.EXECUTOR_URL || '').trim().replace(/\/+$/, '');
-  cfg.executor.token = String(cfg.executor.token || process.env.EXECUTOR_TOKEN || '').trim();
+  // executor 远程执行：纯 env 接线（compose 注 EXECUTOR_URL/EXECUTOR_TOKEN；未注 = 本地 spawn，单机调试形态）。
+  // cfg.executor 仍作运行期访问器供 remote-exec 读取；url 去尾部斜杠（拼 /exec 用）。executor 进程不读本配置文件（防密钥外泄）。
+  cfg.executor = {
+    url: String(process.env.EXECUTOR_URL || '').trim().replace(/\/+$/, ''),
+    token: String(process.env.EXECUTOR_TOKEN || '').trim(),
+  };
 
-  // 微信接入（wechat.js）：同上模式；url 留空 = 功能关闭（不报错、不建实例、面板隐藏）。
-  if (!cfg.wxbot || typeof cfg.wxbot !== 'object') cfg.wxbot = {};
-  cfg.wxbot.url = String(cfg.wxbot.url || process.env.WXBOT_URL || '').trim().replace(/\/+$/, '');
-  cfg.wxbot.token = String(cfg.wxbot.token || process.env.WXBOT_TOKEN || '').trim();
+  // 微信接入（wechat.js）：纯 env 接线（wxbot 为栈内组件，不再是 config.yml 字段；旧文件里的 wxbot: 段直接忽略）。
+  // WXBOT_URL 缺省 http://wxbot:8093（compose 注同名 env，置空 = 微信入口整体静默关闭）；
+  // WXBOT_TOKEN 未配 = 关闭（init.sh 生成，core ↔ wxbot 两侧同值）。cfg.wxbot 仍作为运行期访问器供 wechat/routes 读取。
+  cfg.wxbot = {
+    url: String(process.env.WXBOT_URL != null ? process.env.WXBOT_URL : 'http://wxbot:8093').trim().replace(/\/+$/, ''),
+    token: String(process.env.WXBOT_TOKEN || '').trim(),
+  };
 
   // 日志等级:只认 debug/info/warn/error/none(off 是 none 别名),非法值按 info(不影响启动)
   cfg.log_level = String(cfg.log_level || 'info').trim().toLowerCase();

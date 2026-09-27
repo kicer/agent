@@ -7,8 +7,8 @@
 //   - 凭证按实例隔离在 bot.storage_dir/<binding_id>/（compose 卷 ./data），重启自动恢复登录免扫码；
 //     启动时扫描目录逐个拉起实例（core 起来与否不影响；上线状态经 /wxhook/hook 回报 core，core 不在线则丢弃，
 //     首条消息的 inbox 会顺带把状态纠回 online）。
-//   - 零配置文件：必需接线全走 compose env（WXBOT_TOKEN / CORE_URL，同 executor 的 EXECUTOR_* 模式），
-//     config.yml 降级为「可选覆盖」（端口/日志等级/占位文案），不存在就用内置默认值。
+//   - 零配置文件：必需接线全走 compose env（WXBOT_TOKEN / CORE_URL / WXBOT_LOG_LEVEL，同 executor 的 EXECUTOR_* 模式）；
+//     不读 core 的 config.yml（内含平台密钥/登录 secret，只给 core 进程），日志等级只认 env，避免两处配置漂移与信息泄漏。
 //   - 鉴权：/api/* 需 Bearer token；env WXBOT_TOKEN 自动并入白名单，与 core 侧同一值即双向打通；
 //     仅 /health 开放。凭证 = 微信账号权限，./wxbot/data 卷勿外泄。
 import express from "express";
@@ -28,7 +28,7 @@ const DEFAULTS = {
   },
   bot: {
     storage_dir: "/data/bots",   // 每绑定一个子目录（目录名 = binding id）
-    log_level: "info",           // debug | info | warn | error | silent
+    log_level: "info",           // debug | info | warn | error | silent；运行期被 env WXBOT_LOG_LEVEL 覆盖（compose 注入，同 EXECUTOR_LOG_LEVEL 模式）
     empty_hint: "（这条消息类型暂时接不住——支持文字/图片/视频/文件；指令可发 /help）", // 未接入类型（voice/贴纸等）的本地兑底回执
   },
 };
@@ -102,6 +102,14 @@ if (!CONFIG.core.url) {
   console.warn("[wxbot] core.url 未配置且未注入 CORE_URL：收信无法转发给 Agent（实例仍可登录，回复会提示服务未配置）");
 }
 fs.mkdirSync(CONFIG.bot.storage_dir, { recursive: true });
+
+// 日志等级：env WXBOT_LOG_LEVEL（compose 注入，与 EXECUTOR_LOG_LEVEL 同模式；none/off → SDK 词表的 silent），
+// 未注入/非法值走 DEFAULTS（或可选覆盖文件）的值，不影响启动。debug 时收信消息原始结构会原样打印（见 describeMsg）。
+{
+  const map = { debug: "debug", info: "info", warn: "warn", error: "error", none: "silent", off: "silent" };
+  const lv = String(process.env.WXBOT_LOG_LEVEL || "").trim().toLowerCase();
+  CONFIG.bot.log_level = map[lv] || String(CONFIG.bot.log_level || "info").toLowerCase();
+}
 
 // ── 鉴权 ─────────────────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
@@ -220,7 +228,28 @@ function createInstance(id) {
 const MEDIA_KINDS = new Set(["image", "video", "file"]);
 const TEXT_LIKE_KINDS = new Set(["text", "voice"]);
 
+// log_level=debug 时打印收信消息的原始结构（长文本截断、Buffer 只记大小、数组只记个数）：
+// 用于观察新消息类型/未接入类型的字段形态（如 voice 转写文字、混合消息等）。
+function describeMsg(msg) {
+  const cut = (s) => (s.length > 300 ? s.slice(0, 300) + `…(${s.length})` : s);
+  const out = {};
+  for (const [k, v] of Object.entries(msg || {})) {
+    if (v === undefined) continue;
+    if (v === null || typeof v === "number" || typeof v === "boolean") { out[k] = v; continue; }
+    if (Buffer.isBuffer(v)) { out[k] = `<buffer ${v.length}b>`; continue; }
+    if (typeof v === "string") { out[k] = cut(v); continue; }
+    if (Array.isArray(v)) { out[k] = `<array ${v.length}>`; continue; }
+    let s;
+    try { s = cut(JSON.stringify(v)); } catch { s = "[object]"; }
+    out[k] = s === undefined ? "[unserializable]" : s;
+  }
+  return out;
+}
+
 async function onIncoming(inst, msg) {
+  if (CONFIG.bot.log_level === "debug") {
+    try { console.log(`[wxbot:${inst.id}] recv: ${JSON.stringify(describeMsg(msg))}`); } catch { /* 调试日志不进主链路 */ }
+  }
   const type = String(msg?.type || "text");
   const text = TEXT_LIKE_KINDS.has(type) ? String(msg?.text ?? "").trim() : "";
   const userId = String(msg?.userId ?? "");
@@ -375,5 +404,5 @@ for (const ent of fs.readdirSync(CONFIG.bot.storage_dir, { withFileTypes: true }
 }
 
 app.listen(CONFIG.server.port, "0.0.0.0", () => {
-  console.log(`[wxbot] listening on :${CONFIG.server.port}, core=${CONFIG.core.url || "(未配置)"}, 恢复实例 ${instances.size} 个`);
+  console.log(`[wxbot] listening on :${CONFIG.server.port}, core=${CONFIG.core.url || "(未配置)"}, log_level=${CONFIG.bot.log_level}, 恢复实例 ${instances.size} 个`);
 });

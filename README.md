@@ -811,7 +811,7 @@ HTTP 直连时浏览器不认为这是“安全上下文”：PWA/Service Worker
 
 ## 十四、配置文件示例
 
-完整字段与默认值见 `app/config.example.yml`（与 `server/config.js` 的 `DEFAULTS` 一一对应）；
+完整字段与默认值见 `app/config.example.yml`（core 专属，与 `server/config.js` 的 `DEFAULTS` 一一对应）；
 部署时由 `scripts/init.sh` 生成的顶层 `config.yml` 只覆盖 `platforms` / `auth` / `mcp_servers`。
 
 ```yaml

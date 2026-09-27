@@ -39,9 +39,12 @@ agent-core 的 `wechat_bindings` 表；扫码二维码呈现在 agent-core 的 W
 | --- | --- | --- |
 | `WXBOT_TOKEN` | 根 `.env`（`scripts/init.sh` 生成/复用） | 本服务 `/api/*` 鉴权白名单（自动并入）+ 回调 core `/wxhook/*` 的凭据，与 core 侧同一值双向互信 |
 | `CORE_URL` | compose 静态注 `http://agent-core:8090` | 转发目标 |
+| `WXBOT_LOG_LEVEL` | compose 静态注 `info` | 日志等级（debug 原样打印收信消息结构；none/off→silent） |
 
-端口、日志等级、非文本消息占位文案等次要旋钮走 `src/server.js` 内置 DEFAULTS；
-确需覆盖时按 `config.yml.example` 头部三步说明操作（建文件 + 解开 compose 里注释的挂载行）。
+端口、非文本消息占位文案等次要旋钮走 `src/server.js` 内置 DEFAULTS；日志等级由 env `WXBOT_LOG_LEVEL`
+决定（compose 注入，同 executor 的 `EXECUTOR_LOG_LEVEL` 约定；`debug` 原样打印收信消息结构，
+长文本截断、Buffer 只记大小，便于观察新消息类型字段）。
+本服务**不挂不读 core 的 `config.yml`**（内含平台密钥/登录 secret，只给 core 进程）。
 
 ## 部署
 
@@ -80,8 +83,9 @@ WXBOT_TOKEN=$WXBOT_TOKEN CORE_URL=http://127.0.0.1:8090 \
 
 ## 已知边界 / 后续扩展
 
-- 语音消息目前回 `bot.empty_hint` 占位（二期：SDK `bot.download(msg)` 拿 WAV（需 `silk-wasm`）
-  → tools/asr `/api/transcribe` 转写后进会话）。
+- 语音消息已接入：iLink 服务端自动转写（`msg.text` 即识别文字），按普通文本转发进会话——
+  语音说 `/new` 这类命令也能用；转写为空（环境噪音等）时回 `bot.empty_hint` 占位提示。
+  原始 silk 音频不下载，无需本地 ASR。
 - 出站文件/图片已实现「链接→卡片」：AI 在回复正文里给 mint 链接，core 自动换成微信文件卡片
   （链接文字保留兜底）；AI 侧约定见 core 注入的 channel_note。
 - core 未配 `WXBOT_URL` 时微信功能整体静默关闭（设置页不出现入口，服务零报错）。

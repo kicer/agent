@@ -68,11 +68,11 @@ cd ../mcp && docker compose up -d --build
 ```bash
 cp app/config.example.yml config.yml
 cp .env.example .env
-vi .env         # 填 EXECUTOR_TOKEN，生成：openssl rand -hex 32
+vi .env         # 填 EXECUTOR_TOKEN / WXBOT_TOKEN（或直接跑 scripts/init.sh 自动生成）
 vi config.yml
 ```
 
-`config.example.yml` 与 `server/config.js` 的默认值一一对应，容器内可直接用（路径默认
+`app/config.example.yml` 与 `server/config.js` 的默认值一一对应，容器内可直接用（路径默认
 `/workspace/tasks`、`/workspace/data`）。`config.yml` 里至少要配：
 
 ```yaml

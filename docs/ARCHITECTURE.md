@@ -15,7 +15,7 @@
 agent/
 ├── README.md                      设计文档（API/数据模型/部署总览）
 ├── docker-compose.yml             编排：agent-core / agent-executor(+init) / wxbot（微信接入）
-├── config.yml                     运行时配置（含密钥，已 .gitignore）
+├── config.yml                     运行时配置（含密钥，已 .gitignore；只给 agent-core 进程读，其他组件禁挂禁读）
 ├── data/                          默认数据卷（任务目录、SQLite、prompt dump）
 ├── tasks/                         任务目录挂载点（同 ./data 顶层等价，二选一）
 ├── skills/                        技能目录（用户维护的 SKILL.md/run.py）
@@ -23,7 +23,7 @@ agent/
 ├── app/                           ── Core 服务容器 ──
 │   ├── Dockerfile                 node:20-slim，npm install only prod
 │   │   ├── package.json               依赖：express / better-sqlite3 / multer / sharp / yaml / minimatch / cron-parser
-│   ├── config.example.yml         配置模板（被复制为顶层 config.yml）
+│   ├── config.example.yml         core 专属配置模板（复制/生成为顶层 config.yml）
 │   ├── scripts/
 │   │   └── init.sh                部署入口：生成 .env + config.yml → 起 agent/mcp 服务
 │   ├── server/                    后端代码
@@ -153,7 +153,7 @@ graph LR
 3. `initDb(cfg.db_path)` 建表 + 增量迁移（`db.js`，含 `held_at` / `last_model_id` / `assistant_type` / `user` / `profile` 等历史升级）。
 4. `createBus()` 建 SSE 事件总线（`sse.js`）。
 5. `engine.setModelPool(cfg, db, bus); engine.init()`：按 cfg.models 重建 `model_pool` 槽位表；会话状态归位（active/遗留 queued → held，绑定不清）；指向已删/禁用模型的绑定在下次发言时由 `ensureBinding` 自动改选。
-6. `scheduler.start(engine)`：启动定时任务轮询（30s 一次，`unref`）。**必须在 engine.init() 之后**——先让会话状态归位，首轮 tick 才看不到脏状态（见 §5.12）。随后 `wechat.init(cfg, db, bus)` 挂上总线内部订阅（微信接入，§5.13；`wxbot.url` 未配时全程静默）。
+6. `scheduler.start(engine)`：启动定时任务轮询（30s 一次，`unref`）。**必须在 engine.init() 之后**——先让会话状态归位，首轮 tick 才看不到脏状态（见 §5.12）。随后 `wechat.init(cfg, db, bus)` 挂上总线内部订阅（微信接入，§5.13；env WXBOT_URL/WXBOT_TOKEN 未就位时全程静默）。
 7. `createAuth(cfg)` 装配登录中间件；未配 `auth.users` 则认证关闭（可交给前置 nginx-proxy basic auth）。
 8. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`、`/api/channel`、`/api/wechat`）；`auth.middleware` 之前另挂两个内网/匿名入口：`/p`（公网临时文件）与 `/wxhook`（wxbot 回调，共享服务 token 把门）。
 9. `mcp.init(cfg).then(...)`：对每个 MCP 服务 initialize → tools/list，发现的工具存在 `mcp` 模块内。
@@ -430,12 +430,12 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 背景：仓库内 `wxbot/`（已入库，作为根 compose 的 `wxbot` 服务）是基于官方 iLink 协议 SDK 的微信「调制解调器」，只挂 `agent-mcp-net` 内网、不暴露公网；身份权威与全部会话逻辑在 core，引擎不感知微信。
 
 - **模型**：一条 `wechat_bindings` = 一个 core 用户 = 一个 bot 实例（一人一绑，换号先解绑）。binding id 三用：实例控制/投递的寻址键、wxbot 凭证目录名、channel 键（`channel='wx:'+id`，因此命令层、会话自动新建、投递游标查询全部白借 §5.4 的 channel 机制，零新逻辑）。iLink 协议保证扫码登录后仅本人可与 bot 单线对话，无陌生人入口，故无联系人授权面。
-- **方向三条线**：① Web（设置页→账户→微信内联卡）→ `/api/wechat` → wxbot `/api/instances*`（实例控制；QR SVG 代理内联渲染，只在 has_qr 就绪后取码，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（文本；image/video/file 媒体先落会话任务目录：带说明文字的拼「用户上传了文件」告知行+正文并进一回合，单发媒体只补一行 `wx_media` 留痕不触发回合（下次真实对话模型自然看到，「刚才那张图」指代不断），同 web 附件链路，voice 二期——命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message → 分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`；wxbot 出口统一 stripMarkdown（微信不渲染 markdown）；tool_call/tool_result 事件另发 `/api/typing` sendTyping 心跳（每绑定 2s 冷却、失败静默），长工具回合里微信持续显示「正在输入」，文本投递后自动取消。
+- **方向三条线**：① Web（设置页→账户→微信内联卡）→ `/api/wechat` → wxbot `/api/instances*`（实例控制；QR SVG 代理内联渲染，只在 has_qr 就绪后取码，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（文本；image/video/file 媒体先落会话任务目录：带说明文字的拼「用户上传了文件」告知行+正文并进一回合，单发媒体只补一行 `wx_media` 留痕不触发回合（下次真实对话模型自然看到，「刚才那张图」指代不断），同 web 附件链路；voice 走 iLink 服务端自动转写（msg.text 即识别文字），按文本类转发——命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message → 分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`；wxbot 出口统一 stripMarkdown（微信不渲染 markdown）；tool_call/tool_result 事件另发 `/api/typing` sendTyping 心跳（每绑定 2s 冷却、失败静默），长工具回合里微信持续显示「正在输入」，文本投递后自动取消。
 - **渠道上下文**（ensureChannelContext，普通/媒体/带尾随文本的 /new 收信时幂等确保，先于首条消息入库）：微信会话直接落 executing（跳过顾问 handoff，与定时任务同理由）+ 注入一条 `channel_note` user 行（微信环境说明：单线纯文本、给链接即交付卡片、入站文件已存工作目录等，AI 第一回合即知）；/clear 删光历史后下条消息自动重注入。
 - **出站文件（链接→卡片）**：deliverNow 扫正文 `/p/<22位id>` 链 → 同进程 `publicFiles.resolve` + 归属硬校验（只转本会话签发的链接，防外流）→ 本地读字节（单文件≤20MB、每条回复最多 5 个）→ `POST wxbot:/api/deliver_media` → SDK 按扩展名自动路由 image/video/file 卡片；尽力而为：失败只 warn，链接文字留在正文作兜底（AI 无需感知卡片机制，channel_note 已告知「给链接即交付」）。
 - **投递游标** `last_msg_id` 落库 + 每绑定串行队列：重启不重发旧回复，wxbot 短暂不可达不丢（下一条连带补齐）；errAck/纯工具轮（空文本）不进微信，`__blocks__` 图消息降级为占位文案。文本投递经 wxbot 出口统一 stripMarkdown（微信不渲染 markdown）。
-- **降级承诺**：`wxbot.url` 未配 = 功能整体静默关闭（启动零日志噪声、设置页入口隐藏）；配了但 wxbot 没起 = restore 只留一行 info，面板显示未连接，所有外呼失败只 warn，绝不阻塞/抛出未捕获异常影响 Web 主流程（鉴权/探活失败同样只降级）。绑定/刷新/解绑对 wxbot 均 **fire-and-forget**（点击秒回，不拿 wxbot 网络往返卡按钮；失败落 note 由轮询/刷新按钮恢复）；`overview()` 每轮访问拿实例快照双向纠偏（补建缺失实例/纠正丢的 hook），`restore()` 启动对账兼清孤儿实例；前端内联卡按渲染串比对增量更新，QR 只在 has_qr 就绪后才取码，无闪烁无坏图帧。
-- 鉴权：双向共用一个服务 token（根 .env `WXBOT_TOKEN`，init.sh 生成/复用）——core→wxbot 时 wxbot 把该 env 自动并入 /api 白名单；wxbot→core 走 `/wxhook`（挂 auth.middleware 之前，Bearer 哈希后定长比较，token 未配一律 503 fail-closed）。wxbot 零配置文件（同 executor 模式），接线全靠 env，config.yml 仅作可选覆盖。
+- **降级承诺**：微信接入未配置（env `WXBOT_URL` 置空或未配 `WXBOT_TOKEN`）= 功能整体静默关闭（启动零日志噪声、设置页入口隐藏）；配了但 wxbot 没起 = restore 只留一行 info，面板显示未连接，所有外呼失败只 warn，绝不阻塞/抛出未捕获异常影响 Web 主流程（鉴权/探活失败同样只降级）。绑定/刷新/解绑对 wxbot 均 **fire-and-forget**（点击秒回，不拿 wxbot 网络往返卡按钮；失败落 note 由轮询/刷新按钮恢复）；`overview()` 每轮访问拿实例快照双向纠偏（补建缺失实例/纠正丢的 hook），`restore()` 启动对账兼清孤儿实例；前端内联卡按渲染串比对增量更新，QR 只在 has_qr 就绪后才取码，无闪烁无坏图帧。
+- 鉴权：双向共用一个服务 token（根 .env `WXBOT_TOKEN`，init.sh 生成/复用）——core→wxbot 时 wxbot 把该 env 自动并入 /api 白名单；wxbot→core 走 `/wxhook`（挂 auth.middleware 之前，Bearer 哈希后定长比较，token 未配一律 503 fail-closed）。wxbot 零配置文件（同 executor 模式）：接线全靠 env（`WXBOT_TOKEN` / `CORE_URL` / `WXBOT_LOG_LEVEL`，none/off→silent；debug 原样打印收信消息结构），**不挂不读 core 的 config.yml**（密钥只给 core 进程）。
 
 ---
 
@@ -540,7 +540,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 
 ## 9. 配置
 
-详见 `app/config.example.yml`（字段与 `server/config.js` 的 `DEFAULTS` 一一对应；顶层 `config.yml` 由 `scripts/init.sh` 生成或手建，**已 gitignore**）。要点：
+详见 `app/config.example.yml`（core 专属；字段与 `server/config.js` 的 `DEFAULTS` 一一对应；顶层 `config.yml` 由 `scripts/init.sh` 生成或手建，**已 gitignore**）。要点：
 
 - `platforms[].keys[].models[]` —— 三层层级。内部唯一键 = `平台名/模型id`（用于历史会话回绑、用量统计），**改名等于重建其下所有模型**。
 - `model_profiles`（顶层）—— 多套可复用的 prompt+tools 组合（`{tools_allow?, tools_deny?, system_prompt_file?}`）；模型层用 `profile: <名>` 引用，不配 = 默认全量（仍受顶层 `tools_deny` 屏蔽）。内置 `advising`/`lab`/`zero` 三套默认组合，可用同名覆盖；`advising` 不经模型引用——会话处于顾问阶段时强制命中（见 §4.1 phase 状态机）。元工具自测/纯文本场景用，详见 §5.8；运行期手动切换已全部移除（消息级参数与会话绑定均废弃）。
@@ -555,8 +555,8 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - `mcp_servers[].enable: false` —— 启动不加载该服务（配置保留），其余工具不受影响。
 - `mcp_servers[].timeout_ms` —— 该服务单次 `tools/call` 的最大等待，默认 60000（夹在 1s~10min）；工具发现/握手用固定 15s，不受本项影响。
 - `mcp_servers[].tools_allow` / `tools_deny` —— 发现阶段的工具名单（字符串数组，按服务端原始名）：allow 白名单，deny 在其后叠加（deny 优先）；用于压低发给模型的工具数（如浏览器类服务）。
-- `executor.url` / `executor.token` —— 留空走环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN`（compose 默认注入）。
-- `wxbot.url` / `wxbot.token` —— 微信接入（§5.13，可选）：url 留空/未配时功能整体静默关闭；留空时读 env `WXBOT_URL` / `WXBOT_TOKEN`（compose 默认注 `http://wxbot:8093`；根 .env 置 `WXBOT_URL=` 可关）；`WXBOT_TOKEN` 由 scripts/init.sh 生成/复用，同一值注进 core 与 wxbot 两侧双向互信（wxbot 零配置文件，同 EXECUTOR_TOKEN 模式）。
+- executor 接线 —— **不占配置字段**，纯 env（compose 从根 .env 注入 `EXECUTOR_URL` / `EXECUTOR_TOKEN`；未注 = 本地 spawn，单机调试形态）；executor 进程不读本配置文件，日志等级走 `EXECUTOR_LOG_LEVEL`。
+- 微信接入（§5.13）—— **不占 config.yml 字段**（wxbot 已是栈内组件）：接线纯 env，`WXBOT_URL`（缺省 `http://wxbot:8093`；根 .env 显式置空 = 微信入口整体静默关闭）与 `WXBOT_TOKEN`（init.sh 生成/复用，同一值注进 core 与 wxbot 两侧双向互信；未配 = 关闭）。旧 config.yml 里的 `wxbot:` 段直接忽略。
 
 ---
 

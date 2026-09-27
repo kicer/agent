@@ -41,7 +41,7 @@ function timingEqual(a, b) {
 function requireService(req, res, next) {
   const cfg = engine.getConfig();
   const token = (cfg.wxbot && cfg.wxbot.token) || '';
-  if (!token) return res.status(503).json({ error: '微信接入服务 token 未配置（config wxbot.token / env WXBOT_TOKEN）' });
+  if (!token) return res.status(503).json({ error: '微信接入服务 token 未配置（env WXBOT_TOKEN）' });
   const h = String(req.headers.authorization || '');
   if (!h.startsWith('Bearer ') || !timingEqual(h.slice(7).trim(), token)) {
     return res.status(401).json({ error: 'invalid service token' });
@@ -69,7 +69,7 @@ function rowFor(req) {
   return b;
 }
 
-// 面板总览：enabled=false（wxbot.url 未配）时前端整卡隐藏——没配置就当功能不存在；
+// 面板总览：enabled=false（WXBOT_URL/WXBOT_TOKEN 未就位）时前端整卡隐藏——没配置就当功能不存在；
 // alive/has_qr 与状态自愈全在 wechat.overview()（hook 丢事件也能从实例快照纠回来）。
 router.get('/', wrap(async (req, res) => {
   res.json(await wechat.overview(String(req.user || '')));

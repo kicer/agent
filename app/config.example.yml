@@ -1,5 +1,8 @@
-# config.example.yml — 配置模板：与 server/config.js 的 DEFAULTS 一一对应。
-# 复制为 config.yml 即可启动；platforms 为空则无模型可用，可在前端设置页添加后重启。
+# config.example.yml —— agent-core 专属配置模板：与 server/config.js 的 DEFAULTS 一一对应。
+# ⚠️ 本文件（及其生成物 config.yml）只给 core 进程读：内含平台 api_key / 登录 secret，
+#   executor、wxbot 等其他组件一律不挂、不读（bind mount 只挂给 agent-core），它们的接线全部由根 compose 经 .env 注入 env。
+# 部署推荐用 scripts/init.sh 生成 config.yml（只写 platforms/auth/mcp_servers/public_link，其余走默认值）；
+# 手动部署才整份复制本文件。platforms 为空则无模型可用，可在前端设置页添加后重启。
 
 # 模型平台池：每平台 {name, url, type?, models:[{id, ...}], keys:[{api_key, concurrency?}]}。
 platforms: []
@@ -27,16 +30,11 @@ port: 8090                                         # 服务监听端口
 workspace_root: "/workspace/tasks"                 # 任务工作区根目录，AI 文件操作限制在此
 data_root: "/workspace/data"                       # 数据根目录：SQLite 与 prompt dump
 db_path: ""                                        # 留空取 data_root/.agent.db
-log_level: "info"                                  # debug < info < warn < error < none
+log_level: "info"                                  # debug < info < warn < error < none（仅 core 自身；executor/wxbot 的日志等级另走 EXECUTOR_LOG_LEVEL / WXBOT_LOG_LEVEL env，compose 注）
 
-executor:                                          # 独立命令执行服务；两侧需同路径挂载 tasks/skills
-  url: ""                                          # 非空走远端执行；留空读 env EXECUTOR_URL 或本地 spawn
-  token: ""                                        # 与 executor 侧同值；留空读 env EXECUTOR_TOKEN
-
-wxbot:                                             # 微信接入（可选；仓库 wxbot/ 子项目，只挂内网，不入 git）
-  url: ""                                          # 非空才启用；留空读 env WXBOT_URL（compose 注 http://wxbot:8093）；
-                                                   # 留空 = 功能整体静默关闭；填了但 wxbot 没起也不报错，设置页显示未连接
-  token: ""                                        # core ↔ wxbot 共享服务 token，两侧同值；留空读 env WXBOT_TOKEN
+# executor（命令执行）与 wxbot（微信接入）均**不是本文件的配置项**，接线全走根 compose 注入的 env（见 .env.example）：
+#   EXECUTOR_URL / EXECUTOR_TOKEN；WXBOT_URL（默认 http://wxbot:8093，置空=微信入口静默关闭）/ WXBOT_TOKEN（init.sh 生成，两侧同值）。
+# 详见 docs/ARCHITECTURE.md §5.13。
 
 terminal:
   default_timeout_ms: 30000                        # 命令默认超时（ms）

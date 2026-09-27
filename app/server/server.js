@@ -27,7 +27,7 @@ engine.init();
 //（active/遗留 queued → held），首轮 tick 才不会看到脏状态。
 scheduler.start(engine);
 
-// 微信接入（wechat.js，可选能力）：wxbot.url 未配 = 全部静默关闭；配了但 wxbot 没起 =
+// 微信接入（wechat.js，可选能力）：env WXBOT_URL/WXBOT_TOKEN 未就位 = 全部静默关闭；配了但 wxbot 没起 =
 // restore 只留一行日志，不重试不报错（用户在设置页点刷新自愈），不影响 Web 主流程。
 wechat.init(cfg, db, bus);
 
@@ -175,7 +175,7 @@ mcp.init(cfg).then(async () => {
       const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url + (s.enable === false ? '(禁用)' : '')).join(', ');
       log.info('startup', '  mcp_servers=' + (mcpList || '(none)'));
       log.info('startup', '  auth=' + (auth.enabled ? 'login: ' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
-      log.info('startup', '  wxbot=' + (cfg.wxbot.url ? cfg.wxbot.url : '(未启用)'));
+      log.info('startup', '  wxbot=' + (cfg.wxbot.url && cfg.wxbot.token ? cfg.wxbot.url : '(未启用)'));
       log.info('startup', '  log_level=' + cfg.log_level);
       // 微信实例恢复 fire-and-forget：wxbot 没起只留日志，绝不阻塞/抛错影响启动。
       wechat.restore().catch(e => log.warn('wechat', '启动恢复异常：' + (e && e.message || e)));

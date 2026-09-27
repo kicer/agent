@@ -24,7 +24,7 @@ app/
 │   ├── templates/system-prompt.txt  # System prompt 模板（直接编辑）
 │   └── public/              # H5 前端（Vanilla JS + SSE；无构建，index.html + js/ 六模块按序加载）
 ├── test/                    # mock 上游 + 端到端冒烟测试
-├── config.example.yml
+├── config.example.yml       # core 专属配置模板（部署时生成/复制为仓库根 config.yml 挂进容器）
 ├── Dockerfile / docker-compose.yml
 ```
 
