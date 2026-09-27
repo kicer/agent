@@ -65,7 +65,8 @@ docker compose up -d agent-core       # core 带 WXBOT_URL/WXBOT_TOKEN 重建（
 | POST | `/api/instances/:id/refresh` | 重发登录流程（二维码过期/失败后；保留凭证） |
 | DELETE | `/api/instances/:id` | 销毁实例并删登录凭证（解绑） |
 | GET | `/api/instances/:id/qr.svg` | 当前登录二维码（core 设置页代理渲染） |
-| POST | `/api/deliver {id,to,text}` | 外发投递（core 已按微信长度分段） |
+| POST | `/api/deliver {id,to,text}` | 文本投递（core 已分段；出口统一 stripMarkdown，微信不渲染 markdown） |
+| POST | `/api/deliver_media {id,to,filename,b64}` | 附件投递（core 已把正文里的 /p/ 链接换成本地字节并做归属/大小校验；SDK 按扩展名自动路由 image/video/file 卡片） |
 
 ## 本地调试
 
@@ -80,5 +81,6 @@ WXBOT_TOKEN=$WXBOT_TOKEN CORE_URL=http://127.0.0.1:8090 \
 
 - 语音消息目前回 `bot.empty_hint` 占位（二期：SDK `bot.download(msg)` 拿 WAV（需 `silk-wasm`）
   → tools/asr `/api/transcribe` 转写后进会话）。
-- 出站图片/文件二期：core 的 `GET /p/<id>` 公网链喂 `bot.send(userId, {url})`（SDK 自动下载上传 CDN）。
+- 出站文件/图片已实现「链接→卡片」：AI 在回复正文里给 mint 链接，core 自动换成微信文件卡片
+  （链接文字保留兜底）；AI 侧约定见 core 注入的 channel_note。
 - core 未配 `WXBOT_URL` 时微信功能整体静默关闭（设置页不出现入口，服务零报错）。

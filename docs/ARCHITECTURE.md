@@ -181,7 +181,8 @@ messages          id PK / session_id FK / role (system|user|assistant|tool) /
                   is_error / created_at
                   # type 取值: summary / archived / errAck / task_brief (任务书快照，advising→executing 切换后首条上下文) /
                   #   session_context (name 列 = SESSION_CONTEXT_NAME) /
-                  #   scheduler_note（定时任务删除通知，未知 type 按普通 user 消息发模型）
+                  #   scheduler_note（定时任务删除通知）/ channel_note（微信渠道上下文说明，每微信会话一条；
+                  #   未知 type 一律按普通 user 消息发模型、UI 照常展示）
                   # 旧版遗留: summarize_request（压缩指令 user 消息，已废弃，仅 buildMessages 兼容旧库）
 
 files             id PK / session_id / filename / size / created_at
@@ -253,7 +254,7 @@ stateDiagram-v2
   唯一出口是 `handoff` 工具：handler 把 `brief` 原样落盘根 `task.md`（reason ∈ ready/user_skip/user_stuck，
   空 brief 拒回不切）；`handoff` 与 `lab` 同入全局 `tools_deny`，advising 组合显式 `tools_deny: []` 独享可见。
 - executing（执行）：回到常规 profile 链路（模型配置 > 默认全量）；单会话只解决一个问题，一路走到底，回头路只有「清空」。
-- 上下文压缩对 phase 中性（原来什么模式、压完仍什么模式）；定时任务投递前强制 `executing`（无人值守不能被顾问话术卡住）。
+- 上下文压缩对 phase 中性（原来什么模式、压完仍什么模式）；定时任务投递与微信渠道消息前强制 `executing`（无人值守/异步接入不能被顾问话术卡住，微信侧由 wechat.ensureChannelContext 幂等保证，见 §5.13）。
 - 切换瞬间全史标 `archived`、插一条 `type='task_brief'` user 行（task.md 磁盘快照）作执行阶段唯一上下文起点；
   幂等：执行中再改 task.md 只是普通文件编辑。
 - 存量会话启动时统一回填 `executing`（旧值 planning 废弃，见 db.js 迁移）；与 status 状态机正交，不影响模型调度。
@@ -427,8 +428,10 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 背景：仓库内 `wxbot/`（已入库，作为根 compose 的 `wxbot` 服务）是基于官方 iLink 协议 SDK 的微信「调制解调器」，只挂 `agent-mcp-net` 内网、不暴露公网；身份权威与全部会话逻辑在 core，引擎不感知微信。
 
 - **模型**：一条 `wechat_bindings` = 一个 core 用户 = 一个 bot 实例（一人一绑，换号先解绑）。binding id 三用：实例控制/投递的寻址键、wxbot 凭证目录名、channel 键（`channel='wx:'+id`，因此命令层、会话自动新建、投递游标查询全部白借 §5.4 的 channel 机制，零新逻辑）。iLink 协议保证扫码登录后仅本人可与 bot 单线对话，无陌生人入口，故无联系人授权面。
-- **方向三条线**：① Web（设置页→账户→微信内联卡）→ `/api/wechat` → wxbot `/api/instances*`（实例控制；QR SVG 代理内联渲染，只在 has_qr 就绪后取码，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（文本；image/video/file 媒体先落会话任务目录再拼「用户上传了文件」告知行，同 web 附件链路，voice 二期——命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message → 分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`。
-- **投递游标** `last_msg_id` 落库 + 每绑定串行队列：重启不重发旧回复，wxbot 短暂不可达不丢（下一条连带补齐）；errAck/纯工具轮（空文本）不进微信，`__blocks__` 图消息降级为占位文案。
+- **方向三条线**：① Web（设置页→账户→微信内联卡）→ `/api/wechat` → wxbot `/api/instances*`（实例控制；QR SVG 代理内联渲染，只在 has_qr 就绪后取码，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（文本；image/video/file 媒体先落会话任务目录再拼「用户上传了文件」告知行，同 web 附件链路，voice 二期——命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message → 分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`；wxbot 出口统一 stripMarkdown（微信不渲染 markdown）。
+- **渠道上下文**（ensureChannelContext，普通/媒体/带尾随文本的 /new 收信时幂等确保，先于首条消息入库）：微信会话直接落 executing（跳过顾问 handoff，与定时任务同理由）+ 注入一条 `channel_note` user 行（微信环境说明：单线纯文本、给链接即交付卡片、入站文件已存工作目录等，AI 第一回合即知）；/clear 删光历史后下条消息自动重注入。
+- **出站文件（链接→卡片）**：deliverNow 扫正文 `/p/<22位id>` 链 → 同进程 `publicFiles.resolve` + 归属硬校验（只转本会话签发的链接，防外流）→ 本地读字节（单文件≤20MB、每条回复最多 5 个）→ `POST wxbot:/api/deliver_media` → SDK 按扩展名自动路由 image/video/file 卡片；尽力而为：失败只 warn，链接文字留在正文作兜底（AI 无需感知卡片机制，channel_note 已告知「给链接即交付」）。
+- **投递游标** `last_msg_id` 落库 + 每绑定串行队列：重启不重发旧回复，wxbot 短暂不可达不丢（下一条连带补齐）；errAck/纯工具轮（空文本）不进微信，`__blocks__` 图消息降级为占位文案。文本投递经 wxbot 出口统一 stripMarkdown（微信不渲染 markdown）。
 - **降级承诺**：`wxbot.url` 未配 = 功能整体静默关闭（启动零日志噪声、设置页入口隐藏）；配了但 wxbot 没起 = restore 只留一行 info，面板显示未连接，所有外呼失败只 warn，绝不阻塞/抛出未捕获异常影响 Web 主流程（鉴权/探活失败同样只降级）。绑定/刷新/解绑对 wxbot 均 **fire-and-forget**（点击秒回，不拿 wxbot 网络往返卡按钮；失败落 note 由轮询/刷新按钮恢复）；`overview()` 每轮访问拿实例快照双向纠偏（补建缺失实例/纠正丢的 hook），`restore()` 启动对账兼清孤儿实例；前端内联卡按渲染串比对增量更新，QR 只在 has_qr 就绪后才取码，无闪烁无坏图帧。
 - 鉴权：双向共用一个服务 token（根 .env `WXBOT_TOKEN`，init.sh 生成/复用）——core→wxbot 时 wxbot 把该 env 自动并入 /api 白名单；wxbot→core 走 `/wxhook`（挂 auth.middleware 之前，Bearer 哈希后定长比较，token 未配一律 503 fail-closed）。wxbot 零配置文件（同 executor 模式），接线全靠 env，config.yml 仅作可选覆盖。
 

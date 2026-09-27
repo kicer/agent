@@ -265,9 +265,12 @@ async function onIncoming(inst, msg) {
   }
 }
 
-// ── HTTP 服务 ────────────────────────────────────────────────────────────────
+// ── HTTP 服务 ──────────────────────────────────────────────────────────────────────
 const app = express();
 app.disable("x-powered-by");
+// 附件投递带 base64 大 body：该路径单独先挂大限额解析器（早于全局 1mb；body-parser 幂等，
+// 全局那份见到 req._body 会自动跳过），与 core 侧 /wxhook 同法。
+app.use("/api/deliver_media", express.json({ limit: "30mb" }));
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/health", (_req, res) => {
@@ -327,6 +330,26 @@ app.post("/api/deliver", requireAuth, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: "发送失败：" + String(e?.message || e).slice(0, 200) });
+  }
+});
+
+// core → wxbot 附件投递（链接→卡片）：core 已把正文里的 /p/ 链接换成本地读好的字节并做
+// 归属/大小/数量校验；这里只转发 SDK——bot.send 的 file 按扩展名自动路由 image/video/file 卡片，
+// CDN 上传 + 加密全在 SDK 内。
+app.post("/api/deliver_media", requireAuth, async (req, res) => {
+  const { id, to, filename, b64 } = req.body || {};
+  const inst = instances.get(String(id || ""));
+  if (!inst) return res.status(404).json({ error: "实例不存在" });
+  if (!to || !String(b64 || "").trim()) return res.status(400).json({ error: "to/b64 不能为空" });
+  const buf = Buffer.from(String(b64).slice(0, 30 * 1024 * 1024), "base64");
+  if (!buf.length) return res.status(400).json({ error: "b64 解码失败" });
+  if (buf.length > 20 * 1024 * 1024) return res.status(413).json({ error: "附件过大（限 20MB）" });
+  const safeName = String(filename || "file").split(/[\\/]/).pop().slice(0, 120) || "file";
+  try {
+    await inst.bot.send(String(to), { file: buf, fileName: safeName });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ error: "附件发送失败：" + String(e?.message || e).slice(0, 200) });
   }
 });
 

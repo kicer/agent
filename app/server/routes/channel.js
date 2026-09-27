@@ -219,3 +219,6 @@ router.post('/send', wrap((req, res) => {
 module.exports = router;
 module.exports.handleSend = handleSend;
 module.exports.ensureSession = ensureSession;
+// 微信桥（wechat.js）直调面：命令识别（渠道上下文注入时机）与「建会话+换绑不发消息」（/new 带尾随文本）
+module.exports.parseCommand = parseCommand;
+module.exports.newSessionFor = newSessionFor;

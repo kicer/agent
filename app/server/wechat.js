@@ -9,6 +9,7 @@
 //   Web   → routes/wechat.js → 本模块 → wxbot /api/instances*（实例控制 / QR 代理）
 //   wxbot → core  /wxhook/{inbox,hook}（Bearer 服务 token，挂在 auth.middleware 之前）
 //   core  → wxbot /api/deliver（assistant 最终回复推送；总线内部监听驱动，游标落库不重发）
+//         + /api/deliver_media（正文里的 /p/ 链接→本地读字节→微信文件/图片卡片，尽力而为）
 // 降级承诺：wxbot.url 未配置 = 功能整体静默关闭；配置了但 wxbot 没起 = 启动只留一行日志，
 // 面板显示「未连接」、操作时报可读错误，绝不抛出未捕获异常影响 Web 主流程。
 const crypto = require('crypto');
@@ -16,7 +17,8 @@ const fs = require('fs');
 const path = require('path');
 const engine = require('./engine');
 const log = require('./log');
-const channel = require('./routes/channel'); // 只用 handleSend/ensureSession（模块加载无副作用；engine 不 require 本模块，无环）
+const publicFiles = require('./public-files');
+const channel = require('./routes/channel'); // 只用 handleSend/ensureSession/newSessionFor/parseCommand（模块加载无副作用；engine 不 require 本模块，无环）
 
 let cfg, db, bus;
 let busAttached = false;
@@ -238,10 +240,32 @@ function handleHook(body) {
 // wxbot 会把 error 文案直接回给用户（IM 里「出错要出声」）。
 // 媒体消息（inbox 带 media:{b64,kind,filename?}，wxbot 已从 CDN 下好）：统一落会话任务目录
 // + 记 files 元数据表 → 按 web 上传同款拼「用户上传了文件：<名>」作正文走 handleSend。
-// 命名规则：图片/视频微信侧本无名 → 生成 wximg-/wxvid- 时间戳名；文件保留原名（sanitise 后，
-// 对 AI 可读性重要），撞名加 -N；扩展名以 magic 嗅探为准（不信声明值）。
+// 渠道上下文（普通/媒体/带尾随文本的 /new 在消息入库前先幂等确保）：微信会话直接落 executing
+// 跳过顾问 handoff（与定时任务投递同理由：异步接入不能被顾问话术卡住），channel_note 把微信
+// 环境说明注入历史（UI 可见的 user 行，模型当普通消息看）——先于首条消息，AI 第一回合就看得到。
 const MEDIA_MAX_BYTES = 20 * 1024 * 1024;
 const MEDIA_KINDS = new Set(['image', 'video', 'file']);
+
+const CHANNEL_NOTE = [
+  '【渠道说明】本会话来自微信单聊，用户只能收发文本与文件，无可点击界面。',
+  '- 交流风格：简短口语化，适配手机阅读；内容较长时整理成文件交付，不刷屏。',
+  '- 交付文件：生成文件后，在回复正文中给出下载链接，系统会自动将其转为微信文件卡片，',
+  '  链接文字保留作兜底。含敏感内容的文件不要外链。',
+  '- 接收文件：用户发来的图片/视频/文件已存入当前工作目录，用户消息中会说明文件名，可直接读取。',
+].join('\n');
+
+function ensureChannelContext(s) {
+  if (!s) return;
+  if (s.phase !== 'executing') {
+    db.prepare("UPDATE sessions SET phase='executing', updated_at=? WHERE id=?").run(now(), s.id);
+    s.phase = 'executing';
+  }
+  if (!db.prepare("SELECT 1 FROM messages WHERE session_id = ? AND type = 'channel_note' LIMIT 1").get(s.id)) {
+    engine.saveMessage(s.id, { role: 'user', type: 'channel_note', content: CHANNEL_NOTE });
+    log.info('wechat', s.id + ' 渠道上下文注入（executing + channel_note）');
+  }
+}
+
 function handleInbox(body) {
   const b = getBinding(String((body || {}).id || ''));
   if (!b) throw Object.assign(new Error('绑定不存在（可能已解绑）'), { status_code: 404 });
@@ -251,16 +275,30 @@ function handleInbox(body) {
   if (b.status !== 'online') touchBinding(b.id, { status: 'online', note: null });
   let text = String((body || {}).text || '').trim();
   const m = (body || {}).media;
-  if (m && String(m.b64 || '').trim()) {
-    const kind = MEDIA_KINDS.has(String(m.kind || '')) ? String(m.kind) : 'file';
-    let buf;
+  const hasMedia = !!(m && String(m.b64 || '').trim());
+  // 媒体先验完再建会话：坏数据不该白造一个会话出来
+  let buf = null, kind = '';
+  if (hasMedia) {
+    kind = MEDIA_KINDS.has(String(m.kind || '')) ? String(m.kind) : 'file';
     try { buf = Buffer.from(String(m.b64).trim().slice(0, Math.ceil(MEDIA_MAX_BYTES / 3) * 4 + 1024), 'base64'); } catch (_) { buf = null; }
     if (!buf || !buf.length) throw Object.assign(new Error('媒体数据无法解析'), { status_code: 400 });
     if (buf.length > MEDIA_MAX_BYTES) throw Object.assign(new Error('附件过大（限 20MB）'), { status_code: 400 });
-    const s = channel.ensureSession(db, b.user, 'wx:' + b.id);
+  }
+  const parsed = text ? channel.parseCommand(text) : null;
+  // 需要「先确保会话+渠道上下文」的三类：媒体 / 普通消息 / 带尾随文本的 /new（先建会话换绑，
+  // 尾随文本随后当普通消息发出）；裸命令（/help /status /裸 /new 等）不隐式建会话。
+  const newWithText = !!(parsed && parsed.cmd === 'new' && parsed.rest);
+  const plainMsg = hasMedia || !!(text && (!parsed || parsed.normal));
+  let s = null;
+  if (newWithText) s = channel.newSessionFor(db, b.user, 'wx:' + b.id, '').s;
+  else if (plainMsg) s = channel.ensureSession(db, b.user, 'wx:' + b.id);
+  if (s) ensureChannelContext(s);
+  if (hasMedia) {
     const name = saveTaskMedia(s, buf, kind, String(m.filename || ''));
     text = text ? '用户上传了文件：' + name + '\n\n' + text : '用户上传了文件：' + name;
     log.info('file', (b.user || '-') + ' [微信 ' + b.id + '] ' + kind + ' 落任务目录 ' + s.id + '/' + name + '（' + buf.length + ' 字节）');
+  } else if (newWithText) {
+    text = parsed.rest;
   }
   return channel.handleSend(db, {
     user: b.user,
@@ -340,7 +378,7 @@ function attachBus() {
     try {
       const cs = db.prepare('SELECT user, channel FROM channel_sessions WHERE session_id = ?').get(sessionId);
       if (!cs || !String(cs.channel || '').startsWith('wx:')) return;
-      enqueueDelivery(cs.channel.slice(3), () => deliverNow(cs.channel.slice(3), data));
+      enqueueDelivery(cs.channel.slice(3), () => deliverNow(cs.channel.slice(3), data, sessionId));
     } catch (e) {
       log.warn('wechat', '投递监听异常：' + msg(e));
     }
@@ -356,7 +394,7 @@ function enqueueDelivery(key, fn) {
   next.then(() => { if (deliveryQ.get(key) === next) deliveryQ.delete(key); });
 }
 
-async function deliverNow(bid, m) {
+async function deliverNow(bid, m, sessionId) {
   const b = getBinding(bid);
   if (!b || b.status !== 'online' || !b.wx_to_user) return;
   if (m.type === 'errAck') return;
@@ -373,8 +411,41 @@ async function deliverNow(bid, m) {
       return;
     }
   }
+  // 链接→卡片：扫正文里的 /p/<22位id>（本会话 mint 过的公网链）→ 同进程查表 + 归属硬校验 →
+  // 本地读字节推 wxbot（SDK 按扩展名自动路由 image/video/file 卡片，CDN 上传加密全自带）。
+  // 尽力而为：任一附件失败只 warn（链接文字已在正文，用户可点），不影响游标推进。
+  for (const a of findAttachments(content, sessionId)) {
+    try { await wxbotApi('POST', '/api/deliver_media', { id: b.id, to: b.wx_to_user, filename: a.filename, b64: a.b64 }, 60000); }
+    catch (e) { log.warn('wechat', b.id + ' 附件投递失败（' + a.filename + '，链接文字兜底）：' + msg(e)); }
+  }
   if (id > (b.last_msg_id || 0)) touchBinding(b.id, { last_msg_id: id });
   log.info('wechat', b.id + ' 已投递消息 ' + id + '（' + segs.length + ' 段）→ 微信');
+}
+
+// 扫回复文本里的 /p/<22位id> 链 → 可卡片化的本地附件（{filename, b64}，最多 5 个，单文件限 20MB）。
+// 归属硬校验：只转本会话签发的链接（AI 复述他会话/被注入的链接时不外流文件）；过期（resolve 为
+// 空）、文件已删、跳出任务目录、超限全部静默跳过——链接文字本身留在正文，用户仍可点。
+const ATTACH_MAX_BYTES = 20 * 1024 * 1024;
+const ATTACH_MAX_COUNT = 5;
+function findAttachments(content, sessionId) {
+  const out = [];
+  const seen = new Set();
+  for (const m of String(content).matchAll(/\/p\/([A-Za-z0-9_-]{22})(?![A-Za-z0-9_-])/g)) {
+    const pid = m[1];
+    if (seen.has(pid) || out.length >= ATTACH_MAX_COUNT) continue;
+    seen.add(pid);
+    try {
+      const f = publicFiles.resolve(pid);
+      if (!f || String(f.sessionId) !== String(sessionId)) continue;
+      const dir = engine.taskDirOf(sessionId);
+      const abs = path.resolve(dir, String(f.rel));
+      if (!abs.startsWith(dir + path.sep)) continue; // rel 签发时已验，此处再兑一层
+      const st = fs.statSync(abs);
+      if (!st.isFile() || st.size > ATTACH_MAX_BYTES) continue;
+      out.push({ filename: path.basename(abs), b64: fs.readFileSync(abs).toString('base64') });
+    } catch (_) { /* 过期/已删/异常：跳过 */ }
+  }
+  return out;
 }
 
 // 微信单条上限按 ~1800 字保守分段：先按行聚合，超长行硬切。
