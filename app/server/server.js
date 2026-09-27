@@ -10,6 +10,7 @@ const { createBus } = require('./sse');
 const { createAuth } = require('./auth');
 const engine = require('./engine');
 const scheduler = require('./scheduler');
+const wechat = require('./wechat');
 const llm = require('./llm');
 const mcp = require('./mcp');
 const skills = require('./tools/skills');
@@ -26,6 +27,10 @@ engine.init();
 //（active/遗留 queued → held），首轮 tick 才不会看到脏状态。
 scheduler.start(engine);
 
+// 微信接入（wechat.js，可选能力）：wxbot.url 未配 = 全部静默关闭；配了但 wxbot 没起 =
+// restore 只留一行日志，不重试不报错（用户在设置页点刷新自愈），不影响 Web 主流程。
+wechat.init(cfg, db, bus);
+
 const app = express();
 const server = http.createServer(app);
 
@@ -40,6 +45,10 @@ app.use(auth.router);      // /login、/logout、/api/login 等免认证端点
 // 安全性来自“22 字符随机 ID + 服务端过期”，详见 routes/public-files.js 头注释。
 app.use('/p', require('./routes/public-files'));
 
+// wxbot 内网回调（/wxhook/inbox|hook）：同在 auth.middleware 之前，凭共享服务 token（Bearer）把门，
+// 微信用户永远不该直接碰这两个端点（wxbot 只挂内网，不暴露公网）。
+app.use('/wxhook', require('./routes/wechat').hookRouter);
+
 app.use(auth.middleware);  // 其余请求需登录态（cookie 或 Basic 头）
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -53,6 +62,8 @@ app.use('/api/platforms', require('./routes/platforms'));
 app.use('/api/system', require('./routes/system'));
 // 用户画像（账户设置）：读写按登录用户隔离，逻辑在 user-profile.js
 app.use('/api/profile', require('./routes/profile'));
+// 微信绑定管理（设置页→账户→微信绑定），业务在 wechat.js；未配置时接口返回 enabled:false，前端整卡隐藏
+app.use('/api/wechat', require('./routes/wechat'));
 // 文本命令接入端（IM/CLI 等无 UI 客户端）：命令解析 + (user, channel) 当前会话绑定，见 routes/channel.js
 app.use('/api/channel', require('./routes/channel'));
 // data-page 技能配套：任务 app/ 子树页面向导 /app/{task_id}/ + 数据 API /api/db/{task_id}/query。
@@ -163,7 +174,10 @@ mcp.init(cfg).then(async () => {
       const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url + (s.enable === false ? '(禁用)' : '')).join(', ');
       log.info('startup', '  mcp_servers=' + (mcpList || '(none)'));
       log.info('startup', '  auth=' + (auth.enabled ? 'login: ' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
+      log.info('startup', '  wxbot=' + (cfg.wxbot.url ? cfg.wxbot.url : '(未启用)'));
       log.info('startup', '  log_level=' + cfg.log_level);
+      // 微信实例恢复 fire-and-forget：wxbot 没起只留日志，绝不阻塞/抛错影响启动。
+      wechat.restore().catch(e => log.warn('wechat', '启动恢复异常：' + (e && e.message || e)));
       // prompt dump 失败不影响服务：只是核对用产物。
       try {
         dumpPromptBundle();

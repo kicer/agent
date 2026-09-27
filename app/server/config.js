@@ -76,6 +76,9 @@ const DEFAULTS = {
   db_path: '',
   // 命令执行服务：url 非空走远端 executor，留空本地 spawn；留空时回退 env EXECUTOR_URL / EXECUTOR_TOKEN。
   executor: { url: '', token: '' },
+  // 微信接入（可选能力）：url 非空才启用（留空时整个微信功能静默下线，不影响其他一切）；
+  // 留空时回退 env WXBOT_URL / WXBOT_TOKEN（compose 注入，同 executor 模式；wxbot 只在内网，走容器名）。
+  wxbot: { url: '', token: '' },
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
   // fetch：timeout_ms 覆盖请求发出到 body 读完的全生命周期；max_bytes 为流式抓取字节上限（超限即断开）。
   fetch: { timeout_ms: 30000, max_bytes: 1048576 },
@@ -268,6 +271,11 @@ function parseAndValidate(rawText, configPath) {
   if (!cfg.executor || typeof cfg.executor !== 'object') cfg.executor = {};
   cfg.executor.url = String(cfg.executor.url || process.env.EXECUTOR_URL || '').trim().replace(/\/+$/, '');
   cfg.executor.token = String(cfg.executor.token || process.env.EXECUTOR_TOKEN || '').trim();
+
+  // 微信接入（wechat.js）：同上模式；url 留空 = 功能关闭（不报错、不建实例、面板隐藏）。
+  if (!cfg.wxbot || typeof cfg.wxbot !== 'object') cfg.wxbot = {};
+  cfg.wxbot.url = String(cfg.wxbot.url || process.env.WXBOT_URL || '').trim().replace(/\/+$/, '');
+  cfg.wxbot.token = String(cfg.wxbot.token || process.env.WXBOT_TOKEN || '').trim();
 
   // 日志等级:只认 debug/info/warn/error/none(off 是 none 别名),非法值按 info(不影响启动)
   cfg.log_level = String(cfg.log_level || 'info').trim().toLowerCase();

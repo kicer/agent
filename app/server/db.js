@@ -116,6 +116,21 @@ function initDb(dbPath) {
       PRIMARY KEY (user, channel)
     );
 
+    -- 微信绑定（wechat.js）：一条 core 用户 ↔ 一个 wxbot iLink bot 实例（扫码登录后仅本人可与 bot 单线对话，
+    -- 协议保证无陌生人入口）。binding id 同时用作 channel 键（'wx:'+id，走 routes/channel.js 同一套命令层）
+    -- 和 wxbot 凭证目录名，权威在本表；投递游标 last_msg_id 落库，重启不重发旧回复。
+    CREATE TABLE IF NOT EXISTS wechat_bindings (
+      id TEXT PRIMARY KEY,
+      user TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',   -- pending 等扫码 | online | expired | error
+      note TEXT,                                -- 错误/状态说明，面板原样展示
+      bot_account_id TEXT,                      -- bot 上线后的微信账号标识（登录回调带回，展示用）
+      wx_to_user TEXT,                          -- 最近来话人 userId（deliver 回发对象；实际上只会是主人自己）
+      last_msg_id INTEGER NOT NULL DEFAULT 0,   -- 投递游标：id ≤ 此值的 assistant 消息已送过微信
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     -- 模型 token 用量流水（每次模型回合一条）。故意不建会话外键：
     -- 删会话后累计统计仍需保留
     CREATE TABLE IF NOT EXISTS model_usage (

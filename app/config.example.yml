@@ -33,6 +33,11 @@ executor:                                          # 独立命令执行服务；
   url: ""                                          # 非空走远端执行；留空读 env EXECUTOR_URL 或本地 spawn
   token: ""                                        # 与 executor 侧同值；留空读 env EXECUTOR_TOKEN
 
+wxbot:                                             # 微信接入（可选；仓库 wxbot/ 子项目，只挂内网，不入 git）
+  url: ""                                          # 非空才启用；留空读 env WXBOT_URL（compose 注 http://wxbot:8093）；
+                                                   # 留空 = 功能整体静默关闭；填了但 wxbot 没起也不报错，设置页显示未连接
+  token: ""                                        # core ↔ wxbot 共享服务 token，两侧同值；留空读 env WXBOT_TOKEN
+
 terminal:
   default_timeout_ms: 30000                        # 命令默认超时（ms）
   max_output_chars: 10000                          # 回传模型的最大输出字符数

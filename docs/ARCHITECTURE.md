@@ -38,6 +38,7 @@ agent/
 │   │   ├── llm.js                 上游 OpenAI 兼容 /chat/completions 流式调用 + 消息组装
 │   │   ├── mcp.js                 极简 MCP 客户端（Streamable HTTP，init→tools/list→tools/call）
 │   │   ├── remote-exec.js         agent-executor 远端执行客户端（SSE 收流）
+│   │   ├── wechat.js              微信接入桥接（wechat_bindings 权威 / 实例控制 / inbox / 总线投递；wxbot 为仓库内私有组件不入 git，见 §5.13）
 │   │   ├── balance.js             余额查询适配器（按 platform.type 分发）
 │   │   ├── version.js             版本信息（package.json + git 短提交号）
 │   │   ├── tools/
@@ -52,6 +53,7 @@ agent/
 │   │   │   ├── messages.js        /api/sessions/:id/messages + SSE 流 + stop/release
 │   │   │   ├── files.js           /api/sessions/:id/files 上传/列表/下载/删除
 │   │   │   ├── channel.js         /api/channel/send 文本命令接入（IM/CLI 等无 UI 端；当前会话绑定 + /new /stop /compact /clear /status /help）
+│   │   │   ├── wechat.js          /api/wechat 绑定管理（设置页）+ /wxhook 内网回调（微信接入，见 §5.13）
 │   │   │   ├── config.js          /api/config 读写（含 api_key/password 脱敏）
 │   │   │   ├── platforms.js       /api/platforms/balance 余额查询
 │   │   │   ├── skills.js          /api/skills 技能文件管理
@@ -146,9 +148,9 @@ graph LR
 3. `initDb(cfg.db_path)` 建表 + 增量迁移（`db.js`，含 `held_at` / `last_model_id` / `assistant_type` / `user` / `profile` 等历史升级）。
 4. `createBus()` 建 SSE 事件总线（`sse.js`）。
 5. `engine.setModelPool(cfg, db, bus); engine.init()`：按 cfg.models 重建 `model_pool` 槽位表；会话状态归位（active/遗留 queued → held，绑定不清）；指向已删/禁用模型的绑定在下次发言时由 `ensureBinding` 自动改选。
-6. `scheduler.start(engine)`：启动定时任务轮询（30s 一次，`unref`）。**必须在 engine.init() 之后**——先让会话状态归位，首轮 tick 才看不到脏状态（见 §5.12）。
+6. `scheduler.start(engine)`：启动定时任务轮询（30s 一次，`unref`）。**必须在 engine.init() 之后**——先让会话状态归位，首轮 tick 才看不到脏状态（见 §5.12）。随后 `wechat.init(cfg, db, bus)` 挂上总线内部订阅（微信接入，§5.13；`wxbot.url` 未配时全程静默）。
 7. `createAuth(cfg)` 装配登录中间件；未配 `auth.users` 则认证关闭（可交给前置 nginx-proxy basic auth）。
-8. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`、`/api/channel`）。
+8. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`、`/api/channel`、`/api/wechat`）；`auth.middleware` 之前另挂两个内网/匿名入口：`/p`（公网临时文件）与 `/wxhook`（wxbot 回调，共享服务 token 把门）。
 9. `mcp.init(cfg).then(...)`：对每个 MCP 服务 initialize → tools/list，发现的工具存在 `mcp` 模块内。
 10. `skills.listSkills(...)` → `llm.setSkillListText(...)` 快照注入 system prompt（`llm.js`）。
 11. `server.listen(PORT)`，打 startup 行：workspace_root / data_root / models / mcp_servers / auth / log_level。
@@ -203,6 +205,12 @@ channel_sessions  user + channel 复合 PK / session_id / updated_at
                   # 文本命令接入端（routes/channel.js）的「当前会话」映射：接入端无会话列表 UI，
                   # 普通消息与 /new 等命令都路由到绑定的会话；无外键，删会话后懒解析自愈；
                   # /api/channel/send 是唯一读写方，Web 路由不碰这张表
+
+wechat_bindings   id PK（wx+10hex）/ user / status (pending|online|expired|error) / note /
+                  bot_account_id / wx_to_user / last_msg_id / created_at / updated_at
+                  # 微信绑定权威表（§5.13）：一条 core 用户 ↔ 一个 wxbot iLink bot 实例（一人一绑，换号先解绑）；
+                  # id 兼作 channel 键（channel='wx:'+id，复用 channel_sessions 全套机制）与 wxbot 凭证目录名；
+                  # last_msg_id 是投递游标（assistant 消息 id ≤ 此值已送微信），落库防 core 重启重发
 ```
 
 **session.status 状态机**（`engine.js`，无排队版）：
@@ -385,6 +393,7 @@ stateDiagram-v2
 
 - `Map<session_id, Set<res>>`。
 - `emit(sessionId, event, data)` 拼 `event: <name>\ndata: <json>\n\n`；无客户端静默丢弃（消息本身已持久化，重连可回放）。
+- 进程内内部订阅 `onInternal(fn)`：先于 HTTP 客户端触发、不受「无观看者早退」影响、单个监听抛错不影响其余——微信投递（wechat.js）靠它拿 assistant_message（微信会话常常没有任何 Web 页面在看）。
 - SSE 心跳：路由层 15s 一次 `: ping\n\n` 注释行（`X-Accel-Buffering: no` 是给 nginx-proxy 看的）。
 
 ### 5.11 `balance.js` —— 余额查询
@@ -404,6 +413,18 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - **补跑语义**：`computeNext` 一律以 `now` 为基准，停机跨过多个触发点后重启只算未来一次，天然不补跑；重启后任务从库自动恢复。
 - **安全**：本功能等价给 AI 开持久化后门（prompt injection 可诱使建任务定时执行任意指令）。缓解三件：工具描述限定「仅用户明确要求时调用」+ 会话页常驻状态条（点击弹详情窗，可见 cron/上次下次时间/提示词，能就地改提示词或删除）+ 创建/触发/跳过/删除全打 `scheduler` info 日志。无权限分级/审批/配额。
 - **边界**：两次触发之间的用户对话也会被下次触发一并存档（UI 可见、AI 下次看不到，符合设计意图）；多用户：调度器全局遍历不按 user 过滤（投递目标是会话本身，隔离在建任务时的 ctx.sessionId 已有）；`last_status='running'` 的收尾不精确（异常结束的回合也会被标 ok）。
+
+---
+
+### 5.13 `wechat.js` —— 微信接入桥接（wxbot 为私有组件，不入 git）
+
+背景：仓库内 `wxbot/`（未入库）是基于官方 iLink 协议 SDK 的微信「调制解调器」，只挂 `agent-mcp-net` 内网、不暴露公网；身份权威与全部会话逻辑在 core，引擎不感知微信。
+
+- **模型**：一条 `wechat_bindings` = 一个 core 用户 = 一个 bot 实例（一人一绑，换号先解绑）。binding id 三用：实例控制/投递的寻址键、wxbot 凭证目录名、channel 键（`channel='wx:'+id`，因此命令层、会话自动新建、投递游标查询全部白借 §5.4 的 channel 机制，零新逻辑）。iLink 协议保证扫码登录后仅本人可与 bot 单线对话，无陌生人入口，故无联系人授权面。
+- **方向三条线**：① Web（设置页→账户→微信绑定）→ `/api/wechat` → wxbot `/api/instances*`（实例控制，QR SVG 代理给页面 `<img>`，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message → 分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`。
+- **投递游标** `last_msg_id` 落库 + 每绑定串行队列：重启不重发旧回复，wxbot 短暂不可达不丢（下一条连带补齐）；errAck/纯工具轮（空文本）不进微信，`__blocks__` 图消息降级为占位文案。
+- **降级承诺**：`wxbot.url` 未配 = 功能整体静默关闭（启动零日志噪声、设置页入口隐藏）；配了但 wxbot 没起 = restore 只留一行 info，面板显示未连接，所有外呼失败只 warn，绝不阻塞/抛出未捕获异常影响 Web 主流程（鉴权/探活失败同样只降级）。
+- 鉴权：core→wxbot = wxbot 自身 auth.tokens 白名单（模板直接引用 `${WXBOT_TOKEN}`）；wxbot→core = `/wxhook` 挂 auth.middleware 之前，Bearer 服务 token 哈希后定长比较（同 auth.js 形态），token 未配一律 503（fail closed）。
 
 ---
 
@@ -462,7 +483,9 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 | `/api/platforms` | `routes/platforms.js` | `GET /balance?pi=&ki=` 余额 |
 | `/api/system` | `routes/system.js` | `GET /status` + `/restart?force=...`（原 `model_profiles` 可用名单字段已删，前端无消费方） |
 | `/api/profile` | `routes/profile.js` | `GET /` 读画像、`PUT /` 保存（三字段 + enabled）；按 `req.user` 隔离，逻辑全在 `user-profile.js`（快照冻结见 engine `createSession`/`clearSessionMessages`，提取见 `enterExecuting`） |
-| `/api/channel` | `routes/channel.js` | `POST /send {channel, text}` 文本命令接入端（IM/CLI 等无 UI 客户端，走 Basic/cookie 鉴权）：命令仅在本入口解析（Web 消息路由不受影响，防误伤路径/代码文本）；严格匹配白名单 `/new[文本] /stop /compact /clear /status /help`，未知斜杠词回提示、不像命令的当普通消息；(user,channel) 经 `channel_sessions` 表绑定当前会话（普通消息无绑定自动建）；命令动作不落消息行（与 Web 按钮对称），AI 回复由接入端复用既有 SSE/详情接口获取 |
+| `/api/channel` | `routes/channel.js` | `POST /send {channel, text}` 文本命令接入端（IM/CLI 等无 UI 客户端，走 Basic/cookie 鉴权）：命令仅在本入口解析（Web 消息路由不受影响，防误伤路径/代码文本）；严格匹配白名单 `/new[文本] /stop /compact /clear /status /help`，未知斜杠词回提示、不像命令的当普通消息；(user,channel) 经 `channel_sessions` 表绑定当前会话（普通消息无绑定自动建）；命令动作不落消息行（与 Web 按钮对称），AI 回复由接入端复用既有 SSE/详情接口获取；`handleSend()` 另供微信桥接直调 |
+| `/api/wechat` | `routes/wechat.js` | 微信绑定管理（设置页，cookie 鉴权 + req.user 隔离）：`GET /`（enabled/alive/我的绑定）、`POST /`（新建绑定，一人一绑）、`GET /:id/qr`（登录二维码 SVG 代理）、`POST /:id/refresh`（重发登录）、`DELETE /:id`（解绑，销毁实例与凭证）；业务全在 `wechat.js`（§5.13） |
+| `/wxhook` | `routes/wechat.js`（hookRouter） | wxbot → core 内网回调（**挂 auth.middleware 之前**，形态同 `/p`）：`POST /inbox {id, from, text}` 收信转 channel 层（非 2xx 时 wxbot 把 error 文案回给微信用户）；`POST /hook {id, event}` 实例状态回报；Bearer 共享服务 token（哈希后定长比较，未配一律 503） |
 | `/api/models` | `server.js` | 模型池（在用会话数 slots_used / 在用会话列表，非独占展示）+ token 用量 |
 | `/api/health` | `server.js` | 健康检查 |
 | `/api/login` `/api/login_restore` `/api/logout` `/api/password` `/api/me` | `auth.js` | 认证路由（认证前） |
@@ -522,6 +545,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - `mcp_servers[].timeout_ms` —— 该服务单次 `tools/call` 的最大等待，默认 60000（夹在 1s~10min）；工具发现/握手用固定 15s，不受本项影响。
 - `mcp_servers[].tools_allow` / `tools_deny` —— 发现阶段的工具名单（字符串数组，按服务端原始名）：allow 白名单，deny 在其后叠加（deny 优先）；用于压低发给模型的工具数（如浏览器类服务）。
 - `executor.url` / `executor.token` —— 留空走环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN`（compose 默认注入）。
+- `wxbot.url` / `wxbot.token` —— 微信接入（§5.13，可选）：url 留空/未配时功能整体静默关闭；留空时读 env `WXBOT_URL` / `WXBOT_TOKEN`（compose 默认注 `http://wxbot:8093`，`.env` 置 `WXBOT_URL=` 可关）；token 与 wxbot 侧 `.env` 同值，双向共用（出向控制 + 入向 /wxhook 回调）。
 
 ---
 
@@ -741,6 +765,8 @@ sequenceDiagram
 14. **编辑 SKILL.md 不会立即生效** —— 不需要重启，但需要 `routes/skills.js` 的 `refreshSkillPrompt()` 异步重建 system prompt 段落（fire-and-forget，扫描失败不影响 API 响应）。
 15. **`pids_limit` 与 `ulimit` 区别** —— 前者是 cgroup pids 控制器算整个容器的进程+线程；后者是 per-process `RLIMIT_FSIZE` 等。被杀时 OOM kill vs SIGXFSZ 行为不同。
 16. **浏览器内双凭据身份分裂** —— 前端 `req()` 曾附加 sessionStorage 里的 Basic 头兜底 cookie，但 sessionStorage 按标签页隔离、刷新后残留（新标签页不继承，复制标签页则继承），cookie 是浏览器全局：A/B 切号登录后刷新旧标签页，会出现 `/api/me`（读 cookie）是 A、会话列表（Basic 优先于 cookie）是 B 的不一致，SSE（EventSource 只能带 cookie）又跟着 A。现已统一：浏览器身份只认 cookie（`req()` 不带 Basic 头，登录页不再存明文口令），服务端 `authUser` 也是 cookie 优先；Basic 仅供 curl/脚本无 cookie 时使用。
+
+17. **微信功能必须静默降级** —— wxbot 是可选依赖：未配置/未启动/网络断开时，core 启动与 Web 主流程必须零报错（restore 只留日志、外呼失败只 warn、设置页自动隐藏入口）；改 wechat.js 时不得引入任何会冒到主流程的同步抛错或未 catch 的 promise。
 
 ---
 

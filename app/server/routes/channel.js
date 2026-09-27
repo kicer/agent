@@ -113,17 +113,15 @@ function statusReply(db, s) {
 }
 
 // ---------- 入口 ----------
-// POST /api/channel/send {channel?, text} → {kind, reply, session_id, message_id?}
-// - kind='message'：普通消息已入会话开跑；kind='command'：reply 即命令回执（纯文本，IM 直接转发）。
-// - AI 的正式回复不在本接口返回：接入端复用 SSE GET /api/sessions/:id/stream 或轮询会话详情。
-// - 引擎主动拒绝的（回合进行中点压缩/清空）走 HTTP 4xx {error}，语义与 Web 路由一致。
-router.post('/send', wrap((req, res) => {
-  const db = engine.getDb();
-  const user = String(req.user || '').trim().slice(0, 64); // 认证用户；未开认证为空串（自用单用户）
-  const channel = String((req.body || {}).channel || '').trim().slice(0, 64);
-  const text = String((req.body || {}).text || '').trim();
+// 命令主流程：Web 接入（POST /api/channel/send）与微信桥接（wechat.js 直调）共用同一函数，
+// 命令表/会话绑定/自动建会话只有一份实现；来源差异（日志前缀 tag、身份解析）由调用方注入。
+// 返回 {kind, reply, session_id, message_id?}；引擎拒绝的（回合进行中压缩/清空）抛 {status_code}，由调用方映射。
+function handleSend(db, opts) {
+  const user = String(opts.user || '').trim().slice(0, 64);
+  const channel = String(opts.channel || '').trim().slice(0, 64);
+  const text = String(opts.text || '').trim();
   if (!text) throw Object.assign(new Error('text 不能为空'), { status_code: 400 });
-  const tag = (user || '-') + ' [' + (channel || 'default') + ']';
+  const tag = opts.tag || ((user || '-') + ' [' + (channel || 'default') + ']');
 
   const parsed = parseCommand(text);
 
@@ -138,63 +136,76 @@ router.post('/send', wrap((req, res) => {
       sent = engine.postUserMessage(s.id, text);
     }
     log.info('msg', tag + ' channel 消息 → ' + s.id);
-    return res.json({ kind: 'message', reply: '已发送到会话 ' + s.id, session_id: s.id, message_id: sent.message_id });
+    return { kind: 'message', reply: '已发送到会话 ' + s.id, session_id: s.id, message_id: sent.message_id };
   }
 
   if (parsed.unknown) {
     const s = boundSession(db, user, channel);
-    return res.json({ kind: 'command', reply: '/' + parsed.unknown + ' 不是有效命令，发送 /help 查看清单', session_id: s ? s.id : null });
+    return { kind: 'command', reply: '/' + parsed.unknown + ' 不是有效命令，发送 /help 查看清单', session_id: s ? s.id : null };
   }
 
   const cmd = parsed.cmd;
 
   if (cmd === 'help') {
     const s = boundSession(db, user, channel);
-    return res.json({ kind: 'command', reply: HELP_TEXT, session_id: s ? s.id : null });
+    return { kind: 'command', reply: HELP_TEXT, session_id: s ? s.id : null };
   }
 
   if (cmd === 'new') {
     const r = newSessionFor(db, user, channel, parsed.rest);
     log.info('task', tag + ' channel /new → ' + r.s.id + (parsed.rest ? '（含首条消息）' : ''));
-    return res.json({
+    return {
       kind: 'command',
       reply: '已新建会话 ' + r.s.id + (parsed.rest ? '，首条消息已发出' : '（发普通消息或 /status 查看状态）'),
       session_id: r.s.id,
       message_id: r.sent ? r.sent.message_id : undefined,
-    });
+    };
   }
 
   // 其余命令都作用于当前会话；无绑定时不隐式新建（那不是用户点这条命令的意图）
   const s = boundSession(db, user, channel);
   if (!s) {
-    return res.json({ kind: 'command', reply: '当前没有会话（先 /new，或直接发一条普通消息自动新建）', session_id: null });
+    return { kind: 'command', reply: '当前没有会话（先 /new，或直接发一条普通消息自动新建）', session_id: null };
   }
 
   if (cmd === 'stop') {
     // 与 Web 按钮语义对齐：只有回合真在跑才停，idle 不误伤（stop 会把 held 刷成 cancelled）
     const run = engine.getRun(s.id);
     if (!(run && run.looping)) {
-      return res.json({ kind: 'command', reply: '当前没有进行中的回合（无需终止）', session_id: s.id });
+      return { kind: 'command', reply: '当前没有进行中的回合（无需终止）', session_id: s.id };
     }
     engine.stop(s.id);
     log.info('msg', tag + ' channel /stop ' + s.id);
-    return res.json({ kind: 'command', reply: '已发送终止指令，回合收尾中', session_id: s.id });
+    return { kind: 'command', reply: '已发送终止指令，回合收尾中', session_id: s.id };
   }
 
   if (cmd === 'compact') {
     engine.summarizeContext(s.id); // 回合进行中 engine 抛 409（请先终止），冒给调用方
     log.info('msg', tag + ' channel /compact ' + s.id);
-    return res.json({ kind: 'command', reply: '已发起上下文压缩，摘要稍后会作为一条回复出现在会话里', session_id: s.id });
+    return { kind: 'command', reply: '已发起上下文压缩，摘要稍后会作为一条回复出现在会话里', session_id: s.id };
   }
 
   if (cmd === 'clear') {
     engine.clearSessionMessages(s.id); // 同上，回合进行中 409
     log.info('msg', tag + ' channel /clear ' + s.id);
-    return res.json({ kind: 'command', reply: '已清空当前会话（回到顾问模式），继续发消息即从零开始', session_id: s.id });
+    return { kind: 'command', reply: '已清空当前会话（回到顾问模式），继续发消息即从零开始', session_id: s.id };
   }
 
   // cmd === 'status'
-  return res.json({ kind: 'command', reply: statusReply(db, s), session_id: s.id });
+  return { kind: 'command', reply: statusReply(db, s), session_id: s.id };
+}
+
+// HTTP 入口：POST /api/channel/send {channel?, text} → handleSend 结果。
+// - kind='message'：普通消息已入会话开跑；kind='command'：reply 即命令回执（纯文本，IM 直接转发）。
+// - AI 的正式回复不在本接口返回：接入端复用 SSE GET /api/sessions/:id/stream 或轮询会话详情。
+// - 引擎主动拒绝的走 HTTP 4xx {error}，语义与 Web 路由一致。
+router.post('/send', wrap((req, res) => {
+  res.json(handleSend(engine.getDb(), {
+    user: String(req.user || '').trim(), // 认证用户；未开认证为空串（自用单用户）
+    channel: (req.body || {}).channel,
+    text: (req.body || {}).text,
+  }));
 }));
 
 module.exports = router;
+module.exports.handleSend = handleSend;
