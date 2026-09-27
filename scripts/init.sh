@@ -6,7 +6,7 @@
 # 用法：
 #   ./scripts/init.sh                                     # 全用默认值（无模型、admin/admin）
 #   BIGMODEL_KEY=xxx AUTH_USER=me ./scripts/init.sh       # 给几个变量就行
-#   ./scripts/init.sh --env-only                          # 只刷新 .env（含同步 wxbot/.env），不动 config.yml
+#   ./scripts/init.sh --env-only                          # 只刷新 .env 密钥（幂等，不碰 config.yml）
 #
 # 输入（都可选）：
 #   BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY  模型平台 key，填几个启用几个（0~3 个）
@@ -48,7 +48,7 @@ AGENT_PORT_INPUT="${AGENT_PORT:-}"
 AGENT_PORT="${AGENT_PORT_INPUT:-8090}"
 EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-}"
 AUTH_SECRET="${AUTH_SECRET:-}"
-# 微信接入服务 token（core ↔ wxbot 双向共用，compose 两侧同值注入；wxbot/ 子项目不入 git）
+# 微信接入服务 token（core ↔ wxbot 双向共用，compose 两侧同值注入；wxbot 已并入仓库）
 WXBOT_TOKEN="${WXBOT_TOKEN:-}"
 
 log()  { echo -e "\n\033[1;32m===== $* =====\033[0m"; }

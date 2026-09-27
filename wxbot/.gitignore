@@ -1,0 +1,10 @@
+# wxbot 已作为根 compose 的服务并入仓库；以下为本地私密/生成物，不入库
+# （.env、node_modules、data 根 .gitignore 同样覆盖，这里重复声明以显式表达意图、双保险）
+
+# 可选覆盖配置——服务零配置文件为默认形态，只有真要改旋钮时才在部署机本地创建
+config.yml
+
+.env
+node_modules/
+data/
+*.log

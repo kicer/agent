@@ -1,0 +1,20 @@
+{
+  "name": "wxbot",
+  "version": "1.0.0",
+  "description": "wxbot.foresh.com: WeChat iLink bot console - QR login page + echo bot via @wechatbot/wechatbot",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@wechatbot/wechatbot": "^2.2.0",
+    "express": "^4.21.0",
+    "js-yaml": "^4.1.0",
+    "qrcode": "^1.5.4"
+  }
+}

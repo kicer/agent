@@ -14,7 +14,7 @@
 ```
 agent/
 ├── README.md                      设计文档（API/数据模型/部署总览）
-├── docker-compose.yml             编排：agent-core / agent-executor(+init) / wxbot（微信接入，代码在 ./wxbot 不入 git）
+├── docker-compose.yml             编排：agent-core / agent-executor(+init) / wxbot（微信接入）
 ├── config.yml                     运行时配置（含密钥，已 .gitignore）
 ├── data/                          默认数据卷（任务目录、SQLite、prompt dump）
 ├── tasks/                         任务目录挂载点（同 ./data 顶层等价，二选一）
@@ -38,7 +38,7 @@ agent/
 │   │   ├── llm.js                 上游 OpenAI 兼容 /chat/completions 流式调用 + 消息组装
 │   │   ├── mcp.js                 极简 MCP 客户端（Streamable HTTP，init→tools/list→tools/call）
 │   │   ├── remote-exec.js         agent-executor 远端执行客户端（SSE 收流）
-│   │   ├── wechat.js              微信接入桥接（wechat_bindings 权威 / 实例控制 / inbox / 总线投递；wxbot 为仓库内私有组件不入 git，见 §5.13）
+│   │   ├── wechat.js              微信接入桥接（wechat_bindings 权威 / 实例控制 / inbox / 总线投递；对端服务见 wxbot/，§5.13）
 │   │   ├── balance.js             余额查询适配器（按 platform.type 分发）
 │   │   ├── version.js             版本信息（package.json + git 短提交号）
 │   │   ├── tools/
@@ -83,6 +83,12 @@ agent/
 │   ├── Dockerfile                 node:20-slim + 系统/Python 工具链（apt + pip）
 │   ├── server.js                  零依赖单文件 HTTP 服务（仅 Node 内置 http）
 │   └── smoke-test.js              Executor 自身冒烟（/health / exec 流式 / 鉴权 / 取消）
+│
+├── wxbot/                         ── 微信接入容器（根 compose 的 wxbot 服务）──
+│   ├── app/Dockerfile             node:22-slim + @wechatbot/wechatbot / express / js-yaml / qrcode
+│   ├── app/src/server.js          iLink 多实例调制解调器：实例管理 + /api/{instances,deliver} + 收信转发 core
+│   ├── README.md                  部署/接口/零配置接线（WXBOT_TOKEN/CORE_URL 全靠 env 注入）
+│   └── data/                      iLink 登录凭证（gitignore，绝不入库）
 │
 └── docs/
     ├── DEPLOY.md                  部署（Docker，IP:端口直连）
@@ -416,9 +422,9 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 
 ---
 
-### 5.13 `wechat.js` —— 微信接入桥接（wxbot 为私有组件，不入 git）
+### 5.13 `wechat.js` —— 微信接入桥接
 
-背景：仓库内 `wxbot/`（未入库）是基于官方 iLink 协议 SDK 的微信「调制解调器」，只挂 `agent-mcp-net` 内网、不暴露公网；身份权威与全部会话逻辑在 core，引擎不感知微信。
+背景：仓库内 `wxbot/`（已入库，作为根 compose 的 `wxbot` 服务）是基于官方 iLink 协议 SDK 的微信「调制解调器」，只挂 `agent-mcp-net` 内网、不暴露公网；身份权威与全部会话逻辑在 core，引擎不感知微信。
 
 - **模型**：一条 `wechat_bindings` = 一个 core 用户 = 一个 bot 实例（一人一绑，换号先解绑）。binding id 三用：实例控制/投递的寻址键、wxbot 凭证目录名、channel 键（`channel='wx:'+id`，因此命令层、会话自动新建、投递游标查询全部白借 §5.4 的 channel 机制，零新逻辑）。iLink 协议保证扫码登录后仅本人可与 bot 单线对话，无陌生人入口，故无联系人授权面。
 - **方向三条线**：① Web（设置页→账户→微信绑定）→ `/api/wechat` → wxbot `/api/instances*`（实例控制，QR SVG 代理给页面 `<img>`，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message → 分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`。
