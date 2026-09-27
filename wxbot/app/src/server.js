@@ -215,12 +215,14 @@ function createInstance(id) {
 // 收信 → 转发 core inbox。命令回执（kind=command）同步回文本；
 // 普通消息（kind=message）不回执——最终回复稍后由 core 经 /api/deliver 推过来。
 // 媒体消息（image/video/file）：SDK 下好字节随 inbox 转发（core 落任务目录 + 拼「用户上传了文件」
-// 告知行，同 web 附件模式）。msg.text 对媒体消息是 SDK 占位描述（如 "[image]"），不能当真正文，
-// 故只认 type==='text'；voice 等未接入类型回占位提示。
+// 告知行，同 web 附件模式）。msg.text 对媒体消息是 SDK 占位描述（如 "[image]"），不能当真正文；
+// voice 特殊：iLink 服务端已自动转写，msg.text 即识别出的文字，按文本处理（silk 原始音频不下载）。
 const MEDIA_KINDS = new Set(["image", "video", "file"]);
+const TEXT_LIKE_KINDS = new Set(["text", "voice"]);
+
 async function onIncoming(inst, msg) {
   const type = String(msg?.type || "text");
-  const text = type === "text" ? String(msg?.text ?? "").trim() : "";
+  const text = TEXT_LIKE_KINDS.has(type) ? String(msg?.text ?? "").trim() : "";
   const userId = String(msg?.userId ?? "");
   const isMedia = MEDIA_KINDS.has(type);
   if (!text && !isMedia) {

@@ -86,10 +86,10 @@ function parseCommand(text) {
 // 微信这类纯文本端由 wxbot 发送前 stripMarkdown 降级——格式信息留在生产方，渲染适配在消费方。
 const HELP_TEXT = [
   '**可用命令**',
-  '- `/new [文本]` 新建会话并切换（带文本则作为首条消息直接开跑；不打断旧会话正在跑的回合）',
+  '- `/new [msg]` 新建会话并切换）',
   '- `/stop` 终止当前回合',
-  '- `/compact` 压缩上下文（摘要稍后作为一条回复出现在会话里）',
-  '- `/clear` 清空当前会话（回到顾问模式，会话继续用）',
+  '- `/compact` 压缩上下文',
+  '- `/clear` 清空当前会话',
   '- `/status` 查看当前会话状态',
   '- `/help` 显示本帮助',
 ].join('\n');
@@ -174,14 +174,14 @@ function handleSend(db, opts) {
   // 其余命令都作用于当前会话；无绑定时不隐式新建（那不是用户点这条命令的意图）
   const s = boundSession(db, user, channel);
   if (!s) {
-    return { kind: 'command', reply: '当前没有会话（先 /new，或直接发一条普通消息自动新建）', session_id: null };
+    return { kind: 'command', reply: '当前没有会话，请直接发送消息', session_id: null };
   }
 
   if (cmd === 'stop') {
     // 与 Web 按钮语义对齐：只有回合真在跑才停，idle 不误伤（stop 会把 held 刷成 cancelled）
     const run = engine.getRun(s.id);
     if (!(run && run.looping)) {
-      return { kind: 'command', reply: '当前没有进行中的回合（无需终止）', session_id: s.id };
+      return { kind: 'command', reply: '当前没有进行中的回合，无需终止', session_id: s.id };
     }
     engine.stop(s.id);
     log.info('msg', tag + ' channel /stop ' + s.id);
@@ -191,13 +191,13 @@ function handleSend(db, opts) {
   if (cmd === 'compact') {
     engine.summarizeContext(s.id); // 回合进行中 engine 抛 409（请先终止），冒给调用方
     log.info('msg', tag + ' channel /compact ' + s.id);
-    return { kind: 'command', reply: '已发起上下文压缩，摘要稍后会作为一条回复出现在会话里', session_id: s.id };
+    return { kind: 'command', reply: '已发起上下文压缩，摘要稍后回复', session_id: s.id };
   }
 
   if (cmd === 'clear') {
     engine.clearSessionMessages(s.id); // 同上，回合进行中 409
     log.info('msg', tag + ' channel /clear ' + s.id);
-    return { kind: 'command', reply: '已清空当前会话（回到顾问模式），继续发消息即从零开始', session_id: s.id };
+    return { kind: 'command', reply: '已清空当前会话，现在从零开始', session_id: s.id };
   }
 
   // cmd === 'status'
