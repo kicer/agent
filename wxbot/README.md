@@ -24,8 +24,8 @@ agent-core 的 `wechat_bindings` 表；扫码二维码呈现在 agent-core 的 W
 
 - 收信 → core `/wxhook/inbox` 复用 **channel 命令层**（`/new /stop /compact /clear /status /help`），
   命令回执同步回文本；普通消息（AI 回复）异步由 core 经 `/api/deliver` 推送（`bot.send`）。
-  图片/视频/文件消息经 SDK `download` 取字节随 inbox 转发（限 20MB），core 落会话任务目录并拼
-  「用户上传了文件」告知行——与 web 上传附件同一条链路，vision 模型 read_file 即可看图。
+  图片/视频/文件消息经 SDK `download` 取字节随 inbox 转发（限 20MB），core 落会话任务目录；带说明文字的
+  拼「用户上传了文件」告知行一起触发回合，**单发媒体只静默留痕不唤醒 AI**（下次提及自然能指代到该文件）。
 - **单线对话**：iLink 扫码登录后只有绑定者本人能与 bot 会话，无陌生人入口，故无联系人授权面。
 - 实例凭证按绑定隔离在 `./data/bots/<binding_id>/`，容器重启自动恢复登录免扫码；
   启动时扫描该目录逐个拉起实例（core 不在线也照常上线，状态回调失败不影响，首条消息会纠偏）。

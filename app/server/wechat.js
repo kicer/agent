@@ -247,11 +247,10 @@ const MEDIA_MAX_BYTES = 20 * 1024 * 1024;
 const MEDIA_KINDS = new Set(['image', 'video', 'file']);
 
 const CHANNEL_NOTE = [
-  '【渠道说明】本会话来自微信单聊，用户只能收发文本与文件，无可点击界面。',
+  '本会话来自微信单聊，用户只能收发文本与文件，无可点击界面。',
   '- 交流风格：简短口语化，适配手机阅读；内容较长时整理成文件交付，不刷屏。',
-  '- 交付文件：生成文件后，在回复正文中给出下载链接，系统会自动将其转为微信文件卡片，',
-  '  链接文字保留作兜底。含敏感内容的文件不要外链。',
-  '- 接收文件：用户发来的图片/视频/文件已存入当前工作目录，用户消息中会说明文件名，可直接读取。',
+  '- 交付文件：生成文件后，在回复时用mint_public_link给出可公开下载的链接，链接文字保留作兜底。',
+  '- 接收文件：用户发来的文件会自动存入当前工作目录，可直接读取。',
 ].join('\n');
 
 function ensureChannelContext(s) {
@@ -295,8 +294,15 @@ function handleInbox(body) {
   if (s) ensureChannelContext(s);
   if (hasMedia) {
     const name = saveTaskMedia(s, buf, kind, String(m.filename || ''));
-    text = text ? '用户上传了文件：' + name + '\n\n' + text : '用户上传了文件：' + name;
     log.info('file', (b.user || '-') + ' [微信 ' + b.id + '] ' + kind + ' 落任务目录 ' + s.id + '/' + name + '（' + buf.length + ' 字节）');
+    if (text) {
+      text = '用户上传了文件：' + name + '\n\n' + text; // 带说明文字：告知行+正文并进一条消息触发回合
+    } else {
+      // 单发媒体只落盘+留痕，不唤醒 AI（scheduler_note 同构：下一次真实对话时模型自然看到这条
+      // user 行，「刚才那张图」的指代仍成立；表情包连发不会每条换来一句「收到」）
+      const mid = engine.saveMessage(s.id, { role: 'user', type: 'wx_media', content: '用户上传了文件：' + name });
+      return { kind: 'message', reply: '', session_id: s.id, message_id: mid };
+    }
   } else if (newWithText) {
     text = parsed.rest;
   }
