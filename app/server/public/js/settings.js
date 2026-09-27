@@ -347,11 +347,11 @@
     if (!ctx()) return;
     let html = '<div class="set-scroll">';
     if (me) html += userCardHtml(me.user);
+    // 微信内联卡排画像前（更高频入口）；占位隐藏，wxInitZone 拉到状态才显形（未配置/未连且无绑定 → 始终隐藏）
+    html += '<div class="settings-card" id="wx-zone" style="display:none"></div>';
     html += pErr
       ? '<div class="settings-card"><h4>用户画像</h4><div class="empty-tip">加载失败:' + esc(pErr) + '</div></div>'
       : profileCardHtml(p);
-    // 微信内联卡：占位隐藏，wxInitZone 拉到状态才显形（未配置/未连且无绑定 → 始终隐藏，零打扰）
-    html += '<div class="settings-card" id="wx-zone" style="display:none"></div>';
     setBody(html + '</div>');
     wxInitZone(ctx);
   }
@@ -432,13 +432,16 @@
       html += svg
         ? '<div class="wx-qr">' + svg + '</div><div class="cfg-note" style="text-align:center">微信扫码 → 手机确认；二维码会过期，也可随时点刷新。</div>'
         : '<div class="wx-qr wx-qr-wait">正在获取二维码…</div>';
+      // 首次绑定尚未成功：不给「解绑」（无物可解、误触还销毁），只留轻量的重新取码
       html += '<button class="ghost-btn" onclick="sUI.wxRefresh(\'' + esc(b.id) + '\')">刷新二维码</button>';
-    } else if (b.status === 'expired' || b.status === 'error') {
-      html += '<button class="primary-btn" onclick="sUI.wxRefresh(\'' + esc(b.id) + '\')">重新获取二维码</button>';
-    } else if (b.status === 'online') {
-      html += '<div class="cfg-note">已在线：给 bot 好友发消息即对话（/help 看命令）。网页端可实时看到同一个会话。</div>';
+    } else {
+      if (b.status === 'expired' || b.status === 'error') {
+        html += '<button class="primary-btn" onclick="sUI.wxRefresh(\'' + esc(b.id) + '\')">重新获取二维码</button>';
+      } else if (b.status === 'online') {
+        html += '<div class="cfg-note">已在线：给 bot 好友发消息即对话（/help 看命令）。网页端可实时看到同一个会话。</div>';
+      }
+      html += '<div style="margin-top:10px"><button class="ghost-btn" onclick="sUI.wxUnbind(\'' + esc(b.id) + '\')">解绑</button></div>';
     }
-    html += '<div style="margin-top:10px"><button class="ghost-btn" onclick="sUI.wxUnbind(\'' + esc(b.id) + '\')">解绑</button></div>';
     return html;
   }
 
