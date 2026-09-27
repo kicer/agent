@@ -29,7 +29,7 @@ const DEFAULTS = {
   bot: {
     storage_dir: "/data/bots",   // 每绑定一个子目录（目录名 = binding id）
     log_level: "info",           // debug | info | warn | error | silent
-    empty_hint: "（暂时只收得到文字哦，发文字或 /help 试试）", // 非文本消息的本地兜底回执
+    empty_hint: "（这条消息类型暂时接不住——支持文字/图片/视频/文件；指令可发 /help）", // 未接入类型（voice/贴纸等）的本地兑底回执
   },
 };
 
@@ -214,16 +214,43 @@ function createInstance(id) {
 
 // 收信 → 转发 core inbox。命令回执（kind=command）同步回文本；
 // 普通消息（kind=message）不回执——最终回复稍后由 core 经 /api/deliver 推过来。
+// 媒体消息（image/video/file）：SDK 下好字节随 inbox 转发（core 落任务目录 + 拼「用户上传了文件」
+// 告知行，同 web 附件模式）。msg.text 对媒体消息是 SDK 占位描述（如 "[image]"），不能当真正文，
+// 故只认 type==='text'；voice 等未接入类型回占位提示。
+const MEDIA_KINDS = new Set(["image", "video", "file"]);
 async function onIncoming(inst, msg) {
-  const text = String(msg?.text ?? "").trim();
+  const type = String(msg?.type || "text");
+  const text = type === "text" ? String(msg?.text ?? "").trim() : "";
   const userId = String(msg?.userId ?? "");
-  if (!text) {
+  const isMedia = MEDIA_KINDS.has(type);
+  if (!text && !isMedia) {
     try { await inst.bot.reply(msg, CONFIG.bot.empty_hint); } catch { /* 尽力而为 */ }
     return;
   }
   inst.bot.sendTyping(userId).catch(() => {});
+  let media = null;
+  if (isMedia) {
+    try {
+      const dl = await inst.bot.download(msg);
+      const buf = dl && dl.data ? (Buffer.isBuffer(dl.data) ? dl.data : Buffer.from(dl.data)) : null;
+      if (!buf || !buf.length) {
+        console.warn(`[wxbot:${inst.id}] ${type} 无可下载媒体`);
+        try { await inst.bot.reply(msg, CONFIG.bot.empty_hint); } catch { /* 忽略 */ }
+        return;
+      }
+      if (buf.length > 20 * 1024 * 1024) {
+        try { await inst.bot.send(userId, "⚠️ 附件过大（限 20MB），未转发"); } catch { /* 忽略 */ }
+        return;
+      }
+      media = { kind: type, b64: buf.toString("base64"), filename: dl.fileName || undefined };
+    } catch (e) {
+      console.error(`[wxbot:${inst.id}] 媒体下载失败（${type}）：`, e?.message || e);
+      try { await inst.bot.send(userId, "⚠️ 媒体下载失败：" + String(e?.message || e).slice(0, 120)); } catch { /* 忽略 */ }
+      return; // 媒体即消息主体，下载失败不降级成空文本
+    }
+  }
   try {
-    const r = await corePost("/wxhook/inbox", { id: inst.id, from: userId, text });
+    const r = await corePost("/wxhook/inbox", { id: inst.id, from: userId, text: text || undefined, media: media || undefined }, 30000);
     if (r && r.kind === "command" && r.reply) await inst.bot.send(userId, r.reply);
   } catch (e) {
     if (e.status === 404) {

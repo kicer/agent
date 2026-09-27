@@ -1,8 +1,8 @@
 // 微信接入路由：
-//   - 本文件默认导出 = Web 侧 router（挂在 auth.middleware 之后，cookie 鉴权 + req.user 隔离）；
-//   - 具名导出 hookRouter = wxbot → core 的内网回调入口（/wxhook/*），挂在 auth.middleware 之前，
-//     形态同 GET /p/<id>（Core 上除登录外的匿名入口家族），靠共享服务 token（Bearer，常量时间比较）把门。
-// 业务全部在 wechat.js，这里只做鉴权、归属过滤与 HTTP 形状。
+// 本文件默认导出 = Web 侧 router（挂在 auth.middleware 之后，cookie 鉴权 + req.user 隔离）；
+// 具名导出 hookRouter = wxbot → core 的内网回调入口（/wxhook/*），挂在 auth.middleware 与全局
+// express.json 之前（媒体转发的 base64 远超 2mb，由下方专用大限额解析器处理），
+// 凭 Bearer 服务 token（常量时间比较）把门。业务全在 wechat.js，这里只做鉴权、归属过滤与 HTTP 形状。
 const crypto = require('crypto');
 const express = require('express');
 const engine = require('../engine');
@@ -10,6 +10,9 @@ const wechat = require('../wechat');
 
 const router = express.Router();
 const hookRouter = express.Router();
+// wxbot 专用 JSON 入口：媒体 base64 大 body（解码后限 20MB，b64 膨胀 4/3）；比全局 2mb 宽得多。
+// 本 router 先于全局解析器挂载，body-parser 认到 req._body 后全局那份会自动跳过。
+hookRouter.use(express.json({ limit: '32mb' }));
 
 function wrap(fn) {
   return function (req, res) {

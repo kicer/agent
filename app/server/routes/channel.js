@@ -58,6 +58,12 @@ function newSessionFor(db, user, channel, firstText) {
   return { s, sent };
 }
 
+// 解析 (user,channel) 的当前会话，无绑定则新建并绑定（不发消息）——
+// 微信图片入口需要先拿到会话才能落任务目录文件，随后再走 handleSend 拼告知行。
+function ensureSession(db, user, channel) {
+  return boundSession(db, user, channel) || newSessionFor(db, user, channel, '').s;
+}
+
 // ---------- 命令解析 ----------
 // 严格匹配：整条消息恰好是命令词（仅 /new 可带尾随文本）才算命令。
 // 首词形如 /纯ASCII词 但不在清单 → 回「未知命令」提示、不转发模型（防弱模型就着 /hlep 演一段）；
@@ -209,3 +215,4 @@ router.post('/send', wrap((req, res) => {
 
 module.exports = router;
 module.exports.handleSend = handleSend;
+module.exports.ensureSession = ensureSession;

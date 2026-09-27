@@ -34,6 +34,11 @@ wechat.init(cfg, db, bus);
 const app = express();
 const server = http.createServer(app);
 
+// wxbot 内网回调（/wxhook/inbox|hook）：凭共享服务 token（Bearer）把门，微信用户永远不该直接碰
+// 这两个端点（wxbot 只挂内网）。必须挂在全局 express.json(2mb) 之前：媒体 base64 转发体远超 2mb，
+// 由 hookRouter 自带的 32mb 解析器先读掉并置 req._body，下游全局 json 解析器自动跳过（同 executor 不冲突）。
+app.use('/wxhook', require('./routes/wechat').hookRouter);
+
 app.use(express.json({ limit: '2mb' }));
 
 // 登录认证（cookie 会话）：users 配在 config.yml 的 auth.users；留空则不启用。
@@ -44,10 +49,6 @@ app.use(auth.router);      // /login、/logout、/api/login 等免认证端点
 // 公网临时文件的取用端点（GET /p/<id>）：匿名可达，必须挂在 auth.middleware 之前。
 // 安全性来自“22 字符随机 ID + 服务端过期”，详见 routes/public-files.js 头注释。
 app.use('/p', require('./routes/public-files'));
-
-// wxbot 内网回调（/wxhook/inbox|hook）：同在 auth.middleware 之前，凭共享服务 token（Bearer）把门，
-// 微信用户永远不该直接碰这两个端点（wxbot 只挂内网，不暴露公网）。
-app.use('/wxhook', require('./routes/wechat').hookRouter);
 
 app.use(auth.middleware);  // 其余请求需登录态（cookie 或 Basic 头）
 

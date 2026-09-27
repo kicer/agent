@@ -12,9 +12,11 @@
 // 降级承诺：wxbot.url 未配置 = 功能整体静默关闭；配置了但 wxbot 没起 = 启动只留一行日志，
 // 面板显示「未连接」、操作时报可读错误，绝不抛出未捕获异常影响 Web 主流程。
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const engine = require('./engine');
 const log = require('./log');
-const channel = require('./routes/channel'); // 只用 handleSend（模块加载无副作用；engine 不 require 本模块，无环）
+const channel = require('./routes/channel'); // 只用 handleSend/ensureSession（模块加载无副作用；engine 不 require 本模块，无环）
 
 let cfg, db, bus;
 let busAttached = false;
@@ -234,6 +236,12 @@ function handleHook(body) {
 
 // 微信来消息 → channel 层同一入口。返回 handleSend 结果；抛错冒给 hook 路由映射成非 2xx，
 // wxbot 会把 error 文案直接回给用户（IM 里「出错要出声」）。
+// 媒体消息（inbox 带 media:{b64,kind,filename?}，wxbot 已从 CDN 下好）：统一落会话任务目录
+// + 记 files 元数据表 → 按 web 上传同款拼「用户上传了文件：<名>」作正文走 handleSend。
+// 命名规则：图片/视频微信侧本无名 → 生成 wximg-/wxvid- 时间戳名；文件保留原名（sanitise 后，
+// 对 AI 可读性重要），撞名加 -N；扩展名以 magic 嗅探为准（不信声明值）。
+const MEDIA_MAX_BYTES = 20 * 1024 * 1024;
+const MEDIA_KINDS = new Set(['image', 'video', 'file']);
 function handleInbox(body) {
   const b = getBinding(String((body || {}).id || ''));
   if (!b) throw Object.assign(new Error('绑定不存在（可能已解绑）'), { status_code: 404 });
@@ -241,12 +249,84 @@ function handleInbox(body) {
   if (from && from !== b.wx_to_user) touchBinding(b.id, { wx_to_user: from });
   // 能收到消息就说明实例活着；漏收 online 回调（core 重启窗口）时顺带纠偏
   if (b.status !== 'online') touchBinding(b.id, { status: 'online', note: null });
+  let text = String((body || {}).text || '').trim();
+  const m = (body || {}).media;
+  if (m && String(m.b64 || '').trim()) {
+    const kind = MEDIA_KINDS.has(String(m.kind || '')) ? String(m.kind) : 'file';
+    let buf;
+    try { buf = Buffer.from(String(m.b64).trim().slice(0, Math.ceil(MEDIA_MAX_BYTES / 3) * 4 + 1024), 'base64'); } catch (_) { buf = null; }
+    if (!buf || !buf.length) throw Object.assign(new Error('媒体数据无法解析'), { status_code: 400 });
+    if (buf.length > MEDIA_MAX_BYTES) throw Object.assign(new Error('附件过大（限 20MB）'), { status_code: 400 });
+    const s = channel.ensureSession(db, b.user, 'wx:' + b.id);
+    const name = saveTaskMedia(s, buf, kind, String(m.filename || ''));
+    text = text ? '用户上传了文件：' + name + '\n\n' + text : '用户上传了文件：' + name;
+    log.info('file', (b.user || '-') + ' [微信 ' + b.id + '] ' + kind + ' 落任务目录 ' + s.id + '/' + name + '（' + buf.length + ' 字节）');
+  }
   return channel.handleSend(db, {
     user: b.user,
     channel: 'wx:' + b.id,
-    text: (body || {}).text,
+    text,
     tag: (b.user || '-') + ' [微信 ' + b.id + ']',
   });
+}
+
+// magic bytes 定真实格式（不信声明扩展名）：图片四类 + 常见视频两类；认不出的交给命名处兕底。
+function sniffMediaExt(buf) {
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
+  if (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png';
+  if (buf.length > 3 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'gif';
+  if (buf.length > 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'webp';
+  if (buf.length > 12 && buf.toString('ascii', 4, 8) === 'ftyp') return 'mp4';
+  if (buf.length > 4 && buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x01 && buf[3] === 0x00) return 'mp4'; // 裸 MPEG 容器/其他
+  return '';
+}
+
+// 文件名消毒：只留路径末段，剔除控制字符与路径/shell 危符（保留中文），限长；全脏则退回 fallback。
+function sanitizeMediaName(raw, fallback) {
+  let n = String(raw || '').split(/[\\/]/).pop().trim();
+  n = n.replace(/[\u0000-\u001f"'`$\\:*?<>|\u200b\u200e\u200f]+/g, '-').replace(/\s+/g, ' ').replace(/^-+/, '').replace(/\.+$/, '');
+  if (n.startsWith('.')) n = n.slice(1); // 防隐藏文件（点前缀在文件列表被隐）
+  if (n.length > 48) {
+    const dot = n.lastIndexOf('.');
+    const ext = dot > 0 && n.length - dot <= 6 ? n.slice(dot) : '';
+    n = n.slice(0, 48 - ext.length) + ext;
+  }
+  return n || (fallback || 'file');
+}
+
+// 落盘：图片/视频生成时间戳名（扩展名以嗅探为准），文件保留消毒后的原名；撞名加 -N；记 files 元数据行。
+function saveTaskMedia(s, buf, kind, rawName) {
+  const dir = engine.taskDirOf(s.id);
+  const sniff = sniffMediaExt(buf);
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const ts = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  let name;
+  if (kind === 'image' || kind === 'video') {
+    const prefix = kind === 'image' ? 'wximg' : 'wxvid';
+    let ext = sniff;
+    if (!ext) { // 嗅探失败才退回声明名里的扩展名（≤5 位字母数字），再不行 bin
+      const dot = String(rawName || '').lastIndexOf('.');
+      const tail = dot >= 0 ? String(rawName).slice(dot + 1).toLowerCase() : '';
+      ext = /^[a-z0-9]{1,5}$/.test(tail) ? tail : 'bin';
+    }
+    name = prefix + '-' + ts + '.' + ext;
+  } else {
+    const safe = sanitizeMediaName(rawName, 'wxfile-' + ts);
+    const dot = safe.lastIndexOf('.');
+    const stem = dot > 0 ? safe.slice(0, dot) : safe;
+    const ext = dot > 0 ? safe.slice(dot) : (sniff ? '.' + sniff : '');
+    name = stem + ext;
+  }
+  let final = name;
+  for (let n = 1; fs.existsSync(path.join(dir, final)); n++) {
+    const dot = name.lastIndexOf('.');
+    final = (dot > 0 ? name.slice(0, dot) : name) + '-' + n + (dot > 0 ? name.slice(dot) : '');
+  }
+  fs.writeFileSync(path.join(dir, final), buf);
+  db.prepare('INSERT INTO files (session_id, filename, size, created_at) VALUES (?,?,?,?)')
+    .run(s.id, final, buf.length, now());
+  return final;
 }
 
 // ---------- 投递：进程内总线监听 → 分段 push wxbot /api/deliver ----------
