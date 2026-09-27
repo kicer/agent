@@ -90,7 +90,7 @@ router.post('/', wrap((req, res) => {
 }));
 
 // 列表查询参数(2.0):
-//   status=active|done|all  归档分组:active=排队/活跃/保持,done=已完成/已终止
+//   status=active|done|all  归档分组:active=活跃/保持（含遗留 queued）,done=已完成/已终止
 //   q=关键词                标题或消息内容 LIKE 搜索
 //   before + before_id      游标分页(上一页末行的 updated_at,id),避免 offset 翻页在
 //                           updated_at 变动时重复/漏行
@@ -128,15 +128,6 @@ router.get('/', wrap((req, res) => {
     + whereSql + ' ORDER BY updated_at DESC, id DESC LIMIT ?'
   );
   const rows = stmt.all.apply(stmt, args.concat([limit]));
-
-  const qpos = db.prepare(
-    'SELECT session_id, ROW_NUMBER() OVER (ORDER BY queued_at, id) AS pos FROM wait_queue'
-  ).all();
-  const posMap = {};
-  for (const r of qpos) posMap[r.session_id] = r.pos;
-  for (const row of rows) {
-    row.queue_pos = row.status === 'queued' ? (posMap[row.id] || null) : null;
-  }
   if (req.query.with_total === '1') {
     const cnt = db.prepare('SELECT COUNT(*) AS n FROM sessions' + whereSql);
     const total = cnt.all.apply(cnt, args)[0].n;
@@ -216,7 +207,6 @@ router.get('/:id', wrap((req, res) => {
     messages,
     files: listTaskFiles(taskDir),
     schedule,
-    queue_pos: session.status === 'queued' ? engine.queuePosition(session.id) : null,
     running: !!(engine.getRun(session.id) || {}).looping,
     has_more: hasMore, // 分页模式下：是否还有更早的历史
     oldest_id: messages.length ? messages[0].id : null, // 本页最早行 id，作为下一页 before 游标
@@ -226,7 +216,8 @@ router.get('/:id', wrap((req, res) => {
 // 按需加载单条消息的完整内容（用于 tool 消息的懒加载）
 router.get('/:id/messages/:mid', wrap(getMessage));
 
-// 手动占用空闲模型（仅已结版/已终止可绑，见 bindToSession）：状态栏「选择模型」弹窗发起。
+// 手动为会话指定模型（状态栏「选择模型」弹窗发起）：不再排队/不再独占，任意空闲与否都可绑；
+// 仅会话正在输出（looping）时拒绝（见 engine.bindToSession）。
 // 曾有的 profile 会话模式绑定已废弃：profile 只由「阶段强制 + 模型配置默认」决定（见 engine.resolveProfileName）。
 router.post('/:id/bind', wrap((req, res) => {
   const mid = (req.body || {}).model_id;

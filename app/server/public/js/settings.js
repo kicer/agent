@@ -410,11 +410,6 @@
       { path: 'upload.image_quality', label: 'JPEG 质量(0~1)', type: 'float' },
       { path: 'upload.confirm_size_mb', label: '大文件确认阈值(MB)', type: 'int' },
     ] },
-    { group: '模型租约(会话结束后的保持)', items: [
-      { path: 'model_hold.idle_release_ms', label: '无人观看释放(ms)', type: 'int' },
-      { path: 'model_hold.active_max_ms', label: '最长保持(ms)', type: 'int' },
-      { path: 'model_hold.sweep_ms', label: '巡检间隔(ms)', type: 'int' },
-    ] },
   ];
   function kvPlain(label, v) {
     return '<div class="cfg-kv"><label>' + esc(label) + '</label><b>' + esc(dispVal(v)) + '</b></div>';
@@ -927,13 +922,13 @@
           ? '<span class="model-card-state pending">待重启</span>'
           : '<span class="model-card-state off">已禁用</span>')
       : run
-        ? '<span class="model-card-state ' + (run.is_busy ? 'busy' : 'idle') + '">' + (run.is_busy ? '占用中' : '空闲') + '</span>'
+        ? '<span class="model-card-state ' + (run.slots_used ? 'busy' : 'idle') + '">' + (run.slots_used ? '在用×' + run.slots_used : '空闲') + '</span>'
         : '<span class="model-card-state pending">待重启</span>';
     return '<div class="model-card' + (disabled ? ' off' : '') + '" title="点击编辑平台" onclick="sUI.mEdit(' + pi + ')">' +
       '<div class="model-card-head">' +
         '<span class="model-card-name">' + esc(m.display_name || m.mid || m.id) + '</span>' +
         '<span class="model-card-meta">' + esc(m.mid || m.id) +
-          (run && run.is_busy && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</span>' +
+          (run && run.slots_used && run.current_session_id ? ' · 会话 ' + esc(run.current_session_id) : '') + '</span>' +
         stateHtml +
         '<label class="model-en-sw" title="' + (disabled ? '已禁用,点击启用' : '启用中,点击禁用') + '" onclick="event.stopPropagation()">' +
           '<input type="checkbox"' + (disabled ? '' : ' checked') + ' onchange="sUI.mToggleEnable(\'' + encodeURIComponent(m.id) + '\')">' +

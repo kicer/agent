@@ -62,19 +62,19 @@ app.use(require('./routes/data-page'));
 // model_pool 表只有 id/display_name/占用态,会话页「选择模型」弹窗需要按平台分组展示。
 // 配置里新增但重启前未进池的模型不在此返回(池才是运行时真相)。
 app.get('/api/models', (req, res) => {
-  // 池行是平台物理 key（id=「平台#下标」）：key 为平台下模型共享资源，
-  // 按模型聚合返回：slots_total/slots_busy = 平台 key 总数/被占数，is_busy = 平台 key 全满（其下所有模型都不可选）。
-  const keyRows = db.prepare('SELECT id, is_busy, current_session_id FROM model_pool').all();
+  // 池行是平台物理 key（id=「平台#下标」）：key 为共享资源——非独占，多个会话可同时绑同一个 key
+  // 并发 looping（调度只是优先级选 key，见 engine.chooseKey）。
+  // 「在用」按 sessions 实时算：各平台 key 上绑着的 active/held 会话数（展示用途，无「不可选」语义）。
+  const keyRows = db.prepare('SELECT id FROM model_pool').all();
   const totalByPlat = {};
-  const busyByPlat = {};
   const sessByPlat = {};
   for (const r of keyRows) {
     const plat = r.id.split('#')[0];
     totalByPlat[plat] = (totalByPlat[plat] || 0) + 1;
-    if (r.is_busy) {
-      busyByPlat[plat] = (busyByPlat[plat] || 0) + 1;
-      if (r.current_session_id) (sessByPlat[plat] = sessByPlat[plat] || []).push(r.current_session_id);
-    }
+  }
+  for (const s of db.prepare("SELECT id, model_slot FROM sessions WHERE model_slot IS NOT NULL AND status IN ('active','held')").all()) {
+    const plat = String(s.model_slot).split('#')[0];
+    (sessByPlat[plat] = sessByPlat[plat] || []).push(s.id);
   }
   // 模型行取自生效配置（cfg 重启生效，与池同步）：按模型 id 去重、保留配置顺序，禁用模型不返回。
   const cfgNow = engine.getConfig();
@@ -84,14 +84,14 @@ app.get('/api/models', (req, res) => {
     if (m.enable === false || seen.has(m.id)) continue;
     seen.add(m.id);
     const total = totalByPlat[m.platform] || 0;
-    const busy = busyByPlat[m.platform] || 0;
+    const using = sessByPlat[m.platform] || [];
     rows.push({
       id: m.id, display_name: m.display_name, platform: m.platform, mid: m.mid,
       vision: !!m.vision, type: m.type, key_count: total,
       profile: m.profile || '', // 模型默认 prompt+tools 组合（model_profiles 名，空 = 全量）
-      slots_total: total, slots_busy: busy,
-      is_busy: total > 0 && busy >= total ? 1 : 0,
-      current_session_id: (sessByPlat[m.platform] || []).join(','),
+      slots_total: total,
+      slots_used: using.length,                  // 在用会话数（active/held，可超 key 数：共享不独占）
+      current_session_id: using.join(','),       // 在用会话 id 列表（展示用）
     });
   }
   const stats = engine.modelUsageStats();
@@ -173,8 +173,8 @@ mcp.init(cfg).then(async () => {
 
 // 优雅退出（照抄 executor/server.js 的 shutdown 形态）：node 在容器里是 PID 1，
 // 不显式注册监听时 SIGTERM 会被直接忽略，docker stop/restart 只能白等满
-// stop_grace_period（默认 10s）后被 SIGKILL。scheduler/holdSweeper 的 timer
-// 均已 unref，退出只需收掉监听与 SSE 长连接。
+// stop_grace_period（默认 10s）后被 SIGKILL。scheduler 的 timer 已 unref，
+// 退出只需收掉监听与 SSE 长连接。
 function shutdown(sig) {
   log.info('shutdown', '收到 ' + sig + '，停止服务');
   bus.closeAllSessions(); // 给前端干净的流结束（走重连/回放），而不是 TCP reset

@@ -3,10 +3,10 @@
 // 先把会话历史整体存档（type='archived'，llm.buildMessages 会跳过 → AI 只看到本次
 // prompt，等价全新会话），再经 engine.postUserMessage 投递任务 prompt 自动开跑，
 // 结果留在会话里供用户次日查看。
-// 形态照抄 engine.js 的 startHoldSweeper：模块级 timer + setInterval + unref，
-// 单次异常只记日志，绝不中断定时器。
-// 启动时序：必须在 engine.init() 之后调 start(engine)（见 server.js）——
-// engine.init() 先把 active 退回队列 / held 结版归位，首轮 tick 才不会看到脏状态。
+// 形态：模块级 timer + setInterval + unref（同旧版 engine 的 holdSweeper，该定时器已随
+// 「key 不独占不排队」改造删除），单次异常只记日志，绝不中断定时器。
+// 启动时序：在 engine.init() 之后调 start(engine)（见 server.js）——init 先把会话状态归位，
+// 首轮 tick 才不会看到脏状态。
 // 依赖注入 engine 而非 require('./engine')：engine→executor→scheduler 已有引用链，
 // 顶层反向 require 会成环拿到半成品 exports。
 const { CronExpressionParser } = require('cron-parser'); // 锁定 v5.10.1：API 是 CronExpressionParser.parse（v4 的 parseExpression 已不存在）
@@ -116,9 +116,9 @@ function archiveHistory(db, sessionId) {
 }
 
 // 投递 + 复活一体：postUserMessage 已按会话当时状态全量流转，无需单独复活步骤——
-// held → 转 active 立即开跑（注意：会抢占保持中的模型）；
-// queued / completed / cancelled → 重新入队并尝试派发：有空闲模型当轮即跑，
-// 没有则留在队列等 dispatchQueued（正是「半夜无人值守排队执行」场景，不是异常）。
+// 新调度下不再有排队：任意非 looping 态（held/completed/cancelled）都直接拿模型开跑（恒 delivered:'live'）；
+// 绑定模型已被配置改动失效时由 ensureBinding 自动改选（优先留原平台）；
+// 仅模型池整体为空会抛错（tick 捕获后标 last_status=error，不阻塞其它任务）。
 function deliver(sessionId, prompt) {
   return eng.postUserMessage(sessionId, prompt);
 }

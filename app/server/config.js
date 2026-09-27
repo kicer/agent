@@ -85,7 +85,8 @@ const DEFAULTS = {
   upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10 },
   // 技能根目录：留空取 workspace_root 同级 skills（/workspace/tasks → /workspace/skills）。
   skills: { skills_root: '', timeout_ms: 120000 },
-  // 回合结束后模型保持占用（held）租约：无人观看 idle_release_ms 释放，有人观看最长 active_max_ms，sweep_ms 巡检。
+  // 【已废弃】旧版模型保持租约（held 到期自动释放）。调度已改为「key 共享并发 + 优先级选择」（见 engine.chooseKey），
+  // 不再有任何到期逻辑；字段保留仅为旧 config.yml 兼容（解析不报错），运行期无人读取。
   model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },
   // 日志等级：debug < info < warn < error < none（none=全部静默）。
   log_level: 'info',

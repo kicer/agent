@@ -144,7 +144,7 @@ graph LR
 2. `log.setLevel(cfg.log_level)` 注入全局日志等级。
 3. `initDb(cfg.db_path)` 建表 + 增量迁移（`db.js`，含 `held_at` / `last_model_id` / `assistant_type` / `user` / `profile` 等历史升级）。
 4. `createBus()` 建 SSE 事件总线（`sse.js`）。
-5. `engine.setModelPool(cfg, db, bus); engine.init()`：清空 model_pool busy 状态、把所有 active 会话退回队列、held 会话直接结版、启动 `holdSweeper` 定时器。
+5. `engine.setModelPool(cfg, db, bus); engine.init()`：按 cfg.models 重建 `model_pool` 槽位表；会话状态归位（active/遗留 queued → held，绑定不清）；指向已删/禁用模型的绑定在下次发言时由 `ensureBinding` 自动改选。
 6. `scheduler.start(engine)`：启动定时任务轮询（30s 一次，`unref`）。**必须在 engine.init() 之后**——先让会话状态归位，首轮 tick 才看不到脏状态（见 §5.12）。
 7. `createAuth(cfg)` 装配登录中间件；未配 `auth.users` 则认证关闭（可交给前置 nginx-proxy basic auth）。
 8. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`）。
@@ -178,11 +178,11 @@ messages          id PK / session_id FK / role (system|user|assistant|tool) /
 files             id PK / session_id / filename / size / created_at
                   # 仅记录元数据；文件本体在 workspace 目录里
 
-model_pool        id (PK='平台/模型id') / display_name / is_busy / current_session_id
-                  # 启动时 syncModelPool 按 cfg.models 重建
+model_pool        id (PK='平台#key下标') / display_name / last_used_at / is_busy / current_session_id
+                  # 启动时 syncModelPool 按 cfg.models 重建；key 为共享资源不再独占（多会话可并发绑同一 key），
+                  # 调度只按「最不 active」优先级选 key（engine.chooseKey）；is_busy/current_session_id 为旧版独占残留列，不再读写
 
-wait_queue        id PK / session_id / queued_at
-                  # 排队调度表（FIFO）
+wait_queue        （已废弃）旧版 FIFO 排队表；排队语义整体移除（不再等模型），表保留不再读写
 
 meta              key PK / value
                   # 杂项：如 task_seq:YYYYMMDD（每日任务序号，删除会话不回退）
@@ -199,21 +199,25 @@ scheduled_tasks   session_id PK (FK sessions, ON DELETE CASCADE) / cron_expr /
                   # 改频次后端重校验并重算 next_run_at）；删除走 CASCADE 或 DELETE /:id/schedule（见 §5.12）
 ```
 
-**session.status 状态机**（`engine.js`）：
+**session.status 状态机**（`engine.js`，无排队版）：
 
 ```mermaid
 stateDiagram-v2
-    [*] --> queued: createSession
-    queued --> active: dispatchQueued 拿到空闲模型
-    queued --> held: 新建时指定空闲模型（无消息时预留）
-    active --> held: finalize（正常完成，进入保持租约）
-    active --> cancelled: stop（用户终止）
-    held --> completed: releaseHold / sweepHeld（用户主动断开或租约到期）
-    held --> active: postUserMessage（保持期内直接复用模型）
-    completed --> held: bindToSession（手动选模型）
+    [*] --> held: createSession（创建即绑模型，空池报错）
+    held --> active: postUserMessage（沿用绑定立即开跑）
+    completed --> active: postUserMessage（绑定仍在，继续用原模型）
+    cancelled --> active: postUserMessage（同上）
+    active --> held: finalize（正常结束，绑定保持）
+    active --> cancelled: stop（用户终止，绑定保持）
+    held --> completed: releaseHold（手动「断开」，纯状态动作）
+    held --> active: bindToSession（换绑且有未回应消息）
+    completed --> held: bindToSession（手动选模）
     cancelled --> held: bindToSession
-    queued --> queued: 启动后重排队（重启恢复）
 ```
+
+要点：key 非独占、无排队、无保持租约——`held` 只表示「回合已收尾，绑定持续展示」，不会自动到期；
+会话永远粘着自己的 model_slot（跨重启/结版/终止保持），换绑只有两条路：用户手动「选择模型」，
+或绑定失效（配置删模型/禁用/改名）后由 `ensureBinding` 自动改选（优先留原平台）。
 
 **session.phase 状态机**（advising/executing，`engine.js`）：
 
@@ -250,14 +254,15 @@ stateDiagram-v2
 
 | 函数 | 角色 |
 |---|---|
-| `syncModelPool` | 启动时把 cfg.models 写入 `model_pool` 表，删配置中已消失的；把 active 会话退回队列；启动 `holdSweeper` |
-| `bindModel` / `releaseModel` | 标记 `model_pool.is_busy` + 改 `sessions.model_id`/`status` |
-| `enqueue` / `dequeue` / `dispatchQueued` | FIFO 调度，空闲模型分配给队首会话（`pickModelFor` 优先回绑 `last_model_id`） |
+| `syncModelPool` | 启动时把 cfg.models 写入 `model_pool` 表，删配置中已消失的；会话状态归位（active/遗留 queued→held，绑定不清） |
+| `applyBinding` / `bindingValid` / `ensureBinding` | 会话粘住 key+模型（model_slot/model_id/last_model_id + 刷新槽位 last_used_at）；绑定失效（配置删模型/禁用/改名）时按优先级自动改选，优先留原平台；空池抛 503 |
+| `chooseKey` / `chooseModel` | 优先级选 key（**无排队、无独占**）：looping 回合数少 → 在用（active/held）会话数少 → 最久未用（轮转摊平）→ id；具体模型在同平台内选（偏好旧模型 > 绑得最少的） |
 | `getRun` / `killRunProcs` | 每会话的运行控制（`cancelled` / `procs` / `abortController` / `looping`） |
 | `runLoop` / `runLoopInner` | Agent 主循环：解析 profile → buildMessages → callModel → 解包 tool args → 校验 → saveMessage → executeTool → saveMessage(tool) → SSE 广播。每迭代现解 profile（`resolveProfileName`：advising 阶段强制内置 `advising` 组合 > 模型配置 > 默认全量），prompt 与 tools 集（`effectiveTools` 按 `tools_allow`/`tools_deny` 过滤）跟着组合切换 |
 | `streamAssistant` | 单次上游调用：拿 abortSignal / shouldCancel / 各类回调，把流式 chunk 转 SSE 事件（`assistant_delta` / `reasoning_delta`） |
-| `createSession` | 生成 id（`task-YYYYMMDD-NNN`，序号从历史 + `meta.task_seq` 取大）→ mkdir 任务目录 → phase 默认 advising → 决定立即绑/入队 |
-| `postUserMessage` | 用户消息入口；识别 active/held/queued 路径并决定是 `delivered:'live'` 还是 `'queued'` |
+| `createSession` | 生成 id（`task-YYYYMMDD-NNN`，序号从历史 + `meta.task_seq` 取大）→ mkdir 任务目录 → phase 默认 advising → **创建即绑模型落 held**（指定模型优先其平台，无效退回全局；空池直接报错不建吊着会话） |
+| `postUserMessage` | 用户消息入口；除 looping（下一迭代自动带上新消息）外任意状态都是「保绑定→转 active→立即开跑」，`delivered` 恒 `'live'` |
+| `bindToSession` / `releaseHold` | 手动换绑（任意模型即点即换，仅输出中拒绝，无「占用」概念）；「断开」= held→completed 纯状态动作（无资源可释放，绑定仍在可继续用） |
 | `summarizeContext` / `clearSessionMessages` / `deleteMessage` | 收尾 + 上下文压缩（清空同时把 phase 打回 advising 并归档旧 task.md） |
 | `enterExecuting` / `archiveTaskBrief` | 阶段切换：批尾接 `handoff` 成功标记（brief 已由 handler 落盘）→ 全史存档 + 插 task_brief 快照 + phase='executing' + SSE 广播；清空时旧 task.md mv 进 `.task-history/` |
 | `checkToolArgs` / `unwrapToolArgs` | 工具参数校验 + 部分弱模型参数包裹外层自动解包 |
@@ -270,7 +275,7 @@ stateDiagram-v2
 - **errAck 机制**：工具参数结构性错误（JSON 非法/缺必填）→ 整条 assistant 标 `type='errAck'`，关联 tool 回执一并丢弃，发请求时由 user 错误提示替代（`llm.buildMessages`）—— 防止模型模仿自己的坏样本死循环。
 - **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。压缩回合**不插入任何指令消息**：由 `engine.summarizeContext` 在内存 run 上标 `summarizing`，`runLoopInner` 据此走 `llm.compressMessages`：沿用默认 system prompt + 正常历史 messages，末尾追加一条 user（`server/templates/compress-prompt.txt` 原文，参考标题回合的拼法），且不传 tools；回合内首条无 tool_calls 的收尾回复即摘要。（`llm.buildMessages` 仍保留旧库 `summarize_request` 行的处理，仅为历史数据兼容。）
 - **图片（多模态）**：`messages.content` 列是 TEXT，含图时存 `{"__blocks__":[content...]}` 哨兵 JSON。新版 `read_file` 读图：sharp 压缩产物落任务目录 `.imgcache/`（前端文件列表隐带点的项），库里只存 `image_ref` 轻量块；`buildMessages` 发送前经调用方传入的 `mintUrl` 回调现签成公网外链（同 `mint_public_link` 那套 `GET /p/<id>`）填入 `image_url` 块，base64 不进 DB 也不进请求体；签不到降级为文字占位。旧库/用户粘贴附件的 `data:` URL 块原样透传。图块**只保留最后一条 assistant 之后的**（`lastAssistant` 判定），之前的换成"已省略"文字描述；UI 渲染走带 cookie 的会话内下载路由，历史永不裂图。
-- **保持租约**（`holdSweeper`）：sweeper_ms 巡检（默认 10s）；held 会话无观看者 idle_release_ms 释放（默认 3 分钟），有观看者 active_max_ms 强制释放（默认 30 分钟）。active 闲置（绑了模型但无 run 在跑、无未回应消息）按相同租约处理。
+- **key 共享并发，无租约**：`model_pool.is_busy`/`current_session_id` 已废弃不再读写（旧库残留列，启动时清零）；同一 key 可被多个会话同时绑定并发 looping（上游 key 本身支持多并发）。held 不再自动到期，顶部「保持中 · 模型」持续展示，唯一出口是手动「断开」或换绑。
 - **task_brief（任务书锚点，advising→executing 切换）**：runLoopInner 工具批跑完后，若 advising 回合内有 `handoff` 成功返回（brief 已由 handler 原样落盘根 task.md 并记 files 表；批量末尾统一切，防父 assistant 先存档、后落库回执成孤儿行被上游拒收；同批多次 handoff 后写覆盖 last-wins），`enterExecuting` 当场重建上下文：全史标 `archived` → 插一条 `type='task_brief'` user 行（内容 = task.md 磁盘快照，非引用）→ phase='executing' + SSE `phase`/`status` 事件；下一迭代重读历史 + 重解 profile，天然切默认组合、同回合开工。压缩不碰 phase（task_brief 与其它历史一样会被后续压缩存档，漂移可控：压缩本就由用户主导）。
 - **profile（prompt+tools 组合）**：顶层 `model_profiles` 定义多套组合，`platforms[].models[].profile` 引用（见 §5.8）——这是唯一的引用来源：运行期手动切换已全部移除（消息级 profile 参数、`sessions.profile` 会话绑定均废弃，列保留不读写）；`advising` 例外，不走引用、由 phase 强制命中。名单外工具被调用不拦（`checkToolArgs` 查不到 def 不报错，`executeTool` 全表照跑），但阶段契约类例外：advising 内 `write_file`/`edit_file` 在批内挡下、`handoff` 在 handler 里带 phase 守卫；tools schema 只活在请求体不进历史，所以切换不脏化旧消息。压缩回合同样跟随（小模型会话点压缩不会回退到默认大模板）。
 
@@ -360,7 +365,7 @@ stateDiagram-v2
 - 兼容：旧版 `models[]`（扁平）自动迁移到 `platforms[]` 层级；旧版 `web_search.*` 迁移到 `mcp_servers[]`（log.info 提示）。
 - 规范化：`normalizePlatforms` 校验 `name/url/type`，key 层 `concurrency`，model 层 `{id, display_name, vision, enable, extra_params, thinking_params, profile}`；同平台内 model id 必须唯一（内部唯一键 = 平台名/模型id）；`profile` 引用不存在的名字直接报错。
 - `model_profiles`（顶层，`normalizeModelProfiles`）：多套可复用的 prompt+tools 组合，每项 `{tools_allow?, tools_deny?, system_prompt_file?}`，三者至少配一个。`tools_allow` 按**最终发给模型的工具名**匹配（内置 + MCP，含 `服务名__` 前缀，与 prompt.txt dump 同源可对）；未配 = 全量，**空数组 `[]` = 零工具（纯文本组合）**——与 MCP 的 `tools_allow`（空名单视作未配）有意不同。`tools_deny` 在 allow 之后叠加生效（deny 赢）；profile 未配 = 继承全局 `tools_deny`（DEFAULTS 屏蔽元工具 `lab`），`[]` = 显式清空（lab profile 靠它换回元工具），非空 = 替换全局。`system_prompt_file` 相对 `server/templates/`（compose 已 bind-mount ./app/server，宿主直接可改），**配置加载时一次性读入常驻内存**，缺失/为空报错拦在保存/重启预检；自定义文件 = 完全接管模板正文，技能清单靠模板内 `{APP_SKILLS}` 占位符就地插入（不放 = 无技能段；默认模板同机制，见 §5.2），语言指令始终尾拼。运行期切换（前端传参）零 IO、不碰本配置。
-- 默认值（`DEFAULTS`）：port=8090、workspace_root/data_root=`/workspace/tasks` `/workspace/data`、log_level=info、terminal 30s/10K、fetch 30s/1MB、agent temperature=1.0、max_tool_iterations=100、max_retries=2、model_hold 3min/30min/10s、上传 1.5MB/2000px/0.85；顶层默认 `tools_deny: [lab]`；内置 `model_profiles` 含 `lab`（元工具自测：`tools_allow:[lab]` + 显式清空 deny + `lab-system.txt`）与 `zero`（零工具 + `zero-system.txt`）。`config.yml` 只覆盖 deploy 相关段，其余走默认值；整份清单见 `app/config.example.yml`。
+- 默认值（`DEFAULTS`）：port=8090、workspace_root/data_root=`/workspace/tasks` `/workspace/data`、log_level=info、terminal 30s/10K、fetch 30s/1MB、agent temperature=1.0、max_tool_iterations=100、max_retries=2、上传 1.5MB/2000px/0.85（旧 `model_hold` 已废弃，字段仅为旧 config.yml 解析兼容保留）；顶层默认 `tools_deny: [lab]`；内置 `model_profiles` 含 `lab`（元工具自测：`tools_allow:[lab]` + 显式清空 deny + `lab-system.txt`）与 `zero`（零工具 + `zero-system.txt`）。`config.yml` 只覆盖 deploy 相关段，其余走默认值；整份清单见 `app/config.example.yml`。
 - 读写：`readConfigText` / `writeConfigText`（先校验后写，无原子 rename，因 bind mount 上 rename 会 EBUSY）；`applyEditsToText` 用 `YAML.Document` 保留注释。
 - `getConfig` 是浅引用，路由层拿到的就是运行中实例，**改完 in-memory 不影响**（要重启）。
 
@@ -386,10 +391,10 @@ stateDiagram-v2
 
 AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks` 表，生命周期绑定会话），无人值守时（典型是半夜）自动执行，结果留在会话里供用户次日查看。
 
-- **形态**照抄 `startHoldSweeper`：`start(engine)` 注入 engine（避免 engine→executor→scheduler 顶层循环 require），`setInterval` 30s + `unref`，单次异常只 `log.error` 不中断定时器。周期/最小间隔是模块常量，不进 config.yml。
+- **形态**：`start(engine)` 注入 engine（避免 engine→executor→scheduler 顶层循环 require），`setInterval` 30s + `unref`，单次异常只 `log.error` 不中断定时器。周期/最小间隔是模块常量，不进 config.yml。
 - **cron**：`cron-parser@5.10.1`（锁版；v5 API 是 `CronExpressionParser.parse`，与 v4 的 `parseExpression` 不兼容），显式 `tz: 'Asia/Shanghai'`（与容器 TZ 一致，不靠隐式时区）。最小间隔 1h 在创建时校验。
 - **tick 两阶段**：A 收尾上一轮 `running`（runLoop 无结束回调，轮询推断：会话转非 active 即标 ok）；B 取到期任务投递——`next_run_at <= now` 且非 running；**防堆积以会话状态为准**：active 直接标 `skipped` 不投递（比 DB 标记时序可靠）。
-- **投递 = 存档 + 强制 executing + postUserMessage**（顺序不可换）：先把会话全部消息标 `type='archived'`（`buildMessages` 跳过 → AI 只看到本次 prompt，等价全新会话，上下文不随触发次数增长；UI 照常展示全量），再把 `phase` 强制置 `executing`（无人值守的半夜 prompt 不能被顾问 profile 当白天聊天「引导澄清等人回答」），最后 `engine.postUserMessage`——它自带复活语义：held 立即开跑（**会抢占保持中的模型**，自用可接受）；queued/completed/cancelled 重新入队尝试派发，无空闲模型则排队等 `dispatchQueued`（正常的夜间排队场景，非异常）。
+- **投递 = 存档 + 强制 executing + postUserMessage**（顺序不可换）：先把会话全部消息标 `type='archived'`（`buildMessages` 跳过 → AI 只看到本次 prompt，等价全新会话，上下文不随触发次数增长；UI 照常展示全量），再把 `phase` 强制置 `executing`（无人值守的半夜 prompt 不能被顾问 profile 当白天聊天「引导澄清等人回答」），最后 `engine.postUserMessage`——新调度下恒立即开跑（key 不独占不排队，任何状态都拿模型直接跑；绑定失效自动改选）；仅模型池整体为空会投递失败标 `error`，下个周期重试。
 - **补跑语义**：`computeNext` 一律以 `now` 为基准，停机跨过多个触发点后重启只算未来一次，天然不补跑；重启后任务从库自动恢复。
 - **安全**：本功能等价给 AI 开持久化后门（prompt injection 可诱使建任务定时执行任意指令）。缓解三件：工具描述限定「仅用户明确要求时调用」+ 会话页常驻状态条（点击弹详情窗，可见 cron/上次下次时间/提示词，能就地改提示词或删除）+ 创建/触发/跳过/删除全打 `scheduler` info 日志。无权限分级/审批/配额。
 - **边界**：两次触发之间的用户对话也会被下次触发一并存档（UI 可见、AI 下次看不到，符合设计意图）；多用户：调度器全局遍历不按 user 过滤（投递目标是会话本身，隔离在建任务时的 ctx.sessionId 已有）；`last_status='running'` 的收尾不精确（异常结束的回合也会被标 ok）。
@@ -443,15 +448,15 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 
 | 路径前缀 | 文件 | 主要端点 |
 |---|---|---|
-| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`（`model_id`=手动占模型，仅已结版/已终止；原 profile 会话模式绑定已废弃）、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI）、`PATCH /:id/schedule`（改提示词/频次，cron 经 validateCron 重校验并重算 next_run_at） |
-| `/api/sessions/:id/messages` | `routes/messages.js` | `POST /` 发消息（body 可选 `deepThink`；响应 `delivered:'live'\|'queued'`；原 `profile` 参数已废弃）、`POST /stop`、`POST /release`（held→completed）、`DELETE /messages`（清空 + 回 advising）、`POST /summarize`（压缩，phase 中性）、`DELETE /messages/:mid`、`GET /stream` SSE 事件流 |
+| `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`（`model_id`=手动换绑：任意模型即点即换、仅正在输出拒绝；原 profile 会话模式绑定已废弃）、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI）、`PATCH /:id/schedule`（改提示词/频次，cron 经 validateCron 重校验并重算 next_run_at） |
+| `/api/sessions/:id/messages` | `routes/messages.js` | `POST /` 发消息（body 可选 `deepThink`；响应 `delivered` 恒 `'live'`（排队已废弃）；原 `profile` 参数已废弃）、`POST /stop`、`POST /release`（held→completed，纯状态动作、无资源可释放）、`DELETE /messages`（清空 + 回 advising）、`POST /summarize`（压缩，phase 中性）、`DELETE /messages/:mid`、`GET /stream` SSE 事件流 |
 | `/api/sessions/:id/files` | `routes/files.js` | `POST /` 上传（multer，50MB/文件，文件名清洗 sanitizeName）、`GET /` 列表（递归）、`GET /download[-name/...]` 签名下载（5 分钟 TTL）、`GET /zip-token` + `GET /zip[-name/...]` 选中项（含文件夹）打包 zip 流式下载（纯 Node STORE，两遍读：先 CRC 后磁盘流发送）、`DELETE /` 删文件（目录递归删） |
 | `/api/skills` | `routes/skills.js` | 技能列表/创建/重命名/删除 + 技能内文件 CRUD + 上传（`?overwrite=true` 覆盖） |
 | `/api/config` | `routes/config.js` | `GET /` 原文+生效（脱敏）、`POST /validate`、`PUT /` 整文件保存、`PATCH /` 单项修改（path/value/op[delete\|append]） |
 | `/api/platforms` | `routes/platforms.js` | `GET /balance?pi=&ki=` 余额 |
 | `/api/system` | `routes/system.js` | `GET /status` + `/restart?force=...`（原 `model_profiles` 可用名单字段已删，前端无消费方） |
 | `/api/profile` | `routes/profile.js` | `GET /` 读画像、`PUT /` 保存（三字段 + enabled）；按 `req.user` 隔离，逻辑全在 `user-profile.js`（快照冻结见 engine `createSession`/`clearSessionMessages`，提取见 `enterExecuting`） |
-| `/api/models` | `server.js` | 空闲/占用模型池 + token 用量 |
+| `/api/models` | `server.js` | 模型池（在用会话数 slots_used / 在用会话列表，非独占展示）+ token 用量 |
 | `/api/health` | `server.js` | 健康检查 |
 | `/api/login` `/api/login_restore` `/api/logout` `/api/password` `/api/me` | `auth.js` | 认证路由（认证前） |
 | `/login` `/logout` | `auth.js` | 登录/登出页 |
@@ -462,7 +467,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 
 | event | data | 触发时机 |
 |---|---|---|
-| `status` | `{session_id, status, phase, model_id, queue_pos}` | 状态变化时；SSE 连接建立时立即发一次 |
+| `status` | `{session_id, status, phase, model_id}` | 状态变化时；SSE 连接建立时立即发一次 |
 | `assistant_delta` | `{text}` | 模型流式文本 |
 | `reasoning_delta` | `{text}` | 模型流式思考（`reasoning`/`reasoning_content`） |
 | `assistant_message` | `{id, content, reasoning, tool_calls, type, is_summary, mode}` | 整轮 assistant 落库后（含 `type='errAck'` 标识） |
@@ -502,7 +507,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - `terminal.max_output_chars`（默认 10000）—— AI 看到的命令输出上限；executor 侧另有 `EXECUTOR_MAX_OUTPUT_CHARS=200000` 兕底。
 - `fetch.timeout_ms`（默认 30000）/ `fetch.max_bytes`（默认 1MB）—— 网页抓取的全生命周期超时与流式抓取字节上限；返回值另有 1MB 字符 `truncate` 护栏。
 - `skills.skills_root` —— 缺省取 `workspace_root` 的同级 `skills/`。
-- `model_hold` —— 保持租约；详情见 §5.1。
+- ~~`model_hold`~~ —— 已废弃（旧版保持租约：held 到期自动释放）；新调度下 key 不独占、不排队，held 不再到期，字段仅为旧配置解析兼容保留。
 - 上下文压缩 —— 无配置项：压缩回合沿用当前 profile 的 system prompt（无 profile = 默认模板）+ 正常历史，末尾追加一条 user（固定模板 `server/templates/compress-prompt.txt` 原文），该回合不传 tools；调整压缩策略直接改该文件。
 - 会话标题自动生成 —— 无配置项：首次交互回合结束（`finalize` 成功分支）后触发，用会话当前 model_id 发一次**不带 system、不传 tools** 的标题请求（历史 user/assistant 原文 + 模板 `server/templates/title-prompt.txt` 作末条 user，`{{language}}` 填 `agent.language`）；结果清洗后写入 `sessions.title` 并 SSE 推 `title` 事件。失败静默（title 仍空，下个回合结束自动重试）；已有标题（建会话时填写或手动重命名）不覆盖。
 - `auth.users` —— 明文密码配在配置里（自用场景）；`secret` 留空则随机生成（重启掉登录态，建议固定随机串）。
@@ -529,7 +534,7 @@ sequenceDiagram
     U->>F: 输入文本/附件
     F->>R: POST /:id/messages {content, attachments, deepThink}
     R->>E: postUserMessage
-    Note over E: saveMessage(user) +<br/>确定 status: active/held/queued
+    Note over E: saveMessage(user) +<br/>保绑定、转 active、立即开跑
     E-->>R: {message_id, delivered}
     R-->>F: {message_id, delivered}
     par SSE 流
@@ -673,7 +678,7 @@ sequenceDiagram
 ### 12.4 异步 / DB
 
 - `better-sqlite3` **同步 API**，单进程内无竞争（"JS 单线程 + 同步 DB"在头注释里也强调了）。
-- 异步用 `async/await`；`setTimeout`/`setInterval` 走定时器（`holdSweeper` 的 timer 调 `unref()` 不阻止进程退出）。
+- 异步用 `async/await`；`setTimeout`/`setInterval` 走定时器（scheduler 的轮询 timer、自动压缩宽限期 timer 均调 `unref()` 不阻止进程退出）。
 - 写库用 `db.prepare(...).run/get/all`；复杂查询写 `prepare` 一次复用。
 
 ### 12.5 进程组 / 取消
@@ -717,14 +722,14 @@ sequenceDiagram
 2. **路径穿越** —— 任何用户传 `path` 都要 `resolveInTask`，否则 `../../../etc/passwd` 就能读出去。
 3. **跨平台路径** —— Windows/macOS 路径分隔符差异：`resolveInTask` 用 `path.resolve` 适配本地；技能内部用 `path.posix.normalize`（强制 POSIX 风格）。
 4. **session.id 序号不复用** —— `genTaskId` 取历史最大 + `meta.task_seq` 取大；删会话后序号不回收。
-5. **保持租约 vs 释放** —— `held`（保持中，占用模型免排队）vs `completed`（已结版）vs `cancelled`（用户终止）三种终态在 UI 上要区分。
+5. **held 的语义** —— held = 「回合已收尾，绑定持续展示」，无排队/租约含义、不会自动到期；completed = 手动「断开」，cancelled = 手动终止；三态 UI 仍需区分，但都不影响模型可用性（key 共享）。
 6. **errAck 误判** —— 弱模型会把参数多包一层 `{"arguments":{...}}`，`unwrapToolArgs` 自动解包；`checkToolArgs` 只看 required 字段是否在顶层。
 7. **图片上下文省钱** —— `lastAssistant` 之前的图发请求时被剥 base64 改文字描述，但 DB 存全量，UI 历史重渲染仍能看图；要看原图就 `read_file` 重读。
 8. **SSE 被 nginx-proxy 缓冲** —— 必须 `proxy_buffering off`；否则 `assistant_delta` 攒到响应结束才一次性下发，体感卡死。
 9. **cookie 兜底（APK 场景）** —— WebView 杀进程后 cookie 不一定落盘，登录响应回 `token` 让前端存 localStorage，下次冷启动调 `/api/login_restore` 恢复。
 10. **MCP session 过期** —— 第一次 `tools/call` 可能 400 + 含 "session"，`mcp.js` 自动重 initialize 后重试一次；日志会打 warn。
 11. **Executor 截断不中断** —— stdout 撞 `EXECUTOR_MAX_OUTPUT_CHARS` 后**只停止 SSE 推送，仍持续消费管道**（防子进程 pipe 满阻塞），`truncated=true` 在 exit 帧带回。所以 `cat /dev/urandom` 这类命令即使输出无限也不会卡死，只是烧 CPU 到 `timeout_ms` 触发 SIGKILL。
-12. **保持期用户发新消息** —— `postUserMessage` 在 `held` 时直接转 `active` + `runLoop`，不重新排队（这就是保持租约的"免排队追问"语义）。
+12. **任意时刻发言都立即开跑** —— `postUserMessage` 除回合正在跑外不排队不分状态，保绑定后直接 `runLoop`（`delivered` 恒 live）；原模型被配置改动失效时 `ensureBinding` 自动改选（优先原平台），日志有「原绑定失效…自动改选」一行。
 13. **模型 tool_calls 不带 id** —— `runLoopInner` 兜底补 `'call_' + 随机串`（与 `tool_call_id` 落库一致，`buildMessages` 按 id 配对丢弃 errAck 关联回执）。
 14. **编辑 SKILL.md 不会立即生效** —— 不需要重启，但需要 `routes/skills.js` 的 `refreshSkillPrompt()` 异步重建 system prompt 段落（fire-and-forget，扫描失败不影响 API 响应）。
 15. **`pids_limit` 与 `ulimit` 区别** —— 前者是 cgroup pids 控制器算整个容器的进程+线程；后者是 per-process `RLIMIT_FSIZE` 等。被杀时 OOM kill vs SIGXFSZ 行为不同。

@@ -58,10 +58,7 @@ skills:
   skills_root: ""                                  # 留空取 workspace_root 同级 skills 目录
   timeout_ms: 120000                               # 单个技能执行超时（ms）
 
-model_hold:
-  idle_release_ms: 180000                          # 无人观看超时释放（ms）
-  active_max_ms: 1800000                           # 有人观看最长保持（ms）
-  sweep_ms: 10000                                  # 租约巡检间隔（ms）
+# 旧版 model_hold（模型保持租约）已废弃删除：key 不再独占也不排队，回合结束后的 held 不再自动到期。
 
 auth:                                              # users 留空 = 不启用登录认证
   secret: ""                                       # 登录态签名密钥；留空则每次重启随机（需重新登录）

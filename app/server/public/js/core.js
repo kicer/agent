@@ -12,7 +12,7 @@
    *   POST   /api/sessions/:id/files                           附件上传(multipart)
    *   GET    /api/sessions/:id/stream                          SSE 流式输出
    *   POST   /api/sessions/:id/stop | /release                  状态栏「终止/断开」
-   *   POST   /api/sessions/:id/bind {model_id}                  状态栏「选择模型」(已完成/已终止会话)
+   *   POST   /api/sessions/:id/bind {model_id}                  状态栏「选择模型」(任意可选,仅输出中拒绝)
    *   DELETE /api/sessions/:id/messages                         状态栏「清空」(会话内删除已移除,清空由这里承担)
    *   DELETE /api/sessions/:id/messages/:messageId              删除单条消息/工具卡(删 assistant 连带工具回执;单删工具卡同步摘除父调用)
    *   GET    /api/models                                        状态栏「选择模型」弹窗模型列表

@@ -61,6 +61,9 @@ function initDb(dbPath) {
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
 
+    -- 模型池：一行一个物理 key 槽位（id=「平台#下标」），由配置重建（见 engine.syncModelPool）。
+    -- key 不再独占（多会话可共享同一 key 并发 looping），调度只是按「最不 active」优顺序选（见 engine.chooseKey）。
+    -- is_busy / current_session_id 是旧版独占时代的残留列：保留不读写，只存 last_used_at（轮转依据）。
     CREATE TABLE IF NOT EXISTS model_pool (
       id TEXT PRIMARY KEY,
       display_name TEXT,
@@ -69,6 +72,8 @@ function initDb(dbPath) {
       last_used_at INTEGER
     );
 
+    -- 旧版 FIFO 等待队列表：已废弃（排队语义整体移除，会话绑不到模型不再挂队等而是直接报错），
+    -- 表与列保留（SQLite 删表不值得），代码不再读写。
     CREATE TABLE IF NOT EXISTS wait_queue (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id TEXT NOT NULL,
@@ -129,16 +134,16 @@ function initDb(dbPath) {
   `);
   // 升级老库：model_usage 补 cached_tokens 列（输入 token 缓存命中量累计，算历史命中率）
   try { db.exec('ALTER TABLE model_usage ADD COLUMN cached_tokens INTEGER DEFAULT 0'); } catch (_) { /* 已存在 */ }
-  // 迁移：旧库补 held_at 列（held 保持租约起始时间）
+  // 升级老库：旧库补 held_at 列（进入 held 的时刻；现仅展示/自动压缩校验用，租约到期逻辑已随「key 不独占」一并移除）
   const cols = db.prepare('PRAGMA table_info(sessions)').all();
   if (!cols.some(c => c.name === 'held_at')) db.exec('ALTER TABLE sessions ADD COLUMN held_at INTEGER');
-  // 迁移：model_slot 记会话占用的具体池 key 槽位（「平台#key下标」，平台 key 为其下模型共享资源），
-  // model_id 仍存模型 id 供展示/统计（见 engine.bindModel）。
+  // 迁移：model_slot 记会话粘住的具体池 key 槽位（「平台#key下标」，key 为共享资源不再独占），
+  // 跨结版/重启保持（只有手动换绑或模型失效改选会动），model_id 存模型 id 供展示/统计（见 engine.applyBinding）。
   if (!cols.some(c => c.name === 'model_slot')) db.exec('ALTER TABLE sessions ADD COLUMN model_slot TEXT');
-  // 迁移：model_pool 一行一个物理 key 槽位（id=「平台#下标」），last_used_at 支撑「最久未用先上」轮转（见 engine.freeModel）
+  // 迁移：model_pool 一行一个物理 key 槽位（id=「平台#下标」），last_used_at 支撑「最久未用先上」轮转（见 engine.chooseKey）
   const poolCols = db.prepare('PRAGMA table_info(model_pool)').all();
   if (!poolCols.some(c => c.name === 'last_used_at')) db.exec('ALTER TABLE model_pool ADD COLUMN last_used_at INTEGER');
-  // 迁移：last_model_id 记住会话最近用过的模型，释放后新消息优先回绑（见 engine.dispatchQueued）
+  // 迁移：last_model_id 记住会话最近用过的模型（换绑时一并刷新），绑定失效时供 ensureBinding 优先回原平台/原模型
   if (!cols.some(c => c.name === 'last_model_id')) {
     db.exec('ALTER TABLE sessions ADD COLUMN last_model_id TEXT');
     db.exec('UPDATE sessions SET last_model_id = model_id WHERE last_model_id IS NULL AND model_id IS NOT NULL');

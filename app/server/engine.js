@@ -1,4 +1,4 @@
-// 核心引擎：会话管理、模型池调度（FIFO）、Agent 主循环、任务目录。
+// 核心引擎：会话管理、模型池调度（优先级选 key：无排队、无独占）、Agent 主循环、任务目录。
 // 单进程内存模型：JS 单线程 + better-sqlite3 同步 API，不存在跨进程竞争。
 const fs = require('fs');
 const path = require('path');
@@ -141,27 +141,16 @@ function emitStatus(sessionId) {
     status: s.status,
     phase: s.phase,
     model_id: s.model_id,
-    queue_pos: s.status === 'queued' ? queuePosition(sessionId) : null,
   });
 }
 
-function queuePosition(sessionId) {
-  const row = db.prepare(
-    'SELECT queued_at FROM wait_queue WHERE session_id = ?'
-  ).get(sessionId);
-  if (!row) return null;
-  const better = db.prepare('SELECT COUNT(*) AS c FROM wait_queue WHERE queued_at < ?').get(row.queued_at);
-  return better.c + 1;
-}
-
-// ---------- 模型池调度 ----------
+// ---------- 模型池（启动重建与恢复） ----------
 function syncModelPool() {
   registerProfilePrompts(); // profile 自定义 prompt 注册进 llm（文本已随配置加载读入）
   const stmt = db.prepare(
     'INSERT INTO model_pool (id, display_name, is_busy, current_session_id) VALUES (?,?,0,NULL) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name'
   );
-  // 池槽位按物理 key 拆分：槽位 id = 「平台#key下标」，一个 key 同时只服务一个会话（concurrency 仍仅记录未调度）。
-  // 同平台的模型共享这批 key：平台 key 全部被占时，其下所有模型都不可再选。
+  // 池槽位按物理 key 拆分：槽位 id = 「平台#key下标」，key 为共享资源（同平台模型共用，也可多会话同时用，见 chooseKey）。
   // enable:false 的模型不进池：平台下模型全禁用则该平台不建槽位（与其他模型配置一致，重启生效）。
   const seen = new Set();
   for (const m of cfg.models) if (m.enable !== false) seen.add(m.platform + '#' + m.key_index);
@@ -170,23 +159,40 @@ function syncModelPool() {
   for (const row of db.prepare('SELECT id FROM model_pool').all()) {
     if (!seen.has(row.id)) db.prepare('DELETE FROM model_pool WHERE id = ?').run(row.id);
   }
-  // 进程重启后：释放所有绑定、把 active 会话退回队列；held 会话直接结版（释放）。
-  // 禁用模型同样走这里收尾：重启后池里已无它，绑过它的会话被退回队列/结版，后续重新分配启用中的模型。
-  db.prepare('UPDATE model_pool SET is_busy = 0, current_session_id = NULL').run();
-  db.prepare("UPDATE sessions SET status='completed', completed_at=?, held_at=NULL, model_id=NULL, model_slot=NULL WHERE status='held'").run(now());
-  for (const s of db.prepare("SELECT id FROM sessions WHERE status = 'active'").all()) {
-    db.prepare("UPDATE sessions SET status='queued', model_id=NULL, model_slot=NULL, updated_at=? WHERE id=?").run(now(), s.id);
-    enqueue(s.id);
-  }
-  // 兑底：queued 会话必须在队列中
-  for (const s of db.prepare("SELECT id FROM sessions WHERE status='queued'").all()) enqueue(s.id);
-  startHoldSweeper();
+  // 进程重启后：key 非独占，所有会话的绑定保持不动（顶部展示的模型持续可见，直到用户手动断开/换绑）。
+  // active（重启后必无回合进程）与遗留 queued 会话统一归位 held；指向已被删除/禁用模型的绑定，
+  // 下次发消息时由 ensureBinding 自动改选（优先留原平台），用户无感。
+  db.prepare('UPDATE model_pool SET is_busy = 0, current_session_id = NULL').run(); // 旧版独占列清残留（调度已不读）
+  db.prepare("UPDATE sessions SET status='held', held_at=COALESCE(held_at, updated_at), updated_at=? WHERE status IN ('active','queued')").run(now());
 }
 
-function freeModel() {
-  // 轮转：最久未用（从未用过排最前）的空闲 key 先上 → 全平台 key 自然摊平，
-  // 平台 key 灌满后自动轮到下一个平台（见 pickModelFor）。
-  return db.prepare('SELECT * FROM model_pool WHERE is_busy = 0 ORDER BY ifnull(last_used_at, 0), id').get();
+// ---------- 模型池调度（优先级选择，无排队、无独占） ----------
+// key 是共享资源：同一个 key 可同时服务多个 looping 会话（上游 key 本身支持多并发），
+// 调度只是挑「最不 active」的一个：looping 回合数少 → 在用（active/held）会话数少 → 最久未用（轮转摊平）→ id。
+// preferPlatform：优先留在原平台（绑定模型失效改选、用户手动选模时用）；
+// strict=true 时限定该平台（没有该平台的槽位就返回 null，供手动绑定「就要这个模型」的语义）。
+function chooseKey(preferPlatform, strict) {
+  const rows = db.prepare('SELECT id, last_used_at FROM model_pool').all();
+  if (!rows.length) return null;
+  const users = {};   // slot -> 在用会话数（active/held）
+  for (const r of db.prepare("SELECT model_slot AS s, COUNT(*) AS c FROM sessions WHERE model_slot IS NOT NULL AND status IN ('active','held') GROUP BY model_slot").all()) users[r.s] = r.c;
+  const looping = {}; // slot -> 回合执行中的会话数（内存 runs，库里无此状态）
+  for (const [id, run] of runs) {
+    if (!run || !run.looping) continue;
+    const s = db.prepare('SELECT model_slot FROM sessions WHERE id = ?').get(id);
+    if (s && s.model_slot) looping[s.model_slot] = (looping[s.model_slot] || 0) + 1;
+  }
+  const ranked = rows.slice().sort((a, b) =>
+    ((looping[a.id] || 0) - (looping[b.id] || 0)) ||
+    ((users[a.id] || 0) - (users[b.id] || 0)) ||
+    ((a.last_used_at || 0) - (b.last_used_at || 0)) ||
+    (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0)));
+  if (preferPlatform) {
+    const sub = ranked.filter(r => platformOf(r.id) === preferPlatform);
+    if (sub.length) return sub[0];
+    if (strict) return null;
+  }
+  return ranked[0];
 }
 
 // 模型 id「平台/模型」或池槽位 id「平台#key下标」→ 平台名。
@@ -196,14 +202,6 @@ function platformOf(id) {
   if (h >= 0) return s.slice(0, h);
   const sl = s.indexOf('/');
   return sl >= 0 ? s.slice(0, sl) : s;
-}
-
-// 指定平台的空闲 key 槽位：最久未用的先上。
-// 用范围比较而非 LIKE，避免平台名里的 _/% 被当通配符。
-function freeKeyOf(platform) {
-  if (!platform) return null;
-  return db.prepare('SELECT * FROM model_pool WHERE id >= ? AND id < ? AND is_busy = 0 ORDER BY ifnull(last_used_at, 0), id LIMIT 1')
-    .get(platform + '#', platform + '#\uffff');
 }
 
 // 平台下启用中的模型 id 列表（cfg.models 按 key 展开过，这里去重并保留配置顺序）。
@@ -341,59 +339,36 @@ function archiveTaskBrief(sessionId) {
   }
 }
 
-function enqueue(sessionId) {
-  const exists = db.prepare('SELECT id FROM wait_queue WHERE session_id = ?').get(sessionId);
-  if (!exists) db.prepare('INSERT INTO wait_queue (session_id, queued_at) VALUES (?,?)').run(sessionId, now());
+// ---------- 绑定 ----------
+// 写入绑定：会话粘住自己的 key+模型（断开/结版/终止不清，跨重启沿用，追问免选），
+// 并刷新槽位 last_used_at（「最久未用先上」的轮转依据）。model_id 同时用于展示/统计。
+function applyBinding(sessionId, key, modelId) {
+  db.prepare('UPDATE model_pool SET last_used_at = ? WHERE id = ?').run(now(), key.id);
+  db.prepare('UPDATE sessions SET model_id=?, model_slot=?, last_model_id=?, updated_at=? WHERE id=?')
+    .run(modelId, key.id, modelId, now(), sessionId);
 }
 
-function dequeue(sessionId) {
-  db.prepare('DELETE FROM wait_queue WHERE session_id = ?').run(sessionId);
+// 会话绑定的 key+模型是否仍有效：槽位在池里（配置冷加载，改配置需重启，重启后池已重建）、
+// 模型在启用列表里（enable:false / 改名 / 整平台删除都会命中失效）。
+function bindingValid(session) {
+  if (!session || !session.model_slot || !session.model_id) return false;
+  if (!db.prepare('SELECT 1 FROM model_pool WHERE id = ?').get(session.model_slot)) return false;
+  return platformModels(platformOf(session.model_slot)).includes(session.model_id);
 }
 
-// key：占用的池 key 槽位行（id=「平台#ki」）；modelId：选定的模型 id（同平台模型共享 key，绑定时才决定用哪个）。
-// status:绑定后的会话状态。
-// - 'active'(默认)：绑定即开跑(有待回应消息,紧随其后 runLoop);排队派发 dispatchQueued 用。
-// - 'held'：仅预留模型占位(手动选模/新建选模,尚无待回应消息),
-//   用户发首条消息后由 postUserMessage 的 held 分支转 active 开跑。
-function bindModel(session, key, modelId, status) {
-  const st = status === 'held' ? 'held' : 'active';
-  db.prepare('UPDATE model_pool SET is_busy = 1, current_session_id = ?, last_used_at = ? WHERE id = ?').run(session.id, now(), key.id);
-  // model_id/last_model_id 存模型 id（展示/统计用），model_slot 记占用的具体 key 槽位；
-  // last_model_id 不随释放清除：会话再次需要模型时优先回绑同平台（见 pickModelFor）
-  db.prepare("UPDATE sessions SET status=?, model_id=?, model_slot=?, last_model_id=?, held_at=?, updated_at=? WHERE id=?")
-    .run(st, modelId, key.id, modelId, st === 'held' ? now() : null, now(), session.id);
+// 开回合前确保有效绑定：配置改动导致原模型失效时自动改选「最不 active」的 key，优先留在原平台
+//（chooseModel 同平台还偏好旧模型），对用户透明；池完全为空时报错（配置问题，比静默挂起诚实）。
+function ensureBinding(session) {
+  if (bindingValid(session)) return;
+  const old = session.model_id || session.last_model_id || '';
+  const key = chooseKey(platformOf(old), false);
+  if (!key) throw Object.assign(new Error('无可用模型：请检查配置并重启服务'), { status_code: 503 });
+  const plat = platformOf(key.id);
+  const modelId = chooseModel(plat, plat === platformOf(old) ? old : '');
+  if (!modelId) throw Object.assign(new Error('无可用模型：请检查配置并重启服务'), { status_code: 503 });
+  applyBinding(session.id, key, modelId);
+  log.info('model', session.id + ' 原绑定失效（' + (old || '无') + '），自动改选 ' + modelId + '（key ' + key.id + '）');
 }
-
-function releaseModel(sessionId) {
-  db.prepare('UPDATE model_pool SET is_busy = 0, current_session_id = NULL WHERE current_session_id = ?').run(sessionId);
-  db.prepare('UPDATE sessions SET model_id = NULL, model_slot = NULL, updated_at = ? WHERE id = ?').run(now(), sessionId);
-}
-
-// 手动为已结版/已终止的会话指定模型：选定的模型必须空闲。
-// 绑上 ≠ 开跑：无待回应消息时进入 held（保持中，占用模型免排队），
-// 用户发首条消息后才转 active 开跑；若有未回应消息（如终止时留下未回答的提问）
-// 则直接 active 并立刻开跑。绑而不用同样受保持租约兑底（sweepHeld）。
-function bindToSession(sessionId, modelId) {
-  const s = getSession(sessionId);
-  if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
-  if (s.status !== 'completed' && s.status !== 'cancelled') {
-    throw Object.assign(new Error('仅已完成/已终止的会话可手动选择模型'), { status_code: 409 });
-  }
-  // 手动选定模型：占用其平台任意一个空闲 key（平台 key 全满才算被占）；模型需在启用列表中。
-  const want = String(modelId || '');
-  const plat = platformOf(want);
-  const key = freeKeyOf(plat);
-  if (!key || !platformModels(plat).includes(want)) throw Object.assign(new Error('模型不存在或正被占用'), { status_code: 409 });
-  touch(sessionId, { cancelled_at: null, completed_at: null, held_at: null });
-  const pending = hasPendingUser(sessionId);
-  bindModel(s, key, want, pending ? 'active' : 'held');
-  emitStatus(sessionId);
-  log.info('model', sessionId + ' 手动绑定模型 ' + want + '（key ' + key.id + '）');
-  if (pending) runLoop(sessionId);
-  return { ok: true, model_id: want };
-}
-
-
 
 // 是否还有待回应的新用户消息（最后一条非 tool 消息是 user）。
 function hasPendingUser(sessionId) {
@@ -405,106 +380,40 @@ function hasPendingUser(sessionId) {
   return false;
 }
 
-// 为排队会话挑 key+模型：上次用过的模型（last_model_id）所在平台有空闲 key 则优先回该平台；
-// 否则按「最久未用」取全局任意空闲 key。具体模型由 chooseModel 在 key 平台上定（同平台偏好上次模型）。
-function pickModelFor(session) {
-  const want = session.last_model_id || '';
-  let key = want ? freeKeyOf(platformOf(want)) : null;
-  if (!key) key = freeModel();
-  if (!key) return null;
-  const plat = platformOf(key.id);
-  const model = chooseModel(plat, platformOf(want) === plat ? want : '');
-  return model ? { key, model } : null;
-}
-
-// 有空闲 key 就按 FIFO 派发排队会话（每会话优先回绑上次用过的模型所在平台）。
-function dispatchQueued() {
-  for (;;) {
-    if (!freeModel()) return;
-    const head = db.prepare('SELECT session_id FROM wait_queue ORDER BY queued_at, id').get();
-    if (!head) return;
-    dequeue(head.session_id);
-    const session = getSession(head.session_id);
-    if (!session || session.status !== 'queued') continue;
-    // 上面已确认有空闲 key；若目标平台无启用模型/无空闲 key 致分配失败（理论上不会），退回队尾等下次派发。
-    const got = pickModelFor(session);
-    if (!got) { enqueue(session.id); continue; }
-    // 无待回应消息的会话（如新建后从未发言）只预留不占跑，绑成 held 等首条消息。
-    // 待开跑的压缩回合（内存 run.summarizing，见 summarizeContext）也算待处理：
-    // 它没有对应的用户消息行，hasPendingUser 判不到，需单独纳入。
-    const run0 = runs.get(session.id);
-    const pending = hasPendingUser(session.id) || !!(run0 && run0.summarizing);
-    bindModel(session, got.key, got.model, pending ? 'active' : 'held');
-    emitStatus(session.id);
-    if (pending) runLoop(session.id);
-  }
-}
-
-// ---------- 保持租约（held / active 闲置） ----------
-// 回合结束后会话进入 held：继续占用模型（用户追问免排队），由 sweeper 按规则释放：
-// - 页面无 SSE 观看者：超过 idle_release_ms 释放；
-// - 有人观看：最长保持 active_max_ms（防止挂着页面霸占模型池）。
-// 「绑定了模型但闲置」的会话（active 且无 run 在跑、无未回应消息，如新建后从未发言）
-// 同样受租约管理，避免建了不用的会话无限占用模型。
-function releaseHeld(sessionId) {
+// 手动为会话指定模型（前端弹窗任意可点，已无「占用」概念）：仅回合正在输出时拒绝（换绑语义不明）。
+// 模型需在启用配置中且其平台有槽位；已结版/已终止会话换绑后继续（held 待发），
+// 若有未回应消息（如终止时留下未回答的提问）则直接 active 并立刻开跑。
+function bindToSession(sessionId, modelId) {
   const s = getSession(sessionId);
-  if (!s || s.status !== 'held') return;
-  touch(sessionId, { status: 'completed', completed_at: now(), held_at: null });
-  releaseModel(sessionId);
-  bus.emit(sessionId, 'done', { status: 'completed' });
+  if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const run = runs.get(sessionId);
+  if (run && run.looping) throw Object.assign(new Error('会话正在输出，请先终止再切换模型'), { status_code: 409 });
+  const want = String(modelId || '');
+  const plat = platformOf(want);
+  if (!platformModels(plat).includes(want)) throw Object.assign(new Error('模型不存在或已禁用'), { status_code: 409 });
+  const key = chooseKey(plat, true);
+  if (!key) throw Object.assign(new Error('该平台暂无可用 key（请检查配置并重启）'), { status_code: 409 });
+  touch(sessionId, { cancelled_at: null, completed_at: null });
+  applyBinding(sessionId, key, want);
+  const pending = hasPendingUser(sessionId);
+  touch(sessionId, { status: pending ? 'active' : 'held', held_at: pending ? null : now() });
   emitStatus(sessionId);
-  dispatchQueued();
+  log.info('model', sessionId + ' 手动绑定模型 ' + want + '（key ' + key.id + '）');
+  if (pending) runLoop(sessionId);
+  return { ok: true, model_id: want };
 }
 
-// 用户主动「断开」： held 会话放弃保持租约，结版为 completed（区别于终止的 cancelled）
+// ---------- 断开（held → completed） ----------
+// 纯状态动作：key 已无独占与租约，没有任何要「释放」的东西；绑定保持，断开后再发消息仍直接沿用原模型。
+// 存在的意义只是把顶部「保持中 · 模型」的状态胶囊收起来（用户确认不再追问）。
 function releaseHold(sessionId) {
   const s = getSession(sessionId);
   if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   if (s.status !== 'held') throw Object.assign(new Error('会话不在保持中'), { status_code: 409 });
-  releaseHeld(sessionId);
-  return { ok: true };
-}
-
-// active 但闲置（从未发言/无未回应消息）→ 按租约释放，语义同 held 到期
-function releaseIdleActive(sessionId) {
-  const s = getSession(sessionId);
-  if (!s || s.status !== 'active' || !s.model_id) return;
-  const run = runs.get(sessionId);
-  if (run && run.looping) return;
-  touch(sessionId, { status: 'completed', completed_at: now() });
-  releaseModel(sessionId);
+  touch(sessionId, { status: 'completed', completed_at: now(), held_at: null });
   bus.emit(sessionId, 'done', { status: 'completed' });
   emitStatus(sessionId);
-  dispatchQueued();
-}
-
-function sweepHeld() {
-  const holdCfg = (cfg && cfg.model_hold) || {};
-  const idleMs = holdCfg.idle_release_ms || 180000;
-  const activeMs = holdCfg.active_max_ms || 1800000;
-  const t = now();
-  for (const s of db.prepare("SELECT * FROM sessions WHERE status='held'").all()) {
-    const heldSince = t - (s.held_at || s.updated_at || 0);
-    const present = bus.clientCount && bus.clientCount(s.id) > 0;
-    if (heldSince >= (present ? activeMs : idleMs)) releaseHeld(s.id);
-  }
-  // active 闲置：绑定了模型但无 run 在跑、无未回应消息（如新建后从未发言）→ 同租约释放
-  for (const s of db.prepare("SELECT * FROM sessions WHERE status='active' AND model_id IS NOT NULL").all()) {
-    const run = runs.get(s.id);
-    if (run && run.looping) continue;
-    if (hasPendingUser(s.id)) continue; // 有消息待回应，由 runLoop 处理，不动它
-    const idleSince = t - (s.updated_at || 0);
-    const present = bus.clientCount && bus.clientCount(s.id) > 0;
-    if (idleSince >= (present ? activeMs : idleMs)) releaseIdleActive(s.id);
-  }
-}
-
-let holdTimer = null;
-function startHoldSweeper() {
-  if (holdTimer) return;
-  const ms = (cfg && cfg.model_hold && cfg.model_hold.sweep_ms) || 10000;
-  holdTimer = setInterval(sweepHeld, ms);
-  if (holdTimer.unref) holdTimer.unref(); // 不阻止进程退出
+  return { ok: true };
 }
 
 // ---------- 运行控制 ----------
@@ -563,14 +472,12 @@ function finalize(sessionId, run) {
   const cancelled = run.cancelled;
   if (cancelled) {
     touch(sessionId, { status: 'cancelled', cancelled_at: now(), completed_at: null });
-    releaseModel(sessionId);
     runs.delete(sessionId);
     bus.emit(sessionId, 'done', { status: 'cancelled' });
     emitStatus(sessionId);
-    dispatchQueued();
     return;
   }
-  // 正常结束：进入 held 保持租约，不释放模型，用户追问可直接复用
+  // 正常结束：进入 held，绑定保持（key 非独占、无租约，不再自动到期）；用户追问直接复用模型，唯一出口是手动「断开」。
   touch(sessionId, { status: 'held', held_at: now(), completed_at: null, cancelled_at: null });
   runs.delete(sessionId);
   bus.emit(sessionId, 'done', { status: 'held' });
@@ -995,69 +902,61 @@ function unwrapToolArgs(tools, name, raw) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ---------- 对外 API ----------
+// 新建即绑模（无排队）：指定了优先模型（welcome 预选）就取其平台「最不 active」的 key；
+// 模型无效或平台无槽位退回全局优先级选。池完全为空直接报错（配置问题），不建吊儿郎当的会话。
 function createSession(title, preferModelId, assistantType, user) {
+  const want = String(preferModelId || '');
+  let key = null, modelId = '';
+  if (want && platformModels(platformOf(want)).includes(want)) {
+    key = chooseKey(platformOf(want), true);
+    if (key) modelId = want;
+    else log.warn('model', '新建会话指定模型 ' + want + ' 的平台暂无可用 key，退回全局选择');
+  }
+  if (!key) {
+    key = chooseKey('', false);
+    if (!key) throw Object.assign(new Error('无可用模型：请检查配置并重启服务'), { status_code: 503 });
+    modelId = chooseModel(platformOf(key.id), '') || '';
+    if (!modelId) throw Object.assign(new Error('无可用模型：请检查配置并重启服务'), { status_code: 503 });
+  }
   const id = genTaskId();
   const dir = taskDirOf(id);
   fs.mkdirSync(dir, { recursive: true });
   db.prepare(
-    "INSERT INTO sessions (id, title, status, phase, model_id, assistant_type, user, created_at, updated_at) VALUES (?,?,'queued','advising',NULL,?,?,?,?)"
-  ).run(id, title || '', assistantType || 'secretary', user || '', now(), now());
+    "INSERT INTO sessions (id, title, status, phase, model_id, model_slot, last_model_id, held_at, assistant_type, user, created_at, updated_at) VALUES (?,?,'held','advising',?,?,?,?,?,?,?,?)"
+  ).run(id, title || '', modelId, key.id, modelId, now(), assistantType || 'secretary', user || '', now(), now());
+  db.prepare('UPDATE model_pool SET last_used_at = ? WHERE id = ?').run(now(), key.id);
   profile.freezeSnapshot(db, id); // 冻结画像快照：仅创建/清空时点注入，会话内恒定（见 user-profile.js）
   // 新会话一律落 advising（顾问模式）：先聊天判意图，任务书 task.md 落地才转 executing（见 enterExecuting）
-  // 指定了模型且其平台恰好有空闲 key → 直接绑定，跳过排队；否则回退到 FIFO 队列
-  const prefer = preferModelId && platformModels(platformOf(preferModelId)).includes(preferModelId)
-    ? freeKeyOf(platformOf(preferModelId))
-    : null;
-  if (prefer) {
-    // 新建时指定模型 = 仅预留（此时还没有任何消息）：先绑成 held 占住 key，
-    // 用户发首条消息后再转 active 开跑
-    bindModel(getSession(id), prefer, preferModelId, 'held');
-    emitStatus(id);
-  } else {
-    enqueue(id);
-    dispatchQueued();
-  }
-  // 已绑定模型（选中的空闲模型 / 自动派发立即拿到模型）时保持 held，等首条消息再开跑。
+  emitStatus(id);
   const session = getSession(id);
   return session;
 }
 
-// 用户消息入口。
+// 用户消息入口：不再排队——任意非 looping 状态都是「拿模型立即开跑」（delivered 恒 live）；
+// 绑定失效（配置改动后原模型被删/禁用）由 ensureBinding 自动改选，用户无感。
 // opts.deepThink: true 时启用模型该「深度思考」参数（记在会话 run 上，正在跑的回合下一轮迭代会取到最新值）。
 // 新建会话需在 runLoop 之前先预建 run 以携带该值。
 function postUserMessage(sessionId, content, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   const messageId = saveMessage(sessionId, { role: 'user', content });
-    // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
-    const run = getRun(sessionId, true);
-    run.deepThink = !!(opts && opts.deepThink);
-    // 真实用户消息到达：若还有个「已排队但尚未开跑」的压缩回合（见 summarizeContext），
-    // 让它作废，避免新消息被误当成压缩回合处理；已在跑（looping）的不动，
-    // 由其收尾时自行清空 summarizing。
-    if (run.summarizing && !run.looping) run.summarizing = null;
+  // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
+  const run = getRun(sessionId, true);
+  run.deepThink = !!(opts && opts.deepThink);
+  // 真实用户消息到达：若还有个「尚未开跑」的压缩回合（见 summarizeContext），
+  // 让它作废，避免新消息被误当成压缩回合处理；已在跑（looping）的不动，
+  // 由其收尾时自行清空 summarizing。
+  if (run.summarizing && !run.looping) run.summarizing = null;
   if (session.status === 'active' && run.looping) {
     // 正在跑：下一轮迭代会从 DB 重新加载历史，自动带上这条消息
     return { message_id: messageId, delivered: 'live' };
   }
-  if (session.status === 'held') {
-    // 保持租约期内：直接复用当前绑定的模型，无需排队
-    touch(sessionId, { status: 'active', held_at: null });
-    emitStatus(sessionId);
-    runLoop(sessionId);
-    return { message_id: messageId, delivered: 'live' };
-  }
-  if (session.status === 'active' && !run.looping) {
-    runLoop(sessionId);
-    return { message_id: messageId, delivered: 'live' };
-  }
-  // 排队 / 已完成 / 已取消 → 重新入队；若派发后已立即拿到空闲模型，则算直接送达
-  touch(sessionId, { status: 'queued', cancelled_at: null, completed_at: null, held_at: null });
-  enqueue(sessionId);
-  dispatchQueued();
-  const after = getSession(sessionId);
+  // 其余全部状态（held/active 闲置/completed/cancelled/遗留 queued）：确保有效绑定后直接开跑
+  ensureBinding(session);
+  touch(sessionId, { status: 'active', held_at: null, completed_at: null, cancelled_at: null });
   emitStatus(sessionId);
-  return { message_id: messageId, delivered: after && after.status === 'active' ? 'live' : 'queued' };
+  runLoop(sessionId);
+  return { message_id: messageId, delivered: 'live' };
 }
 
 function stop(sessionId) {
@@ -1069,21 +968,17 @@ function stop(sessionId) {
     killRunProcs(run);
     if (run.abortController) { try { run.abortController.abort(); } catch (_) {} }
   }
-  dequeue(sessionId);
   if (session.status === 'active') {
-    // run 在循环退出处会 finalize；若无循环在跑则直接收尾
+    // run 在循环退出处会 finalize；若无循环在跑则直接收尾（绑定保持，追问仍可换绑后继续用原模型）
     if (!run || !run.looping) {
       touch(sessionId, { status: 'cancelled', cancelled_at: now(), held_at: null });
-      releaseModel(sessionId);
       runs.delete(sessionId);
       bus.emit(sessionId, 'done', { status: 'cancelled' });
     }
   } else {
-    touch(sessionId, { status: 'cancelled', cancelled_at: now(), model_id: null, held_at: null, completed_at: null });
-    releaseModel(sessionId); // held 会话同时释放模型保持租约
+    touch(sessionId, { status: 'cancelled', cancelled_at: now(), held_at: null, completed_at: null });
   }
   emitStatus(sessionId);
-  dispatchQueued();
   return { ok: true };
 }
 
@@ -1107,7 +1002,6 @@ function deleteSession(sessionId, deleteDir) {
   stop(sessionId);
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
-  db.prepare('DELETE FROM wait_queue WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   autoCompressProposed.delete(sessionId); // 提议闸门随会话销毁
   if (deleteDir) {
@@ -1125,8 +1019,7 @@ function deleteSession(sessionId, deleteDir) {
 // 并在压缩回合的收尾答复 emit 时带 is_summary: true，前端据此把气泡装进摘要卡片并淡出存档旧历史。
 // 收尾落库：摘要行标 type='summary'，它之前的全部消息标 type='archived'
 //（UI 保留展示、不再发给模型，后续对话从摘要开始）。
-// 注意：排队等模型的压缩回合只记在内存 run 上，服务重启会丢（旧版靠库里的指令行存活）；
-// 重启后需重新点「压缩」。
+// 注意：压缩回合标记（run.summarizing）只在内存，服务重启即丢；旧版靠库里的指令行存活。
 // 限制：与 clearSessionMessages 类似——会话执行中(active)禁止操作，避免和正在跑的回合抢上下文。
 // 响应回显 prompt：前端「开始压缩后渲染成一条普通用户消息气泡」；只回一句短提示，
 // 不回完整模板（压缩指令的真实内容在压缩回合开跑时实时序列化进 system prompt，
@@ -1139,34 +1032,16 @@ function summarizeContext(sessionId) {
     throw Object.assign(new Error('任务正在执行，请先「终止」再压缩'), { status_code: 409 });
   }
   const prompt = '正在压缩上下文：AI 将基于完整对话记录生成摘要…';
-  // 与 postUserMessage 同样的唤醒/排队流转，但不落任何消息行；
-  // run.summarizing 标记本回合为压缩回合，摘要产出后由 runLoopInner 清空。
+  // 与 postUserMessage 同样的唤醒语义（不再排队、不落消息行）；run.summarizing 标记本回合为压缩回合，摘要产出后由 runLoopInner 清空。
   // 状态流转时顺带重置 deepThink：压缩回合不需要思考参数，避免沿用上一轮的残留值。
   const r = getRun(sessionId, true);
   r.summarizing = true;
   r.deepThink = false;
-  let delivered;
-  if (session.status === 'held') {
-    // 保持租约期内：直接复用当前绑定的模型，无需排队
-    touch(sessionId, { status: 'active', held_at: null });
-    emitStatus(sessionId);
-    runLoop(sessionId);
-    delivered = 'live';
-  } else if (session.status === 'active') {
-    // 上方已排除 looping；active 空闲时直接开跑
-    runLoop(sessionId);
-    delivered = 'live';
-  } else {
-    // 排队 / 已完成 / 已终止 → 重新入队；若派发后已立即拿到空闲模型，则算直接送达
-    //（dispatchQueued 会把带 summarizing 的排队会话当作有待处理回合开跑）
-    touch(sessionId, { status: 'queued', cancelled_at: null, completed_at: null, held_at: null });
-    enqueue(sessionId);
-    dispatchQueued();
-    const after = getSession(sessionId);
-    emitStatus(sessionId);
-    delivered = after && after.status === 'active' ? 'live' : 'queued';
-  }
-  return { prompt, delivered };
+  ensureBinding(session);
+  touch(sessionId, { status: 'active', held_at: null, completed_at: null, cancelled_at: null });
+  emitStatus(sessionId);
+  runLoop(sessionId);
+  return { prompt, delivered: 'live' };
 }
 
 // 自动压缩确认前的宽限期（ms）：超长回合刚结束时，前端还在收尾渲染（最终消息落 DOM、会话列表刷新等），
@@ -1182,7 +1057,7 @@ const autoCompressProposed = new Set();
 // 由前端弹 modal 询问，用户点「立即压缩」后才 POST /summarize 开启与手动「摘要」完全相同的压缩回合。
 // 每会话至多提议一次（autoCompressProposed 闸门）：取消/忽略后不再反复弹窗，想压可手动点「压缩」。
 // 护栏：压缩回合自身不再检查（防递归）；被终止的回合不触发；仅正常收尾进入 held 后触发；
-// 延迟期间用户抢先发言/手动压缩/终止、租约到期释放都会改动 status 或 held_at，回调里校验后放弃推送；
+// 延迟期间用户抢先发言/手动压缩/终止、手动断开都会改动 status 或 held_at，回调里校验后放弃推送；
 // 无 SSE 观看者时事件静默丢弃且不计数（提议本就是交互式功能，下个超长回合还会再试）。
 function maybeAutoCompress(sessionId, run, wasCompressTurn) {
   try {
@@ -1214,9 +1089,8 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
   }
 }
 
-// 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件。
-// 状态收尾为 completed（释放模型占用、移出等待队列）；此后再次发言从零开始，
-// 不再携带旧历史。执行中的会话不允许清空，需先「终止」。
+// 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件（绑定也保持，下次发言沿用原模型）。
+// 状态收尾为 completed；此后再次发言从零开始，不再携带旧历史。执行中的会话不允许清空，需先「终止」。
 // 阶段语义：清空是 executing 唯一回头路——回到 advising 重新规划（单会话只解决一个问题），
 // 旧任务书 mv 进 .task-history/ 防污染（archiveTaskBrief）；压缩不碰 phase，不在此列。
 function clearSessionMessages(sessionId) {
@@ -1232,8 +1106,6 @@ function clearSessionMessages(sessionId) {
     if (run.abortController) { try { run.abortController.abort(); } catch (_) {} }
   }
   runs.delete(sessionId);
-  dequeue(sessionId);
-  releaseModel(sessionId);
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   archiveTaskBrief(sessionId); // 旧任务书先归档（mv），新一轮 advising 不会被上一问题的约定污染
   autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
@@ -1245,7 +1117,6 @@ function clearSessionMessages(sessionId) {
   bus.emit(sessionId, 'title', { title: null }); // 供其他打开同一会话的窗口同步清掉旧标题
   bus.emit(sessionId, 'phase', { phase: 'advising' });
   emitStatus(sessionId);
-  dispatchQueued();
   return { ok: true };
 }
 
@@ -1324,10 +1195,8 @@ module.exports = {
   taskDirOf,
   loadHistory,
   saveMessage,
-  queuePosition,
   recordModelUsage,
   modelUsageStats,
-  dispatchQueued,
   bindToSession,
   TOOL_DEFINITIONS,
   effectiveTools,

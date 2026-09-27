@@ -338,7 +338,7 @@
     userPaused = false;
     removeTyping();
     renderHeader();
-    updatePhaseBar({ model_id: s && s.model_id, queue_pos: detail.queue_pos });
+    updatePhaseBar({ model_id: s && s.model_id });
     const box = $('chat-view');
     box.innerHTML = '';
     appendMessagesDom(detail.messages || [], box).closeArc();

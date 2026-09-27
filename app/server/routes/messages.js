@@ -34,13 +34,13 @@ router.post('/:id/stop', wrap((req, res) => {
   res.json(r);
 }));
 
-// 断开：held 会话主动放弃模型保持租约，结版为已完成（非终止）
+// 断开：held 会话收起「保持中」态，结版为已完成（纯状态动作：key 非独占，无模型可释放，绑定仍在可继续用）
 router.post('/:id/release', wrap((req, res) => {
   res.json(engine.releaseHold(req.params.id));
 }));
 
 // 清空会话内容：删除全部消息记录，保留会话本身与任务目录文件（不再随下条消息重发旧历史）。
-// 状态收尾为已完成并释放模型/出队；正在执行的回合会被拒绝（需先「终止」）。
+// 状态收尾为已完成（绑定保持，下次发言沿用原模型）；正在执行的回合会被拒绝（需先「终止」）。
 router.delete('/:id/messages', wrap((req, res) => {
   const r = engine.clearSessionMessages(req.params.id);
   log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 清空会话内容（文件保留）');
@@ -99,7 +99,6 @@ router.get('/:id/stream', (req, res) => {
     status: session.status,
     phase: session.phase,
     model_id: session.model_id,
-    queue_pos: session.status === 'queued' ? engine.queuePosition(session.id) : null,
   });
 });
 

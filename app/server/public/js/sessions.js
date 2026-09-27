@@ -10,8 +10,8 @@
     return d.getFullYear() + '年' + (d.getMonth() + 1) + '月';
   }
 
-  // 抽屉行状态指示:仅进行中的会话(排队/活跃/保持)展示彩色圆点,已完成/已终止不显示
-  const DRAWER_STATUS_TEXT = { queued: '排队中', active: '活跃中', held: '保持中' };
+  // 抽屉行状态指示:仅进行中的会话(活跃/保持)展示彩色圆点,已完成/已终止不显示（排队已废弃）
+  const DRAWER_STATUS_TEXT = { active: '活跃中', held: '保持中' };
   function drawerStatusDot(s) {
     const st = s && s.status;
     const label = DRAWER_STATUS_TEXT[st];
@@ -258,26 +258,26 @@
     if (!(state.view === 'chat' && state.sessionId)) { bar.classList.add('hidden'); return; }
     bar.classList.remove('hidden');
     const pill = $('status-pill');
-    const stMap = { queued: '排队中', active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
+    const stMap = { active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
     let text = stMap[state.status] || state.status || '--';
-    if (d && d.queue_pos) text += '(第 ' + d.queue_pos + ' 位)';
-    // active/held 时附带当前占用的模型
-    if ((state.status === 'active' || state.status === 'held') && d && d.model_id) {
+    // 持有绑定的态都附带当前模型：key 非独占、无租约，绑定跨结版持续可见；
+    // 仅手动「断开」（held→completed）收起展示，「终止」不算断开（绑定仍在，再发言沿用）
+    if (d && d.model_id && state.status !== 'completed') {
       text += ' · ' + d.model_id;
     }
     pill.textContent = text;
     // 状态胶囊配色:活跃中绿(执行中)、保持中黄(已答完、保持模型中)等;状态栏整体同步染色
     pill.className = 'status-pill ' + (state.status || '');
     bar.className = 'phase-bar ' + (state.status || '');
-    // 活跃中提供「终止」;保持中改为「断开」(主动放弃保持租约,会话结为已完成)
+    // 活跃中提供「终止」;保持中改为「断开」(纯状态动作:收起保持态徽标，绑定仍在、再发言继续用原模型)
     const btn = $('stop-btn');
     const actionable = state.status === 'active' || state.status === 'held';
     btn.classList.toggle('hidden', !actionable);
     btn.textContent = state.status === 'held' ? '断开' : '终止';
     btn.classList.toggle('muted', state.status === 'held');
-    // 已完成/已终止时提供「选择模型」,手动指定空闲模型后继续对话
+    // 非输出中都可「选择模型」：key 不再独占/排队，任意模型即点即换（后端仅 looping 拒绝）
         const msBtn = $('model-switch-btn');
-        if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && (state.status === 'completed' || state.status === 'cancelled')));
+        if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && state.status && state.status !== 'active'));
         // 状态栏「压缩」按钮：active 时不允许（避免与正在跑的回合抢上下文）;
         // 其余状态可点。未发起总结时可点；发起后按钮 disabled 防双击。
         const cpBtn = $('compress-btn');
@@ -415,7 +415,7 @@
     try {
       if (held) {
         await req('POST', '/api/sessions/' + state.sessionId + '/release');
-        toast('已断开,模型已释放');
+        toast('已断开');
       } else {
         await req('POST', '/api/sessions/' + state.sessionId + '/stop');
         toast('已发送终止指令');
@@ -440,8 +440,8 @@
       } else {
       // 平台颜色盘(循环使用)
       const DOT_COLORS = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#06B6D4','#F97316'];
-      // 按平台分组;/api/models 已按模型聚合槽位:slots_total/slots_busy = 该模型的 key 总数/被占数,
-      // is_busy 仅在全部 key 被占时为真(同模型还剩空闲 key 就仍可再选)。
+      // 按平台分组;/api/models 已按模型聚合槽位:slots_total/slots_used = 该模型的 key 总数/在用会话数。
+      // 任意模型都可点：key 不再独占也不再排队，选「在用」的不影响任何会话（共享并发）。
       const platMap = new Map();
       for (const m of rows) {
         const pk = m.platform || '';
@@ -451,20 +451,16 @@
         platMap.get(pk).models.push(m);
       }
       const groups = [...platMap.values()];
-      // 可选 = 模型还有空闲 key 槽位;统计可用数供底部提示
-      for (const g of groups) for (const m of g.models) if (!m.is_busy) avail++;
+      avail = rows.length; // 底部提示改报模型总数（已无「空闲」概念）
       modelsHtml = groups.map((g, gi) => {
         const dotColor = DOT_COLORS[gi % DOT_COLORS.length];
         const itemHtml = g.models.map(m => {
-          const total = m.slots_total || g.keyCount || 1;
-          const free = total - (m.slots_busy || 0);
-          const disabled = !!m.is_busy;
-          const title = m.is_busy ? ' 占用中' : ((m.slots_busy || 0) > 0 ? ' ' + free + '/' + total + ' key 空闲' : '');
+          const used = m.slots_used || 0;
+          const title = used ? ' 在用×' + used : '';
           // 无会话 = welcome 入口：点模型只记预选（建档时透传 model_id），不直接绑定
           const act = state.sessionId ? 'bindModel' : 'choosePendingModel';
           const pre = !state.sessionId && state.pendingModel === m.id ? ' <span class="msw-busy">预选</span>' : '';
-          return '<div class="msw-item' + (disabled ? ' disabled' : '') + '"' +
-            (disabled ? '' : ' onclick="' + act + '(\'' + esc(m.id) + '\')"') + '>' +
+          return '<div class="msw-item" onclick="' + act + '(\'' + esc(m.id) + '\')">' +
             '<div class="msw-radio"></div>' +
             '<div class="msw-info">' +
               '<div class="msw-name">' + esc(m.display_name || m.mid || m.id) +
@@ -489,9 +485,9 @@
     } catch (e) {
       modelsHtml = '<div class="empty-tip">读取模型列表失败:' + e.message + '</div>';
     }
-    // 空闲数并进顶部提示句（原 footer「共 X 个模型可用」不再单独占行）
+    // 总数并进顶部提示句（原 footer「共 X 个模型可用」不再单独占行）
     if (sub) sub.textContent = (state.sessionId ? '选择一个模型继续当前会话' : '选择一个模型用于新会话')
-      + (avail ? '（共 ' + avail + ' 个空闲）' : '');
+      + (avail ? '（共 ' + avail + ' 个模型）' : '');
     list.innerHTML = modelsHtml;
   }
   function closeModelSwitch() { $('bind-model-modal').classList.add('hidden'); }
@@ -510,7 +506,7 @@
       await req('POST', '/api/sessions/' + id + '/bind', { model_id: modelId });
       toast('已绑定模型 ' + modelId);
     } catch (e) { toast('绑定失败:' + e.message); }
-    // 无论成败都刷新会话详情(失败多为并发占用,状态可能已变);按已加载量分页重渲染，避免长会话退回全量重建
+    // 无论成败都刷新会话详情(失败多为正在输出中换绑被拒,状态可能已变);按已加载量分页重渲染，避免长会话退回全量重建
     try {
       const detail = await req('GET', '/api/sessions/' + id + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount));
       if (state.sessionId === id) { renderDetail(detail); connectStream(); }
