@@ -366,22 +366,23 @@
   }
   // ---------- 页:账户——用户画像编辑卡直接渲染在账户页(无二级页;保存后 renderSetPage 重拉刷新停用徽标) ----------
   const PROFILE_FIELDS = [
-    ['honorific', '称谓', '希望被怎么称呼'],
-    ['industry', '行业', '影响术语与默认假设'],
-    ['preference', '偏好', '语言 / 交付格式等输出要求'],
+    ['honorific', '称谓', '希望被怎么称呼', 80],
+    ['industry', '行业', '影响术语与默认假设', 80],
+    ['preference', '偏好', '顿号分隔标签（AI 会在沟通中自动补充，可手动增删）', 300],
   ];
   function profileCardHtml(p) {
     let html = '<div class="settings-card"><h4>用户画像' +
       (p.enabled === false ? ' <span class="badge held">已停用</span>' : '') + '</h4>' +
       '<div class="cfg-kv"><label>启用</label><input type="checkbox" id="prof-enabled"' + (p.enabled === false ? '' : ' checked') + '></div>';
-    for (const [k, name, ph] of PROFILE_FIELDS) {
+    for (const [k, name, ph, maxLen] of PROFILE_FIELDS) {
       const v = String(p[k] || '');
       html += '<div class="cfg-kv"><label>' + esc(name) + '</label>' +
-        '<input class="cfg-input" id="prof-' + k + '" type="text" maxlength="80" data-orig="' + att(v) + '" value="' + att(v) + '" placeholder="' + esc(ph) + '"></div>';
+        '<input class="cfg-input" id="prof-' + k + '" type="text" maxlength="' + (maxLen || 80) + '" data-orig="' + att(v) + '" value="' + att(v) + '" placeholder="' + esc(ph) + '"></div>';
     }
     html += '<button class="primary-btn" style="margin-top:8px" onclick="sUI.saveProfile()">保存</button>' +
       '<div class="cfg-note">画像只记「不知道就会做错」的信息，新会话开始时作为背景注入（会话内不更新；清空字段保存即抹除）。' +
-      '停用后不再注入也不再更新，重新启用仅对新会话/清空后的会话生效。近期关注（最近会话标题）自动带入背景，无需维护。</div></div>';
+      'AI 会在沟通中持续维护（尤其偏好标签，只记明确表达过的，写入自下个会话生效），这里手动改随时可覆盖。' +
+      '停用后不再注入，AI 的记录请求也会被拒。近期关注（最近会话标题）自动带入背景，无需维护。</div></div>';
     return html;
   }
   async function saveProfile() {

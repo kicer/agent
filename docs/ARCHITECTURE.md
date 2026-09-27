@@ -42,7 +42,7 @@ agent/
 │   │   ├── balance.js             余额查询适配器（按 platform.type 分发）
 │   │   ├── version.js             版本信息（package.json + git 短提交号）
 │   │   ├── tools/
-│   │   │   ├── definitions.json   内置 9 个工具的 OpenAI function 格式定义（含元工具 lab）
+│   │   │   ├── definitions.json   内置工具的 OpenAI function 格式定义（现 12 项，含元工具 lab 与全局屏蔽的 handoff）
 │   │   │   ├── executor.js        工具执行器（文件类 + terminal + skill 委托）
 │   │   │   └── skills.js          Skill Manager（skill 工具的 list/get/run + 路径预处理）
 │   │   ├── download-token.js      下载链接签名（浏览器原生下载用；密钥进程内随机）
@@ -63,8 +63,7 @@ agent/
 │   │   │   ├── system-prompt.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
 │   │   │   ├── advising-system.txt 顾问阶段提示词（内置 profile:advising，phase=advising 时强制命中，见 §4.1）
 │   │   │   ├── compress-prompt.txt 上下文压缩提示词（压缩回合末尾追加为 user 消息，历史照常走 messages）
-│   │   │   ├── title-prompt.txt   会话标题自动生成提示词（首次交互结束后触发，{{language}} 填配置语言）
-│   │   │   └── profile-prompt.txt 用户画像提取提示词（advising→executing 落槌时触发一次，输出锁三字段 JSON，见 user-profile.js）
+│   │   │   └── title-prompt.txt   会话标题自动生成提示词（首次交互结束后触发，{{language}} 填配置语言）
 │   │   └── public/                前端 H5 SPA（无构建，Vanilla JS 经典脚本多文件 + SSE）
 │   │       ├── index.html         主页（HTML+样式；脚本全部在 js/，按序加载共享全局作用域）
 │   │       ├── login.html         登录页
@@ -251,7 +250,8 @@ stateDiagram-v2
 ```
 
 - advising（顾问）：profile 被 `resolveProfileName` 强制为内置 `advising` 组合（问答/判意图/引导澄清需求），
-  只聊和读不写（`write_file`/`edit_file` 不在其白名单，批内幻觉调用也被 runLoopInner 挡下）；
+  只聊和读不写（`write_file`/`edit_file` 不在其白名单，批内幻觉调用也被 runLoopInner 挡下；例外 `profile`——
+  画像元信息不碰任务目录，顾问问答恰是收集称谓/偏好密度最高的时刻），
   唯一出口是 `handoff` 工具：handler 把 `brief` 原样落盘根 `task.md`（reason ∈ ready/user_skip/user_stuck，
   空 brief 拒回不切）；`handoff` 与 `lab` 同入全局 `tools_deny`，advising 组合显式 `tools_deny: []` 独享可见。
 - executing（执行）：回到常规 profile 链路（模型配置 > 默认全量）；单会话只解决一个问题，一路走到底，回头路只有「清空」。
@@ -328,7 +328,7 @@ stateDiagram-v2
 - session 补偿：MCP 规范的 `Mcp-Session-Id` 缓存在 `server.sessionId`；过期（400 + 含 "session" 字样）自动重 initialize 后重试一次。
 - 某些老服务无 `initialize` → catch `Method not found` 不阻断。
 
-### 5.4 `tools/executor.js` —— 内置 9 工具（含元工具 `lab`）的派发器
+### 5.4 `tools/executor.js` —— 内置工具（现 12 项，含元工具 `lab`）的派发器
 
 `HANDLERS` 是 `name → async(ctx, args) → result` 的表；`executeTool(ctx, name, args)` 按 `name` 派发；**未知名直接转发给 MCP**（若 `mcp.hasTool(name)`，调 `mcp.callTool`）。
 
@@ -336,12 +336,13 @@ stateDiagram-v2
 |---|---|
 | `read_file` | 走 `resolveInTask` 防路径穿越；图像（PNG/JPEG/WebP/GIF/BMP/TIFF）按 vision 能力走 `sharp` 压缩后落盘 `.imgcache/` 并回传 `image_rel`（长边 ≤ 2000px，JPEG q=80；文件名带源文件 mtime+size 指纹，重读复用不增殖；重编码无收益时不落盘、直指原文件），发送前由 `llm.buildMessages` 现签成公网外链（engine 侧 mint 前 realpath 复核）；大文本/二进制给 outline，超 32MB 拒读并引导 terminal；行号前缀格式 "`<6位右对齐行号>\\t<原文>`"（`edit_file` 用） |
 | `write_file` / `edit_file` | `edit_file` 用模糊定位（Zed 风格）：先精确匹配，失败后用 Levenshtein DP 找最相似行；超 32MB 拒绝整文件读写（OOM 防护）；DP 候选区间不连续（中间跳过无关 buffer 行）即弃用，防静默吞行；空 `new_text` = 整行干净删除（精确/模糊两层统一，对齐 `"".lines()` 零行语义）；`old_text`/`new_text` 协议见 `definitions.json` |
-| 已移除的工具 | `list_directory` / `create_directory` / `delete_path` / `move_path` / `copy_path` / `find_path` / `grep`：环境固定，文件操作与检索统一走 `terminal`（ls / mkdir / rm / mv / cp / find / rg），内置工具 17 → 10；技能三件套又并为 `skill` 后为 8；再增元工具 `lab` 为 9（默认被全局 `tools_deny` 屏蔽） |
+| 已移除的工具 | `list_directory` / `create_directory` / `delete_path` / `move_path` / `copy_path` / `find_path` / `grep`：环境固定，文件操作与检索统一走 `terminal`（ls / mkdir / rm / mv / cp / find / rg），内置工具 17 → 10；技能三件套又并为 `skill` 后为 8；再增元工具 `lab` 为 9（默认被全局 `tools_deny` 屏蔽）；后续增 `db`、`profile` 各一 → 现 12 项 |
 | `terminal` | **唯一一个走 executor 的内置工具**（当 `rexec.isRemote(cfg)`）；本地分支用 `spawn` + `detached` + 进程组 kill；远端分支 `rexec.run` SSE 收流，结果套上超时/截断/取消注解后 `truncate(text, cfg.terminal.max_output_chars)` 返回 |
 | `fetch` | `AbortController` 覆盖全生命周期（响应头之后的 body 读流同样被超时/取消打断，取消用与 terminal 同款的 200ms 轮询）；content-type 先行，非文本只回状态/类型/尺寸不读 body；流式读到 `cfg.fetch.max_bytes`（默认 1MB）即断开并标注截断；按响应 charset 解码（full-icu 支持 gbk/gb18030 等，未知编码退回 UTF-8）；HTML 用 `htmlToMarkdown` 转；HTML 实体单遍解码（常见命名实体+数字实体通吃，修 `&amp;` 双重解码）；网络错误解包 `err.cause` 直述 ENOTFOUND/TLS 等真因；engine 不截工具结果，返回值末尾另有 `truncate` 1MB 字符护栏 |
 | `mint_public_link` | **唯一的 mint 入口**：与 core 同进程，直接 `publicFiles.mint()`，不绕任何 HTTP；`ctx.taskDir` 就是会话目录，`relOf` 的结果正是取用侧要的 `rel`。校验：`public_link.base_url` 已配 + `resolveInTask` 沙箱 + 确认是文件 + `realpath` 未沿符号链接跳出任务目录；返回单行 URL |
 | `skill` | op 分派 list/get/run（三件套合并：同一 `name` 标识空间 + 同一生命周期，见 `docs/tool-design.md` §一）；委托 `tools/skills.js`；`input_args` 仅 op=run 且可缺省 `{}`，缺参由各技能 `input_schema` 校验点名报错；front matter 带 `visit_url` 的技能在 op=run 成功后由 executor 层拼 `public_link.base_url`（与 mint 同源）追加完整「访问地址」行（技能进程不知公网前缀，AI 拿相对路径会原样转给用户） |
 | `schedule` | **当前会话**（`ctx.sessionId`，AI 不可指定他会话）定时任务的完整生命周期：op 分派 get/create/update/delete（表主键 session_id → 每会话至多一条，无 id 参数）；条件必填在代码里校验、错误回显 op 与缺失字段；数据层在 `scheduler.js`（cron 可解析 → 间隔 ≥1h → prompt ≤20000 → 查重/存在性检查），delete 不落 scheduler_note；描述里限定「仅用户明确要求时调用」（安全缓解，见 §5.12） |
+| `profile` | 用户画像增量维护（op 分派：list / set(honorific\|industry 单值≤20字，空串清除) / add / remove(preference 顿号标签)）；user 取自会话行，AI 不可指定他人；护栏单标≤15字×≤24个×总≤300字，整批原子（任一超限不落库）；停用（enabled=0）拒写不拒读；写入自新会话生效（快照冻结语义不变），list 永远给 live 状态——取代了原 handoff 落槌一次性提取链路 |
 | `lab` | 元工具统一入口：`tool` + 自由 `args` 转发内置 + MCP 全部能力（目标 schema 定义期不可知，条件校验归内层 handler）；`help` 伪工具做现场发现（无参列名单、带 `args.tool` 出完整 schema），未知名回显全清单，禁嵌套、内层错误冒泡不包装。默认被全局 `tools_deny: ['lab']` 屏蔽，仅 `lab` profile（allow `[lab]` + deny `[]` 清空）下发，见 §5.8 |
 
 `resolveInTask(taskDir, relOrAbs)`：把相对路径或绝对路径解析为绝对路径并校验落在 `taskDir` 之内（含根），防穿越。
@@ -492,7 +493,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 | `/api/config` | `routes/config.js` | `GET /` 原文+生效（脱敏）、`POST /validate`、`PUT /` 整文件保存、`PATCH /` 单项修改（path/value/op[delete\|append]） |
 | `/api/platforms` | `routes/platforms.js` | `GET /balance?pi=&ki=` 余额 |
 | `/api/system` | `routes/system.js` | `GET /status` + `/restart?force=...`（原 `model_profiles` 可用名单字段已删，前端无消费方） |
-| `/api/profile` | `routes/profile.js` | `GET /` 读画像、`PUT /` 保存（三字段 + enabled）；按 `req.user` 隔离，逻辑全在 `user-profile.js`（快照冻结见 engine `createSession`/`clearSessionMessages`，提取见 `enterExecuting`） |
+| `/api/profile` | `routes/profile.js` | `GET /` 读画像、`PUT /` 保存（三字段 + enabled）；按 `req.user` 隔离，逻辑全在 `user-profile.js`（快照冻结见 engine `createSession`/`clearSessionMessages`；日常更新由 AI 经 `profile` 工具增量维护，见 §5.4） |
 | `/api/channel` | `routes/channel.js` | `POST /send {channel, text}` 文本命令接入端（IM/CLI 等无 UI 客户端，走 Basic/cookie 鉴权）：命令仅在本入口解析（Web 消息路由不受影响，防误伤路径/代码文本）；严格匹配白名单 `/new[文本] /stop /compact /clear /status /help`，未知斜杠词回提示、不像命令的当普通消息；(user,channel) 经 `channel_sessions` 表绑定当前会话（普通消息无绑定自动建）；命令动作不落消息行（与 Web 按钮对称），AI 回复由接入端复用既有 SSE/详情接口获取；`handleSend()` 另供微信桥接直调 |
 | `/api/wechat` | `routes/wechat.js` | 微信绑定管理（设置页，cookie 鉴权 + req.user 隔离）：`GET /`（enabled/alive/我的绑定）、`POST /`（新建绑定，一人一绑）、`GET /:id/qr`（登录二维码 SVG 代理）、`POST /:id/refresh`（重发登录）、`DELETE /:id`（解绑，销毁实例与凭证）；业务全在 `wechat.js`（§5.13） |
 | `/wxhook` | `routes/wechat.js`（hookRouter） | wxbot → core 内网回调（**挂 auth.middleware 与全局 express.json 之前**，自带 32mb 解析器容纳媒体 base64）：`POST /inbox {id, from, text, media?}` 文本/媒体转 channel 层——media={kind:image\|video\|file, b64, filename?}，core 按 magic 嗅探定扩展名、落会话任务目录（文件保留消毒原名，图/视频生成 wximg-/wxvid- 时间戳名）+ 记 files 表 + 拼「用户上传了文件：<名>」告知行（同 web 附件模式，vision 模型 read_file 即见）；非 2xx 时 wxbot 把 error 文案回给微信用户；`POST /hook {id, event}` 实例状态回报；Bearer 共享服务 token（哈希后定长比较，未配一律 503） |

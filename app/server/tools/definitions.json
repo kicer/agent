@@ -184,6 +184,23 @@
   {
     "type": "function",
     "function": {
+      "name": "profile",
+      "description": "Maintain the current user's profile — stable facts that persist across conversations and get injected into the context of NEW sessions (the current session's injected copy is frozen). Ops: list (read the live profile), set (honorific or industry, single short value), add (append preference tags), remove (delete exact preference tags). Rules: only record what the user has clearly stated or asked to be remembered (form of address, domain, stable output/work preferences); never guess personality, never store one-time task parameters; brief tags beat essays. Preference is a 、-separated tag list (each tag ≤15 chars, ≤24 tags, ≤300 chars total; overflow is rejected — consolidate or remove first). When unsure what is already recorded, op=list returns live state — trust it over memory.",
+      "parameters": {
+        "type": "object",
+        "required": ["op"],
+        "properties": {
+          "op": { "type": "string", "enum": ["list", "set", "add", "remove"], "description": "list = read live profile; set = single-value honorific/industry; add/remove = preference tags." },
+          "honorific": { "type": "string", "description": "op=set: how to address the user (≤20 chars, e.g. 王工). Pass empty string to clear. Exactly one of honorific/industry per call." },
+          "industry": { "type": "string", "description": "op=set: the user's industry/domain (≤20 chars, e.g. 金融). Pass empty string to clear." },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "op=add/remove: preference tag list, e.g. [\"偏好简洁回复\", \"图表中文标注\"]. Matching is exact text." }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "read_file",
       "description": "Reads the content of a file.\n\nText files: each returned line is prefixed with a line number right-aligned in a 6-character field, followed by a tab, then the line content.\n\nLarge text files (roughly over 16 KB) are not returned in full: you get an outline listing top-level symbols (or Markdown headings) with line numbers instead. The outline IS a successful response — do NOT retry the same call without a line range; use the outline line numbers with `start_line` / `end_line` to read specific sections. If no outline can be extracted, a first-1KB excerpt is returned instead. Supplying `start_line` or `end_line` disables outline mode.\n\nImage files (PNG, JPEG, WebP, GIF, BMP, TIFF) are returned as visual content you can analyze directly, but only if the current model supports vision; otherwise a text placeholder is returned — that placeholder is not an error. Very large images (roughly over 50 MB) are skipped, and images may be downscaled (long edge ~2000 px, re-encoded as JPEG) before being returned.\n\nBinary files are not returned as text; a short notice is returned instead. Text files over 32 MB cannot be read by this tool — use `terminal` (grep -n / head / sed -n).",
       "parameters": {

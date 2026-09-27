@@ -294,8 +294,6 @@ function enterExecuting(sessionId) {
     return;
   }
   if (!snapshot.trim()) return; // 空任务书不构成承诺，继续留在顾问模式
-  // 画像提取的输入：归档前的 advising 轮全量历史（归档后就拿不到了，先抓引用）
-  const adviceRows = loadHistory(sessionId);
   const n = db.prepare(
     "UPDATE messages SET type = 'archived' WHERE session_id = ? AND (type IS NULL OR type != 'archived')"
   ).run(sessionId).changes;
@@ -312,8 +310,6 @@ function enterExecuting(sessionId) {
   bus.emit(sessionId, 'phase', { phase: 'executing' });
   emitStatus(sessionId);
   log.info('engine', sessionId + ' advising → executing：task.md 落地，存档 ' + n + ' 条消息，上下文重建为任务书快照');
-  // 用户画像唯一更新时机：一轮需求尘埃落定时异步提取（fire-and-forget，永不抛出，见 user-profile.js）
-  profile.runExtraction(db, cfg, { sessionId, user: session.user, modelId: session.model_id, historyRows: adviceRows, briefText: snapshot });
 }
 
 // 清空即回 advising：上一轮任务书 mv 进 .task-history/（带时间戳名，撞名再加 -N，同上传风格），

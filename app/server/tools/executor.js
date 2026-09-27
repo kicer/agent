@@ -10,6 +10,7 @@ const Database = require('better-sqlite3'); // db 工具：会话目录下的 da
 const rexec = require('../remote-exec');
 const publicFiles = require('../public-files');
 const scheduler = require('../scheduler'); // 只依赖 log/cron-parser，不成环（engine→executor→scheduler 单向）
+const profile = require('../user-profile'); // profile 工具的数据面（仅 llm/log 依赖，无环）
 // lab 的 help 伪工具要读全量定义：与 engine 同路径 require → node 缓存同一对象，单一事实源。
 const BUILTIN_TOOL_DEFS = require('./definitions.json');
 
@@ -803,6 +804,39 @@ function toolScheduleTask(ctx, args) {
   }
 }
 
+// profile：用户画像增量维护（op 分派同 schedule 风格）。user 取自会话行，AI 不可指定他人；
+// 条件必填/帽子校验全在 user-profile.js（抛错由引擎包成 is_error 回执），停用拒写不拒读。
+function toolProfile(ctx, args) {
+  const op = String(args.op || '').trim().toLowerCase();
+  const s = ctx.db.prepare('SELECT user FROM sessions WHERE id = ?').get(ctx.sessionId);
+  if (!s) throw new Error('会话不存在');
+  const user = s.user;
+  switch (op) {
+    case 'list': {
+      const p = profile.getProfile(ctx.db, user);
+      const lines = [
+        '称谓：' + (p.honorific || '（未记录）'),
+        '行业：' + (p.industry || '（未记录）'),
+        '偏好：' + (p.preference || '（未记录）'),
+      ];
+      if (!p.enabled) lines.push('（该用户已停用画像注入；set/add/remove 会被拒绝）');
+      lines.push('本会话已注入的快照不会因写入而变；新会话自动携带最新画像。');
+      return lines.join('\n');
+    }
+    case 'set': {
+      const keys = ['honorific', 'industry'].filter(k => typeof args[k] === 'string');
+      if (keys.length !== 1) throw new Error('op=set 需要 honorific 或 industry 恰一个字符串参数（偏好标签用 add/remove）');
+      return profile.setProfileField(ctx.db, user, keys[0], args[keys[0]]);
+    }
+    case 'add':
+      return profile.addProfileTags(ctx.db, user, args.tags);
+    case 'remove':
+      return profile.removeProfileTags(ctx.db, user, args.tags);
+    default:
+      throw new Error('未知的 op："' + op + '"。可用：list / set(honorific|industry) / add(tags) / remove(tags)');
+  }
+}
+
 // db：会话本地 SQLite（taskDir/data.db，随会话目录隔离，首次使用自动建库建文件）。
 // 连接策略：每次调用 open→用→close，不缓存句柄（会话删目录后不留脏连接）；
 // 单进程 + better-sqlite3 同步 API，同进程内不存在交叠。busy_timeout 兼容
@@ -1160,6 +1194,7 @@ const HANDLERS = {
   terminal: toolTerminal,
   fetch: toolFetch,
   schedule: toolScheduleTask,
+  profile: toolProfile,
   db: toolDb,
   skill: toolSkill,
   lab: toolLab,
