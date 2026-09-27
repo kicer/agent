@@ -14,7 +14,7 @@
 ```
 agent/
 ├── README.md                      设计文档（API/数据模型/部署总览）
-├── docker-compose.yml             编排：agent-core + agent-executor 两个服务
+├── docker-compose.yml             编排：agent-core / agent-executor(+init) / wxbot（微信接入，代码在 ./wxbot 不入 git）
 ├── config.yml                     运行时配置（含密钥，已 .gitignore）
 ├── data/                          默认数据卷（任务目录、SQLite、prompt dump）
 ├── tasks/                         任务目录挂载点（同 ./data 顶层等价，二选一）
@@ -424,7 +424,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - **方向三条线**：① Web（设置页→账户→微信绑定）→ `/api/wechat` → wxbot `/api/instances*`（实例控制，QR SVG 代理给页面 `<img>`，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message → 分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`。
 - **投递游标** `last_msg_id` 落库 + 每绑定串行队列：重启不重发旧回复，wxbot 短暂不可达不丢（下一条连带补齐）；errAck/纯工具轮（空文本）不进微信，`__blocks__` 图消息降级为占位文案。
 - **降级承诺**：`wxbot.url` 未配 = 功能整体静默关闭（启动零日志噪声、设置页入口隐藏）；配了但 wxbot 没起 = restore 只留一行 info，面板显示未连接，所有外呼失败只 warn，绝不阻塞/抛出未捕获异常影响 Web 主流程（鉴权/探活失败同样只降级）。
-- 鉴权：core→wxbot = wxbot 自身 auth.tokens 白名单（模板直接引用 `${WXBOT_TOKEN}`）；wxbot→core = `/wxhook` 挂 auth.middleware 之前，Bearer 服务 token 哈希后定长比较（同 auth.js 形态），token 未配一律 503（fail closed）。
+- 鉴权：双向共用一个服务 token（根 .env `WXBOT_TOKEN`，init.sh 生成/复用）——core→wxbot 时 wxbot 把该 env 自动并入 /api 白名单；wxbot→core 走 `/wxhook`（挂 auth.middleware 之前，Bearer 哈希后定长比较，token 未配一律 503 fail-closed）。wxbot 零配置文件（同 executor 模式），接线全靠 env，config.yml 仅作可选覆盖。
 
 ---
 
@@ -545,7 +545,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - `mcp_servers[].timeout_ms` —— 该服务单次 `tools/call` 的最大等待，默认 60000（夹在 1s~10min）；工具发现/握手用固定 15s，不受本项影响。
 - `mcp_servers[].tools_allow` / `tools_deny` —— 发现阶段的工具名单（字符串数组，按服务端原始名）：allow 白名单，deny 在其后叠加（deny 优先）；用于压低发给模型的工具数（如浏览器类服务）。
 - `executor.url` / `executor.token` —— 留空走环境变量 `EXECUTOR_URL` / `EXECUTOR_TOKEN`（compose 默认注入）。
-- `wxbot.url` / `wxbot.token` —— 微信接入（§5.13，可选）：url 留空/未配时功能整体静默关闭；留空时读 env `WXBOT_URL` / `WXBOT_TOKEN`（compose 默认注 `http://wxbot:8093`，`.env` 置 `WXBOT_URL=` 可关）；token 与 wxbot 侧 `.env` 同值，双向共用（出向控制 + 入向 /wxhook 回调）。
+- `wxbot.url` / `wxbot.token` —— 微信接入（§5.13，可选）：url 留空/未配时功能整体静默关闭；留空时读 env `WXBOT_URL` / `WXBOT_TOKEN`（compose 默认注 `http://wxbot:8093`；根 .env 置 `WXBOT_URL=` 可关）；`WXBOT_TOKEN` 由 scripts/init.sh 生成/复用，同一值注进 core 与 wxbot 两侧双向互信（wxbot 零配置文件，同 EXECUTOR_TOKEN 模式）。
 
 ---
 

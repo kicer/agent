@@ -6,13 +6,17 @@
 # 用法：
 #   ./scripts/init.sh                                     # 全用默认值（无模型、admin/admin）
 #   BIGMODEL_KEY=xxx AUTH_USER=me ./scripts/init.sh       # 给几个变量就行
+#   ./scripts/init.sh --env-only                          # 只刷新 .env（含同步 wxbot/.env），不动 config.yml
 #
 # 输入（都可选）：
 #   BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY  模型平台 key，填几个启用几个（0~3 个）
 #   ZHIPU_KEY                               image_task / video_task 的智谱 key（空 = 这两个服务 enable: false）
 #   AUTH_USER / AUTH_PASSWORD               登录账号（默认 admin / admin，请自行改掉）
 #   PUBLIC_IP / AGENT_PORT                  对外地址与端口，写进 public_link.base_url（PUBLIC_IP 空则尝试自动探测）
-#   AUTH_SECRET / EXECUTOR_TOKEN            一般不用给：不给就自动生成并复用（见下）
+#   AUTH_SECRET / EXECUTOR_TOKEN / WXBOT_TOKEN  一般不用给：不给就自动生成并复用（见下）
+#
+# 微信接入（wxbot 已合入根 compose，作为栈内服务）：本脚本只负责生成/复用根 .env 的 WXBOT_TOKEN；
+# wxbot 自身零配置文件（compose 注 env + 内置默认，同 executor 模式），无需任何同步动作。
 #
 # config.yml 只写 deploy 相关的段：platforms / auth / mcp_servers / public_link；
 # 其余配置项一律走 server/config.js 的 DEFAULTS（完整清单见 app/config.example.yml）。
@@ -26,6 +30,9 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 
+# 支持 --env-only 参数：只刷 .env 密钥（幂等，绝不碰 config.yml）
+if [ "${1:-}" = "--env-only" ]; then ENV_ONLY=1; fi
+
 CONFIG_YML="$REPO_DIR/config.yml"
 ENV_FILE="$REPO_DIR/.env"
 
@@ -36,9 +43,13 @@ ZHIPU_KEY="${ZHIPU_KEY:-}"
 AUTH_USER="${AUTH_USER:-admin}"
 AUTH_PASSWORD="${AUTH_PASSWORD:-admin}"
 PUBLIC_IP="${PUBLIC_IP:-}"
-AGENT_PORT="${AGENT_PORT:-8090}"
+# 记住用户是否显式给了端口（下面 .env 复用逻辑不能踩掉显式传参）
+AGENT_PORT_INPUT="${AGENT_PORT:-}"
+AGENT_PORT="${AGENT_PORT_INPUT:-8090}"
 EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-}"
 AUTH_SECRET="${AUTH_SECRET:-}"
+# 微信接入服务 token（core ↔ wxbot 双向共用，compose 两侧同值注入；wxbot/ 子项目不入 git）
+WXBOT_TOKEN="${WXBOT_TOKEN:-}"
 
 log()  { echo -e "\n\033[1;32m===== $* =====\033[0m"; }
 info() { echo -e "\033[1;36m[INFO]\033[0m $*"; }
@@ -61,20 +72,33 @@ log "生成 $ENV_FILE"
 if [ -f "$ENV_FILE" ]; then
     EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(sed -n 's/^EXECUTOR_TOKEN=//p' "$ENV_FILE" | head -1)}"
     AUTH_SECRET="${AUTH_SECRET:-$(sed -n 's/^AUTH_SECRET=//p' "$ENV_FILE" | head -1)}"
+    WXBOT_TOKEN="${WXBOT_TOKEN:-$(sed -n 's/^WXBOT_TOKEN=//p' "$ENV_FILE" | head -1)}"
+    # AGENT_PORT 同理复用：避免不带参数重跑时把部署机自定义端口重置回 8090（显式传参优先）
+    AGENT_PORT="${AGENT_PORT_INPUT:-$(sed -n 's/^AGENT_PORT=//p' "$ENV_FILE" | head -1)}"
+    AGENT_PORT="${AGENT_PORT:-8090}"
 fi
 EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(gen_hex 32)}"
 AUTH_SECRET="${AUTH_SECRET:-$(gen_hex 32)}"
+WXBOT_TOKEN="${WXBOT_TOKEN:-$(gen_hex 32)}"
 
 cat > "$ENV_FILE" <<EOF
 # 本文件由 scripts/init.sh 生成，勿手改（改配置请重新运行该脚本，或用环境变量覆盖）
 # EXECUTOR_TOKEN: core 与 executor 之间的调用鉴权（两侧同值，compose 注入）
 # AUTH_SECRET:    登录态签名密钥（写进 config.yml 的 auth.secret）
+# WXBOT_TOKEN:    core ↔ wxbot 微信接入服务 token（compose 注入两侧；wxbot 零配置文件，env 即全部接线）
 # AGENT_PORT:     agent-core 映射到宿主机的端口
 EXECUTOR_TOKEN=$EXECUTOR_TOKEN
 AUTH_SECRET=$AUTH_SECRET
+WXBOT_TOKEN=$WXBOT_TOKEN
 AGENT_PORT=$AGENT_PORT
 EOF
-info "EXECUTOR_TOKEN / AUTH_SECRET 已就位（沿用已有 .env 的值，没有则新生成）"
+info "EXECUTOR_TOKEN / AUTH_SECRET / WXBOT_TOKEN 已就位（沿用已有 .env 的值，没有则新生成）"
+
+# --env-only：只刷密钥，绝不碰 config.yml（平台 key 不在 .env 里，重跑全量会清空已部署配置）
+if [ "${ENV_ONLY:-}" = "1" ]; then
+    log "完成 ✅（--env-only：未改动 config.yml）"
+    exit 0
+fi
 
 # PUBLIC_IP 兜底：只有没给时才去探测（探测不到只告警，不影响启动，只是图生视频用不了）
 if [ -z "$PUBLIC_IP" ]; then
@@ -221,5 +245,6 @@ echo " 账号     : $AUTH_USER"
 echo " 密码     : $AUTH_PASSWORD"
 echo " 平台     : ${enabled_plats[*]:-（无）}"
 echo " 智谱 MCP : $([ -n "$ZHIPU_KEY" ] && echo "image_task / video_task 已启用" || echo "未配置（enable: false）")"
+echo " 微信接入 : WXBOT_TOKEN 已就位（compose 注入 core 与 wxbot 两侧；wxbot 无需配置文件）"
 echo "---------------------------------------------"
 log "完成 ✅"
