@@ -82,14 +82,16 @@ function parseCommand(text) {
   return { cmd: head, rest };
 }
 
+// 命令输出统一用 markdown（channel 层的规范格式）：支持渲染的接入端直接用，
+// 微信这类纯文本端由 wxbot 发送前 stripMarkdown 降级——格式信息留在生产方，渲染适配在消费方。
 const HELP_TEXT = [
-  '可用命令：',
-  '/new [文本]   新建会话并切换（带文本则作为首条消息直接开跑；不打断旧会话正在跑的回合）',
-  '/stop         终止当前回合',
-  '/compact      压缩上下文（摘要稍后作为一条回复出现在会话里）',
-  '/clear        清空当前会话（回到顾问模式，会话继续用）',
-  '/status       查看当前会话状态',
-  '/help         显示本帮助',
+  '**可用命令**',
+  '- `/new [文本]` 新建会话并切换（带文本则作为首条消息直接开跑；不打断旧会话正在跑的回合）',
+  '- `/stop` 终止当前回合',
+  '- `/compact` 压缩上下文（摘要稍后作为一条回复出现在会话里）',
+  '- `/clear` 清空当前会话（回到顾问模式，会话继续用）',
+  '- `/status` 查看当前会话状态',
+  '- `/help` 显示本帮助',
 ].join('\n');
 
 const STATUS_TEXT = { active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
@@ -106,15 +108,16 @@ function statusReply(db, s) {
   const run = engine.getRun(s.id);
   const looping = !!(run && run.looping);
   const lines = [
-    '会话 ' + s.id + '「' + (s.title || '未命名') + '」',
-    '状态：' + (looping ? '回合进行中' : (STATUS_TEXT[s.status] || s.status))
+    '**会话状态**',
+    '- 会话：`' + s.id + '`「' + (s.title || '未命名') + '」',
+    '- 状态：' + (looping ? '回合进行中' : (STATUS_TEXT[s.status] || s.status))
       + '｜阶段：' + (PHASE_TEXT[s.phase] || s.phase || '-'),
-    '模型：' + (s.model_id || '未绑定'),
+    '- 模型：`' + (s.model_id || '未绑定') + '`',
   ];
   const t = db.prepare('SELECT cron_expr, next_run_at, last_run_at, last_status FROM scheduled_tasks WHERE session_id = ?').get(s.id);
   lines.push(t
-    ? '定时任务：cron「' + t.cron_expr + '」下次 ' + fmtTime(t.next_run_at) + '（上次 ' + fmtTime(t.last_run_at) + ' ' + (t.last_status || '-') + '）'
-    : '定时任务：无');
+    ? '- 定时任务：cron `' + t.cron_expr + '`，下次 ' + fmtTime(t.next_run_at) + '（上次 ' + fmtTime(t.last_run_at) + ' ' + (t.last_status || '-') + '）'
+    : '- 定时任务：无');
   return lines.join('\n');
 }
 

@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
 import QRCode from "qrcode";
-import { WeChatBot } from "@wechatbot/wechatbot";
+import { WeChatBot, stripMarkdown } from "@wechatbot/wechatbot";
 
 // ── 配置加载（含 ${ENV_VAR} 展开）────────────────────────────────────────────
 const DEFAULTS = {
@@ -251,7 +251,8 @@ async function onIncoming(inst, msg) {
   }
   try {
     const r = await corePost("/wxhook/inbox", { id: inst.id, from: userId, text: text || undefined, media: media || undefined }, 30000);
-    if (r && r.kind === "command" && r.reply) await inst.bot.send(userId, r.reply);
+    // 命令回执可能是 markdown（channel 层规范格式）；微信不渲染 markdown，出口统一 stripMarkdown 降级。
+    if (r && r.kind === "command" && r.reply) await inst.bot.send(userId, stripMarkdown(r.reply));
   } catch (e) {
     if (e.status === 404) {
       // core 侧绑定已删（解绑通知丢失的孤儿实例）：告知用户并自毁（连凭证一起清，避免复活再骚扰）
@@ -322,7 +323,7 @@ app.post("/api/deliver", requireAuth, async (req, res) => {
   if (!inst) return res.status(404).json({ error: "实例不存在" });
   if (!to || !String(text || "").trim()) return res.status(400).json({ error: "to/text 不能为空" });
   try {
-    await inst.bot.send(String(to), String(text));
+    await inst.bot.send(String(to), stripMarkdown(String(text)));
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: "发送失败：" + String(e?.message || e).slice(0, 200) });
