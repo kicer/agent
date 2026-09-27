@@ -105,6 +105,17 @@ function initDb(dbPath) {
 
     CREATE INDEX IF NOT EXISTS idx_sched_next ON scheduled_tasks(next_run_at);
 
+    -- 文本命令接入端（channel）的「当前会话」绑定（routes/channel.js）：接入端没有会话列表 UI，
+    -- 每个 (user, channel) 记一个当前会话，普通消息与 /new 等命令都作用于它。
+    -- 故意不建外键：删会话后绑定行由 channel 层懒解析自愈（查不到会话即清行按未绑定处理）。
+    CREATE TABLE IF NOT EXISTS channel_sessions (
+      user TEXT NOT NULL,
+      channel TEXT NOT NULL DEFAULT '',
+      session_id TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (user, channel)
+    );
+
     -- 模型 token 用量流水（每次模型回合一条）。故意不建会话外键：
     -- 删会话后累计统计仍需保留
     CREATE TABLE IF NOT EXISTS model_usage (

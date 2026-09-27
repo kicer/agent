@@ -22,8 +22,8 @@ const bus = createBus();
 
 engine.setModelPool(cfg, db, bus);
 engine.init();
-// 定时任务调度器（scheduler.js）：必须在 engine.init() 之后启动——init 先把 active
-// 退回队列 / held 结版归位，首轮 tick 才不会看到脏状态。
+// 定时任务调度器（scheduler.js）：必须在 engine.init() 之后启动——init 先把会话状态归位
+//（active/遗留 queued → held），首轮 tick 才不会看到脏状态。
 scheduler.start(engine);
 
 const app = express();
@@ -53,13 +53,15 @@ app.use('/api/platforms', require('./routes/platforms'));
 app.use('/api/system', require('./routes/system'));
 // 用户画像（账户设置）：读写按登录用户隔离，逻辑在 user-profile.js
 app.use('/api/profile', require('./routes/profile'));
+// 文本命令接入端（IM/CLI 等无 UI 客户端）：命令解析 + (user, channel) 当前会话绑定，见 routes/channel.js
+app.use('/api/channel', require('./routes/channel'));
 // data-page 技能配套：任务 app/ 子树页面向导 /app/{task_id}/ + 数据 API /api/db/{task_id}/query。
 // 随其余业务路由一样挂在 auth.middleware 之后（登录态才能访问）。
 app.use(require('./routes/data-page'));
 
-// 模型池状态(前端可展示空闲/占用)+ 每模型 token 用量(今日/累计,输入/输出分开)。
+// 模型池状态（前端展示在用会话数/在用会话列表，key 非独占）+ 每模型 token 用量（今日/累计，输入/输出分开）。
 // 从生效配置补齐平台维度字段(platform/mid/vision/type + 平台 key 数 key_count):
-// model_pool 表只有 id/display_name/占用态,会话页「选择模型」弹窗需要按平台分组展示。
+// model_pool 表只有 id/display_name/last_used_at，会话页「选择模型」弹窗需要按平台分组展示。
 // 配置里新增但重启前未进池的模型不在此返回(池才是运行时真相)。
 app.get('/api/models', (req, res) => {
   // 池行是平台物理 key（id=「平台#下标」）：key 为共享资源——非独占，多个会话可同时绑同一个 key

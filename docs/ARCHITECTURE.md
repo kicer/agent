@@ -51,6 +51,7 @@ agent/
 │   │   │   ├── sessions.js        /api/sessions CRUD + 列表分页
 │   │   │   ├── messages.js        /api/sessions/:id/messages + SSE 流 + stop/release
 │   │   │   ├── files.js           /api/sessions/:id/files 上传/列表/下载/删除
+│   │   │   ├── channel.js         /api/channel/send 文本命令接入（IM/CLI 等无 UI 端；当前会话绑定 + /new /stop /compact /clear /status /help）
 │   │   │   ├── config.js          /api/config 读写（含 api_key/password 脱敏）
 │   │   │   ├── platforms.js       /api/platforms/balance 余额查询
 │   │   │   ├── skills.js          /api/skills 技能文件管理
@@ -147,7 +148,7 @@ graph LR
 5. `engine.setModelPool(cfg, db, bus); engine.init()`：按 cfg.models 重建 `model_pool` 槽位表；会话状态归位（active/遗留 queued → held，绑定不清）；指向已删/禁用模型的绑定在下次发言时由 `ensureBinding` 自动改选。
 6. `scheduler.start(engine)`：启动定时任务轮询（30s 一次，`unref`）。**必须在 engine.init() 之后**——先让会话状态归位，首轮 tick 才看不到脏状态（见 §5.12）。
 7. `createAuth(cfg)` 装配登录中间件；未配 `auth.users` 则认证关闭（可交给前置 nginx-proxy basic auth）。
-8. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`）。
+8. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`、`/api/channel`）。
 9. `mcp.init(cfg).then(...)`：对每个 MCP 服务 initialize → tools/list，发现的工具存在 `mcp` 模块内。
 10. `skills.listSkills(...)` → `llm.setSkillListText(...)` 快照注入 system prompt（`llm.js`）。
 11. `server.listen(PORT)`，打 startup 行：workspace_root / data_root / models / mcp_servers / auth / log_level。
@@ -197,6 +198,11 @@ scheduled_tasks   session_id PK (FK sessions, ON DELETE CASCADE) / cron_expr /
                   # 定时任务：每会话至多一个（session_id 主键兼防重），按 next_run_at 索引；
                   # 创建只经 AI 工具 schedule；频次/提示词可在会话详情弹窗改（PATCH /:id/schedule，
                   # 改频次后端重校验并重算 next_run_at）；删除走 CASCADE 或 DELETE /:id/schedule（见 §5.12）
+
+channel_sessions  user + channel 复合 PK / session_id / updated_at
+                  # 文本命令接入端（routes/channel.js）的「当前会话」映射：接入端无会话列表 UI，
+                  # 普通消息与 /new 等命令都路由到绑定的会话；无外键，删会话后懒解析自愈；
+                  # /api/channel/send 是唯一读写方，Web 路由不碰这张表
 ```
 
 **session.status 状态机**（`engine.js`，无排队版）：
@@ -456,6 +462,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 | `/api/platforms` | `routes/platforms.js` | `GET /balance?pi=&ki=` 余额 |
 | `/api/system` | `routes/system.js` | `GET /status` + `/restart?force=...`（原 `model_profiles` 可用名单字段已删，前端无消费方） |
 | `/api/profile` | `routes/profile.js` | `GET /` 读画像、`PUT /` 保存（三字段 + enabled）；按 `req.user` 隔离，逻辑全在 `user-profile.js`（快照冻结见 engine `createSession`/`clearSessionMessages`，提取见 `enterExecuting`） |
+| `/api/channel` | `routes/channel.js` | `POST /send {channel, text}` 文本命令接入端（IM/CLI 等无 UI 客户端，走 Basic/cookie 鉴权）：命令仅在本入口解析（Web 消息路由不受影响，防误伤路径/代码文本）；严格匹配白名单 `/new[文本] /stop /compact /clear /status /help`，未知斜杠词回提示、不像命令的当普通消息；(user,channel) 经 `channel_sessions` 表绑定当前会话（普通消息无绑定自动建）；命令动作不落消息行（与 Web 按钮对称），AI 回复由接入端复用既有 SSE/详情接口获取 |
 | `/api/models` | `server.js` | 模型池（在用会话数 slots_used / 在用会话列表，非独占展示）+ token 用量 |
 | `/api/health` | `server.js` | 健康检查 |
 | `/api/login` `/api/login_restore` `/api/logout` `/api/password` `/api/me` | `auth.js` | 认证路由（认证前） |
