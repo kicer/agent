@@ -402,6 +402,10 @@ function saveTaskMedia(s, buf, kind, rawName) {
 //   3. 结论（不带 tool_calls 的 assistant_message，回合收尾）挂起到 done 再投：
 //      预算够 → 全文 + 附件卡片；放不下但 ≥2 → 降级「截断头部 + 全文写会话
 //      .md 转文件卡片」（内容零丢失）；<2 → 放弃并告警（网页端完整可见）。
+//   4. 工具调用摘要：tool_call/tool_result 事件按回合累积 digest（工具名 + 关键参数一行式，
+//      同类计数折叠、失败标 ✗、最多 8 行溢出折叠），随下一条真实投出的过程/结论消息
+//      以 pre 风格短行置顶带出（微信无字体样式，用 ·/✗ 前缀短行表达）；不单独占配额，
+//      过程被省略时顺延挂到结论；发送成功才清空，失败/未投保留。
 // 挂起用「证据」判定而非猜测：下一条 assistant_message 或 done 都会把旧的挂起结算掉。
 function attachBus() {
   if (busAttached || !bus) return;
@@ -415,7 +419,12 @@ function attachBus() {
       const bid = cs.channel.slice(3);
       if (event === 'assistant_message') enqueueDelivery(bid, () => onAssistantEvent(bid, data, sessionId));
       else if (event === 'done') enqueueDelivery(bid, () => flushHeld(bid));
-      else maybeTypingPing(bid); // 工具调用/回执→「正在输入」心跳：微信端在长工具回合里能看到 AI 还在干活
+      else {
+        // 工具调用/回执：心跳 + 摘要累积（digest 搭便车投递，见策略注释第 4 条）
+        if (event === 'tool_call') toolDigestPush(bid, data);
+        else if (event === 'tool_result') toolDigestMark(bid, data);
+        maybeTypingPing(bid); // 「正在输入」心跳：微信端在长工具回合里能看到 AI 还在干活
+      }
     } catch (e) {
       log.warn('wechat', '投递监听异常：' + msg(e));
     }
@@ -449,8 +458,8 @@ function maybeTypingPing(bid) {
 const REPLY_QUOTA = 10;        // iLink 单个 context token 的回复条数（经验值，撞墙只会多试一次）
 const PROC_HEAD_LIMIT = 5;     // 过程消息最多直发条数（用户确认：首几条有信息量）
 const CONCLUSION_RESERVE = 4;  // 过程发送的下限防线：始终给结论留这么多条
-const turnState = new Map();   // bid -> { sent, proc, omitted, held }；内存态，重启即新回合，可接受
-function resetTurn(bid) { turnState.set(bid, { sent: 0, proc: 0, omitted: 0, held: null }); return turnState.get(bid); }
+const turnState = new Map();   // bid -> { sent, proc, omitted, held, tools }；内存态，重启即新回合，可接受
+function resetTurn(bid) { turnState.set(bid, { sent: 0, proc: 0, omitted: 0, held: null, tools: [] }); return turnState.get(bid); }
 function getTurn(bid) { return turnState.get(bid) || resetTurn(bid); }
 
 // 投递前的内容归一（语义同旧 deliverNow）：errAck / 空文本 → 不可投；富文本 blocks → 占位文案。
@@ -521,15 +530,65 @@ function markSeen(b, m) {
   if (id > (b.last_msg_id || 0)) touchBinding(b.id, { last_msg_id: id });
 }
 
+// ---------- 工具调用摘要（digest） ----------
+// 关键参数白名单提取：terminal→command、fetch→url、其余→path；46 字截断，
+// write_file/edit_file 绝不把正文带进微信；解析失败静默退化为纯工具名。
+const DIGEST_MAX_LINES = 8;
+const DIGEST_ARG_LEN = 46;
+function argHint(name, args) {
+  try {
+    const a = JSON.parse(String(args || '{}')) || {};
+    const raw = name === 'terminal' ? a.command : name === 'fetch' ? a.url : a.path;
+    const v = String(raw || '').trim().replace(/\s+/g, ' ');
+    if (!v) return '';
+    return v.length > DIGEST_ARG_LEN ? v.slice(0, DIGEST_ARG_LEN) + '…' : v;
+  } catch (_) { return ''; }
+}
+function toolDigestPush(bid, data) {
+  try {
+    const st = getTurn(bid);
+    const name = String((data && data.name) || '');
+    if (!name) return;
+    const hint = argHint(name, data && data.arguments);
+    const ex = st.tools.find(t => t.name === name && t.hint === hint && !t.err);
+    if (ex) { ex.count++; if (data.id) ex.ids.push(data.id); return; }
+    st.tools.push({ name, hint, count: 1, err: false, ids: data && data.id ? [data.id] : [] });
+  } catch (_) { /* 摘要锦上添花，绝不动摇投递 */ }
+}
+function toolDigestMark(bid, data) {
+  try {
+    if (!data || !data.is_error) return;
+    const st = getTurn(bid);
+    const t = st.tools.find(x => x.ids.indexOf(data.tool_call_id) >= 0);
+    if (t) t.err = true;
+  } catch (_) { /* 同上 */ }
+}
+// 渲染但不清空：发送成功后由调用方清 st.tools；发送失败/被省略时摘要保留搭下一班。
+function peekToolDigest(st) {
+  const ts = st && st.tools;
+  if (!ts || !ts.length) return '';
+  let total = 0;
+  for (const t of ts) total += t.count;
+  const lines = [];
+  for (let i = 0; i < ts.length && lines.length < DIGEST_MAX_LINES; i++) {
+    const t = ts[i];
+    lines.push((t.err ? '✗ ' : '· ') + t.name + (t.hint ? ' ' + t.hint : '') + (t.count > 1 ? ' ×' + t.count : ''));
+  }
+  if (ts.length > lines.length) lines.push('· …另有 ' + (ts.length - lines.length) + ' 类调用');
+  return '🔧 本回合工具调用 ' + total + ' 次：\n' + lines.join('\n') + '\n\n';
+}
+
 // 过程消息：直发窗口内且投完后仍给结论留足储备才投；否则计入 omitted，并进结论的注记行。
+// 有待发工具 digest 时拼在正文前一起投（成功投递才清空；被省略时保留，搭结论便车）。
 async function deliverProcess(bid, m, sessionId) {
   const b = bindReady(bid);
   if (!b || stale(b, m)) return;
-  const content = normalizeContent(m);
+  const st = getTurn(bid);
+  let content = normalizeContent(m);
   if (!content) return;
+  content = peekToolDigest(st) + content;
   const segs = splitText(content);
   const attach = findAttachments(content, sessionId);
-  const st = getTurn(bid);
   if (st.proc >= PROC_HEAD_LIMIT || st.sent + segs.length + attach.length > REPLY_QUOTA - CONCLUSION_RESERVE) {
     st.omitted++;
     log.debug('wechat', bid + ' 过程消息并入省略（proc=' + st.proc + ' sent=' + st.sent + '）消息 ' + m.id);
@@ -538,6 +597,7 @@ async function deliverProcess(bid, m, sessionId) {
   if (!await sendSegs(b, segs)) return;
   st.sent += segs.length + await sendAttachments(b, attach);
   st.proc++;
+  st.tools = [];
   markSeen(b, m);
 }
 
@@ -547,8 +607,9 @@ async function deliverConclusion(bid, m, sessionId) {
   const b = bindReady(bid);
   if (!b || stale(b, m)) return;
   const st = getTurn(bid);
+  const digest = peekToolDigest(st);
   let content = normalizeContent(m);
-  if (st.omitted) content = '（本轮已省略 ' + st.omitted + ' 条过程消息）\n\n' + (content || '');
+  if (st.omitted || digest) content = (st.omitted ? '（本轮已省略 ' + st.omitted + ' 条过程消息）\n\n' : '') + digest + (content || '');
   if (!content) { st.omitted = 0; return; } // 只剩注记：不为「省略了什么」单独刷屏
   const segs = splitText(content);
   const attach = findAttachments(content, sessionId);
@@ -556,6 +617,7 @@ async function deliverConclusion(bid, m, sessionId) {
   if (segs.length + attach.length <= remaining) {
     if (!await sendSegs(b, segs)) return;
     st.sent += segs.length + await sendAttachments(b, attach);
+    st.tools = [];
   } else if (remaining >= 2) {
     try {
       const dir = engine.taskDirOf(sessionId);
@@ -565,6 +627,7 @@ async function deliverConclusion(bid, m, sessionId) {
       await wxbotApi('POST', '/api/deliver', { id: b.id, to: b.wx_to_user, text: head }, 15000);
       st.sent++;
       st.sent += await sendAttachments(b, [{ filename: name, b64: Buffer.from(content).toString('base64') }]);
+      st.tools = [];
       if (attach.length) log.warn('wechat', b.id + ' 结论走文件兜底，正文内 ' + attach.length + ' 个附件卡片未投（链接仍在文件里）');
     } catch (e) {
       log.warn('wechat', b.id + ' 结论溢出降级投递失败：' + msg(e));
