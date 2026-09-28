@@ -21,10 +21,8 @@ services:
       # 调用鉴权 token：两侧同一值。从 .env 读取（已 gitignore），不再硬编码进仓库；
       # 未设置则 compose 直接报错，避免静默无鉴权。生成：openssl rand -hex 32
       - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - see .env.example}
-      # 微信接入（wechat.js ↔ wxbot 服务，同 executor 模式的双向服务 token）：由 scripts/init.sh 生成并写进 .env；
-      # 未设置直接报错避免静默半启用。wxbot 容器没起也不影响 core（探活失败 = 设置页自动隐藏入口）；
-      # .env 置 WXBOT_URL= 可整体关闭微信功能。
-      - WXBOT_URL=${WXBOT_URL:-http://wxbot:8093}
+      # 微信接入
+      - WXBOT_URL=http://wxbot:8093
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
     networks:
       - agent-mcp-net
@@ -139,12 +137,11 @@ services:
     environment:
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
       - CORE_URL=http://agent-core:8090
+      - WXBOT_LOG_LEVEL=info
       - TZ=Asia/Shanghai
     volumes:
-      - ./wxbot/data:/data                       # iLink 登录凭证（每绑定一个子目录），等于微信账号权限，勿外泄
-      # 可选覆盖（端口/日志等级/占位文案）：需要时新建 ./wxbot/config.yml 再取消下行注释
-      # （不能无条件挂载：bind 单文件源不存在时 docker 会建同名目录而不是报错）
-      # - ./wxbot/config.yml:/app/config.yml:ro
+      # iLink 登录凭证（每绑定一个子目录），等于微信账号权限，勿外泄
+      - ./wxbot/data:/data
     networks:
       - agent-mcp-net
 
