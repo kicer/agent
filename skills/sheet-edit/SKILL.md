@@ -5,6 +5,16 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 # sheet-edit
 
+## 调用形式（重要）
+
+本技能通过 `skill` 工具执行，完整调用是：
+
+```json
+{"op": "run", "name": "sheet-edit", "input_args": {"action": "inspect", "file": "预算表.xlsx"}}
+```
+
+外层 `op`（固定为 run）属于 skill 工具；**下文所有 JSON 示例都是 `input_args` 的内容**，其动作键是 `action`，不要与外层 `op` 混淆。
+
 ## 何时使用
 
 - 修改表格文件中的单元格值或公式
@@ -17,15 +27,15 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 ## 工作流程
 
-1. `op=inspect` 查看表结构与公式
-2. 按需求选择 `op=apply` / `op=insert_rows` / `op=delete_rows` / `op=insert_cols` / `op=delete_cols`
+1. `action=inspect` 查看表结构与公式（注意采用返回里的 `suggested_header_row`）
+2. 按需求选择 `action=apply` / `insert_rows` / `delete_rows` / `insert_cols` / `delete_cols`
 
 ## inspect
 
 读取表结构、单元格值、公式。
 
 ```json
-{"op": "inspect", "file": "预算表.xlsx"}
+{"action": "inspect", "file": "预算表.xlsx"}
 ```
 
 参数：
@@ -45,6 +55,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
       "rows": 10,
       "cols": 7,
       "header_row": 1,
+      "suggested_header_row": 1,
       "headers": ["序号", "项目", "单位", "数量", "单价", "金额", "备注"],
       "preview": [
         [1, "管道", "米", 100, 18, {"formula": "=D3*E3"}, ""],
@@ -62,6 +73,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 要点：
 - `headers` 是表头行；合并单元格只有首个有值，其余为 `null`
+- `suggested_header_row` 是自动检测的表头行（中文表格常见「第 1 行合并标题 + 第 2 行真表头」）；与你的 `header_row` 不一致时直接采用它继续后续调用，不用自己推断
 - 公式以 `{"formula": "=..."}` 表示
 - `preview` 可能被 `limit` 截断；`formulas` 最多列 500 条（超出时 `formulas_truncated: true`）
 - `merged` 是合并区域列表（如 `["A1:G1"]`）
@@ -71,7 +83,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 ```json
 {
-  "op": "apply",
+  "action": "apply",
   "file": "预算表.xlsx",
   "changes": [
     {
@@ -123,7 +135,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 ```json
 {
-  "op": "insert_rows",
+  "action": "insert_rows",
   "file": "预算表.xlsx",
   "sheet": "明细",
   "after_match": {"项目": "顶管"},
@@ -140,7 +152,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 ```json
 {
-  "op": "delete_rows",
+  "action": "delete_rows",
   "file": "预算表.xlsx",
   "sheet": "明细",
   "match": {"项目": "顶管"},
@@ -159,7 +171,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 ```json
 {
-  "op": "insert_cols",
+  "action": "insert_cols",
   "file": "预算表.xlsx",
   "sheet": "明细",
   "after": "单价",
@@ -175,7 +187,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 ```json
 {
-  "op": "delete_cols",
+  "action": "delete_cols",
   "file": "预算表.xlsx",
   "sheet": "明细",
   "col": "备注",
@@ -207,7 +219,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 1. **match 不唯一**：多行满足条件，补充更多列条件
 2. **old 不匹配**：定位错了或数据已变，重新 inspect
-3. **表头不在第 1 行**：传 `header_row`
+3. **表头不在第 1 行（标题行+表头行结构极常见）**：看 inspect 的 `suggested_header_row`；apply/insert/delete 若把标题行误当表头，报错信息里会直接给出建议行号，按其重试即可
 4. **列名不存在**：报错会列出可用列名
 5. **sheet 不存在**：报错会列出可用 sheet 名
 6. **写入合并区域非锚点格**：报错提示改用区域左上角锚点

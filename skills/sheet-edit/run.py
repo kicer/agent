@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""sheet-edit 技能入口。接收一个 JSON 参数，分发到对应 op。"""
+"""sheet-edit 技能入口。接收一个 JSON 参数，按其中 action 键分发（旧键名 op 仍兼容）。"""
 import json
 import sys
 from pathlib import Path
@@ -33,10 +33,10 @@ def main():
         _err("input_args 必须是 JSON 对象")
         return 1
 
-    op = args.get('op')
-    handler = HANDLERS.get(op)
+    action = args.get('action') or args.get('op') or 'inspect'
+    handler = HANDLERS.get(action)
     if not handler:
-        _err(f"未知 op: {op!r}（支持: {', '.join(HANDLERS.keys())}）")
+        _err(f"未知 action: {action!r}（支持: {', '.join(HANDLERS.keys())}）")
         return 1
 
     try:

@@ -72,6 +72,7 @@ def _sheet_info(ws, name, header_row, limit):
         'rows': ws.max_row,
         'cols': ws.max_column,
         'header_row': header_row,
+        'suggested_header_row': locate.detect_header_row(ws),
         'headers': [
             _json_safe(ws.cell(header_row, c).value)
             for c in range(1, ws.max_column + 1)
