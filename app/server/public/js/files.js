@@ -120,11 +120,10 @@
     });
   })();
 
-  // 任务文件面板多选状态：Set 保留当前选中的文件路径；filesAllPaths 保留当前面板所有路径。
+  // 任务文件面板多选状态：Set 保留当前选中的文件路径（全选范围 = 当前浏览目录，见 filesVisiblePaths）。
   // 文件夹作为整体选中项存储（键加 d: 前缀），下载时由后端打包成 zip。
   const DIR_SEL_PREFIX = 'd:';
   const fileSelected = new Set();
-  let filesAllPaths = [];
   let filesTreeRoot = null; // 最近一次拉取构建的目录树（单层列表渲染与全选/有效性计算都基于它）
   let filesDirSizes = new Map(); // 目录路径('' = 根) → 其下文件递归总字节；按未过滤原始列表聚合（含隐藏的 .tmp/.venv）
   let filesCurDir = '';     // 当前浏览目录（相对任务根；'' = 根）。面包屑 + 单层列表的游标
@@ -149,6 +148,12 @@
     let out = node.files.map(f => f.filename);
     for (const d of node.dirs.values()) out = out.concat(filesUnderDir(d));
     return out;
+  }
+  // 全选的作用域 = 当前浏览目录下的全部文件（递归含其子文件夹，等价于逐个勾选这些文件夹行）。
+  // 不能再用全任务树的扁平列表：在子文件夹里点全选会把根下其它文件也选上，批量删除会清空整个任务目录。
+  function filesVisiblePaths() {
+    const node = filesNodeAt(filesCurDir);
+    return node ? filesUnderDir(node) : [];
   }
   // 树中全部目录节点（父在前），附各自包含的文件列表
   function collectDirNodes(node, out) {
@@ -209,7 +214,8 @@
 
   function updateFilesFooter() {
     const n = fileSelected.size;
-    const total = filesAllPaths.length;
+    const vis = filesVisiblePaths();
+    const total = vis.length; // 全选按钮只看当前目录：无文件则禁用
     const effCount = effectiveSelection().length;
     const countEl = $('files-count');
     const dlBtn = $('files-bulk-download');
@@ -225,25 +231,31 @@
       togBtn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
       togBtn.tabIndex = disabled ? -1 : 0;
       let state = 'none';
-      if (total > 0 && filesAllPaths.every(isFileEffectivelySelected)) state = 'all';
-      else if (n > 0) state = 'some';
+      if (total > 0 && vis.every(isFileEffectivelySelected)) state = 'all';
+      else if (vis.some(isFileEffectivelySelected)) state = 'some';
       togBtn.dataset.state = state;
-      togBtn.setAttribute('aria-checked', state === 'all' ? 'true' : (n > 0 ? 'mixed' : 'false'));
+      togBtn.setAttribute('aria-checked', state === 'all' ? 'true' : (state === 'some' ? 'mixed' : 'false'));
       togBtn.title = state === 'all' ? '取消全选' : '全选';
       togBtn.setAttribute('aria-label', state === 'all' ? '取消全选' : '全选');
     }
   }
 
-  // 全选 / 取消全选：依据当前状态决定。全部选中 → 取消；否则 → 选中全部
+  // 全选 / 取消全选：只作用于当前浏览目录（递归含子文件夹）。全部选中 → 取消；否则 → 选中全部。
+  // 取消时仅清除与本目录相关的选中项：目录内的单项/子目录键，以及整体覆盖本目录的祖先勾选键。
   function toggleSelectAll() {
-    const total = filesAllPaths.length;
-    if (total === 0) return;
+    const vis = filesVisiblePaths();
+    if (vis.length === 0) return;
     const togBtn = $('files-toggle-all');
     if (togBtn && togBtn.getAttribute('aria-disabled') === 'true') return;
-    if (filesAllPaths.every(p => fileSelected.has(p))) {
-      fileSelected.clear();
+    if (vis.every(isFileEffectivelySelected)) {
+      const prefix = filesCurDir ? filesCurDir + '/' : '';
+      for (const k of Array.from(fileSelected)) {
+        const p = isDirSelKey(k) ? selDirPath(k) : k;
+        // p 在本目录内（单项文件或被勾选的子目录），或 p 是覆盖本目录的祖先整选键（如进入 sub 前勾了 d:sub）
+        if (p.startsWith(prefix) || (prefix && prefix.startsWith(p + '/'))) fileSelected.delete(k);
+      }
     } else {
-      for (const p of filesAllPaths) fileSelected.add(p);
+      for (const p of vis) fileSelected.add(p);
     }
     // 同步文件行与目录头勾选框的视觉状态
     refreshFileSelStates();
@@ -390,7 +402,6 @@
     if (!state.sessionId) return;
     // 重新拉取前清空旧选择，避免脏数据遗留
     fileSelected.clear();
-    filesAllPaths = [];
     filesTreeRoot = null;
     updateFilesFooter();
     try {
@@ -399,8 +410,6 @@
       const files = await req('GET', '/api/sessions/' + state.sessionId + '/files?dirs=1' + hiddenQ);
       // 会话级 .tmp（executor 的共享 /tmp 落盘处）与 .venv（Python 虚拟环境）不属于任务产物：默认隐藏（老后端兼容兑底；新版关彩蛋时服务端已不返回 dot 项）
       const shown = filesShowHidden ? files : files.filter(f => !/^(\.tmp|\.venv)(\/|$)/.test(String(f.filename)));
-      // 目录标记行不参与选中/全选/计数，只用来铺树（空文件夹可见）
-      filesAllPaths = shown.filter(f => !(f.dir === true || /\/$/.test(String(f.filename)))).map(f => f.filename);
       // 重建目录树后只渲染当前目录这一层(后端已按时间倒序,组内再排一次防旧排序缓存)
       filesTreeRoot = buildFilesTree(shown);
       // 总大小按原始列表（含 .tmp/.venv）聚合：目录标记行无字节量跳过；文件把 size 记到每一级祖先目录（根 = ''）
@@ -590,6 +599,7 @@
         if (e.target.closest('.file-check')) { toggleDirSelect(dp); return; }
         filesCurDir = dp;
         renderFilesDir();
+        updateFilesFooter(); // 全选作用域随浏览目录变化，刷新底部勾选态
         return;
       }
       const row = e.target.closest('.file-row');
@@ -641,6 +651,7 @@
     if (!c) return;
     filesCurDir = c.dataset.path;
     renderFilesDir();
+    updateFilesFooter(); // 同上：面包屑回跳也重算全选态
   });
 
   // 彩蛋：点面板标题旁的总大小文本 = 切换隐藏文件（dot 项含 .tmp/.venv）显隐。
