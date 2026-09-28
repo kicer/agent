@@ -414,6 +414,19 @@ for (const ent of fs.readdirSync(CONFIG.bot.storage_dir, { withFileTypes: true }
   if (ent.isDirectory() && ID_RE.test(ent.name)) createInstance(ent.name);
 }
 
-app.listen(CONFIG.server.port, "0.0.0.0", () => {
-  console.log(`[wxbot] listening on :${CONFIG.server.port}, core=${CONFIG.core.url || "(未配置)"}, log_level=${CONFIG.bot.log_level}, 恢复实例 ${instances.size} 个`);
+const httpServer = app.listen(CONFIG.server.port, "0.0.0.0", () => {
+  console.log(`[wxbot] listening on :${CONFIG.server.port}, core=${CONFIG.core.url || "(未配置)"}, log_level=${CONFIG.bot.log_level}, 恢复实例 ${instances.size} 个}`);
 });
+
+// 优雅停机（对齐 executor/server.js 的 shutdown 模式）：此前未注册任何信号处理，bot.run() 的
+// 长轮询与 SDK 长连接吊着事件循环，docker stop/restart 只能等满 10s 宽限期吃 SIGKILL，重启肉眼可见地慢。
+// 现自接管：停掉全部实例（保留登录凭证，下次启动照常恢复）、关 HTTP，3s 兜底定时器无条件退出——
+// stop 自身若悬挂（SDK 第三方黑盒）兜底是唯一可信保险；最坏停机 3s。
+function shutdown(sig) {
+  console.log(`[wxbot] 收到 ${sig}，停止服务`);
+  for (const id of Array.from(instances.keys())) destroyInstance(id, false);
+  httpServer.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
