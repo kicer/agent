@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""sheet-edit 技能入口。接收一个 JSON 参数，按其中 action 键分发（旧键名 op 仍兼容）。"""
+"""sheet 技能入口。接收一个 JSON 参数，按其中 action 键分发（旧键名 op 仍兼容）。"""
 import json
 import sys
 from pathlib import Path

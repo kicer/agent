@@ -63,14 +63,17 @@ async function listSkills(ctx) {
     if (!fs.existsSync(mdPath)) continue;
     let content;
     try { content = await fsp.readFile(mdPath, 'utf8'); } catch (_) { continue; }
-    out.push({ name: e.name, description: extractDescription(content) });
+    // frontmatter 可选 required: true —— 进 system prompt 时行首标 **required**（配合模板里的强制条款）
+    let required = false;
+    try { required = parseFrontMatter(content).required === true; } catch (_) {}
+    out.push({ name: e.name, description: extractDescription(content), required: required });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }
 
 // ---------- system prompt 注入：可用技能列表 ----------
-// 把技能列表格式化成 “## Available Skills” 段落（每行 `- 名字: 描述`；
+// 把技能列表格式化成 “## Available Skills” 段落（每行 `- [**required** ]名字: 描述`；
 // listSkills 已按名字 localeCompare 排序，行序恒定，不破坏前缀缓存；
 // 参数查 op=get，执行 op=run；描述如需实时复核仍可查 op=list）。
 // 由 llm.setSkillListText 拼入 system prompt：启动时快照（server.js）与技能变更后
@@ -81,7 +84,7 @@ function formatSkillListForPrompt(list) {
   const lines = list.map(s => {
     // 描述压成单行：YAML 块标量可能带换行，不能让它撞破列表结构
     const desc = String(s.description || '').replace(/\s*\n\s*/g, ' ').trim();
-    return '- ' + s.name + (desc ? ': ' + desc : '');
+    return (s.required ? '- **required** ' : '- ') + s.name + (desc ? ': ' + desc : '');
   });
   return '## Available Skills\n' + lines.join('\n');
 }

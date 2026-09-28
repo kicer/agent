@@ -1,4 +1,4 @@
-"""sheet-edit 的各个 op 实现。"""
+"""sheet 的各个 op 实现。"""
 import datetime
 import re
 import shutil
@@ -128,11 +128,20 @@ def apply(args):
             plan.extend(_resolve_change(wb, ch, header_row))
 
         for item in plan:
-            if not locate.value_eq(item['expected_old'], item['actual_old']):
+            # csv 往返的空串视同空格；省略 old = 空格断言，给了 old = 精确校验
+            act = None if item['actual_old'] == '' else item['actual_old']
+            exp = item['expected_old']
+            if exp is _MISSING:
+                if act is not None:
+                    raise UserError(
+                        f"目标格非空，拒绝无 old 写入: {item['sheet']} 第 {item['row']} 行 "
+                        f"'{item['col_name']}' 当前为 {act!r}（填空应保证目标为空；改已有值必须提供 old）"
+                    )
+            elif not locate.value_eq(exp, act):
                 raise UserError(
                     f"旧值不匹配: {item['sheet']} 第 {item['row']} 行 "
-                    f"'{item['col_name']}': 期望 {item['expected_old']!r}, "
-                    f"实际 {_json_safe(item['actual_old'])!r}"
+                    f"'{item['col_name']}': 期望 {exp!r}, "
+                    f"实际 {_json_safe(act)!r}"
                 )
 
         before = _snapshot(wb)
@@ -209,6 +218,9 @@ def _resolve_change(wb, ch, header_row):
 
 _ADDR_RE = re.compile(r'^\$?([A-Za-z]{1,3})\$?(\d{1,7})$')
 
+# set/cells 的 old 缺省哨兵：省略 old = 断言目标格当前为空再写入（填空）；改已有值必须显式 old。
+_MISSING = object()
+
 
 def _resolve_cells(ws, sheet, cells_spec):
     """地址模式：cells = {"C5": {"old": ..., "new": ...}, ...}。多级表头等列名不可用场景的正经出口，
@@ -227,8 +239,8 @@ def _resolve_cells(ws, sheet, cells_spec):
 
 
 def _mk_item(ws, sheet, row, col, label, spec, match_info):
-    if not isinstance(spec, dict) or 'old' not in spec or 'new' not in spec:
-        raise UserError(f"'{label}' 的设值必须是 {{\"old\": ..., \"new\": ...}} 格式")
+    if not isinstance(spec, dict) or 'new' not in spec:
+        raise UserError(f"'{label}' 的设值必须是 {{\"new\": ..., \"old\": 可选...}} 格式")
     actual = ws.cell(row, col).value
     if isinstance(actual, ArrayFormula):
         raise UserError(
@@ -244,7 +256,7 @@ def _mk_item(ws, sheet, row, col, label, spec, match_info):
         'col': col,
         'col_name': label,
         'match': match_info,
-        'expected_old': spec['old'],
+        'expected_old': spec['old'] if 'old' in spec else _MISSING,
         'actual_old': actual,
         'new': new,
     }

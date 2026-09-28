@@ -1,16 +1,17 @@
 ---
-name: sheet-edit
-description: 结构化修改表格文件。内容定位（列名 + 值），最小改动。支持改值、改公式、插入/删除行列，公式引用自动调整。
+name: sheet
+description: 表格文件（xls/xlsx/csv/ods）的读取与安全修改。inspect 看结构/公式/表头定位；apply 按「列名+值」或 cells 地址最小改动，自带 old 校验、全簿逐格自检、公式引用调整与自动重算。不用于新建工作簿、图表生成。
+required: true
 ---
 
-# sheet-edit
+# sheet
 
 ## 调用形式（重要）
 
 本技能通过 `skill` 工具执行，完整调用是：
 
 ```json
-{"op": "run", "name": "sheet-edit", "input_args": {"action": "inspect", "file": "预算表.xlsx"}}
+{"op": "run", "name": "sheet", "input_args": {"action": "inspect", "file": "预算表.xlsx"}}
 ```
 
 外层 `op`（固定为 run）属于 skill 工具；**下文所有 JSON 示例都是 `input_args` 的内容**，其动作键是 `action`，不要与外层 `op` 混淆。
@@ -112,13 +113,14 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
   "changes": [
     {"sheet": "总表", "cells": {
       "D4": {"old": 157, "new": 190},
-      "F4": {"old": 120, "new": 150}
+      "H4": {"new": "=D4*0.9"}
     }}
   ]
 }
 ```
 
 - 地址从 inspect 的 `preview`（含列坐标提示）/`formulas` 里数出来；允许可选 `$`（`$D$4` 同 `D4`）
+- 每个地址的 `old` 同样可选（省略 = 空格断言），与 `set` 语义一致
 - old 校验、合并区防护、全簿逐格自检、LO 重算与列名模式**完全同源**，不是降级通道
 
 ### 定位
@@ -135,7 +137,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 {"set": {"单价": {"old": 157, "new": 180}}}
 ```
 
-`old` 必须与实际值一致，否则整体报错，不做任何改动。
+`old` 可省：**省略 = 断言目标格当前为空再写入**（填空/补列/补公式场景）；改已有值必须给 `old`，不一致则整体报错、不做任何改动。
 
 ### 改公式
 

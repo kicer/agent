@@ -1,4 +1,4 @@
-"""sheet-edit 内部库。"""
+"""sheet 内部库。"""
 
 
 class UserError(Exception):
