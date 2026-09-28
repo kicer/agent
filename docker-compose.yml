@@ -24,12 +24,8 @@ services:
       # 微信接入
       - WXBOT_URL=http://wxbot:8093
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
-      - VIRTUAL_HOST=agent.ai.foresh.com
-      - VIRTUAL_PORT=8090
-      - CERT_NAME=default
     networks:
       - agent-mcp-net
-      - my-app-network
 
   # 技能准备（一次性，跑完退出）：把各技能的“运行期可变”依赖落到宿主 ./skills——
   # requirements.txt → 先离线探测，只把镜像缺的包装进共享 deps 目录（镜像已带的不重复装）；
@@ -142,8 +138,6 @@ services:
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
       - CORE_URL=http://agent-core:8090
       - WXBOT_LOG_LEVEL=info
-      # 出口 markdown 纯文化开关：默认空=不剥（微信已支持渲染）；微信端格式翻车时改成 1 恢复旧行为
-      - WXBOT_STRIP_MARKDOWN=${WXBOT_STRIP_MARKDOWN:-}
       - TZ=Asia/Shanghai
     volumes:
       # iLink 登录凭证（每绑定一个子目录），等于微信账号权限，勿外泄
@@ -160,5 +154,3 @@ networks:
   agent-mcp-net:
     name: agent-mcp-net
     driver: bridge
-  my-app-network:
-    external: true
