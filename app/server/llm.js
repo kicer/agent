@@ -123,12 +123,16 @@ function cachedDecodeBlocks(session, row) {
 
 // 将 DB 消息行转为 OpenAI messages 数组（不含 system，由调用方拼接）。
 // 图片两种形态：旧库/用户粘贴附件的 image_url 块（data: URL）原样透传；
-// 新版 read_file 读图存的是 image_ref 块（{rel}，指向任务目录 .imgcache/ 产物），
-// 发送前用 mintUrl(rel)（engine 传入的公网链现签回调）换成 image_url 外链块，
+// 新版 read_file 读图存的是 image_ref 块（{rel}，指向任务目录 .imgcache/ 产物）。
+// tool 回执里的未消费图不放在回执内发送——tool 角色带 image_url 非标准形态，
+// 大量 OpenAI 兼容上游会整批忽略或只认批次最后一张，模型看不到图却见回执写着
+// 「已回传」，会反复 read_file 补看（死循环烧 token，见多模态回退复盘）；
+// 故回执降级为纯文本，图块现签成 image_url（mintUrl 公网链回调）后统一并入
+// 该批回执之后的一条 user 消息（user 角色各家通吃），每张图前配一行对应回执文字；
 // 签不到（base_url 未配等）降级为文字占位，绝不把 image_ref 这种非标准块发上游。
-// 省 token：图块仅在其位于最后一条 assistant 消息之后（模型尚未对它回复）时保留；
-// 之前的视为已消费，发请求时替换为文字标记。DB 始终存全量：UI 历史照常渲染图片，
-// 模型如需重看可再次 read_file（新消息在尾部，会重新携带图片）。
+// 省 token：图块仅在其位于最后一条 assistant 消息之后（模型尚未对它回复）时携带；
+// 之前的视为已消费，发请求时替换为文字标记（措辞不再催促重读）。DB 始终存全量：
+// UI 历史照常渲染图片，模型如需重看可再次 read_file（新回执在尾部，会重新携带图片）。
 // 压缩摘要相关行（见 engine.runLoopInner / summarizeContext）：
 // - type='summary'（assistant，收尾答复）：不跳过。它是压缩后后续轮次的上下文起点，
 //   正常以 assistant 历史行发给模型；压缩收尾时打此标。
@@ -171,6 +175,11 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
   history.forEach((row, i) => {
     if (row.role === 'assistant' && !row.tool_calls) lastClosingAssistant = i;
   });
+  // 未消费图片的暂存区：tool 回执降级为纯文本，图块收集到这里，
+  // 循环结束后合并成一条 user 消息发送（顺序约束：天然落在该批全部回执之后、
+  // 且是模型下一次的直接输入，assistant→tool 回执的紧邻约束不被打断）。
+  const pendingImages = [];
+  let imgSeq = 0;
   history.forEach((row, i) => {
       // archived：UI 可见，但不进入模型上下文（节省 token）
       if (row.type === 'archived') return;
@@ -215,13 +224,27 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
     if (blocks) {
       if (i < lastAssistant) {
         content = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n') +
-          '\n[图片数据已省略：模型此前已识别过本图；如需重新查看请再次调用 read_file]';
+          '\n[图片数据已省略：本图已随上一条回执发送过，不再重复携带；若你当时未能识别其内容，请直接告知用户，勿反复重读同一文件]';
+      } else if (row.role === 'tool') {
+        // 未消费的图：回执只留文字，图块挪进批次后的 user 合并消息（见 pendingImages）
+        const texts = blocks.filter(b => b && b.type === 'text').map(b => b.text);
+        content = texts.join('\n');
+        for (const b of blocks) {
+          if (!b || (b.type !== 'image_ref' && b.type !== 'image_url')) continue;
+          // 每张图配一行对应回执说明（回执首行含文件名与压缩信息），模型能对上号
+          pendingImages.push({ type: 'text', text: '[图片 ' + (++imgSeq) + '，对应回执] ' + ((texts[0] || 'read_file 图片回传').split('\n')[0]) });
+          if (b.type === 'image_url') { pendingImages.push(b); continue; } // 旧库内联 data: URL 原样
+          const url = mintUrl ? mintUrl(b.rel) : null;
+          pendingImages.push(url ? { type: 'image_url', image_url: { url } }
+            : { type: 'text', text: '[图片外链不可用：未能取得图片内容，请直接告知用户，勿反复重读同一文件]' });
+        }
       } else {
-        // 未消费：image_ref → 现签公网外链（每次请求重签，不过期）；其余块（含旧 data: URL）原样
+        // user 行（粘贴附件/旧形态）：image_url 块（data: URL）原样；image_ref → 现签公网外链
+        //（每次请求重签，不过期）
         content = blocks.map(b => {
           if (!b || b.type !== 'image_ref') return b;
           const url = mintUrl ? mintUrl(b.rel) : null;
-          return url ? { type: 'image_url', image_url: { url } } : { type: 'text', text: '[图片外链不可用：请重新读取]' };
+          return url ? { type: 'image_url', image_url: { url } } : { type: 'text', text: '[图片外链不可用：请直接告知用户，勿反复重读同一文件]' };
         });
       }
     }
@@ -231,6 +254,14 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
       messages.push({ role: row.role, content });
     }
   });
+  // 该批未消费图片合并发送：一条 user 消息带全部图块，逐图前置对应回执标签
+  if (pendingImages.length) {
+    messages.push({
+      role: 'user',
+      content: [{ type: 'text', text: '[系统] 以上工具回执对应的图片内容如下（read_file 回传，按回执顺序）：' }]
+        .concat(pendingImages),
+    });
+  }
   return messages;
 }
 

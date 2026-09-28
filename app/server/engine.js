@@ -689,8 +689,9 @@ async function runLoopInner(sessionId, run) {
         }
       }
       // 工具可返回 {text, image_rel}（read_file 读图且模型支持 vision，压缩产物在 .imgcache/）：
-      // 落库时以 image_ref 内容块拼进 tool 消息（哨兵 JSON，见 llm.js encodeBlocks），
-      // buildMessages 发请求前现签成公网外链的 image_url 块；前端工具卡走带 cookie 的下载路由渲染。
+      // 落库时以 image_ref 内容块拼进 tool 消息（哨兵 JSON，见 llm.js encodeBlocks）；
+      // buildMessages 发请求前把未消费的图现签成公网外链 image_url 块，并入该批回执之后的
+      // 一条 user 消息发送（tool 角色带图非标准形态，上游支持度差）；前端工具卡走带 cookie 的下载路由渲染。
       let outText;
       let imageRel = null;
       if (output && typeof output === 'object' && output.image_rel) {
@@ -700,6 +701,18 @@ async function runLoopInner(sessionId, run) {
         outText = String(output == null ? '' : output);
       }
       if (run.cancelled && !isError) outText = (outText ? outText + '\n' : '') + '（用户已终止任务）';
+      // 死循环护栏：同一回合内同一张图只投递一次——若上游没认图，模型会一轮轮重读同一文件、
+      // 每轮都签新图烧 token；同回合再读同图只回文字提示，不再携带图片（run 随回合结束销毁，
+      // 新回合/新用户消息自动重置额度，正常追问重看不受影响）。
+      if (imageRel) {
+        if (!run.imgDelivered) run.imgDelivered = new Set();
+        if (run.imgDelivered.has(imageRel)) {
+          outText += '\n[该图片本回合已投递过，不再重复携带；若你未看到它，请直接告知用户，勿反复重读同一文件]';
+          imageRel = null;
+        } else {
+          run.imgDelivered.add(imageRel);
+        }
+      }
       log.debug('tool', sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText);
       const toolContent = imageRel
         ? encodeBlocks([
