@@ -402,10 +402,11 @@ function saveTaskMedia(s, buf, kind, rawName) {
 //   3. 结论（不带 tool_calls 的 assistant_message，回合收尾）挂起到 done 再投：
 //      预算够 → 全文 + 附件卡片；放不下但 ≥2 → 降级「截断头部 + 全文写会话
 //      .md 转文件卡片」（内容零丢失）；<2 → 放弃并告警（网页端完整可见）。
-//   4. 工具调用摘要：tool_call/tool_result 事件按回合累积 digest（工具名 + 关键参数一行式，
-//      同类计数折叠、失败标 ✗、最多 8 行溢出折叠），随下一条真实投出的过程/结论消息
-//      以 pre 风格短行置顶带出（微信无字体样式，用 ·/✗ 前缀短行表达）；不单独占配额，
-//      过程被省略时顺延挂到结论；发送成功才清空，失败/未投保留。
+//   4. 工具台账：tool_call/tool_result 只往 st.tools 记账（✓/✗ 状态前缀 + 工具名 + 参数原文
+//      不解析；同类计数折叠、失败行尾 (failed)）。攒满一屏（8 行）→ 独立「### 工具调用 +
+//      代码块」消息走串行队列即发（占 1 条配额）；done 时零头补发（纯工具轮兜底也在此，
+//      不依赖任何文本消息）；预算保不住结论储备、或直投失败 → 降级搭结论「--- 尾段」便车；
+//      失败不插队（用户确认：微信端重结果轻过程）。过程正文不再携带工具信息（单一出口防重复）。
 // 挂起用「证据」判定而非猜测：下一条 assistant_message 或 done 都会把旧的挂起结算掉。
 function attachBus() {
   if (busAttached || !bus) return;
@@ -420,9 +421,11 @@ function attachBus() {
       if (event === 'assistant_message') enqueueDelivery(bid, () => onAssistantEvent(bid, data, sessionId));
       else if (event === 'done') enqueueDelivery(bid, () => flushHeld(bid));
       else {
-        // 工具调用/回执：心跳 + 摘要累积（digest 搭便车投递，见策略注释第 4 条）
-        if (event === 'tool_call') toolDigestPush(bid, data);
-        else if (event === 'tool_result') toolDigestMark(bid, data);
+        // 工具调用/回执：心跳 + 台账记账；攒满一屏即经串行队列独立发台账（见策略注释第 4 条）
+        if (event === 'tool_call') {
+          toolDigestPush(bid, data);
+          if (getTurn(bid).tools.length >= DIGEST_MAX_LINES) enqueueDelivery(bid, () => flushLedger(bid, DIGEST_MAX_LINES));
+        } else if (event === 'tool_result') toolDigestMark(bid, data);
         maybeTypingPing(bid); // 「正在输入」心跳：微信端在长工具回合里能看到 AI 还在干活
       }
     } catch (e) {
@@ -456,7 +459,7 @@ function maybeTypingPing(bid) {
 
 // ---------- 回合预算状态与投递分配 ----------
 const REPLY_QUOTA = 10;        // iLink 单个 context token 的回复条数（经验值，撞墙只会多试一次）
-const PROC_HEAD_LIMIT = 5;     // 过程消息最多直发条数（用户确认：首几条有信息量）
+const PROC_HEAD_LIMIT = 1;     // 直发的开头过程消息条数（用户确认：1 条「我打算怎么做」足够，工具信息归台账）
 const CONCLUSION_RESERVE = 4;  // 过程发送的下限防线：始终给结论留这么多条
 const turnState = new Map();   // bid -> { sent, proc, omitted, held, tools }；内存态，重启即新回合，可接受
 function resetTurn(bid) { turnState.set(bid, { sent: 0, proc: 0, omitted: 0, held: null, tools: [] }); return turnState.get(bid); }
@@ -506,10 +509,13 @@ async function onAssistantEvent(bid, m, sessionId) {
   st.held = { m, sessionId };
 }
 
-// done（回合收尾/停止/清空都会发）：把挂起的最后一条按「结论」结算——保底投递路径。
+// done（回合收尾/停止/清空都会发）：先补发台账零头（纯工具轮兜底也在此），
+// 再把挂起的最后一条按「结论」结算——保底投递路径。
 async function flushHeld(bid) {
   const st = turnState.get(bid);
-  if (!st || !st.held) return;
+  if (!st) return;
+  await flushLedger(bid);
+  if (!st.held) return;
   const held = st.held;
   st.held = null;
   await deliverConclusion(bid, held.m, held.sessionId);
@@ -530,18 +536,16 @@ function markSeen(b, m) {
   if (id > (b.last_msg_id || 0)) touchBinding(b.id, { last_msg_id: id });
 }
 
-// ---------- 工具调用摘要（digest） ----------
-// 关键参数白名单提取：terminal→command、fetch→url、其余→path；46 字截断，
-// write_file/edit_file 绝不把正文带进微信；解析失败静默退化为纯工具名。
+// ---------- 工具台账（ledger） ----------
+// 参数原文按固定长度截取，不做 JSON 解析、不按工具选字段；压平换行只为防撑破一行。
+// write_file 等正文类参数最多露出前 DIGEST_ARG_LEN 字。
 const DIGEST_MAX_LINES = 8;
-const DIGEST_ARG_LEN = 46;
-function argHint(name, args) {
+const DIGEST_ARG_LEN = 120;    // 代码块在微信端横向滚动不折行，参数尽量露全，仅防超长撑爆消息体
+function argHint(args) {
   try {
-    const a = JSON.parse(String(args || '{}')) || {};
-    const raw = name === 'terminal' ? a.command : name === 'fetch' ? a.url : a.path;
-    const v = String(raw || '').trim().replace(/\s+/g, ' ');
+    const v = String(args || '').replace(/\s+/g, ' ').trim();
     if (!v) return '';
-    return v.length > DIGEST_ARG_LEN ? v.slice(0, DIGEST_ARG_LEN) + '…' : v;
+    return v.length > DIGEST_ARG_LEN ? v.slice(0, DIGEST_ARG_LEN) + '...' : v;
   } catch (_) { return ''; }
 }
 function toolDigestPush(bid, data) {
@@ -549,7 +553,7 @@ function toolDigestPush(bid, data) {
     const st = getTurn(bid);
     const name = String((data && data.name) || '');
     if (!name) return;
-    const hint = argHint(name, data && data.arguments);
+    const hint = argHint(data && data.arguments);
     const ex = st.tools.find(t => t.name === name && t.hint === hint && !t.err);
     if (ex) { ex.count++; if (data.id) ex.ids.push(data.id); return; }
     st.tools.push({ name, hint, count: 1, err: false, ids: data && data.id ? [data.id] : [] });
@@ -563,30 +567,59 @@ function toolDigestMark(bid, data) {
     if (t) t.err = true;
   } catch (_) { /* 同上 */ }
 }
-// 渲染但不清空：发送成功后由调用方清 st.tools；发送失败/被省略时摘要保留搭下一班。
+// 台账行：✓/✗ 状态前缀（失败在行首才醒目）+ 工具名 + 参数原文 + 计数折叠（独立直发与结论尾段两处共用）。
+const ledgerLine = t => '- ' + (t.err ? '✗' : '✓') + ' ' + t.name + (t.hint ? ' ' + t.hint : '') + (t.count > 1 ? ' x' + t.count : '');
+// 降级路径的渲染（peek 不清空）：台账单发预算不足/失败时搭结论尾段，结论投递成功后调用方清空。
+// 若 wxbot 开 WXBOT_STRIP_MARKDOWN 回退纯文化，stripMarkdown 会把围栏/标题降为普通行，信息不丢。
 function peekToolDigest(st) {
   const ts = st && st.tools;
   if (!ts || !ts.length) return '';
-  let total = 0;
-  for (const t of ts) total += t.count;
-  const lines = [];
-  for (let i = 0; i < ts.length && lines.length < DIGEST_MAX_LINES; i++) {
-    const t = ts[i];
-    lines.push((t.err ? '✗ ' : '· ') + t.name + (t.hint ? ' ' + t.hint : '') + (t.count > 1 ? ' ×' + t.count : ''));
+  const lines = ts.slice(0, DIGEST_MAX_LINES).map(ledgerLine);
+  if (ts.length > lines.length) lines.push('- ...等 ' + (ts.length - lines.length) + ' 类');
+  return '---\n\n### 工具调用\n\n```\n' + lines.join('\n') + '\n```';
+}
+// 正文与 digest 一起分段：正文照旧 splitText，digest 原子追尾——markdown 代码围栏不能被
+// 1800 字分段拦腰斩断；尾段能与正文同段就同段（不多占配额），放不下才单独成段。
+function digestSegs(body, digest) {
+  const segs = body ? splitText(body) : [];
+  if (!digest) return segs;
+  if (!segs.length) return [digest];
+  const joined = segs[segs.length - 1] + '\n\n' + digest;
+  if (joined.length <= 1800) segs[segs.length - 1] = joined;
+  else segs.push(digest);
+  return segs;
+}
+// 独立台账消息：一批 ≤8 行整屏渲染，无折叠（零头等下一班车，done 时补发）。
+function renderLedger(batch) {
+  return '### 工具调用\n\n```\n' + batch.map(ledgerLine).join('\n') + '\n```';
+}
+// 台账直发：mid 门槛控制节奏（中途=攒满一屏才发，done=零头都发）；预算保不住结论储备就
+// 留给结论尾段搭便车；直投失败归还队首（串行队列调度，与正文消息天然排队，无并发互踩）。
+async function flushLedger(bid, min) {
+  const st = getTurn(bid);
+  if (!st.tools.length || st.tools.length < (min || 0)) return;
+  const b = bindReady(bid);
+  if (!b) return;
+  if (st.sent + 1 > REPLY_QUOTA - CONCLUSION_RESERVE) return; // 台账是锦上添花，结论才是刚需
+  const batch = st.tools.splice(0, DIGEST_MAX_LINES);
+  try {
+    await wxbotApi('POST', '/api/deliver', { id: b.id, to: b.wx_to_user, text: renderLedger(batch) }, 15000);
+    st.sent++;
+    log.debug('wechat', bid + ' 台账直投 ' + batch.length + ' 类调用（余 ' + st.tools.length + '）');
+  } catch (e) {
+    st.tools = batch.concat(st.tools);
+    log.debug('wechat', bid + ' 台账直投失败，归还待搭结论尾段：' + msg(e));
   }
-  if (ts.length > lines.length) lines.push('· …另有 ' + (ts.length - lines.length) + ' 类调用');
-  return '🔧 本回合工具调用 ' + total + ' 次：\n' + lines.join('\n') + '\n\n';
 }
 
 // 过程消息：直发窗口内且投完后仍给结论留足储备才投；否则计入 omitted，并进结论的注记行。
-// 有待发工具 digest 时拼在正文前一起投（成功投递才清空；被省略时保留，搭结论便车）。
+// 正文不携带工具信息——台账自有出口（flushLedger 独立直发，预算不足时降级搭结论尾段），不重复。
 async function deliverProcess(bid, m, sessionId) {
   const b = bindReady(bid);
   if (!b || stale(b, m)) return;
   const st = getTurn(bid);
-  let content = normalizeContent(m);
+  const content = normalizeContent(m);
   if (!content) return;
-  content = peekToolDigest(st) + content;
   const segs = splitText(content);
   const attach = findAttachments(content, sessionId);
   if (st.proc >= PROC_HEAD_LIMIT || st.sent + segs.length + attach.length > REPLY_QUOTA - CONCLUSION_RESERVE) {
@@ -597,7 +630,6 @@ async function deliverProcess(bid, m, sessionId) {
   if (!await sendSegs(b, segs)) return;
   st.sent += segs.length + await sendAttachments(b, attach);
   st.proc++;
-  st.tools = [];
   markSeen(b, m);
 }
 
@@ -607,11 +639,12 @@ async function deliverConclusion(bid, m, sessionId) {
   const b = bindReady(bid);
   if (!b || stale(b, m)) return;
   const st = getTurn(bid);
-  const digest = peekToolDigest(st);
   let content = normalizeContent(m);
-  if (st.omitted || digest) content = (st.omitted ? '（本轮已省略 ' + st.omitted + ' 条过程消息）\n\n' : '') + digest + (content || '');
-  if (!content) { st.omitted = 0; return; } // 只剩注记：不为「省略了什么」单独刷屏
-  const segs = splitText(content);
+  if (st.omitted) content = '`以上已省略 ' + st.omitted + ' 条过程消息`\n---\n' + (content || '');
+  const digest = peekToolDigest(st);
+  if (!content && !digest) { st.omitted = 0; return; } // 只剩注记：不为「省略了什么」单独刷屏
+  const full = content ? (digest ? content + '\n\n' + digest : content) : digest; // 兑底文件/卡片用含 digest 的全文
+  const segs = digestSegs(content, digest);
   const attach = findAttachments(content, sessionId);
   const remaining = REPLY_QUOTA - st.sent;
   if (segs.length + attach.length <= remaining) {
@@ -622,11 +655,11 @@ async function deliverConclusion(bid, m, sessionId) {
     try {
       const dir = engine.taskDirOf(sessionId);
       const name = '微信回复全文-' + (Number(m.id) || now()) + '.md';
-      fs.writeFileSync(path.join(dir, name), content);
+      fs.writeFileSync(path.join(dir, name), full);
       const head = segs[0].slice(0, 1500) + '\n……内容较长，全文见附件「' + name + '」';
       await wxbotApi('POST', '/api/deliver', { id: b.id, to: b.wx_to_user, text: head }, 15000);
       st.sent++;
-      st.sent += await sendAttachments(b, [{ filename: name, b64: Buffer.from(content).toString('base64') }]);
+      st.sent += await sendAttachments(b, [{ filename: name, b64: Buffer.from(full).toString('base64') }]);
       st.tools = [];
       if (attach.length) log.warn('wechat', b.id + ' 结论走文件兜底，正文内 ' + attach.length + ' 个附件卡片未投（链接仍在文件里）');
     } catch (e) {
