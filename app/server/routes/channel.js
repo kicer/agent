@@ -3,7 +3,8 @@
 // - 命令只在 /api/channel/send 解析，不进普通消息路由——Web 上以斜杠开头的文本照常发给模型。
 //   命令是无 UI 端的按钮替代品，不是全局协议（防误伤路径/代码讨论这类合法文本）。
 // - 每个 (user, channel) 记一个「当前会话」（channel_sessions 表）：接入端没有会话列表 UI，
-//   普通消息与命令都路由到它；/new 新建并换绑，旧会话不打断、按自己状态自然走完。
+//   普通消息与命令都路由到它；/new /switch 换绑，旧会话不打断、按自己状态自然走完；
+//   /list /rename /delete /models 覆盖 Web 端其余管理操作（同 engine 函数，数据面零特殊）。
 // - 数据面零特殊：全部走 engine 既有函数（同一张 sessions/messages 表、同一 SSE），
 //   Web 端打开这些会话与普通会话无差别。
 // - 命令动作本身不落消息行（与 Web 点「终止」按钮不产生消息对称）；
@@ -64,11 +65,88 @@ function ensureSession(db, user, channel) {
   return boundSession(db, user, channel) || newSessionFor(db, user, channel, '').s;
 }
 
+// ---------- 会话列表与编号（/list /switch /delete） ----------
+// 编号 = 本列表行号，最近更新在前（排序与用户隔离同 Web 会话列表 GET /api/sessions 一致）。
+// 列表是动态的：switch/delete 回执复述目标标题，中间恰好有人新建/删除时用户能发现编号指错了对象。
+// 命令回执占 1 条微信回复额度：截 10 行，更早的会话留给网页端管理。
+const LIST_LIMIT = 10;
+
+function listedSessions(db, user) {
+  const me = String(user || '').trim();
+  const where = me ? ' WHERE user = ?' : '';
+  const args = me ? [me] : [];
+  const rows = db.prepare(
+    'SELECT id, title, model_id, status, updated_at FROM sessions' + where
+    + ' ORDER BY updated_at DESC, id DESC LIMIT ?'
+  ).all(...args, LIST_LIMIT);
+  const total = db.prepare('SELECT COUNT(*) AS n FROM sessions' + where).get(...args).n;
+  return { rows: rows, total: total };
+}
+
+// 参数解析：纯数字 = /list 编号；否则按会话 id 前缀在列表内匹配（task-20260928-3 比记编号省事）。
+function pickSession(rows, arg) {
+  if (/^\d+$/.test(arg)) {
+    const n = parseInt(arg, 10);
+    return n >= 1 && n <= rows.length ? rows[n - 1] : null;
+  }
+  const hit = rows.filter(r => String(r.id).startsWith(arg));
+  return hit.length === 1 ? hit[0] : null;
+}
+
+function shortTitle(r) {
+  const t = String(r.title || '').trim() || '未命名';
+  return t.length > 24 ? t.slice(0, 24) + '…' : t;
+}
+
+function listReply(db, user, curId) {
+  const res = listedSessions(db, user);
+  const rows = res.rows;
+  if (!rows.length) return '**会话列表**\n还没有会话：直接发条消息会自动新建';
+  const lines = rows.map((r, i) => {
+    const line = '- ' + (i + 1) + '. `' + shortTitle(r) + '` · ' + (r.model_id || '未绑模型')
+      + ' · ' + (STATUS_TEXT[r.status] || r.status) + ' · ' + fmtTime(r.updated_at);
+    return line + (r.id === curId ? ' [当前]' : '');
+  });
+  lines.push(res.total > rows.length
+    ? '共 ' + res.total + ' 个会话，只列最近 ' + rows.length + ' 个，更早的在网页端管理'
+    : '用 /switch <编号> 切换，/delete <编号> 删除');
+  return ['**会话列表**'].concat(lines).join('\n');
+}
+
+// ---------- 模型清单（/models） ----------
+// cfg.models 按 key 展开（同平台多 key 每个模型重复多份），按 id 去重保配置序；
+// enable:false 不列（bind 会被 engine 拒，列出来只会诱导白点）。上限 15 行，同样为回执占额度。
+const MODELS_LIMIT = 15;
+
+function modelChoices() {
+  const seen = new Set();
+  const out = [];
+  for (const m of (engine.getConfig() || {}).models || []) {
+    if (m.enable === false || seen.has(m.id)) continue;
+    seen.add(m.id);
+    out.push(m);
+  }
+  return out;
+}
+
+function modelsReply(ms, curModelId) {
+  if (!ms.length) return '**模型清单**\n配置里没有启用的模型（网页端设置页添加后重启）';
+  const shown = ms.slice(0, MODELS_LIMIT);
+  const lines = shown.map((m, i) => '- ' + (i + 1) + '. `' + m.id + '`'
+    + (m.vision ? ' · 支持读图' : '') + (m.id === curModelId ? ' [当前]' : ''));
+  if (ms.length > shown.length) lines.push('共 ' + ms.length + ' 个，只列前 ' + MODELS_LIMIT + ' 个');
+  lines.push('用 /models <编号> 给当前会话换模型');
+  return ['**模型清单**'].concat(lines).join('\n');
+}
+
 // ---------- 命令解析 ----------
-// 严格匹配：整条消息恰好是命令词（仅 /new 可带尾随文本）才算命令。
+// 严格匹配：整条消息恰好是命令词（ARG_CMDS 内的可带参数）才算命令。
 // 首词形如 /纯ASCII词 但不在清单 → 回「未知命令」提示、不转发模型（防弱模型就着 /hlep 演一段）；
-// 其余一律普通消息：/home/x、/a.b 这类路径代码，以及 /clear abc 这种带尾巴的（用户约定：强检查不匹配）。
-const CMDS = new Set(['new', 'stop', 'compact', 'clear', 'status', 'help']);
+// 其余一律普通消息：/home/x、/a.b 这类路径代码，以及 /clear abc 这种裸命令带尾巴的（用户约定：强检查不匹配）。
+const CMDS = new Set(['new', 'stop', 'compact', 'clear', 'status', 'help', 'list', 'switch', 'rename', 'delete', 'models']);
+// 可带参数的命令：/new 尾随文本作首条消息；/switch /delete 吃 /list 编号（或会话 id 前缀）；
+// /rename 吃新标题；/models 可带模型编号或完整 id。清单外的命令带尾巴仍按普通消息回落。
+const ARG_CMDS = new Set(['new', 'switch', 'rename', 'delete', 'models']);
 
 function parseCommand(text) {
   const t = String(text || '').trim();
@@ -78,7 +156,7 @@ function parseCommand(text) {
   const rest = sp < 0 ? '' : t.slice(sp + 1).trim();
   if (!/^[a-z][a-z0-9_-]*$/.test(head)) return { normal: true };
   if (!CMDS.has(head)) return { unknown: head };
-  if (rest && head !== 'new') return { normal: true };
+  if (rest && !ARG_CMDS.has(head)) return { normal: true };
   return { cmd: head, rest };
 }
 
@@ -87,10 +165,15 @@ function parseCommand(text) {
 const HELP_TEXT = [
   '**可用命令**',
   '- `/new [msg]` 新建会话并切换',
+  '- `/list` 会话列表',
+  '- `/switch <编号>` 切换当前会话',
+  '- `/rename <标题>` 重命名当前会话',
+  '- `/delete <编号>` 删除指定会话',
+  '- `/models [编号]` 切换知道模型',
   '- `/stop` 终止当前回合',
   '- `/compact` 压缩上下文',
   '- `/clear` 清空当前会话',
-  '- `/status` 查看当前会话状态',
+  '- `/status` 查看当前状态',
   '- `/help` 显示本帮助',
 ].join('\n');
 
@@ -148,14 +231,16 @@ function handleSend(db, opts) {
   }
 
   if (parsed.unknown) {
-    const s = boundSession(db, user, channel);
-    return { kind: 'command', reply: '/' + parsed.unknown + ' 不是有效命令，发送 /help 查看清单', session_id: s ? s.id : null };
+    const u = boundSession(db, user, channel);
+    return { kind: 'command', reply: '/' + parsed.unknown + ' 不是有效命令，发送 /help 查看清单', session_id: u ? u.id : null };
   }
 
   const cmd = parsed.cmd;
+  // 当前绑定会话：list/switch/delete 不依赖它（列表操作面向全部会话，switch 本身就是换绑），
+  // 其余命令作用于它；help/new 只用它回 session_id。
+  const s = boundSession(db, user, channel);
 
   if (cmd === 'help') {
-    const s = boundSession(db, user, channel);
     return { kind: 'command', reply: HELP_TEXT, session_id: s ? s.id : null };
   }
 
@@ -170,10 +255,70 @@ function handleSend(db, opts) {
     };
   }
 
+  if (cmd === 'list') {
+    return { kind: 'command', reply: listReply(db, user, s ? s.id : null), session_id: s ? s.id : null };
+  }
+
+  if (cmd === 'switch') {
+    if (!parsed.rest) {
+      return { kind: 'command', reply: '用法：/list 查看编号，再 /switch <编号>', session_id: s ? s.id : null };
+    }
+    const t = pickSession(listedSessions(db, user).rows, parsed.rest);
+    if (!t) {
+      return { kind: 'command', reply: '没找到 ' + parsed.rest + ' 对应的会话（编号以最新的 /list 为准）', session_id: s ? s.id : null };
+    }
+    if (s && s.id === t.id) {
+      return { kind: 'command', reply: '当前就是会话「' + shortTitle(t) + '」', session_id: t.id };
+    }
+    setBinding(db, user, channel, t.id);
+    log.info('task', tag + ' channel /switch → ' + t.id);
+    return { kind: 'command', reply: '已切到会话「' + shortTitle(t) + '」（' + (STATUS_TEXT[t.status] || t.status) + ' · ' + fmtTime(t.updated_at) + '）', session_id: t.id };
+  }
+
+  if (cmd === 'delete') {
+    if (!parsed.rest) {
+      return { kind: 'command', reply: '用法：/list 查看编号，再 /delete <编号>', session_id: s ? s.id : null };
+    }
+    const t = pickSession(listedSessions(db, user).rows, parsed.rest);
+    if (!t) {
+      return { kind: 'command', reply: '没找到 ' + parsed.rest + ' 对应的会话（编号以最新的 /list 为准）', session_id: s ? s.id : null };
+    }
+    engine.deleteSession(t.id, true); // 同 Web 默认（删除弹窗「同时删除任务文件夹」预勾选）：IM 没有二次确认 UI，对齐默认语义
+    const wasCur = s && s.id === t.id;
+    if (wasCur) db.prepare('DELETE FROM channel_sessions WHERE user = ? AND channel = ?').run(user, channel);
+    log.info('task', tag + ' channel /delete ' + t.id + '（含任务目录）' + (wasCur ? '（当前会话，已解绑）' : ''));
+    return { kind: 'command', reply: '已删除会话「' + shortTitle(t) + '」（连同任务目录，不可恢复）' + (wasCur ? '，下次发消息自动新建会话' : ''), session_id: wasCur ? null : (s ? s.id : null) };
+  }
+
+  // 裸 /models 只是看清单，不要求已有会话；带编号的在下面换绑分支里（需当前会话）
+  if (cmd === 'models' && !parsed.rest) {
+    return { kind: 'command', reply: modelsReply(modelChoices(), s ? s.model_id : ''), session_id: s ? s.id : null };
+  }
+
   // 其余命令都作用于当前会话；无绑定时不隐式新建（那不是用户点这条命令的意图）
-  const s = boundSession(db, user, channel);
   if (!s) {
     return { kind: 'command', reply: '当前没有会话，请直接发送消息', session_id: null };
+  }
+
+  if (cmd === 'rename') {
+    if (!parsed.rest) {
+      return { kind: 'command', reply: '用法：/rename <标题>', session_id: s.id };
+    }
+    const r = engine.renameSession(s.id, parsed.rest); // 空/超长/不存在校验与 Web 同源，400/404 冒给调用方
+    log.info('task', tag + ' channel /rename ' + s.id + ' → 「' + r.title + '」');
+    return { kind: 'command', reply: '已改名为「' + r.title + '」', session_id: s.id };
+  }
+
+  if (cmd === 'models') {
+    const ms = modelChoices();
+    // 编号或完整 id（如 deepseek/deepseek-flash）都认
+    const m = /^\d+$/.test(parsed.rest) ? ms[parseInt(parsed.rest, 10) - 1] : ms.find(x => x.id === parsed.rest);
+    if (!m) {
+      return { kind: 'command', reply: '没有 ' + parsed.rest + ' 对应的模型（/models 查看清单）', session_id: s.id };
+    }
+    engine.bindToSession(s.id, m.id); // 与 Web 换绑弹窗同源：回合进行中/平台无 key 的 409 冒给调用方
+    log.info('model', tag + ' channel /models ' + s.id + ' → ' + m.id);
+    return { kind: 'command', reply: '会话「' + shortTitle(s) + '」模型已切到 `' + m.id + '`', session_id: s.id };
   }
 
   if (cmd === 'stop') {

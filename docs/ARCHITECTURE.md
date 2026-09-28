@@ -52,7 +52,7 @@ agent/
 │   │   │   ├── sessions.js        /api/sessions CRUD + 列表分页
 │   │   │   ├── messages.js        /api/sessions/:id/messages + SSE 流 + stop/release
 │   │   │   ├── files.js           /api/sessions/:id/files 上传/列表/下载/删除
-│   │   │   ├── channel.js         /api/channel/send 文本命令接入（IM/CLI 等无 UI 端；当前会话绑定 + /new /stop /compact /clear /status /help）
+│   │   │   ├── channel.js         /api/channel/send 文本命令接入（IM/CLI 等无 UI 端；当前会话绑定 + /new /list /switch /rename /delete /models /stop /compact /clear /status /help）
 │   │   │   ├── wechat.js          /api/wechat 绑定管理（设置页）+ /wxhook 内网回调（微信接入，见 §5.13）
 │   │   │   ├── config.js          /api/config 读写（含 api_key/password 脱敏）
 │   │   │   ├── platforms.js       /api/platforms/balance 余额查询
@@ -496,7 +496,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 | `/api/platforms` | `routes/platforms.js` | `GET /balance?pi=&ki=` 余额 |
 | `/api/system` | `routes/system.js` | `GET /status` + `/restart?force=...`（原 `model_profiles` 可用名单字段已删，前端无消费方） |
 | `/api/profile` | `routes/profile.js` | `GET /` 读画像、`PUT /` 保存（三字段 + enabled）；按 `req.user` 隔离，逻辑全在 `user-profile.js`（快照冻结见 engine `createSession`/`clearSessionMessages`；日常更新由 AI 经 `profile` 工具增量维护，见 §5.4） |
-| `/api/channel` | `routes/channel.js` | `POST /send {channel, text}` 文本命令接入端（IM/CLI 等无 UI 客户端，走 Basic/cookie 鉴权）：命令仅在本入口解析（Web 消息路由不受影响，防误伤路径/代码文本）；严格匹配白名单 `/new[文本] /stop /compact /clear /status /help`，未知斜杠词回提示、不像命令的当普通消息；(user,channel) 经 `channel_sessions` 表绑定当前会话（普通消息无绑定自动建）；命令动作不落消息行（与 Web 按钮对称），AI 回复由接入端复用既有 SSE/详情接口获取；`handleSend()` 另供微信桥接直调 |
+| `/api/channel` | `routes/channel.js` | `POST /send {channel, text}` 文本命令接入端（IM/CLI 等无 UI 客户端，走 Basic/cookie 鉴权）：命令仅在本入口解析（Web 消息路由不受影响，防误伤路径/代码文本）；严格匹配白名单 `/new[文本] /list /switch[编号] /rename[标题] /delete[编号] /models[编号] /stop /compact /clear /status /help`（可带参数命令走 ARG_CMDS：switch/delete 编号=最近 /list 行号或 id 前缀，delete 删会话连同任务目录（同 Web 删除弹窗默认勾选），models 换绑复用 engine.bindToSession），未知斜杠词回提示、不像命令的当普通消息；(user,channel) 经 `channel_sessions` 表绑定当前会话（普通消息无绑定自动建）；命令动作不落消息行（与 Web 按钮对称），AI 回复由接入端复用既有 SSE/详情接口获取；`handleSend()` 另供微信桥接直调 |
 | `/api/wechat` | `routes/wechat.js` | 微信绑定管理（设置页，cookie 鉴权 + req.user 隔离）：`GET /`（enabled/alive/我的绑定）、`POST /`（新建绑定，一人一绑）、`GET /:id/qr`（登录二维码 SVG 代理）、`POST /:id/refresh`（重发登录）、`DELETE /:id`（解绑，销毁实例与凭证）；业务全在 `wechat.js`（§5.13） |
 | `/wxhook` | `routes/wechat.js`（hookRouter） | wxbot → core 内网回调（**挂 auth.middleware 与全局 express.json 之前**，自带 32mb 解析器容纳媒体 base64）：`POST /inbox {id, from, text, media?}` 文本/媒体转 channel 层——media={kind:image\|video\|file, b64, filename?}，core 按 magic 嗅探定扩展名、落会话任务目录（文件保留消毒原名，图/视频生成 wximg-/wxvid- 时间戳名）+ 记 files 表 + 拼「用户上传了文件：<名>」告知行（同 web 附件模式，vision 模型 read_file 即见）；非 2xx 时 wxbot 把 error 文案回给微信用户；`POST /hook {id, event}` 实例状态回报；Bearer 共享服务 token（哈希后定长比较，未配一律 503） |
 | `/api/models` | `server.js` | 模型池（在用会话数 slots_used / 在用会话列表，非独占展示）+ token 用量 |

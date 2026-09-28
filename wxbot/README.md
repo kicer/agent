@@ -22,7 +22,7 @@ agent-core 的 `wechat_bindings` 表；扫码二维码呈现在 agent-core 的 W
                         └ 总线监听   assistant 消息 → 分段投递（游标落库不重发）
 ```
 
-- 收信 → core `/wxhook/inbox` 复用 **channel 命令层**（`/new /stop /compact /clear /status /help`），
+- 收信 → core `/wxhook/inbox` 复用 **channel 命令层**（`/new /list /switch /rename /delete /models /stop /compact /clear /status /help`），
   命令回执同步回文本；普通消息（AI 回复）异步由 core 经 `/api/deliver` 推送（`bot.send`）。
   图片/视频/文件消息经 SDK `download` 取字节随 inbox 转发（限 20MB），core 落会话任务目录；带说明文字的
   拼「用户上传了文件」告知行一起触发回合，**单发媒体只静默留痕不唤醒 AI**（下次提及自然能指代到该文件）。
