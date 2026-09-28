@@ -272,6 +272,15 @@ function handleInbox(body) {
   if (from && from !== b.wx_to_user) touchBinding(b.id, { wx_to_user: from });
   // 能收到消息就说明实例活着；漏收 online 回调（core 重启窗口）时顺带纠偏
   if (b.status !== 'online') touchBinding(b.id, { status: 'online', note: null });
+  // 新入站 = iLink 发了新 context token，本轮回复额度刷新：重置回合预算。
+  // 防御性结算：正常收信时 done 已把挂起投完，这里只兜住 done 丢失（如监听异常）的残留结论。
+  const old = turnState.get(b.id);
+  if (old && old.held) {
+    const h = old.held;
+    old.held = null;
+    enqueueDelivery(b.id, () => deliverConclusion(b.id, h.m, h.sessionId));
+  }
+  resetTurn(b.id);
   let text = String((body || {}).text || '').trim();
   const m = (body || {}).media;
   const hasMedia = !!(m && String(m.b64 || '').trim());
@@ -306,12 +315,16 @@ function handleInbox(body) {
   } else if (newWithText) {
     text = parsed.rest;
   }
-  return channel.handleSend(db, {
+  const out = channel.handleSend(db, {
     user: b.user,
     channel: 'wx:' + b.id,
     text,
     tag: (b.user || '-') + ' [微信 ' + b.id + ']',
   });
+  // 命令回执（/help /status /stop 等）由 wxbot 收到 inbox 响应后同步原样发出，占 1 条回复额度；
+  // 普通消息的 reply 字段不发（最终回复走总线投递），不计。
+  if (out && out.kind === 'command' && out.reply) getTurn(b.id).sent++;
+  return out;
 }
 
 // magic bytes 定真实格式（不信声明扩展名）：图片四类 + 常见视频两类；认不出的交给命名处兕底。
@@ -376,17 +389,32 @@ function saveTaskMedia(s, buf, kind, rawName) {
 // ---------- 投递：进程内总线监听 → 分段 push wxbot /api/deliver ----------
 // 只推最终 assistant 文本（type=errAck / 纯工具轮空文本 / 存档类事件都不进微信）；
 // 游标 last_msg_id 落库：core 重启不补发历史，wxbot 短暂不可达时不丢（下一条事件连带补齐）。
+//
+// 回合回复预算（配额在 iLink 上游，不可见也不可查，只能我们自己记账后主动分配）：
+// 回复额度挂在「入站消息」的 context token 上——用户每发一条消息，本轮总共只能回约
+// REPLY_QUOTA 条（分段与附件卡片各占 1 条）。AI 原生的「多迭代多条中间回复 + 长结论」
+// 天然撞上限，且过去靠位置赌重要性（截尾恰好丢掉最要的结论）。现策略：
+//   1. handleInbox 每条入站重置预算；命令回执（wxbot 同步原样发出）记 1 条。
+//   2. 过程消息（assistant_message 带 tool_calls，回合必然继续）直发至多
+//      PROC_HEAD_LIMIT 条——前几条「我打算怎么做」有信息量；且发送后必须给结论
+//      留足 CONCLUSION_RESERVE 条；不满足则不投，计数 omitted，结论开头并入
+//      「已省略 N 条过程」一行注记（宁精勿滥，长任务靠 typing 心跳感知进展）。
+//   3. 结论（不带 tool_calls 的 assistant_message，回合收尾）挂起到 done 再投：
+//      预算够 → 全文 + 附件卡片；放不下但 ≥2 → 降级「截断头部 + 全文写会话
+//      .md 转文件卡片」（内容零丢失）；<2 → 放弃并告警（网页端完整可见）。
+// 挂起用「证据」判定而非猜测：下一条 assistant_message 或 done 都会把旧的挂起结算掉。
 function attachBus() {
   if (busAttached || !bus) return;
   busAttached = true;
   bus.onInternal((sessionId, event, data) => {
     if (event === 'assistant_message') { if (!data) return; }
-    else if (event !== 'tool_call' && event !== 'tool_result') return;
+    else if (event !== 'done' && event !== 'tool_call' && event !== 'tool_result') return;
     try {
       const cs = db.prepare('SELECT user, channel FROM channel_sessions WHERE session_id = ?').get(sessionId);
       if (!cs || !String(cs.channel || '').startsWith('wx:')) return;
       const bid = cs.channel.slice(3);
-      if (event === 'assistant_message') enqueueDelivery(bid, () => deliverNow(bid, data, sessionId));
+      if (event === 'assistant_message') enqueueDelivery(bid, () => onAssistantEvent(bid, data, sessionId));
+      else if (event === 'done') enqueueDelivery(bid, () => flushHeld(bid));
       else maybeTypingPing(bid); // 工具调用/回执→「正在输入」心跳：微信端在长工具回合里能看到 AI 还在干活
     } catch (e) {
       log.warn('wechat', '投递监听异常：' + msg(e));
@@ -417,32 +445,139 @@ function maybeTypingPing(bid) {
   } catch (_) { /* 心跳尽力而为 */ }
 }
 
-async function deliverNow(bid, m, sessionId) {
-  const b = getBinding(bid);
-  if (!b || b.status !== 'online' || !b.wx_to_user) return;
-  if (m.type === 'errAck') return;
+// ---------- 回合预算状态与投递分配 ----------
+const REPLY_QUOTA = 10;        // iLink 单个 context token 的回复条数（经验值，撞墙只会多试一次）
+const PROC_HEAD_LIMIT = 5;     // 过程消息最多直发条数（用户确认：首几条有信息量）
+const CONCLUSION_RESERVE = 4;  // 过程发送的下限防线：始终给结论留这么多条
+const turnState = new Map();   // bid -> { sent, proc, omitted, held }；内存态，重启即新回合，可接受
+function resetTurn(bid) { turnState.set(bid, { sent: 0, proc: 0, omitted: 0, held: null }); return turnState.get(bid); }
+function getTurn(bid) { return turnState.get(bid) || resetTurn(bid); }
+
+// 投递前的内容归一（语义同旧 deliverNow）：errAck / 空文本 → 不可投；富文本 blocks → 占位文案。
+function normalizeContent(m) {
+  if (!m || m.type === 'errAck') return '';
   let content = String(m.content || '').trim();
-  if (!content) return; // 纯工具调用轮（无文本）不打扰微信
+  if (!content) return '';
   if (content.startsWith('{"__blocks__"')) content = '【富文本消息，请到网页端查看】';
-  const id = Number(m.id) || 0;
-  if (id && id <= (b.last_msg_id || 0)) return;
-  const segs = splitText(content);
+  return content;
+}
+
+// 分段逐条投递；一段失败即中断并返回 false（游标不推进，同旧语义）。
+async function sendSegs(b, segs) {
   for (const s of segs) {
     try { await wxbotApi('POST', '/api/deliver', { id: b.id, to: b.wx_to_user, text: s }, 15000); }
     catch (e) {
       log.warn('wechat', b.id + ' 投递失败，游标未推进（下次回复连带补齐）：' + msg(e));
-      return;
+      return false;
     }
   }
-  // 链接→卡片：扫正文里的 /p/<22位id>（本会话 mint 过的公网链）→ 同进程查表 + 归属硬校验 →
-  // 本地读字节推 wxbot（SDK 按扩展名自动路由 image/video/file 卡片，CDN 上传加密全自带）。
-  // 尽力而为：任一附件失败只 warn（链接文字已在正文，用户可点），不影响游标推进。
-  for (const a of findAttachments(content, sessionId)) {
-    try { await wxbotApi('POST', '/api/deliver_media', { id: b.id, to: b.wx_to_user, filename: a.filename, b64: a.b64 }, 60000); }
+  return true;
+}
+
+// 附件（正文 /p/ 链 → 文件卡片）尽力而为：单个失败只 warn，链接文字已在正文兜底。
+async function sendAttachments(b, list) {
+  let n = 0;
+  for (const a of list) {
+    try { await wxbotApi('POST', '/api/deliver_media', { id: b.id, to: b.wx_to_user, filename: a.filename, b64: a.b64 }, 60000); n++; }
     catch (e) { log.warn('wechat', b.id + ' 附件投递失败（' + a.filename + '，链接文字兜底）：' + msg(e)); }
   }
+  return n;
+}
+
+// assistant_message 事件入口：带 tool_calls 的必然是过程（回合还会继续）→ 直接结算；
+// 不带的可能收尾 → 挂起，等下一条事件/done 拿证据。挂起顺带保证「结算顺序 = 产生顺序」
+// （都在串行投递链里执行）。
+async function onAssistantEvent(bid, m, sessionId) {
+  const st = getTurn(bid);
+  const held = st.held;
+  st.held = null;
+  if (held) await deliverProcess(bid, held.m, held.sessionId); // 新事件即证据：挂起那条是过程
+  if (m.tool_calls && m.tool_calls.length) { await deliverProcess(bid, m, sessionId); return; }
+  if (!normalizeContent(m)) return; // 空文本轮不可能当结论投，也不占用挂起
+  st.held = { m, sessionId };
+}
+
+// done（回合收尾/停止/清空都会发）：把挂起的最后一条按「结论」结算——保底投递路径。
+async function flushHeld(bid) {
+  const st = turnState.get(bid);
+  if (!st || !st.held) return;
+  const held = st.held;
+  st.held = null;
+  await deliverConclusion(bid, held.m, held.sessionId);
+}
+
+function bindReady(bid) {
+  const b = getBinding(bid);
+  return b && b.status === 'online' && b.wx_to_user ? b : null;
+}
+
+function stale(b, m) {
+  const id = Number(m.id) || 0;
+  return id && id <= (b.last_msg_id || 0);
+}
+
+function markSeen(b, m) {
+  const id = Number(m.id) || 0;
   if (id > (b.last_msg_id || 0)) touchBinding(b.id, { last_msg_id: id });
-  log.info('wechat', b.id + ' 已投递消息 ' + id + '（' + segs.length + ' 段）→ 微信');
+}
+
+// 过程消息：直发窗口内且投完后仍给结论留足储备才投；否则计入 omitted，并进结论的注记行。
+async function deliverProcess(bid, m, sessionId) {
+  const b = bindReady(bid);
+  if (!b || stale(b, m)) return;
+  const content = normalizeContent(m);
+  if (!content) return;
+  const segs = splitText(content);
+  const attach = findAttachments(content, sessionId);
+  const st = getTurn(bid);
+  if (st.proc >= PROC_HEAD_LIMIT || st.sent + segs.length + attach.length > REPLY_QUOTA - CONCLUSION_RESERVE) {
+    st.omitted++;
+    log.debug('wechat', bid + ' 过程消息并入省略（proc=' + st.proc + ' sent=' + st.sent + '）消息 ' + m.id);
+    return;
+  }
+  if (!await sendSegs(b, segs)) return;
+  st.sent += segs.length + await sendAttachments(b, attach);
+  st.proc++;
+  markSeen(b, m);
+}
+
+// 结论：优先全文；放不下 → 截断头部 + 全文落会话文件转卡片（2 条兜底，内容零丢失）；
+// 预算 <2 → 放弃并告警（网页端完整可见，游标不推进）。
+async function deliverConclusion(bid, m, sessionId) {
+  const b = bindReady(bid);
+  if (!b || stale(b, m)) return;
+  const st = getTurn(bid);
+  let content = normalizeContent(m);
+  if (st.omitted) content = '（本轮已省略 ' + st.omitted + ' 条过程消息）\n\n' + (content || '');
+  if (!content) { st.omitted = 0; return; } // 只剩注记：不为「省略了什么」单独刷屏
+  const segs = splitText(content);
+  const attach = findAttachments(content, sessionId);
+  const remaining = REPLY_QUOTA - st.sent;
+  if (segs.length + attach.length <= remaining) {
+    if (!await sendSegs(b, segs)) return;
+    st.sent += segs.length + await sendAttachments(b, attach);
+  } else if (remaining >= 2) {
+    try {
+      const dir = engine.taskDirOf(sessionId);
+      const name = '微信回复全文-' + (Number(m.id) || now()) + '.md';
+      fs.writeFileSync(path.join(dir, name), content);
+      const head = segs[0].slice(0, 1500) + '\n……内容较长，全文见附件「' + name + '」';
+      await wxbotApi('POST', '/api/deliver', { id: b.id, to: b.wx_to_user, text: head }, 15000);
+      st.sent++;
+      st.sent += await sendAttachments(b, [{ filename: name, b64: Buffer.from(content).toString('base64') }]);
+      if (attach.length) log.warn('wechat', b.id + ' 结论走文件兜底，正文内 ' + attach.length + ' 个附件卡片未投（链接仍在文件里）');
+    } catch (e) {
+      log.warn('wechat', b.id + ' 结论溢出降级投递失败：' + msg(e));
+      return;
+    }
+  } else {
+    log.warn('wechat', b.id + ' 回复配额耗尽（已投 ' + st.sent + '/' + REPLY_QUOTA + '），本轮结论未投递（网页端可见）');
+    return;
+  }
+  const omittedNoted = st.omitted;
+  st.omitted = 0;
+  markSeen(b, m);
+  log.info('wechat', b.id + ' 已投递结论 ' + m.id + '（回合已投 ' + st.sent + ' 条，省略过程 ' + omittedNoted + '）→ 微信');
 }
 
 // 扫回复文本里的 /p/<22位id> 链 → 可卡片化的本地附件（{filename, b64}，最多 5 个，单文件限 20MB）。
