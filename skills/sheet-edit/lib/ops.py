@@ -1,12 +1,12 @@
 """sheet-edit 的各个 op 实现。"""
 import datetime
+import re
 import shutil
 import tempfile
 from pathlib import Path
 
 import openpyxl
-from openpyxl.utils import get_column_letter
-from openpyxl.cell.cell import MergedCell
+from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.worksheet.cell_range import CellRange, MultiCellRange
 from openpyxl.worksheet.formula import ArrayFormula
 
@@ -74,6 +74,7 @@ def _sheet_info(ws, name, header_row, limit):
         'cols': ws.max_column,
         'header_row': header_row,
         'suggested_header_row': locate.detect_header_row(ws),
+        'multi_level_header': None,
         'headers': [
             _json_safe(ws.cell(header_row, c).value)
             for c in range(1, ws.max_column + 1)
@@ -84,6 +85,9 @@ def _sheet_info(ws, name, header_row, limit):
         'merged': [str(r) for r in ws.merged_cells.ranges],
         'truncated': False,
     }
+    ml = locate.detect_multi_level(ws)
+    if ml:
+        info['multi_level_header'] = {'group_row': ml[0], 'column_row': ml[1]}
     for row in ws.iter_rows():
         for cell in row:
             v = cell.value
@@ -173,42 +177,77 @@ def _resolve_change(wb, ch, header_row):
         raise UserError(
             f"sheet 不存在: {sheet}（可用: {', '.join(wb.sheetnames)}）"
         )
-    match = ch.get('match') or {}
-    set_spec = ch.get('set') or {}
-    if not isinstance(set_spec, dict) or not set_spec:
-        raise UserError("change.set 必须是非空对象")
-
+    hr = _int(ch, 'header_row', header_row)  # change 级可覆盖全局 header_row
     ws = wb[sheet]
-    col_map = locate.build_col_map(ws, header_row)
-    row = locate.find_row(ws, col_map, match, header_row)
+
+    set_spec = ch.get('set')
+    cells_spec = ch.get('cells')
+    if set_spec is not None and cells_spec is not None:
+        raise UserError("change 只能二选一：match+set（列名定位）或 cells（地址定位）")
+    if cells_spec is not None:
+        return _resolve_cells(ws, sheet, cells_spec)
+
+    match = ch.get('match') or {}
+    if not isinstance(set_spec, dict) or not set_spec:
+        raise UserError("change.set 必须是非空对象（多级表头等无法按列名定位的表改用 change.cells）")
+
+    ml = locate.detect_multi_level(ws)
+    if ml and hr == ml[0]:
+        raise UserError(
+            f"检测到多级表头（第 {ml[0]} 行分组、第 {ml[1]} 行子列名）：列名模式无法唯一定位，"
+            "请从 inspect 的 preview/formulas 确认目标坐标后改用 change.cells 地址模式"
+        )
+    col_map = locate.build_col_map(ws, hr)
+    row = locate.find_row(ws, col_map, match, hr)
 
     items = []
     for col_name, spec in set_spec.items():
-        if not isinstance(spec, dict) or 'old' not in spec or 'new' not in spec:
-            raise UserError(
-                f"set['{col_name}'] 必须是 {{\"old\": ..., \"new\": ...}} 格式"
-            )
         col = locate.find_col(col_map, col_name)
-        actual = ws.cell(row, col).value
-        if isinstance(actual, ArrayFormula):
-            raise UserError(
-                f"{sheet}!{get_column_letter(col)}{row} 是数组公式，"
-                "本工具不支持修改（请在 Excel/WPS 手工处理）"
-            )
-        new = spec['new']
-        if isinstance(new, (dict, list)):
-            raise UserError(f"set['{col_name}'].new 只能是数字/字符串/布尔/null，收到 {new!r}")
-        items.append({
-            'sheet': sheet,
-            'row': row,
-            'col': col,
-            'col_name': col_name,
-            'match': dict(match),
-            'expected_old': spec['old'],
-            'actual_old': actual,
-            'new': new,
-        })
+        items.append(_mk_item(ws, sheet, row, col, col_name, spec, dict(match)))
     return items
+
+
+_ADDR_RE = re.compile(r'^\$?([A-Za-z]{1,3})\$?(\d{1,7})$')
+
+
+def _resolve_cells(ws, sheet, cells_spec):
+    """地址模式：cells = {"C5": {"old": ..., "new": ...}, ...}。多级表头等列名不可用场景的正经出口，
+    old 校验/合并区防护/全簿自检/重算与列名模式完全同源。"""
+    if not isinstance(cells_spec, dict) or not cells_spec:
+        raise UserError("change.cells 必须是非空对象：地址 → {\"old\": ..., \"new\": ...}")
+    items = []
+    for addr, spec in cells_spec.items():
+        m = _ADDR_RE.match(str(addr).strip())
+        if not m:
+            raise UserError(f"非法单元格地址: {addr!r}（形如 C5，允许可选 $ 绝对符）")
+        col = column_index_from_string(m.group(1).upper())
+        row = int(m.group(2))
+        items.append(_mk_item(ws, sheet, row, col, str(addr).strip().upper(), spec, {}))
+    return items
+
+
+def _mk_item(ws, sheet, row, col, label, spec, match_info):
+    if not isinstance(spec, dict) or 'old' not in spec or 'new' not in spec:
+        raise UserError(f"'{label}' 的设值必须是 {{\"old\": ..., \"new\": ...}} 格式")
+    actual = ws.cell(row, col).value
+    if isinstance(actual, ArrayFormula):
+        raise UserError(
+            f"{sheet}!{get_column_letter(col)}{row} 是数组公式，"
+            "本工具不支持修改（请在 Excel/WPS 手工处理）"
+        )
+    new = spec['new']
+    if isinstance(new, (dict, list)):
+        raise UserError(f"'{label}'.new 只能是数字/字符串/布尔/null，收到 {new!r}")
+    return {
+        'sheet': sheet,
+        'row': row,
+        'col': col,
+        'col_name': label,
+        'match': match_info,
+        'expected_old': spec['old'],
+        'actual_old': actual,
+        'new': new,
+    }
 
 
 def _verify_apply(out_path, before, plan):

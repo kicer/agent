@@ -27,7 +27,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 ## 工作流程
 
-1. `action=inspect` 查看表结构与公式（注意采用返回里的 `suggested_header_row`）
+1. `action=inspect` 查看表结构与公式（注意采用返回里的 `suggested_header_row`；若 `multi_level_header` 非 null，列名模式不可用，直接走 `cells` 地址模式）
 2. 按需求选择 `action=apply` / `insert_rows` / `delete_rows` / `insert_cols` / `delete_cols`
 
 ## inspect
@@ -56,6 +56,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
       "cols": 7,
       "header_row": 1,
       "suggested_header_row": 1,
+      "multi_level_header": null,
       "headers": ["序号", "项目", "单位", "数量", "单价", "金额", "备注"],
       "preview": [
         [1, "管道", "米", 100, 18, {"formula": "=D3*E3"}, ""],
@@ -74,6 +75,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 要点：
 - `headers` 是表头行；合并单元格只有首个有值，其余为 `null`
 - `suggested_header_row` 是自动检测的表头行（中文表格常见「第 1 行合并标题 + 第 2 行真表头」）；与你的 `header_row` 不一致时直接采用它继续后续调用，不用自己推断
+- `multi_level_header` 非 null（如 `{"group_row": 2, "column_row": 3}`）= 多级表头（分组行 + 重复子列名行）：列名定位必死，改用 `cells` 地址模式，别反复换 `header_row` 重试
 - 公式以 `{"formula": "=..."}` 表示
 - `preview` 可能被 `limit` 截断；`formulas` 最多列 500 条（超出时 `formulas_truncated: true`）
 - `merged` 是合并区域列表（如 `["A1:G1"]`）
@@ -97,9 +99,27 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 
 参数：
 - `file`（必填）
-- `changes`（必填）：改动清单
-- `header_row`（可选，默认 1）
+- `changes`（必填）：改动清单；每项可用 `match+set`（列名定位）或 `cells`（地址定位），二选一
+- `header_row`（可选，默认 1）；各 change 可单独带 `header_row` 字段覆盖（多 sheet 表头位置不同时用）
 - `output`（可选）：输出文件名（放原文件同目录；平台预处理成会话目录下的绝对路径也接受），默认原文件名加「（已改）」
+
+### cells 地址定位（多级表头 / 分组汇总表的正经出口）
+
+```json
+{
+  "action": "apply",
+  "file": "预算表.xlsx",
+  "changes": [
+    {"sheet": "总表", "cells": {
+      "D4": {"old": 157, "new": 190},
+      "F4": {"old": 120, "new": 150}
+    }}
+  ]
+}
+```
+
+- 地址从 inspect 的 `preview`（含列坐标提示）/`formulas` 里数出来；允许可选 `$`（`$D$4` 同 `D4`）
+- old 校验、合并区防护、全簿逐格自检、LO 重算与列名模式**完全同源**，不是降级通道
 
 ### 定位
 
@@ -204,6 +224,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 - 改动后自检：目标改动生效、其他内容未变（含公式原文）、文件可打开
 - 任一项失败 → 产物自动删除、不交付
 - 遇不支持的引用形态（数组公式、外部簿引用、结构化引用）直接报错，绝不半改交付
+- 超出能力的表（多级表头等）用 `cells` 地址模式处理；**禁止绕开本技能用 terminal/脚本手改交付物**——手改没有 old 校验、逐格自检、跨表引用检查与重算门禁，错了没人兜底
 
 ## 边界
 
@@ -214,7 +235,7 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
   重算失败时自动回退交付「未重算版」并在结果 `recalc` 字段标注 `failed:...`（未重算版仍带「打开时全量重算」标记，
   Excel/WPS 打开结果一样正确）；结果里看到 recalc=failed 时简短告知用户一句即可，不要重试。
 - CSV 单元格一律按文本保留（「007」「1.10」不会变成 7/1.1）；数字与数字文本在定位比较时互认。
-- 多级表头、复杂合并：可能定位失败，需手工处理。
+- 多级表头（分组行 + 重复子列名，如「新建顶管｜数量·单价」）：`match/set` 列名定位不支持（子列名不唯一，任何 `header_row` 都无解）；`inspect` 会标 `multi_level_header`，请用 `cells` 地址模式 + 从 preview 确认坐标。更深层级（≥3 行表头）同样走 `cells`。
 
 ## 常见错误
 
@@ -225,3 +246,4 @@ description: 结构化修改表格文件。内容定位（列名 + 值），最�
 5. **sheet 不存在**：报错会列出可用 sheet 名
 6. **写入合并区域非锚点格**：报错提示改用区域左上角锚点
 7. **报「不支持数组公式/外部簿引用」**：该表需人工处理，不要反复重试
+8. **报「重复列名 / 检测到多级表头」**：换 `header_row` 重试没有用（子列名天然不唯一），改用 `cells` 地址模式；也不要因此绕开技能去手改文件

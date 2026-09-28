@@ -32,6 +32,35 @@ def detect_header_row(ws, scan=10, col_cap=200) -> int:
     return best_row
 
 
+def detect_multi_level(ws, scan=10, col_cap=200):
+    """检测“分组行 + 重复子列名行”相邻出现的多级表头形态，返回 (分组行, 列名行) 或 None。
+
+    判定：相邻两行均全为字符串；上行值唯一且 ≥2 个（分组标题），下行有重复且 ≥3 个、格数多于上行
+    （真列名在多组下重复）。只读不写，纯诊断用。"""
+    max_c = min(ws.max_column, col_cap)
+    prev = None  # (row, 全字符串, 值列表)
+    for r in range(1, min(scan, ws.max_row) + 1):
+        vals = []
+        ok = True
+        for c in range(1, max_c + 1):
+            v = ws.cell(r, c).value
+            if v is None or v == '':
+                continue
+            if isinstance(v, str) and not v.startswith('='):
+                vals.append(v.strip())
+            else:
+                ok = False
+                break
+        if prev is not None and ok and prev[1] and prev[2]:
+            pu, cu = prev[2], vals
+            if (len(pu) >= 2 and len(set(pu)) == len(pu)
+                    and len(cu) >= 3 and len(set(cu)) != len(cu)
+                    and len(cu) > len(pu)):
+                return (prev[0], r)
+        prev = (r, ok, vals)
+    return None
+
+
 def value_eq(a, b) -> bool:
     if a is None and b is None:
         return True
@@ -57,6 +86,13 @@ def build_col_map(ws, header_row: int) -> dict:
         if not name:
             continue
         if name in col_map:
+            ml = detect_multi_level(ws)
+            if ml:
+                raise UserError(
+                    f"表头行 {header_row} 存在重复列名（'{name}'），且检测到多级表头"
+                    f"（第 {ml[0]} 行分组、第 {ml[1]} 行子列名）：列名模式无法唯一定位，"
+                    "请从 inspect 的 preview/formulas 确认目标坐标后改用 change.cells 地址模式"
+                )
             raise UserError(f"表头行 {header_row} 存在重复列名: '{name}'")
         col_map[name] = c
     if not col_map:
