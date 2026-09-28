@@ -285,7 +285,7 @@ stateDiagram-v2
 | `createSession` | 生成 id（`task-YYYYMMDD-NNN`，序号从历史 + `meta.task_seq` 取大）→ mkdir 任务目录 → phase 默认 advising → **创建即绑模型落 held**（指定模型优先其平台，无效退回全局；空池直接报错不建吊着会话） |
 | `postUserMessage` | 用户消息入口；除 looping（下一迭代自动带上新消息）外任意状态都是「保绑定→转 active→立即开跑」，`delivered` 恒 `'live'` |
 | `bindToSession` / `releaseHold` | 手动换绑（任意模型即点即换，仅输出中拒绝，无「占用」概念）；「断开」= held→completed 纯状态动作（无资源可释放，绑定仍在可继续用） |
-| `summarizeContext` / `clearSessionMessages` / `deleteMessage` | 收尾 + 上下文压缩（清空同时把 phase 打回 advising 并归档旧 task.md） |
+| `summarizeContext` / `clearSessionMessages` / `deleteMessage` | 收尾 + 上下文压缩（清空同时把 phase 打回 advising、归档旧 task.md、连带清空会话 .tmp 即执行容器里的 /tmp） |
 | `enterExecuting` / `archiveTaskBrief` | 阶段切换：批尾接 `handoff` 成功标记（brief 已由 handler 落盘）→ 全史存档 + 插 task_brief 快照 + phase='executing' + SSE 广播；清空时旧 task.md mv 进 `.task-history/` |
 | `checkToolArgs` / `unwrapToolArgs` | 工具参数校验 + 部分弱模型参数包裹外层自动解包 |
 | `ensureSessionContext` | 注入/刷新"会话上下文"首条 user 消息（日期/任务目录/模型名/vision 能力） |

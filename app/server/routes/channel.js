@@ -89,7 +89,7 @@ const HELP_TEXT = [
   '- `/new [msg]` 新建会话并切换）',
   '- `/stop` 终止当前回合',
   '- `/compact` 压缩上下文',
-  '- `/clear` 清空当前会话',
+  '- `/clear` 清空当前会话（临时文件 /tmp 一并清理）',
   '- `/status` 查看当前会话状态',
   '- `/help` 显示本帮助',
 ].join('\n');

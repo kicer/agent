@@ -597,7 +597,7 @@
               '<div class="modal-body" style="font-size:14px;line-height:1.55;color:#555;padding:4px 0 12px;">' +
                 'AI 将基于当前上下文生成结构化总结；完成后摘要之前的旧消息都会<b>存档</b>，不再发送给 AI，后续对话从摘要开始。' +
                 '<br>· 「摘要」= 聊天里<b>保留全部历史展示</b>（旧消息变淡标注已存档），并多一张摘要卡片。' +
-                '<br>· 「清空」= 直接<b>删除本会话全部聊天记录</b>，从零开始（不可恢复，任务文件保留）。' +
+                '<br>· 「清空」= 直接<b>删除本会话全部聊天记录</b>，从零开始（不可恢复，任务文件保留，临时文件 /tmp 一并清空）。' +
               '</div>' +
               '<div class="btn-row">' +
                 '<button class="ghost-btn danger" data-act="clear">清空</button>' +

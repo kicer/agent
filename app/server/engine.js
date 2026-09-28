@@ -1085,7 +1085,24 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
   }
 }
 
-// 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件（绑定也保持，下次发言沿用原模型）。
+// 会话级 /tmp 的宿主机实体：<任务目录>/.tmp（executor wrapper 把它 bind 进容器 /tmp，HOME/TMPDIR 也指这里，
+// 跨 /exec 保留）。清空对话时一并抹掉：临时产物不该带进新一轮；删了下次执行 executor 懒重建，无副作用。
+// 尽力而为：不存在不动；符号链接只断不跟进；失败只记日志不阻断清空。
+function wipeSessionTmp(sessionId) {
+  try {
+    const dir = path.join(taskDirOf(sessionId), '.tmp');
+    let st;
+    try { st = fs.lstatSync(dir); } catch (_) { return; } // 不存在 = 无可清理
+    if (st.isSymbolicLink()) { fs.unlinkSync(dir); return; }
+    fs.rmSync(dir, { recursive: st.isDirectory(), force: true });
+  } catch (e) {
+    log.warn('msg', sessionId + ' 清理会话 .tmp 失败（不影响清空）：' + (e && e.message || e));
+  }
+}
+
+// 清空会话的对话内容：删除该会话的全部消息记录，但保留会话本身与任务目录文件（绑定也保持，下次发言沿用原模型）；
+// 会话级 /tmp（宿主机即 <任务目录>/.tmp，执行容器 bind 成容器内 /tmp）一并清空：清空的语义是“从零开始”，
+// 上一轮留下的临时产物不该带进新一轮；执行容器遇到不存在的 .tmp 会懒重建，无副作用。
 // 状态收尾为 completed；此后再次发言从零开始，不再携带旧历史。执行中的会话不允许清空，需先「终止」。
 // 阶段语义：清空是 executing 唯一回头路——回到 advising 重新规划（单会话只解决一个问题），
 // 旧任务书 mv 进 .task-history/ 防污染（archiveTaskBrief）；压缩不碰 phase，不在此列。
@@ -1104,6 +1121,7 @@ function clearSessionMessages(sessionId) {
   runs.delete(sessionId);
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   archiveTaskBrief(sessionId); // 旧任务书先归档（mv），新一轮 advising 不会被上一问题的约定污染
+  wipeSessionTmp(sessionId);   // 会话级 /tmp 随清空一并抹掉（尽力而为，失败只记日志不阻断）
   autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
   // 标题随历史一并清零：旧标题描述的是已删除的对话，留着会让新对话文不对题；
   // 新一轮交互结束后 maybeGenerateTitle 见 title 为空会自动重新生成。
