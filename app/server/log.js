@@ -35,6 +35,7 @@ function emit(fn, level, args) {
 
 module.exports = {
   setLevel,
+  isDebugEnabled() { return LEVELS.debug >= threshold; },
   debug() { emit(console.log, 'debug', arguments); },
   info() { emit(console.log, 'info', arguments); },
   warn() { emit(console.warn, 'warn', arguments); },

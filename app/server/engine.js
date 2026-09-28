@@ -553,6 +553,23 @@ async function runLoopInner(sessionId, run) {
     const messages = compressing
       ? compressMessages(session, (cfg.agent || {}).language, mintImageUrl, profileName)
       : buildMessages(session, (cfg.agent || {}).language, mintImageUrl, profileName);
+    // 发送形态摘要（debug）：只打角色/块类型/数量，不打 URL 与内容；定位「图没到模型」时
+    // 一眼区分发送侧没拼上图（image 计数为 0）与上游吞图（计数正确但模型说没看到）。
+    if (log.isDebugEnabled && log.isDebugEnabled()) {
+      log.debug('req', sessionId + ' 发送形态: ' + messages.map(m => {
+        if (Array.isArray(m.content)) {
+          const imgs = m.content.filter(b => b && b.type === 'image_url').length;
+          const unmin = m.content.filter(b => b && b.type === 'image_ref').length;
+          const dead = m.content.filter(b => b && b.type === 'text' && String(b.text || '').indexOf('[图片外链不可用') === 0).length;
+          return m.role + '(块 ' + m.content.length + (imgs ? ', image ' + imgs : '') + (unmin ? ', 漏签 ' + unmin : '') + (dead ? ', 断链 ' + dead : '') + ')';
+        }
+        const txt = String(m.content || '');
+        return m.role + (m.tool_calls ? '[calls]' : '')
+          + (txt.includes('图片数据已省略') ? '[图已省]' : '')
+          + (txt.includes('每轮只能携带一张图片') ? '[图被限流]' : '')
+          + (txt.includes('本回合已投递过') ? '[图重复读挡回]' : '');
+      }).join(' '));
+    }
     // 内置工具 + 启动时发现的 MCP 工具（按 profile 白名单过滤），一起随 system prompt 发给模型（压缩回合不发）
     const tools = compressing ? [] : effectiveTools(profileName);
 
@@ -660,6 +677,8 @@ async function runLoopInner(sessionId, run) {
     // 执行工具
     const vision = modelVision(session);
     let handoffDone = false; // 本批工具里是否有 handoff 成功返回（批量跑完统一切换，见循环尾注释）
+    // 本批（=本次模型调用可见范围）是否已放行过一张图；随 while 每轮迭代重置。
+    let imgThisTurn = false;
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
       const id = tc.id;
@@ -701,16 +720,21 @@ async function runLoopInner(sessionId, run) {
         outText = String(output == null ? '' : output);
       }
       if (run.cancelled && !isError) outText = (outText ? outText + '\n' : '') + '（用户已终止任务）';
-      // 死循环护栏：同一回合内同一张图只投递一次——若上游没认图，模型会一轮轮重读同一文件、
-      // 每轮都签新图烧 token；同回合再读同图只回文字提示，不再携带图片（run 随回合结束销毁，
-      // 新回合/新用户消息自动重置额度，正常追问重看不受影响）。
+      // 死循环护栏（实测：多图同时进上下文时部分上游只认一张；叠加催读文案会让模型整轮重读同一批图、
+      // 每轮都签新图烧 token 直到迭代耗尽）：
+      // ① 每次模型调用最多携带一张图：同批后续图回执降级为文字，让模型下一轮单独再读，逐轮收敛；
+      // ② 同回合同一张图只投递一次：已投递过的再读只回文字提示（run 随回合销毁，新回合自动重置额度）。
       if (imageRel) {
         if (!run.imgDelivered) run.imgDelivered = new Set();
         if (run.imgDelivered.has(imageRel)) {
           outText += '\n[该图片本回合已投递过，不再重复携带；若你未看到它，请直接告知用户，勿反复重读同一文件]';
           imageRel = null;
+        } else if (imgThisTurn) {
+          outText += '\n[每轮只能携带一张图片，本张未投递：请在下一轮单独 read_file 本文件查看]';
+          imageRel = null;
         } else {
           run.imgDelivered.add(imageRel);
+          imgThisTurn = true;
         }
       }
       log.debug('tool', sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText);
