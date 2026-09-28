@@ -76,11 +76,21 @@ def from_workbook(xlsx: Path, dst: Path, original_ext: str):
 
 # ---------- 内部 ----------
 
+def _lo_profile(out_dir: Path) -> Path:
+    """LO 隔离 profile：执行容器根文件系统只读，默认 ~/.config 写入会直接 rc=77 崩（实测）；
+    每次调用独立 profile 同时解决并发转换的 LO 单实例锁冲突。"""
+    prof = out_dir / 'loprofile'
+    (prof / 'user').mkdir(parents=True, exist_ok=True)
+    return prof
+
+
 def _libreoffice(src: Path, out_dir: Path, target_ext: str) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     target = target_ext.lstrip('.')
     r = subprocess.run(
-        ['libreoffice', '--headless', '--convert-to', target,
+        ['libreoffice', '--headless', '--norestore',
+         '-env:UserInstallation=' + _lo_profile(out_dir).as_uri(),
+         '--convert-to', target,
          '--outdir', str(out_dir), str(src)],
         capture_output=True, text=True, timeout=180,
     )
@@ -91,6 +101,40 @@ def _libreoffice(src: Path, out_dir: Path, target_ext: str) -> Path:
     if not expected.exists():
         raise UserError(f"LibreOffice 未生成输出: {expected}")
     return expected
+
+
+# 重算适用的二进制/文档格式（csv 无缓存概念，跳过）
+RECALC_EXTS = {'.xlsx', '.xls', '.ods'}
+
+
+def recalc(path: Path, work_dir: Path):
+    """LibreOffice 强制重算公式缓存值：openpyxl 产物无缓存，LO 加载时必须求值才能保存，
+    实测（LO 7.4）重算结果会写入缓存元素且公式文本保留。
+
+    返回 (重算产物路径, None) 或 (None, 失败原因)；不抛异常，是否回退由调用方决策。
+    注意返回的文件在 work_dir 内，调用方需在同一生命周期内用完。"""
+    ext = path.suffix.lower()
+    if ext not in RECALC_EXTS:
+        return None, f"{ext} 格式无需重算"
+    out_dir = work_dir / 'recalc'
+    out_dir.mkdir(parents=True, exist_ok=True)
+    expected = out_dir / path.name
+    try:
+        r = subprocess.run(
+            ['libreoffice', '--headless', '--norestore',
+             '-env:UserInstallation=' + _lo_profile(out_dir).as_uri(),
+             '--convert-to', ext[1:],
+             '--outdir', str(out_dir), str(path)],
+            capture_output=True, text=True, timeout=180,
+        )
+    except FileNotFoundError:
+        return None, "LibreOffice 不可用"
+    except subprocess.TimeoutExpired:
+        return None, "LibreOffice 重算超时(180s)"
+    if r.returncode != 0 or not expected.exists():
+        msg = (r.stderr or r.stdout).strip()[:150] or '无输出'
+        return None, f"LibreOffice 重算失败: {msg}"
+    return expected, None
 
 
 def _read_csv(path: Path):

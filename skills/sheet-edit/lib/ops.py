@@ -1,5 +1,6 @@
 """sheet-edit 的各个 op 实现。"""
 import datetime
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -144,10 +145,12 @@ def apply(args):
         except Exception:
             _drop(out_path)
             raise
+        recalc_note = _try_recalc(out_path, Path(td), lambda p: _verify_apply(p, before, plan))
 
     return {
         'ok': True,
         'output': out_path.name,
+        'recalc': recalc_note,
         'changes': [
             {
                 'sheet': it['sheet'],
@@ -304,10 +307,13 @@ def insert_rows(args):
         except Exception:
             _drop(out_path)
             raise
+        recalc_note = _try_recalc(out_path, Path(td),
+                                  lambda p: _verify_struct(p, before, sheet, 'row', insert_at, count, False, expected_new))
 
     return {
         'ok': True,
         'output': out_path.name,
+        'recalc': recalc_note,
         'sheet': sheet,
         'inserted_at': insert_at,
         'count': count,
@@ -345,10 +351,13 @@ def delete_rows(args):
         except Exception:
             _drop(out_path)
             raise
+        recalc_note = _try_recalc(out_path, Path(td),
+                                  lambda p: _verify_struct(p, before, sheet, 'row', start, count, True, {}))
 
     return {
         'ok': True,
         'output': out_path.name,
+        'recalc': recalc_note,
         'sheet': sheet,
         'deleted_at': start,
         'count': count,
@@ -400,10 +409,13 @@ def insert_cols(args):
         except Exception:
             _drop(out_path)
             raise
+        recalc_note = _try_recalc(out_path, Path(td),
+                                  lambda p: _verify_struct(p, before, sheet, 'col', insert_at, count, False, expected_new))
 
     return {
         'ok': True,
         'output': out_path.name,
+        'recalc': recalc_note,
         'sheet': sheet,
         'inserted_at': insert_at,
         'count': count,
@@ -443,10 +455,13 @@ def delete_cols(args):
         except Exception:
             _drop(out_path)
             raise
+        recalc_note = _try_recalc(out_path, Path(td),
+                                  lambda p: _verify_struct(p, before, sheet, 'col', start, count, True, {}))
 
     return {
         'ok': True,
         'output': out_path.name,
+        'recalc': recalc_note,
         'sheet': sheet,
         'deleted_at': start,
         'count': count,
@@ -531,6 +546,21 @@ def _drop(path: Path):
         path.unlink()
     except OSError:
         pass
+
+
+def _try_recalc(out_path, work_dir, verify):
+    """正确性门禁通过后尝试 LO 重算；重算产物同样过一遍 verify 才能覆盖交付，
+    否则保持未重算版（仍带 fullCalcOnLoad 标记，Excel/WPS 打开会自动算）。
+    重算是可用性增强不是正确性条件，故失败只降级不报错。返回状态供结果 JSON。"""
+    cand, err = convert.recalc(out_path, work_dir)
+    if cand is None:
+        return 'skipped' if '无需重算' in (err or '') else f'failed: {err}'
+    try:
+        verify(cand)
+    except Exception as e:
+        return f'failed: 重算产物未过自检，交付未重算版（{str(e)[:120]}）'
+    shutil.copy2(cand, out_path)
+    return 'done'
 
 
 def _adjust_formulas(wb, target_sheet, axis, at, count, delete):
