@@ -86,10 +86,10 @@ function parseCommand(text) {
 // 微信这类纯文本端由 wxbot 发送前 stripMarkdown 降级——格式信息留在生产方，渲染适配在消费方。
 const HELP_TEXT = [
   '**可用命令**',
-  '- `/new [msg]` 新建会话并切换）',
+  '- `/new [msg]` 新建会话并切换',
   '- `/stop` 终止当前回合',
   '- `/compact` 压缩上下文',
-  '- `/clear` 清空当前会话（临时文件 /tmp 一并清理）',
+  '- `/clear` 清空当前会话',
   '- `/status` 查看当前会话状态',
   '- `/help` 显示本帮助',
 ].join('\n');
@@ -109,9 +109,8 @@ function statusReply(db, s) {
   const looping = !!(run && run.looping);
   const lines = [
     '**会话状态**',
-    '- 会话：`' + s.id + '`「' + (s.title || '未命名') + '」',
-    '- 状态：' + (looping ? '回合进行中' : (STATUS_TEXT[s.status] || s.status))
-      + '｜阶段：' + (PHASE_TEXT[s.phase] || s.phase || '-'),
+    '- 会话：`' + (s.title || s.id),
+    '- 状态：' + (looping ? '回合进行中' : (STATUS_TEXT[s.status] || s.status)),
     '- 模型：`' + (s.model_id || '未绑定') + '`',
   ];
   const t = db.prepare('SELECT cron_expr, next_run_at, last_run_at, last_status FROM scheduled_tasks WHERE session_id = ?').get(s.id);
