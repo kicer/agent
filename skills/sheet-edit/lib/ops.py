@@ -514,10 +514,12 @@ def _pos_int(args, key, default):
 def _out_path(file: Path, output):
     if output:
         name = str(output)
-        # 输出名消毒：只允许文件名，防目录越权（会话目录之外不可写）
-        if '/' in name or '\\' in name or name in ('.', '..') or Path(name).name != name:
-            raise UserError(f"output 只能是文件名（不能含路径分隔符或目录）: {name!r}")
-        return file.parent / name
+        if name in ('.', '..'):
+            raise UserError(f"output 无效: {name!r}")
+        p = Path(name)
+        # 绝对路径原样用：skills.js 会把 output 这类路径参数预处理成会话目录下的绝对路径，
+        # 拒含分隔符反而把平台惯例变成必死参数；防越权由执行容器自身的会话隔离担责。
+        return p if p.is_absolute() else file.parent / p
     return file.parent / f"{file.stem}（已改）{file.suffix}"
 
 
