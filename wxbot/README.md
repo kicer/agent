@@ -40,6 +40,7 @@ agent-core 的 `wechat_bindings` 表；扫码二维码呈现在 agent-core 的 W
 | `WXBOT_TOKEN` | 根 `.env`（`scripts/init.sh` 生成/复用） | 本服务 `/api/*` 鉴权白名单（自动并入）+ 回调 core `/wxhook/*` 的凭据，与 core 侧同一值双向互信 |
 | `CORE_URL` | compose 静态注 `http://agent-core:8090` | 转发目标 |
 | `WXBOT_LOG_LEVEL` | compose 静态注 `info` | 日志等级（debug 原样打印收信消息结构；none/off→silent） |
+| `WXBOT_STRIP_MARKDOWN` | 根 `.env` 可选（默认空） | 出口 markdown 纯文化开关：空/0 = 原样透传（微信已支持渲染）；1 = 恢复 stripMarkdown 降级 |
 
 端口、非文本消息占位文案等次要旋钮走 `src/server.js` 内置 DEFAULTS；日志等级由 env `WXBOT_LOG_LEVEL`
 决定（compose 注入，同 executor 的 `EXECUTOR_LOG_LEVEL` 约定；`debug` 原样打印收信消息结构，
@@ -68,7 +69,7 @@ docker compose up -d agent-core       # core 带 WXBOT_URL/WXBOT_TOKEN 重建（
 | POST | `/api/instances/:id/refresh` | 重发登录流程（二维码过期/失败后；保留凭证） |
 | DELETE | `/api/instances/:id` | 销毁实例并删登录凭证（解绑） |
 | GET | `/api/instances/:id/qr.svg` | 当前登录二维码（core 设置页代理渲染） |
-| POST | `/api/deliver {id,to,text}` | 文本投递（core 已分段；出口统一 stripMarkdown，微信不渲染 markdown） |
+| POST | `/api/deliver {id,to,text}` | 文本投递（core 已分段；markdown 默认透传，微信已支持渲染，`WXBOT_STRIP_MARKDOWN=1` 时出口纯文化） |
 | POST | `/api/typing {id,to}` | 「正在输入」心跳（core 在工具调用/结果时触发，每绑定 2s 冷却；typing 自然过期无需 stopTyping） |
 | POST | `/api/deliver_media {id,to,filename,b64}` | 附件投递（core 已把正文里的 /p/ 链接换成本地字节并做归属/大小校验；SDK 按扩展名自动路由 image/video/file 卡片） |
 

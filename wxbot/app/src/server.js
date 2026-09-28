@@ -29,6 +29,7 @@ const DEFAULTS = {
   bot: {
     storage_dir: "/data/bots",   // 每绑定一个子目录（目录名 = binding id）
     log_level: "info",           // debug | info | warn | error | silent；运行期被 env WXBOT_LOG_LEVEL 覆盖（compose 注入，同 EXECUTOR_LOG_LEVEL 模式）
+    strip_markdown: false,       // 出口 markdown 纯文化开关：微信已支持渲染 markdown，默认 false 原样透传；env WXBOT_STRIP_MARKDOWN=1 可恢复剥除
     empty_hint: "（这条消息类型暂时接不住——支持文字/图片/视频/文件；指令可发 /help）", // 未接入类型（voice/贴纸等）的本地兑底回执
   },
 };
@@ -110,6 +111,16 @@ fs.mkdirSync(CONFIG.bot.storage_dir, { recursive: true });
   const lv = String(process.env.WXBOT_LOG_LEVEL || "").trim().toLowerCase();
   CONFIG.bot.log_level = map[lv] || String(CONFIG.bot.log_level || "info").toLowerCase();
 }
+
+// markdown 出口处理开关：微信已支持渲染 markdown → 默认透传；若某些客户端/版本翻车，
+// env WXBOT_STRIP_MARKDOWN=1/true（compose 注入）或配置文件 bot.strip_markdown: true 恢复旧行为（出口纯文化）。
+{
+  const ev = String(process.env.WXBOT_STRIP_MARKDOWN || "").trim().toLowerCase();
+  if (ev) CONFIG.bot.strip_markdown = /^(1|true|on|yes)$/.test(ev);
+  else CONFIG.bot.strip_markdown = CONFIG.bot.strip_markdown === true || CONFIG.bot.strip_markdown === "true";
+}
+// 出口文本：开关开启才 stripMarkdown，否则原样；命令回执与 /api/deliver 两处发送共用。
+const outText = (s) => (CONFIG.bot.strip_markdown ? stripMarkdown(String(s)) : String(s));
 
 // ── 鉴权 ─────────────────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
@@ -282,8 +293,8 @@ async function onIncoming(inst, msg) {
   }
   try {
     const r = await corePost("/wxhook/inbox", { id: inst.id, from: userId, text: text || undefined, media: media || undefined }, 30000);
-    // 命令回执可能是 markdown（channel 层规范格式）；微信不渲染 markdown，出口统一 stripMarkdown 降级。
-    if (r && r.kind === "command" && r.reply) await inst.bot.send(userId, stripMarkdown(r.reply));
+    // 命令回执可能是 markdown（channel 层规范格式）；默认透传（微信已支持渲染），开关控制是否纯文化。
+    if (r && r.kind === "command" && r.reply) await inst.bot.send(userId, outText(r.reply));
   } catch (e) {
     if (e.status === 404) {
       // core 侧绑定已删（解绑通知丢失的孤儿实例）：告知用户并自毁（连凭证一起清，避免复活再骚扰）
@@ -357,7 +368,7 @@ app.post("/api/deliver", requireAuth, async (req, res) => {
   if (!inst) return res.status(404).json({ error: "实例不存在" });
   if (!to || !String(text || "").trim()) return res.status(400).json({ error: "to/text 不能为空" });
   try {
-    await inst.bot.send(String(to), stripMarkdown(String(text)));
+    await inst.bot.send(String(to), outText(text));
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: "发送失败：" + String(e?.message || e).slice(0, 200) });

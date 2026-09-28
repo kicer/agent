@@ -83,7 +83,7 @@ function parseCommand(text) {
 }
 
 // 命令输出统一用 markdown（channel 层的规范格式）：支持渲染的接入端直接用，
-// 微信这类纯文本端由 wxbot 发送前 stripMarkdown 降级——格式信息留在生产方，渲染适配在消费方。
+// 微信端渲染适配在 wxbot 出口：默认透传 markdown（微信已支持渲染），env WXBOT_STRIP_MARKDOWN=1 才 stripMarkdown 纯文化——格式信息留在生产方，渲染适配在消费方。
 const HELP_TEXT = [
   '**可用命令**',
   '- `/new [msg]` 新建会话并切换',
@@ -109,7 +109,7 @@ function statusReply(db, s) {
   const looping = !!(run && run.looping);
   const lines = [
     '**会话状态**',
-    '- 会话：`' + (s.title || s.id),
+    '- 会话：`' + (s.title || s.id) + '`',
     '- 状态：' + (looping ? '回合进行中' : (STATUS_TEXT[s.status] || s.status)),
     '- 模型：`' + (s.model_id || '未绑定') + '`',
   ];
