@@ -566,7 +566,6 @@ async function runLoopInner(sessionId, run) {
         const txt = String(m.content || '');
         return m.role + (m.tool_calls ? '[calls]' : '')
           + (txt.includes('图片数据已省略') ? '[图已省]' : '')
-          + (txt.includes('每轮只能携带一张图片') ? '[图被限流]' : '')
           + (txt.includes('本回合已投递过') ? '[图重复读挡回]' : '');
       }).join(' '));
     }
@@ -677,8 +676,6 @@ async function runLoopInner(sessionId, run) {
     // 执行工具
     const vision = modelVision(session);
     let handoffDone = false; // 本批工具里是否有 handoff 成功返回（批量跑完统一切换，见循环尾注释）
-    // 本批（=本次模型调用可见范围）是否已放行过一张图；随 while 每轮迭代重置。
-    let imgThisTurn = false;
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
       const id = tc.id;
@@ -720,21 +717,16 @@ async function runLoopInner(sessionId, run) {
         outText = String(output == null ? '' : output);
       }
       if (run.cancelled && !isError) outText = (outText ? outText + '\n' : '') + '（用户已终止任务）';
-      // 死循环护栏（实测：多图同时进上下文时部分上游只认一张；叠加催读文案会让模型整轮重读同一批图、
-      // 每轮都签新图烧 token 直到迭代耗尽）：
-      // ① 每次模型调用最多携带一张图：同批后续图回执降级为文字，让模型下一轮单独再读，逐轮收敛；
-      // ② 同回合同一张图只投递一次：已投递过的再读只回文字提示（run 随回合销毁，新回合自动重置额度）。
+      // 死循环护栏：同回合内同一张图只投递一次——上游能认多图（探针实测同消息双外链全对），
+      // 不再按批次限流；但模型若因惯性叙事反复重读同一文件，每轮都签新图就是纯烧 token，
+      // 故已投递过的图再读只回文字提示（run 随回合销毁，新回合自动重置，追问重看不受影响）。
       if (imageRel) {
         if (!run.imgDelivered) run.imgDelivered = new Set();
         if (run.imgDelivered.has(imageRel)) {
           outText += '\n[该图片本回合已投递过，不再重复携带；若你未看到它，请直接告知用户，勿反复重读同一文件]';
           imageRel = null;
-        } else if (imgThisTurn) {
-          outText += '\n[每轮只能携带一张图片，本张未投递：请在下一轮单独 read_file 本文件查看]';
-          imageRel = null;
         } else {
           run.imgDelivered.add(imageRel);
-          imgThisTurn = true;
         }
       }
       log.debug('tool', sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText);

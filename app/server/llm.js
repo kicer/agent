@@ -128,9 +128,13 @@ function cachedDecodeBlocks(session, row) {
 // 大量 OpenAI 兼容上游会整批忽略或只认批次最后一张，模型看不到图却见回执写着
 // 「已回传」，会反复 read_file 补看（死循环烧 token，见多模态回退复盘）；
 // 故回执降级为纯文本，图块现签成 image_url（mintUrl 公网链回调）后统一并入
-// 该批回执之后的一条 user 消息（user 角色各家通吃），每张图前配一行对应回执文字；
+// 该批之后的一条 user 消息（user 角色各家通吃）：逐图说明文字全部置顶、图块按回执顺序紧随
+//（对齐官方示例排布；探针实测 DS 对交替排布也兼容，取低风险形态），
+// 并附「先逐张简述再继续任务」指令——兼作送达自检，破弱模型的“没收到”惯性叙事；
 // 签不到（base_url 未配等）降级为文字占位，绝不把 image_ref 这种非标准块发上游。
-// 省 token：图块仅在其位于最后一条 assistant 消息之后（模型尚未对它回复）时携带；
+// 省 token：图块保留到最后一条「收尾回复」（无 tool_calls 的 assistant）之前；
+// 中间轮只发 tool_calls 不算看过，图继续携带——14:33 实测 pt 证明图已进上下文而模型
+// 仍自述没看到（弱模型行为不可靠），行为鲁棒优先于极致省钱；更早的视为已消费，
 // 之前的视为已消费，发请求时替换为文字标记（措辞不再催促重读）。DB 始终存全量：
 // UI 历史照常渲染图片，模型如需重看可再次 read_file（新回执在尾部，会重新携带图片）。
 // 压缩摘要相关行（见 engine.runLoopInner / summarizeContext）：
@@ -162,10 +166,13 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
   // tool 回执按 tool_call_id 索引：给 errAck 行拼错误提示时取执行时挡下的原因
   const toolRowById = new Map();
   for (const row of history) if (row.role === 'tool' && row.tool_call_id) toolRowById.set(row.tool_call_id, row);
+  // 「已消费」分界 = 最后一条给出收尾回复（无 tool_calls）的 assistant：模型只发
+  // tool_calls 的中间轮不算已阅图，图继续随请求携带直到它真正答复过一次。
+  // errAck / archived 不发模型，不算回复：它们之前的图不算被消费。
   let lastAssistant = -1;
   for (let i = history.length - 1; i >= 0; i--) {
-    // errAck / archived 不发模型，不算「模型已回复」：它们之前的图不算被消费，下次仍携带
-    if (history[i].role === 'assistant' && history[i].type !== 'errAck' && history[i].type !== 'archived') { lastAssistant = i; break; }
+    const r = history[i];
+    if (r.role === 'assistant' && r.type !== 'errAck' && r.type !== 'archived' && !r.tool_calls) { lastAssistant = i; break; }
   }
   const dropToolCallIds = new Set();
   // 旧版 summarize_request 「已答复」判定的前置信息：最后一次「回合收尾回复」（无 tool_calls 的 assistant）的位置。
@@ -178,7 +185,8 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
   // 未消费图片的暂存区：tool 回执降级为纯文本，图块收集到这里，
   // 循环结束后合并成一条 user 消息发送（顺序约束：天然落在该批全部回执之后、
   // 且是模型下一次的直接输入，assistant→tool 回执的紧邻约束不被打断）。
-  const pendingImages = [];
+  const pendingImages = [];   // 待投递的图块（按回执顺序；签不到时不占位）
+  const pendingLabels = [];   // 每图一行「对应回执」说明，合并进首条文字块（text 置顶、图在后）
   let imgSeq = 0;
   history.forEach((row, i) => {
       // archived：UI 可见，但不进入模型上下文（节省 token）
@@ -226,17 +234,25 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
         content = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n') +
           '\n[图片数据已省略：本图已随上一条回执发送过，不再重复携带；若你当时未能识别其内容，请直接告知用户，勿反复重读同一文件]';
       } else if (row.role === 'tool') {
-        // 未消费的图：回执只留文字，图块挪进批次后的 user 合并消息（见 pendingImages）
+        // 未消费的图：回执只留文字，图块挪进批次后的 user 合并消息（见 pendingImages/Labels）
         const texts = blocks.filter(b => b && b.type === 'text').map(b => b.text);
         content = texts.join('\n');
+        const label = (texts[0] || 'read_file 图片回传').split('\n')[0];
         for (const b of blocks) {
           if (!b || (b.type !== 'image_ref' && b.type !== 'image_url')) continue;
-          // 每张图配一行对应回执说明（回执首行含文件名与压缩信息），模型能对上号
-          pendingImages.push({ type: 'text', text: '[图片 ' + (++imgSeq) + '，对应回执] ' + ((texts[0] || 'read_file 图片回传').split('\n')[0]) });
-          if (b.type === 'image_url') { pendingImages.push(b); continue; } // 旧库内联 data: URL 原样
+          const seq = ++imgSeq;
+          if (b.type === 'image_url') { // 旧库内联 data: URL 原样
+            pendingLabels.push('[图片 ' + seq + '] ' + label);
+            pendingImages.push(b);
+            continue;
+          }
           const url = mintUrl ? mintUrl(b.rel) : null;
-          pendingImages.push(url ? { type: 'image_url', image_url: { url } }
-            : { type: 'text', text: '[图片外链不可用：未能取得图片内容，请直接告知用户，勿反复重读同一文件]' });
+          if (url) {
+            pendingLabels.push('[图片 ' + seq + '] ' + label);
+            pendingImages.push({ type: 'image_url', image_url: { url } });
+          } else {
+            pendingLabels.push('[图片 ' + seq + '] ' + label + '（外链不可用，未取得像素：请直接告知用户，勿反复重读同一文件）');
+          }
         }
       } else {
         // user 行（粘贴附件/旧形态）：image_url 块（data: URL）原样；image_ref → 现签公网外链
@@ -254,11 +270,16 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
       messages.push({ role: row.role, content });
     }
   });
-  // 该批未消费图片合并发送：一条 user 消息带全部图块，逐图前置对应回执标签
-  if (pendingImages.length) {
+  // 该批未消费图片合并发送：单条 text 置顶列出逐图对应说明，图块按编号顺序紧随；
+  // 「先简述每张图再继续」兼作送达自检——模型描述得出来 = 像素真到了；描述不出 = 真没到，
+  // 不会再像 14:33 那样带着图却沿“没收到”的叙事惯性重读。
+  if (pendingImages.length || pendingLabels.length) {
     messages.push({
       role: 'user',
-      content: [{ type: 'text', text: '[系统] 以上工具回执对应的图片内容如下（read_file 回传，按回执顺序）：' }]
+      content: [{ type: 'text',
+        text: '[系统提示] 以下不是用户新输入，是上面这批 tool 回执对应的图片（read_file 回传）：\n'
+          + pendingLabels.join('\n')
+          + (pendingImages.length ? '\n请按编号顺序逐张简述每张图片里有什么（表明像素确实送达），然后继续完成用户的任务。' : '') }]
         .concat(pendingImages),
     });
   }
