@@ -916,6 +916,7 @@ function schedDetail(t) {
   const lines = ['id=' + t.session_id + (t.current ? '（本会话）' : '')];
   if (t.title) lines.push('name=' + t.title);
   if (t.brief) lines.push('brief=' + t.brief);
+  if (t.script) lines.push('script=' + t.script);
   lines.push('cron="' + t.cron_expr + '"');
   lines.push('next=' + scheduler.fmtIso(t.next_run_at));
   if (t.last_run_at) lines.push('last=' + scheduler.fmtIso(t.last_run_at) + ' last_status=' + (t.last_status || '-'));
@@ -959,10 +960,14 @@ function toolScheduleTask(ctx, args) {
       if (!cronExpr) throw new Error('op=create 缺少必填参数 cron_expr');
       if (!prompt) throw new Error('op=create 缺少必填参数 prompt');
       const brief = String(args.brief || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-      const t = scheduler.createTask(db, ctx.sessionId, cronExpr, prompt, brief);
+      // script 纯标记：存在即暗示模型把流程沉淀成脚本（怎么写、用什么跑、prompt 怎么引用由它自定）；
+      // 创建与触发均不校验——缺脚本时 prompt 自身的指示就是回退面。
+      const script = String(args.script || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      const t = scheduler.createTask(db, ctx.sessionId, cronExpr, prompt, brief, script);
       // 定时即下班：标记本回合收尾时由 engine 收口（brief 碎片 + 归档 + 通道解绑，见 engine.taskClockOut）。
       if (ctx.onTaskCreated) ctx.onTaskCreated();
       return '已创建 id=' + ctx.sessionId + '\ncron="' + t.cron_expr + '"\nnext=' + scheduler.fmtIso(t.next_run_at)
+        + (script ? '\nscript=' + script : '')
         + '\n本会话即收口为该任务专柜（用户无感知，下条消息自动进新会话）。';
     }
     case 'update': {

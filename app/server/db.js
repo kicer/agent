@@ -185,6 +185,10 @@ function initDb(dbPath) {
   // brief 直接充当会话的日记碎片底子，零 LLM 成本）。默认空串：存量任务无 brief，其下班碎片降级用 prompt 首行。
   const schedCols = db.prepare('PRAGMA table_info(scheduled_tasks)').all();
   if (!schedCols.some(c => c.name === 'brief')) db.exec("ALTER TABLE scheduled_tasks ADD COLUMN brief TEXT NOT NULL DEFAULT ''");
+  // 升级老库：scheduled_tasks 补 script 列（可选标记：任务脚本的文件名）。纯标记——创建不验存在、
+  // 触发不验存在（参数存在本身就是对 AI 的脚本化暗示，怎么写进 prompt、用 bash 还是 python 由它自定）；
+  // get 详情里展示这个「肌肉记忆长在哪」。与 brief 同构，新库建表后也靠本迁移补列。
+  if (!schedCols.some(c => c.name === 'script')) db.exec("ALTER TABLE scheduled_tasks ADD COLUMN script TEXT NOT NULL DEFAULT ''");
   // 迁移：model_slot 记会话粘住的具体池 key 槽位（「平台#key下标」，key 为共享资源不再独占），
   // 跨结版/重启保持（只有手动换绑或模型失效改选会动），model_id 存模型 id 供展示/统计（见 engine.applyBinding）。
   if (!cols.some(c => c.name === 'model_slot')) db.exec('ALTER TABLE sessions ADD COLUMN model_slot TEXT');

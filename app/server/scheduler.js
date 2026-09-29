@@ -60,15 +60,15 @@ function validateCron(cronExpr) {
 
 // sessionId 由调用方从工具 ctx 取（AI 无法指定别的会话）。校验顺序：
 // validateCron → 本会话尚无任务 → INSERT（主键冲突兜底）。
-function createTask(db, sessionId, cronExpr, prompt, brief) {
+function createTask(db, sessionId, cronExpr, prompt, brief, script) {
   if (prompt.length > PROMPT_MAX_LEN) throw new Error('prompt 过长（上限 ' + PROMPT_MAX_LEN + ' 字符）');
   const first = validateCron(cronExpr);
   const exist = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
   if (exist) throw new Error('本会话已有定时任务（' + exist.cron_expr + '）。改频次或提示词用 op=update；确要换新任务先 op=delete 再 op=create');
   try {
     db.prepare(
-      'INSERT INTO scheduled_tasks (session_id, cron_expr, prompt, brief, next_run_at, created_at) VALUES (?,?,?,?,?,?)'
-    ).run(sessionId, cronExpr, prompt, String(brief || '').slice(0, 80), first, Date.now());
+      'INSERT INTO scheduled_tasks (session_id, cron_expr, prompt, brief, script, next_run_at, created_at) VALUES (?,?,?,?,?,?,?)'
+    ).run(sessionId, cronExpr, prompt, String(brief || '').slice(0, 80), String(script || '').replace(/\s+/g, ' ').trim().slice(0, 80), first, Date.now());
   } catch (_) {
     // 单进程同步 API 下正常到不了这里（上一步已查重），仅作主键约束重复报错的兜底
     const ex = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
@@ -96,7 +96,7 @@ function listUserTasks(db, user) {
 
 function getTask(db, sessionId) {
   return db.prepare(
-    'SELECT cron_expr, prompt, brief, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
+    'SELECT cron_expr, prompt, brief, script, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
   ).get(sessionId) || null;
 }
 

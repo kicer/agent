@@ -292,7 +292,7 @@
     "type": "function",
     "function": {
       "name": "schedule",
-      "description": "Manage your scheduled tasks (alarms). Each task lives on exactly one session (at most one per session) and is addressed by its home session id — the same id op=list shows (e.g. 'task-20260929-003'); omit id (or '0') to act on THIS session's task. At each trigger the prompt is delivered to the task's session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get     Optional id (default: this session).\nop=list    No arguments. Every task of the current user across all sessions, each row starting with its id — hand that id to get/update/delete to act on any task directly; never ask the user to switch sessions.\nop=create  Always targets THIS session (id is rejected). Requires cron_expr, prompt and brief. After creating, this session retires into the task's dedicated home (archived; the user's next message starts a fresh session).\nop=update  Optional id. Requires at least one of cron_expr, prompt; only given fields change.\nop=delete  Optional id. Cancels that task.",
+      "description": "Manage your scheduled tasks (alarms). Each task lives on exactly one session (at most one per session) and is addressed by its home session id — the same id op=list shows (e.g. 'task-20260929-003'); omit id (or '0') to act on THIS session's task. At each trigger the prompt is delivered to the task's session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get     Optional id (default: this session).\nop=list    No arguments. Every task of the current user across all sessions, each row starting with its id — hand that id to get/update/delete to act on any task directly; never ask the user to switch sessions.\nop=create  Always targets THIS session (id is rejected). Requires cron_expr, prompt and brief; optional script. After creating, this session retires into the task's dedicated home (archived; the user's next message starts a fresh session).\nop=update  Optional id. Requires at least one of cron_expr, prompt; only given fields change.\nop=delete  Optional id. Cancels that task.",
       "parameters": {
         "type": "object",
         "required": [
@@ -325,6 +325,10 @@
           "brief": {
             "type": "string",
             "description": "One short plain-language line (<= 40 chars) saying what this task actually accomplishes, e.g. 'collect and produce a daily news PDF report'. It is written into the assistant's long-term memory diary so the recurring job can be recalled later. Required with op=create."
+          },
+          "script": {
+            "type": "string",
+            "description": "Optional marker for op=create: a script filename (relative to the session working dir) meant to carry this task's routine, so triggers reuse muscle memory instead of redoing everything. Supplying it signals you should distill the workflow into that script (language, invocation and how the prompt wires it are yours to decide). Existence is never validated — not at create, not at trigger."
           }
         }
       }
