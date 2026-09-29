@@ -80,7 +80,9 @@ const DEFAULTS = {
   // fetch：timeout_ms 覆盖请求发出到 body 读完的全生命周期；max_bytes 为流式抓取字节上限（超限即断开）。
   fetch: { timeout_ms: 30000, max_bytes: 1048576 },
   // auto_compress_tokens：本轮 In token 峰值 ≥ 此值时推送「自动压缩」提议（0=关）。
-  agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000 },
+  // auto_complete_ms：held（保持中）超过此时长自动收口为 completed（0=关）。key 非独占后 held 不占任何资源，
+  //   收口是纯视觉动作：历史/绑定不动，再发言照常由 completed 分支续跑（见 engine.sweepHeldTimeouts）。
+  agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000, auto_complete_ms: 1800000 },
   // 大图上传预处理（浏览器端 canvas 压缩，参数经 /api/system/status 下发前端）。
   upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10 },
   // 技能根目录：留空取 workspace_root 同级 skills（/workspace/tasks → /workspace/skills）。

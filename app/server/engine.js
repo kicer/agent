@@ -164,6 +164,43 @@ function syncModelPool() {
   // 下次发消息时由 ensureBinding 自动改选（优先留原平台），用户无感。
   db.prepare('UPDATE model_pool SET is_busy = 0, current_session_id = NULL').run(); // 旧版独占列清残留（调度已不读）
   db.prepare("UPDATE sessions SET status='held', held_at=COALESCE(held_at, updated_at), updated_at=? WHERE status IN ('active','queued')").run(now());
+  startHeldSweeper();
+}
+
+// ---------- held 自动收口（保持中 → 已完成） ----------
+// held 自「key 共享非独占」后不再持有任何资源（旧 model_hold 租约已废弃，见 config.js 注释），
+// 只是给用户留着「还能追问」的视觉信号；但长期挂着会显得会话永不收口，出口只剩手动「断开」。
+// 超时翻 completed 是零行为影响的纯状态动作：历史与模型绑定都不动，用户再发言走
+// postUserMessage 的 completed 分支照常原模型续跑。
+// 护栏：阈值远大于 AUTO_COMPRESS_GRACE_MS，不会挤掉自动压缩提议的确认窗口（提议弹出后用户随时可确认，
+//   收口不拦 /summarize）；判据只看 status（held 定义上不在输出中，抢先发言已把状态翻离 held，不会误收）；
+//   held_at 为 NULL（无从判时长的存量数据）跳过；agent.auto_complete_ms = 0 关闭。
+// 扫描间隔随阈值自适应：生产默认 30 分钟封顶 60s；测试把阈值调小即可获得分钟级以下的扫描节奏。
+// 运行期改了 auto_complete_ms 不会重调间隔，重启生效（阈值本身每次 tick 重读，支持热关/热改）。
+const HOLD_SWEEP_MIN_MS = 1000, HOLD_SWEEP_MAX_MS = 60000;
+let holdSweeper = null;
+function startHeldSweeper() {
+  if (holdSweeper) return; // init 重复调用幂等
+  const th = Math.floor(Number((cfg.agent || {}).auto_complete_ms) || 0);
+  if (th <= 0) return;     // 关闭态不建定时器
+  const interval = Math.max(HOLD_SWEEP_MIN_MS, Math.min(HOLD_SWEEP_MAX_MS, Math.floor(th / 4)));
+  holdSweeper = setInterval(sweepHeldTimeouts, interval);
+  if (holdSweeper.unref) holdSweeper.unref(); // 同 scheduler：常驻轮询不阻止进程退出
+}
+function sweepHeldTimeouts() {
+  try {
+    const ms = Math.floor(Number((cfg.agent || {}).auto_complete_ms) || 0);
+    if (ms <= 0) return;
+    const rows = db.prepare("SELECT id FROM sessions WHERE status='held' AND held_at IS NOT NULL AND held_at <= ?").all(now() - ms);
+    for (const r of rows) {
+      touch(r.id, { status: 'completed', completed_at: now(), held_at: null });
+      bus.emit(r.id, 'done', { status: 'completed' }); // 与手动 releaseHold 同链路，前端胶囊/列表自然收起
+      emitStatus(r.id);
+    }
+    if (rows.length) log.info('engine', 'held 超时自动收口 ' + rows.length + ' 个会话（阈值 ' + ms + 'ms）');
+  } catch (e) {
+    log.warn('engine', 'held 收口扫描异常: ' + (e && e.message || e));
+  }
 }
 
 // ---------- 模型池调度（优先级选择，无排队、无独占） ----------

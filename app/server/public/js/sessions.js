@@ -259,13 +259,19 @@
     bar.classList.remove('hidden');
     const pill = $('status-pill');
     const stMap = { active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
-    let text = stMap[state.status] || state.status || '--';
+    const statusText = stMap[state.status] || state.status || '--';
     // 持有绑定的态都附带当前模型：key 非独占、无租约，绑定跨结版持续可见；
-    // 仅手动「断开」（held→completed）收起展示，「终止」不算断开（绑定仍在，再发言沿用）
-    if (d && d.model_id && state.status !== 'completed') {
-      text += ' · ' + d.model_id;
+    // held/cancelled 下模型名即「更换模型」入口（复用选择弹窗），输出中(active)只展示不给点；
+    // completed 收走展示（手动断开/超时长自动收口），再发言仍沿用原绑定
+    const showModel = !!(d && d.model_id && state.status !== 'completed');
+    const switchable = showModel && state.status !== 'active';
+    if (switchable) {
+      pill.innerHTML = esc(statusText) + ' · <span class="pill-model" title="点击更换模型" onclick="openModelSwitch()">' + esc(d.model_id) + '</span>';
+    } else if (showModel) {
+      pill.innerHTML = esc(statusText) + ' · ' + esc(d.model_id);
+    } else {
+      pill.textContent = statusText;
     }
-    pill.textContent = text;
     // 状态胶囊配色:活跃中绿(执行中)、保持中黄(已答完、保持模型中)等;状态栏整体同步染色
     pill.className = 'status-pill ' + (state.status || '');
     bar.className = 'phase-bar ' + (state.status || '');
@@ -275,9 +281,10 @@
     btn.classList.toggle('hidden', !actionable);
     btn.textContent = state.status === 'held' ? '断开' : '终止';
     btn.classList.toggle('muted', state.status === 'held');
-    // 非输出中都可「选择模型」：key 不再独占/排队，任意模型即点即换（后端仅 looping 拒绝）
+    // 「选择模型」独立按钮：胶囊里的模型名可点时（held/cancelled）不再重复给入口；
+    // completed（无模型名）或事件未带 model_id 时仍靠它继续/换模；active 维持原逻辑隐藏
         const msBtn = $('model-switch-btn');
-        if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && state.status && state.status !== 'active'));
+        if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && state.status && !switchable && state.status !== 'active'));
         // 状态栏「压缩」按钮：active 时不允许（避免与正在跑的回合抢上下文）;
         // 其余状态可点。未发起总结时可点；发起后按钮 disabled 防双击。
         const cpBtn = $('compress-btn');

@@ -833,6 +833,9 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .status-pill.held { background: #fff4dc; color: #8a6400; }
 .status-pill.queued { background: #e9edff; color: var(--active); }
 .status-pill.cancelled { background: #fdecea; color: #b3382c; }
+/* 状态胶囊里的模型名 = 「更换模型」入口（held/cancelled 下可点，与独立「选择模型」同一弹窗，见 sessions.js updatePhaseBar） */
+.status-pill .pill-model { cursor: pointer; border-bottom: 1px dashed currentColor; }
+.status-pill .pill-model:hover { opacity: .7; }
 @keyframes pill-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 /* 微信绑定内联卡（账户页）：登录码用服务端 SVG 内联渲染（非 <img>，无坏图帧）；未就绪时占位不跳高 */
 .wx-qr { display: flex; justify-content: center; align-items: center; margin: 10px 0 4px; min-height: 236px; }
