@@ -1141,6 +1141,8 @@ function deleteSession(sessionId, deleteDir) {
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+  const frags = memory.dropFragment(db, sessionId); // 日记随会话一并销毁：删掉的会话不该还活在长期记忆里
+  if (frags) log.info('task', sessionId + ' 连带删除日记碎片 ' + frags + ' 条');
   autoCompressProposed.delete(sessionId); // 提议闸门随会话销毁
   if (deleteDir) {
     try { fs.rmSync(taskDirOf(sessionId), { recursive: true, force: true }); } catch (_) {}
@@ -1231,7 +1233,7 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
 // 与自动标题同模式：fire-and-forget + 内存防重入；绝不阻塞轮换路径（微信先回信，
 // 日记后台慢慢落）。一片一行入 memory_fragments，day=事件日（会话最后活跃日），
 // 去重靠 (user, session_id) 主键；渲染/检索全在 memory.js。
-// /clear 不记：用户主动清零历史 = 不要这段记忆（已定调）。
+// /clear 不记也不留：用户主动清零历史 = 不要这段记忆（已定调），旧碎片随清空一并撕掉（闹钟专柜除外，见 clearSessionMessages）。
 // 摘要模型走候选链兜底（用户定调：日记错过即丢，不能死于会话原绑模型这一个单点）：
 // 原绑 → 同平台其它 → 配置序其它，最多 3 个；全链失败/无可用模型才记带真实原因的降级占坑。
 const journaling = new Set(); // 正在生成碎片的会话（防双发）
@@ -1420,7 +1422,19 @@ function clearSessionMessages(sessionId) {
   // 标题随历史一并清零：旧标题描述的是已删除的对话，留着会让新对话文不对题；
   // 新一轮交互结束后 maybeGenerateTitle 见 title 为空会自动重新生成。
   // journaled_at 清零：清空 = 这单作业被撕掉，旧碎片随对话作废，新一轮将来可再收口。
-  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null, title: null, title_locked: 0, phase: 'advising', journaled_at: null });
+  // 旧碎片要物理删除而非只清标记：(user, session_id) 主键 + INSERT OR IGNORE 下旧碎片会拦住新一轮
+  // 收口（dupe 即占坑），日记里永远留的是那段已被抹掉的对话。
+  // 例外：闹钟专柜（本会话仍挂定时任务）——/clear 不取消任务，它的 brief 碎片是「我有这个周期活」
+  // 的唯一记录，撕不得；同时保持 journaled_at 占坑，免得空转录白烧一次摘要 LLM（结果仍是 dupe）。
+  const isTaskHome = !!db.prepare('SELECT 1 FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
+  if (!isTaskHome) {
+    const frags = memory.dropFragment(db, sessionId);
+    if (frags) log.info('task', sessionId + ' 清空连带删除日记碎片 ' + frags + ' 条');
+  }
+  const reset = { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null,
+    title: null, title_locked: 0, phase: 'advising', journaled_at: null };
+  if (isTaskHome) delete reset.journaled_at; // touch 会把 undefined 写成 NULL，这里直接不送这个键
+  touch(sessionId, reset);
   profile.freezeSnapshot(db, sessionId); // 回 advising 重新规划：画像快照随新一轮重新冻结
   bus.emit(sessionId, 'done', { status: 'completed' });
   bus.emit(sessionId, 'title', { title: null }); // 供其他打开同一会话的窗口同步清掉旧标题

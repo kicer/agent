@@ -7,7 +7,8 @@
 // - text = 纯日记正文（"- " 行列表），【来源会话 id】展示样式只在渲染层拼，存储零冗余元数据；
 // - (user, session_id) 主键即「每会话唯一碎片」的存储级保证（engine 侧 journaled_at 是扫描预排除）；
 // - 注入 =「嘴边的工作记忆」：开场只带最近 inject_max 片（created_at 倒序）；更早的没消失——
-//   recall 工具 op=search/days/day 走全表；retain_days > 0 才按 day 硬裁（默认 0 = 永不删）。
+//   recall 工具 op=search/days/day 走全表；retain_days > 0 才按 day 硬裁（默认 0 = 不按时间删，
+//   但删会话会连带撕掉它的碎片，见 dropFragment）。
 // 时区与 cron（scheduler.js）对齐 Asia/Shanghai：上海无夏令时，按毫秒日移取 day 字符串安全。
 
 const TZ = 'Asia/Shanghai';
@@ -46,6 +47,15 @@ function appendFragment(db, cfg, user, sessionId, day, text) {
   if (!r.changes) return 'dupe';
   prune(db, cfg); // 廉价 DELETE 顺带做；retain_days=0 时 no-op
   return 'added';
+}
+
+// ---------- 删：来源会话销毁时连带撕掉它的碎片 ----------
+// 会话没了，这条「我帮他做过什么」就再无出处：recall 拿到 sid 翻不出原文，也带不出成果文件，
+// 留着是幽灵记忆（还会白占 inject_max 额度）。session id 全局唯一，按 sid 删即可，不必再限 user。
+// 调用方：engine.deleteSession（Web 删除弹窗与微信 /delete 同源）。
+function dropFragment(db, sessionId) {
+  const res = db.prepare('DELETE FROM memory_fragments WHERE session_id = ?').run(String(sessionId));
+  return res.changes || 0;
 }
 
 // 收口标记：sessions.journaled_at 物理占坑（扫描预排除，防陈年空闲会话每轮重复烧摘要 LLM）。
@@ -143,7 +153,7 @@ function prune(db, cfg) {
 
 module.exports = {
   retainDays, injectMax, dayString, cutoffDay,
-  appendFragment, markJournaled, journalFor, injectedIds,
+  appendFragment, dropFragment, markJournaled, journalFor, injectedIds,
   searchFragments, daysIndex, dayEntry, prune,
   INJECT_CAP, FRAG_MAX,
 };

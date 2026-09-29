@@ -119,7 +119,10 @@ function initDb(dbPath) {
     -- 长期记忆（日记，memory.js）：一片碎片一行——会话收口（下班）时落库，(user, session_id) 主键即去重。
     -- day = 事件日（会话最后活跃日，Asia/Shanghai 与 cron 同时区）：人回忆问「哪天干的活」，不是「哪天补记的」。
     -- text = 纯日记正文（- 行列表）；来源会话 id 存在 session_id 列，【id】展示样式只在渲染层拼，存储零冗余。
-    -- 故意不建外键：记忆是用户级的，删会话不能抹掉它已记入的日记（与 channel_sessions 的懒解析同理）。
+    -- 故意不建外键：主键是 (user, session_id)，SQLite 要求引用列命中唯一约束，单列 session_id
+    -- 建不了 FK；且删会话的连带清理由 engine.deleteSession 显式 memory.dropFragment 承担
+    --（与 scheduled_tasks 的 ON DELETE CASCADE 同效果，语义归代码层说清）。
+    -- 旧版曾定调「删会话不能抹掉已记入的日记」，已推翻：会话正文与成果文件都没了，碎片再无出处。
     CREATE TABLE IF NOT EXISTS memory_fragments (
       user TEXT NOT NULL,
       session_id TEXT NOT NULL,
@@ -245,6 +248,13 @@ function initDb(dbPath) {
     }
     db.exec('DROP TABLE memory_entries');
   }
+  // 清理（一次性、幂等）：旧版「删会话不抹日记」留下的孤儿碎片——来源会话已不在，
+  // 回忆时既翻不出原文也带不出成果文件，纯幽灵记忆（还会白占 inject_max 注入额度）。
+  // 现行规则：会话销毁即连带撕碎片（engine.deleteSession → memory.dropFragment），本语句只负责清掉历史脏数据。
+  const orphan = db.prepare(
+    'DELETE FROM memory_fragments WHERE session_id NOT IN (SELECT id FROM sessions)'
+  ).run().changes || 0;
+  if (orphan) console.log('[db] 清理孤儿日记碎片 ' + orphan + ' 条（来源会话已删除）');
   return db;
 }
 
