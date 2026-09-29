@@ -893,26 +893,41 @@ async function toolMintPublicLink(ctx, args) {
   return pl.base_url + '/p/' + id;
 }
 
-// schedule：当前会话定时任务的完整生命周期（op 分派，规范见 docs/tool-design.md）。
-// sessionId 取自 ctx（AI 无法指定别的会话）；表主键 session_id → 每会话至多一条，
-// 资源即「本会话的任务」，无 id 参数。条件必填在代码里校验（schema 只 required op），
-// 错误回显 op 与缺失字段；delete 不落 scheduler_note（返回文本本身已进会话记录）。
+// schedule：用户全部定时任务的生命周期（op 分派，规范见 docs/tool-design.md）。
+// 任务住会话（表主键 session_id → 每会话至多一条），「哪个任务」就用所属会话 id 指认：
+// id 省略/'0' = 本会话（兼容旧调用）；跨会话操作带 op=list 里看到的 id，同用户校验——
+// 用户不切会话，AI 代办一切。create 只落当前会话（定时即下班，建完本会话收口退位成专柜）。
+// 条件必填在代码里校验（schema 只 required op），错误回显 op 与缺失字段；delete 不落 scheduler_note。
 function toolScheduleTask(ctx, args) {
   const op = String(args.op || '').trim().toLowerCase();
   const cronExpr = String(args.cron_expr || '').trim();
   const prompt = String(args.prompt || '').trim();
   const db = ctx.db;
+  const curUser = () => String((db.prepare('SELECT user FROM sessions WHERE id = ?').get(ctx.sessionId) || {}).user || '');
+  // 目标会话解析：无 id → 本会话；有 id → 存在 + 同用户，否则报错（不静默降级，防 AI 拿错目标静默误删）。
+  const target = () => {
+    const raw = String(args.id == null ? '' : args.id).trim();
+    if (!raw || raw === '0' || raw === ctx.sessionId) return ctx.sessionId;
+    const s = db.prepare('SELECT user FROM sessions WHERE id = ?').get(raw);
+    if (!s) throw new Error('id 指向的会话不存在：' + raw + '（op=list 可看各任务所属会话 id）');
+    if (String(s.user || '') !== curUser()) throw new Error('无权操作其他用户的会话任务');
+    return raw;
+  };
+  const where = sid => sid === ctx.sessionId ? '' : '（会话 ' + sid + '）';
   switch (op) {
     case 'get': {
-      const t = scheduler.getTask(db, ctx.sessionId);
-      if (!t) return '本会话当前没有定时任务。要创建用 op=create。';
+      const sid = target();
+      const t = scheduler.getTask(db, sid);
+      if (!t) return '该会话' + (sid === ctx.sessionId ? '' : '（' + sid + '）') + '没有定时任务。要创建用 op=create（只落当前会话）。';
       const last = t.last_run_at
         ? scheduler.fmtTime(t.last_run_at) + '（状态 ' + (t.last_status || '-') + (t.last_note ? '，' + t.last_note : '') + '）'
         : '尚未执行';
-      return '本会话定时任务' + (t.brief ? '「' + t.brief + '」' : '') + '：cron=' + t.cron_expr + '（Asia/Shanghai），下次执行 ' +
+      return '定时任务' + where(sid) + (t.brief ? '「' + t.brief + '」' : '') + '：cron=' + t.cron_expr + '（Asia/Shanghai），下次执行 ' +
         scheduler.fmtTime(t.next_run_at) + '，上次执行 ' + last + '。提示词：' + t.prompt;
     }
     case 'create': {
+      const raw = String(args.id == null ? '' : args.id).trim();
+      if (raw && raw !== '0' && raw !== ctx.sessionId) throw new Error('op=create 只作用于当前会话：新任务住进本会话并于本回合收尾后收口退位成专柜（定时即下班），无需也不能指定其它会话 id');
       if (!cronExpr) throw new Error('op=create 缺少必填参数 cron_expr');
       if (!prompt) throw new Error('op=create 缺少必填参数 prompt');
       const brief = String(args.brief || '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -925,35 +940,36 @@ function toolScheduleTask(ctx, args) {
     }
     case 'update': {
       if (!cronExpr && !prompt) throw new Error('op=update 需要 cron_expr 和 prompt 至少提供一个');
-      const t = scheduler.updateTask(db, ctx.sessionId, {
+      const sid = target();
+      const t = scheduler.updateTask(db, sid, {
         cronExpr: cronExpr || null,
         prompt: prompt || null,
       });
-      return '定时任务已更新：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。';
+      return '定时任务已更新' + where(sid) + '：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。';
     }
-    case 'list_all': {
-      // 跨会话全览（用户问「我都有哪些定时任务」时的唯一入口）：只读不拆生命周期——
-      // update/delete 仍只作用本会话，其余任务靠清单里的会话 id 引导用户切过去操作。
-      const me = db.prepare('SELECT user FROM sessions WHERE id = ?').get(ctx.sessionId);
-      const rows = scheduler.listUserTasks(db, (me && me.user) || '');
-      if (!rows.length) return '你目前没有任何定时任务。要创建用 op=create（本会话' + (scheduler.getTask(db, ctx.sessionId) ? '已有任务，需先 delete' : '当前没有任务，可直接建') + '）。';
+    case 'list': {
+      // 跨会话全览：每行尾挂所属会话 id，AI 拿 id 直接代办改删——不再出现任何
+      //「让用户切会话」式引导（用户不会切）。
+      const rows = scheduler.listUserTasks(db, curUser());
+      if (!rows.length) return '你目前没有任何定时任务。要创建用 op=create（落在本会话，建成后本会话退位成该任务专柜）。';
       const lines = rows.map(t => {
         const last = t.last_run_at
           ? scheduler.fmtTime(t.last_run_at) + '（' + (t.last_status || '-') + (t.last_note ? '，' + t.last_note : '') + '）'
           : '尚未执行';
-        return '- 「' + (t.brief || String(t.prompt).slice(0, 40)) + '」 cron=' + t.cron_expr
-          + '，下次 ' + scheduler.fmtTime(t.next_run_at) + '，上次 ' + last
-          + '，会话「' + (t.title || t.session_id) + '」' + t.session_id
-          + (t.session_id === ctx.sessionId ? '（本会话，可直接 op=update/delete）' : '（要改删请让用户先切到该会话：网页打开它，微信发 /switch ' + t.session_id + '）');
+        return '- id=' + t.session_id + (t.session_id === ctx.sessionId ? '（本会话）' : '')
+          + ' 「' + (t.brief || String(t.prompt).slice(0, 40)) + '」 cron=' + t.cron_expr
+          + '，下次 ' + scheduler.fmtTime(t.next_run_at) + '，上次 ' + last;
       });
-      return '全部定时任务（' + rows.length + ' 个，按下次执行排序）：\n' + lines.join('\n');
+      return '全部定时任务（' + rows.length + ' 个，按下次执行排序）：\n' + lines.join('\n')
+        + '\n改/删直接 op=update / op=delete 并带对应 id；新建闹钟用 op=create（只落本会话，定时即下班）。';
     }
     case 'delete': {
-      const old = scheduler.deleteTask(db, ctx.sessionId);
-      return '定时任务已删除（原定 ' + old + '）。要建新任务用 op=create。';
+      const sid = target();
+      const old = scheduler.deleteTask(db, sid);
+      return '定时任务已删除' + where(sid) + '（原定 ' + old + '）。要建新任务用 op=create（本会话）。';
     }
     default:
-      throw new Error('未知的 op："' + op + '"。可用：get / create（需 cron_expr、prompt、brief）/ update（需 cron_expr、prompt 至少一个）/ delete / list_all（跨会话全览）');
+      throw new Error('未知的 op："' + op + '"。可用：get / list（跨会话全览，每行带 id）/ create（仅当前会话；需 cron_expr、prompt、brief）/ update（需 cron_expr、prompt 至少一个，可选 id）/ delete（可选 id）');
   }
 }
 

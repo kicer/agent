@@ -292,7 +292,7 @@
     "type": "function",
     "function": {
       "name": "schedule",
-      "description": "Manage the recurring scheduled task bound to the CURRENT session. At most one task per session; it is deleted together with the session. At each trigger, the prompt is sent to this session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get       No arguments.\nop=list_all  No arguments. Lists every scheduled task of the current user across all sessions (update/delete still act on the CURRENT session only; other rows name their session id so the user can switch there).\nop=create  Requires cron_expr, prompt and brief.\nop=update  Requires at least one of cron_expr, prompt; only the given fields change.\nop=delete  No arguments.",
+      "description": "Manage your scheduled tasks (alarms). Each task lives on exactly one session (at most one per session) and is addressed by its home session id — the same id op=list shows (e.g. 'task-20260929-003'); omit id (or '0') to act on THIS session's task. At each trigger the prompt is delivered to the task's session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get     Optional id (default: this session).\nop=list    No arguments. Every task of the current user across all sessions, each row starting with its id — hand that id to get/update/delete to act on any task directly; never ask the user to switch sessions.\nop=create  Always targets THIS session (id is rejected). Requires cron_expr, prompt and brief. After creating, this session retires into the task's dedicated home (archived; the user's next message starts a fresh session).\nop=update  Optional id. Requires at least one of cron_expr, prompt; only given fields change.\nop=delete  Optional id. Cancels that task.",
       "parameters": {
         "type": "object",
         "required": [
@@ -303,12 +303,16 @@
             "type": "string",
             "enum": [
               "get",
+              "list",
               "create",
               "update",
-              "delete",
-              "list_all"
+              "delete"
             ],
-            "description": "Operation to perform on the current session's scheduled task."
+            "description": "Operation to perform. Tasks are addressed by their home session id."
+          },
+          "id": {
+            "type": "string",
+            "description": "Task handle: the session id the task lives on, exactly as listed by op=list. Omit (or '0') to act on THIS session's task. Allowed with get/update/delete; op=create rejects it (new tasks always live in this session)."
           },
           "cron_expr": {
             "type": "string",

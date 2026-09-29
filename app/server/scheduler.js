@@ -75,7 +75,7 @@ function createTask(db, sessionId, cronExpr, prompt, brief) {
 // 仅当改了 cron 才重算 next_run_at。不校验 running 状态（update 天然安全，
 // delete 也不打断正在跑的回合）。
 
-// 跨会话全览（schedule op=list_all 与微信 /tasks 命令同源数据）：join sessions 带出标题，
+// 跨会话全览（schedule op=list 的数据源）：join sessions 带出标题，
 // 读清单的人据此找到任务住在哪个会话再切过去操作；改删仍绑定各自会话（生命周期不拆）。
 function listUserTasks(db, user) {
   return db.prepare(
@@ -86,13 +86,13 @@ function listUserTasks(db, user) {
 
 function getTask(db, sessionId) {
   return db.prepare(
-    'SELECT cron_expr, prompt, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
+    'SELECT cron_expr, prompt, brief, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
   ).get(sessionId) || null;
 }
 
 function updateTask(db, sessionId, patch) {
   const row = db.prepare('SELECT cron_expr, next_run_at FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
-  if (!row) throw new Error('本会话没有定时任务，先用 op=create 创建');
+  if (!row) throw new Error('该会话没有定时任务，要建用 op=create（只落当前会话）');
   let cron = row.cron_expr;
   let next = row.next_run_at;
   if (patch.cronExpr && patch.cronExpr !== row.cron_expr) {
@@ -109,7 +109,7 @@ function updateTask(db, sessionId, patch) {
 
 function deleteTask(db, sessionId) {
   const row = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
-  if (!row) throw new Error('本会话没有定时任务，无需 op=delete');
+  if (!row) throw new Error('该会话没有定时任务，无需 op=delete');
   db.prepare('DELETE FROM scheduled_tasks WHERE session_id = ?').run(sessionId);
   log.info('scheduler', sessionId + ' 删除定时任务 ' + row.cron_expr);
   return row.cron_expr;
