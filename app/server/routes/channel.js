@@ -108,7 +108,7 @@ function listReply(db, user, curId) {
     return line + (r.id === curId ? ' [当前]' : '');
   });
   lines.push(res.total > rows.length
-    ? '共 ' + res.total + ' 个会话，只列最近 ' + rows.length + ' 个，更早的在网页端管理'
+    ? '共 ' + res.total + ' 个会话，只列最近 ' + rows.length + ' 个'
     : '用 /switch <编号> 切换，/delete <编号> 删除');
   return ['**会话列表**'].concat(lines).join('\n');
 }
