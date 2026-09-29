@@ -1200,17 +1200,12 @@ const journaling = new Set(); // 正在生成碎片的会话（防双发）
 const JOURNAL_SKIP_TYPES = new Set(['archived', 'channel_note', 'scheduler_note', 'memory_note']);
 const JOURNAL_BUDGET = 24000; // 转录输入字数预算：超长旧会话取首尾、截中段
 
-// 任务目录顶层成果文件名（去 dot 项）：降级碎片的底子 + 摘要输入提示。
-function listTaskTopFiles(sessionId) {
-  try {
-    return fs.readdirSync(taskDirOf(sessionId), { withFileTypes: true })
-      .filter(d => d.isFile() && !d.name.startsWith('.'))
-      .map(d => d.name).slice(0, 12);
-  } catch (_) { return []; } // 目录不存在（空会话）= 无成果
-}
+// 任务目录顶层文件清单已退出摘要输入与降级碎片（评审定稿）：目录里多是临时/中间文件，
+// 喂给模型反诱导它把杂物当成果；成果由摘要从对话本身识别，M3 回忆时现查目录即天然存在性判定。
 
-// 转录文本：只留 user/assistant 纯文本行（多模态块拆文本，工具调用/回执不进日记），每条截 400 字。
-function journalTranscript(s, hist, files) {
+// 转录文本：只留 user/assistant 纯文本行（多模态块拆文本，工具调用/回执/系统注入不进日记），每条截 400 字。
+// 不再带「会话标题」元信息：标题无信息量且会把摘要往复述标题的方向带（定稿）。
+function journalTranscript(hist) {
   const lines = [];
   for (const row of hist) {
     if (row.role !== 'user' && row.role !== 'assistant') continue;
@@ -1222,28 +1217,25 @@ function journalTranscript(s, hist, files) {
     if (!content) continue;
     lines.push((row.role === 'user' ? '用户' : '我') + ': ' + content);
   }
-  const head = '会话标题: ' + (s.title || '未命名') + '\n创建日期: ' + memory.dayString(s.created_at)
-    + '\n成果文件(任务目录顶层): ' + (files.length ? files.join('、') : '无') + '\n--- 对话转录 ---\n';
   let body = lines.join('\n');
-  const budget = JOURNAL_BUDGET - head.length - 40;
-  if (budget > 100 && body.length > budget) {
-    const half = Math.floor(budget / 2);
+  if (body.length > JOURNAL_BUDGET) {
+    const half = Math.floor(JOURNAL_BUDGET / 2);
     body = body.slice(0, half) + '\n……(中段省略)……\n' + body.slice(body.length - half);
   }
-  return head + body;
+  return body;
 }
 
-function journalMessages(s, hist, files) {
+function journalMessages(hist) {
   const lang = (cfg.agent && cfg.agent.language) || '';
-  const sys = '你是 AI 助理的日记写手：一次工作会话结束（换工作台）时，把它压缩成第一人称的日记片段'
+  const sys = '你是 AI 助理的日记写手：一次工作会话收口（下班）时，把它压缩成第一人称的日记片段'
     + '（这个 AI 记自己帮用户做过什么）。\n规则：\n'
     + '- 只写「发生了什么/交付了什么/有什么悬着没办完」，1~4 行，每行以 "- " 开头，一行一件事；\n'
-    + '- 成果文件名、关键专名、数字原样保留，不写感想与空泛总结；\n'
-    + '- 纯文本，总长不超过 180 字；不要标题、不要解释、不要时间前缀。'
+    + '- 从对话本身识别真正交付的成果并点名（文件名原样）；临时文件与中间产物不算成果，不要提及；\n'
+    + '- 不写感想与空泛总结；纯文本，总长不超过 180 字；不要标题、不要解释、不要时间前缀。'
     + (lang ? '\n使用语言：' + lang : '');
   return [
     { role: 'system', content: sys },
-    { role: 'user', content: journalTranscript(s, hist, files) },
+    { role: 'user', content: '--- 对话转录 ---\n' + journalTranscript(hist) },
   ];
 }
 
@@ -1261,25 +1253,22 @@ function journalFragment(sessionId) {
     let settled = false;
     const done = v => { if (!settled) { settled = true; resolve(v); } };
     try {
-      if (!memory.isEnabled(cfg)) return done(false);
       if (journaling.has(sessionId)) return done(false);
       const s = getSession(sessionId);
       if (!s || s.journaled_at) return done(false); // 已收口的会话不二次碎片（每会话唯一碎片的入口保证）
-      const day = memory.dayString(now()); // 时间线跟「下班那天」走，不跟建会话那天（定稿）：
-      // 长跨度会话的碎片若入创建日，可能落进已被裁掉的旧条目里永远看不见。
-      const files = listTaskTopFiles(sessionId);
-      // 无论成败都落一条：模型不可用/空回时降级为「标题 + 成果文件清单」，日记不断档。
+      const day = memory.dayString(now()); // 时间线跟「下班那天」走，不跟建会话那天（定稿）
+      // 无论成败都落一条：模型不可用/空回时降级版只留会话 id 索引（日记不断档，也不爆临时文件）。
       const finish = body => {
         journaling.delete(sessionId);
-        const text = '【' + (s.title || '未命名会话') + ' · ' + s.id + '】\n'
-          + (body || '- 本次工作未能生成摘要(模型不可用)；成果文件：' + (files.length ? files.join('、') : '无'));
+        const text = '【' + s.id + '】\n'
+          + (body || '- 本次工作未能生成摘要(模型不可用)，详情可按本条会话 id 回忆');
         const r = memory.appendFragment(db, cfg, s.user, day, text, s.id);
         if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now()); // dupe 也算收口，不重试
         return r === 'added' || r === 'dupe';
       };
       if (!s.model_id) return done(finish(null)); // 未绑定：不跑模型，直接记降级版
       journaling.add(sessionId);
-      callModel(cfg, s.model_id, journalMessages(s, loadHistory(sessionId), files), null, { key_slot: s.model_slot })
+      callModel(cfg, s.model_id, journalMessages(loadHistory(sessionId)), null, { key_slot: s.model_slot })
         .then(r => done(finish(cleanJournalText(r && r.content))))
         .catch(e => {
           log.warn('memory', sessionId + ' 日记摘要失败，写降级版: ' + (e && e.message || e));
@@ -1296,19 +1285,17 @@ function journalFragment(sessionId) {
 // 定时即下班（定稿）：创建定时任务 = 本工作台会话收口，碎片用任务 brief 纯模板，零 LLM。
 // 由 finalize 在回合 done 广播后调用（时序安全：attachBus 监听在 done 回调里已同步捕获绑定并入队投递，
 // 删 channel_sessions 不影响本次微信回复；投递只依赖 wechat_bindings 表）。
-// 收口三件套：碎片入创建日条目 + journaled 占坑（本会话从此退出 4h 空闲流程，任务执行痕迹不落日记，
+// 收口三件套：碎片入收口当日条目 + journaled 占坑（本会话从此退出 4h 空闲流程，任务执行痕迹不落日记，
 // 用户拿「任务是什么 + 成果文件」即可回溯全貌）+ 顺手归档 + 解绑退位。
-// 记忆整体关闭（retain_days=0）时不收口也不解绑：没有日记的下班毫无意义，别把用户工作台抽了。
 // 回合内任务又被删的边缘：查无任务即放弃，退回 4h 空闲轨道。
 function taskClockOut(sessionId) {
   try {
-    if (!memory.isEnabled(cfg)) return;
     const s = getSession(sessionId);
     if (!s || s.journaled_at) return; // 空闲收口抢先落地过，不重复
     const t = db.prepare('SELECT cron_expr, prompt, brief FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
     if (!t) return;
     const what = String(t.brief || t.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-    const text = '【设定周期任务 · ' + s.id + '】\n- 用户让我设了个闹钟：' + what
+    const text = '【' + s.id + '】\n- 用户让我设了个闹钟：' + what
       + '（频率 ' + t.cron_expr + '，到点自动执行，本会话是该任务的专柜）';
     const r = memory.appendFragment(db, cfg, s.user, memory.dayString(now()), text, s.id); // 碎片入「下班当天」
     if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now());

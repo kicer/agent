@@ -87,12 +87,13 @@ const DEFAULTS = {
   upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10 },
   // 技能根目录：留空取 workspace_root 同级 skills（/workspace/tasks → /workspace/skills）。
   skills: { skills_root: '', timeout_ms: 120000 },
-  // 长期记忆（日记，memory.js）：会话收口（下班）时把该次工作写成当日事件碎片，
-  // 新会话开场注入近几天日记（微信通道拟人化工程 M0-M2）。retain_days = 保留窗（默认 7 天，
-  // 硬帽 30 超限截断，见 memory.MAX_RETAIN）；0 = 整体关闭（不写不读不裁）。
-  // wrap_idle_ms = 空闲收口阈值：held/completed 且超过此时长无更新 → 后台 LLM 摘要生成碎片、
-  // 归档、微信通道解绑退位（下次消息自然新工作台）；0 = 关。设定定时任务是显式收口事件，不受此开关影响。
-  memory: { retain_days: 7, wrap_idle_ms: 14400000 },
+  // 长期记忆（日记，memory.js）：会话收口（下班）时一条几十字的第一人称碎片，按【收口当日】入条目。
+  // 记忆分层：存储默认永久（虚拟人的过去不能到点就抹）；注入只取最近几条当「嘴边的工记」；
+  // inject_max = 新会话开场注入上限（默认 10，硬帽 50）；0 = 只记录不自动注入。
+  // retain_days = 存储裁剪窗：0 = 默认永不删；正数 = 超窗硬删（自动清理/隐私抹除场景才用）。
+  // wrap_idle_ms = 空闲收口阈值：held/completed 且超过此时长无更新 → 后台 LLM 摘要收口、
+  // 归档、微信通道解绑退位（下次消息自然新工作台）；0 = 关。设定定时任务是显式收口，不受此开关影响。
+  memory: { inject_max: 10, retain_days: 0, wrap_idle_ms: 14400000 },
   // 【已废弃】旧版模型保持租约（held 到期自动释放）。调度已改为「key 共享并发 + 优先级选择」（见 engine.chooseKey），
   // 不再有任何到期逻辑；字段保留仅为旧 config.yml 兼容（解析不报错），运行期无人读取。
   model_hold: { idle_release_ms: 180000, active_max_ms: 1800000, sweep_ms: 10000 },

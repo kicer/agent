@@ -52,9 +52,10 @@ agent:
   auto_compress_tokens: 60000                      # In token 超此值弹「自动压缩」提议；0=关
   auto_complete_ms: 1800000                        # 保持中(held)超此时长自动收口为已完成；0=关（纯状态动作，历史/模型绑定不动）
 
-# 长期记忆（日记，memory.js）：会话收口时写当日事件碎片；新会话开场注入近 retain_days 天日记；0=关
+# 长期记忆（日记，memory.js）：收口时一条几十字第一人称碎片入当日条目；存储默认永久，旧记忆靠回忆下钻
 memory:
-  retain_days: 7                                   # 保留窗，硬帽 30 天
+  inject_max: 10                                   # 新会话开场注入最近几条碎片；0=只记录不注入
+  retain_days: 0                                   # 存储裁剪窗；0=永不删，正数=超窗硬删
   wrap_idle_ms: 14400000                           # 空闲超此时长自动收口（碎片+归档+微信解绑）；0=关
 
 upload:

@@ -62,18 +62,18 @@ function fmtTime(ms) {
 }
 function fmtMs(ms) { return ms >= 3600000 ? (ms / 3600000).toFixed(ms % 3600000 ? 1 : 0) + ' 小时' : Math.round(ms / 60000) + ' 分钟'; }
 
-// 碎片正文里把「· 会话id】」渲染成可点链接（新开标签看该会话原始 JSON，排查溯源用）
+// 碎片头行【会话id】渲染成可点链接（新开标签看该会话原始 JSON，排查溯源用）
 function linkSids(html) {
-  return html.replace(/·\s*([A-Za-z0-9_\-]{6,})】/g, function (m, sid) {
-    return '· <a href="/api/sessions/' + encodeURIComponent(sid) + '" target="_blank">' + esc(sid) + '</a>】';
+  return html.replace(/【(task-[0-9A-Za-z_\-]+)】/g, function (m, sid) {
+    return '【<a href="/api/sessions/' + encodeURIComponent(sid) + '" target="_blank">' + esc(sid) + '</a>】';
   });
 }
 
 function render(d) {
   var meta = document.getElementById('meta');
   meta.innerHTML = '用户 <b>' + (d.user ? esc(d.user) : '<i>（未启用登录 · 隐式单用户）</i>') + '</b>'
-    + '<span class="badge ' + (d.enabled ? 'on">记忆开启' : 'off">记忆关闭') + '</span>'
-    + ' 保留窗 <b>' + d.retain_days + ' 天</b>'
+    + '<span class="badge ' + (d.inject_max ? 'on">注入最近 ' + d.inject_max + ' 条' : 'off">注入已关（仍记录）') + '</span>'
+    + ' · 存储 <b>' + (d.retain_days ? '保留 ' + d.retain_days + ' 天' : '永久') + '</b>'
     + ' · 空闲收口 <b>' + (d.wrap_idle_ms ? fmtMs(d.wrap_idle_ms) : '关') + '</b>'
     + ' · held 归档 <b>' + (d.auto_complete_ms ? fmtMs(d.auto_complete_ms) : '关') + '</b>';
 

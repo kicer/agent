@@ -2,8 +2,8 @@
 // 未启用认证时即空串键的隐式单用户，功能不变。
 //
 // 设计原则（「只记不知道就会做错的信息」）：
-// - 存储封闭三字段 honorific/industry/preference；「近期关注」不入库，
-//   仅在快照冻结时从该用户最近会话标题现取现拼，UI 不展示也不编辑。
+// - 存储封闭三字段 honorific/industry/preference。早期快照附带的「近期关注」（现取最近会话标题）已移除：
+//   标题无信息量、与长期记忆日记重叠，还会干扰 AI 对当下任务的判断（评审定稿）。
 // - 注入：会话创建/清空时把渲染文本冻结进 sessions.profile_snapshot，
 //   buildMessages 每轮以 system 后首条 user 消息注入——内容字节恒定不破坏前缀缓存，
 //   且不落 messages 表，阶段切换归档/压缩都动不到它。
@@ -20,7 +20,6 @@ const SET_MAX = 20;     // AI 写 honorific/industry 的单值帽（称谓应当
 const TAG_MAX = 15;     // 单个偏好标签长度帽
 const TAGS_MAX = 24;    // 偏好标签数量帽
 const TAG_SPLIT = /[、，,;；\n]+/;
-const RECENT_TITLES = 5;
 const SNAPSHOT_HEAD = '【用户画像 · 背景参考】以下为历史会话沉淀的粗粒度认知，非任务约束；与当前请求冲突时，一律以当前请求为准。';
 const FIELD_LABELS = { honorific: '称谓', industry: '行业', preference: '偏好' };
 
@@ -140,16 +139,12 @@ function removeProfileTags(db, user, tags) {
     + '；偏好现共 ' + (cur.length - removed.length) + ' 条' + WRITE_NOTE;
 }
 
-// 渲染注入文本：三字段（非空才成行）+ 现取的近期关注；停用或全空 → 空串（不注入）。
-function snapshotText(db, user, excludeSessionId) {
+// 渲染注入文本：三字段（非空才成行）；停用或全空 → 空串（不注入）。
+function snapshotText(db, user) {
   const p = getProfile(db, user);
   if (!p.enabled) return '';
   const lines = [];
   for (const k of FIELDS) if (p[k]) lines.push('- ' + FIELD_LABELS[k] + '：' + p[k]);
-  const titles = db.prepare(
-    "SELECT title FROM sessions WHERE user = ? AND id != ? AND title IS NOT NULL AND title != '' ORDER BY updated_at DESC LIMIT " + RECENT_TITLES
-  ).all(String(user || ''), String(excludeSessionId || '')).map(r => r.title);
-  if (titles.length) lines.push('- 近期关注：' + titles.join('；'));
   return lines.length ? SNAPSHOT_HEAD + '\n' + lines.join('\n') : '';
 }
 
@@ -158,7 +153,7 @@ function freezeSnapshot(db, sessionId) {
   try {
     const s = db.prepare('SELECT user FROM sessions WHERE id = ?').get(sessionId);
     if (!s) return;
-    db.prepare('UPDATE sessions SET profile_snapshot = ? WHERE id = ?').run(snapshotText(db, s.user, sessionId), sessionId);
+    db.prepare('UPDATE sessions SET profile_snapshot = ? WHERE id = ?').run(snapshotText(db, s.user), sessionId);
   } catch (e) { log.warn('profile', '画像快照冻结失败(忽略)：' + (e && e.message || e)); }
 }
 
