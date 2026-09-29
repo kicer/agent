@@ -65,6 +65,8 @@ app.use('/api/platforms', require('./routes/platforms'));
 app.use('/api/system', require('./routes/system'));
 // 用户画像（账户设置）：读写按登录用户隔离，逻辑在 user-profile.js
 app.use('/api/profile', require('./routes/profile'));
+// 长期记忆（日记）只读调试视图：独立页 /memory.html 的供数接口，查表即答零写操作
+app.use('/api/memory', require('./routes/memory'));
 // 微信绑定管理（设置页→账户→微信绑定），业务在 wechat.js；未配置时接口返回 enabled:false，前端整卡隐藏
 app.use('/api/wechat', require('./routes/wechat'));
 // 文本命令接入端（IM/CLI 等无 UI 客户端）：命令解析 + (user, channel) 当前会话绑定，见 routes/channel.js

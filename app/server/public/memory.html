@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>长期记忆 · 调试</title>
+<style>
+  body { margin: 0; padding: 20px 16px 60px; background: #f4f6fa; color: #2b3441;
+         font: 14px/1.65 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .meta { color: #7a8699; font-size: 12px; margin-bottom: 14px; }
+  .meta b { color: #2b3441; font-weight: 600; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; margin-left: 6px; }
+  .badge.on { background: #e3f2e6; color: #1c7a2e; }
+  .badge.off { background: #fdecea; color: #b3382c; }
+  .badge.out { background: #eceff5; color: #7a8699; }
+  button { border: 1px solid #cdd5e0; background: #fff; color: #2b3441; border-radius: 8px;
+           padding: 5px 14px; font-size: 13px; cursor: pointer; }
+  button:active { background: #eef1f6; }
+  h2 { font-size: 15px; margin: 26px 0 10px; padding-left: 8px; border-left: 3px solid #4c6ef5; }
+  .card { background: #fff; border: 1px solid #e3e8f0; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .day { font-weight: 600; font-size: 14px; }
+  .day .t { color: #9aa4b2; font-weight: 400; font-size: 12px; margin-left: 8px; }
+  .frag { margin-top: 8px; padding: 8px 10px; background: #f8fafc; border: 1px solid #eef1f6; border-radius: 8px; white-space: pre-wrap; word-break: break-all; }
+  .frag .sid a { color: #4c6ef5; text-decoration: none; font-size: 12px; }
+  pre.inj { background: #fff; border: 1px solid #e3e8f0; border-radius: 10px; padding: 12px 14px;
+            white-space: pre-wrap; word-break: break-all; margin: 0; font: 13px/1.7 ui-monospace, Menlo, monospace; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e3e8f0; border-radius: 10px; overflow: hidden; }
+  th, td { padding: 7px 10px; text-align: left; font-size: 12.5px; border-bottom: 1px solid #eef1f6; }
+  th { background: #f8fafc; color: #7a8699; font-weight: 500; }
+  tr:last-child td { border-bottom: 0; }
+  td a { color: #4c6ef5; text-decoration: none; }
+  .empty { color: #9aa4b2; padding: 14px 2px; }
+  .st { font-size: 12px; }
+  .st.held { color: #8a6400; } .st.completed { color: #1c7a2e; } .st.active { color: #4c6ef5; } .st.cancelled { color: #b3382c; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>长期记忆 · 日记调试台
+    <button style="float:right;margin-top:2px" onclick="load()">刷新</button>
+  </h1>
+  <div class="meta" id="meta">加载中…</div>
+
+  <h2>注入预览（新会话实际带上的文本，与 journalFor 同源）</h2>
+  <pre class="inj" id="injection">—</pre>
+
+  <h2>按天条目（memory_entries 原样）</h2>
+  <div id="entries"></div>
+
+  <h2>已收口会话（journaled_at 非空，与碎片对照）</h2>
+  <div id="sessions"></div>
+</div>
+<script>
+'use strict';
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function fmtTime(ms) {
+  if (!ms) return '-';
+  const d = new Date(Number(ms)), p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function fmtMs(ms) { return ms >= 3600000 ? (ms / 3600000).toFixed(ms % 3600000 ? 1 : 0) + ' 小时' : Math.round(ms / 60000) + ' 分钟'; }
+
+// 碎片正文里把「· 会话id】」渲染成可点链接（新开标签看该会话原始 JSON，排查溯源用）
+function linkSids(html) {
+  return html.replace(/·\s*([A-Za-z0-9_\-]{6,})】/g, function (m, sid) {
+    return '· <a href="/api/sessions/' + encodeURIComponent(sid) + '" target="_blank">' + esc(sid) + '</a>】';
+  });
+}
+
+function render(d) {
+  var meta = document.getElementById('meta');
+  meta.innerHTML = '用户 <b>' + (d.user ? esc(d.user) : '<i>（未启用登录 · 隐式单用户）</i>') + '</b>'
+    + '<span class="badge ' + (d.enabled ? 'on">记忆开启' : 'off">记忆关闭') + '</span>'
+    + ' 保留窗 <b>' + d.retain_days + ' 天</b>'
+    + ' · 空闲收口 <b>' + (d.wrap_idle_ms ? fmtMs(d.wrap_idle_ms) : '关') + '</b>'
+    + ' · held 归档 <b>' + (d.auto_complete_ms ? fmtMs(d.auto_complete_ms) : '关') + '</b>';
+
+  document.getElementById('injection').textContent = d.injection || '（无注入文本：无记忆或功能关闭）';
+
+  var eHtml = '';
+  (d.entries || []).forEach(function (e) {
+    var frags = String(e.content || '').split(/\n\n+/).filter(Boolean);
+    eHtml += '<div class="card"><div class="day">' + esc(e.day)
+      + (e.in_window ? '' : '<span class="badge out">窗外（待裁）</span>')
+      + '<span class="t">更新 ' + fmtTime(e.updated_at) + ' · ' + frags.length + ' 个碎片</span></div>'
+      + frags.map(function (f) { return '<div class="frag">' + linkSids(esc(f)) + '</div>'; }).join('')
+      + '</div>';
+  });
+  document.getElementById('entries').innerHTML = eHtml || '<div class="empty">暂无条目——等一次收口，或先在微信/网页聊几句。</div>';
+
+  var sHtml = '';
+  (d.sessions || []).forEach(function (s) {
+    sHtml += '<tr><td><a href="/api/sessions/' + encodeURIComponent(s.id) + '" target="_blank">' + esc(s.id) + '</a></td>'
+      + '<td>' + esc(s.title || '（未命名）') + '</td>'
+      + '<td><span class="st ' + esc(s.status) + '">' + esc(s.status) + '</span></td>'
+      + '<td>' + esc(s.model_id || '-') + '</td>'
+      + '<td>' + fmtTime(s.journaled_at) + '</td></tr>';
+  });
+  document.getElementById('sessions').innerHTML = sHtml
+    ? '<table><tr><th>会话</th><th>标题</th><th>状态</th><th>模型</th><th>收口时间</th></tr>' + sHtml + '</table>'
+    : '<div class="empty">暂无已收口会话。</div>';
+}
+
+function load() {
+  fetch('/api/memory').then(function (r) { return r.json(); }).then(function (d) {
+    if (d.error) { document.getElementById('meta').textContent = '加载失败: ' + d.error; return; }
+    render(d);
+  }).catch(function (e) { document.getElementById('meta').textContent = '加载失败: ' + e.message; });
+}
+load();
+</script>
+</body>
+</html>
