@@ -10,6 +10,23 @@
     return { text: m[2] || '', files: files };
   }
 
+  // ---------- token 用量展示（气泡操作行与工具卡共用）----------
+  // usage 落库时是 JSON 串、SSE 事件里是对象；上游不报 details 时 cached 置 null，以区分「未上报」与「0 命中」。
+  function normUsage(usage) {
+    let u = usage;
+    if (typeof u === 'string') { try { u = JSON.parse(u); } catch (_) { u = null; } }
+    return u && (u.pt || u.ct) ? u : null;
+  }
+  function usageBrief(u) {
+    return 'In: ' + fmtTok(u.pt || 0) +
+      (u.cached != null && u.pt ? '/' + Math.round(u.cached / u.pt * 100) + '%' : '') +
+      ', Out: ' + fmtTok(u.ct || 0);
+  }
+  function usageTip(u) {
+    return '输入 ' + (u.pt || 0) + ' tok，缓存命中 ' +
+      (u.cached == null ? '未上报' : u.cached + ' tok') + '，输出 ' + (u.ct || 0) + ' tok';
+  }
+
   function actionsHtml(ts, content, msgId, usage) {
     const b64 = btoa(unescape(encodeURIComponent(content)));
     // 删除本条:仅已落库消息可删(传 m.id);流式未落库时无 id,不渲染
@@ -18,15 +35,9 @@
         '<svg class="ic sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>' +
         '</button>'
       : '';
-    // token 用量：In 输入(+缓存命中率), Out 输出；历史重渲染时 usage 是 JSON 串,流式事件里是对象
-    let u = usage;
-    if (typeof u === 'string') { try { u = JSON.parse(u); } catch (_) { u = null; } }
-    const usageHtml = u && (u.pt || u.ct)
-      ? '<span class="act-usage" title="输入 ' + (u.pt || 0) + ' tok，缓存命中 ' +
-        (u.cached == null ? '未上报' : u.cached + ' tok') + '，输出 ' + (u.ct || 0) + ' tok">' +
-        'In: ' + fmtTok(u.pt || 0) +
-        (u.cached != null && u.pt ? '/' + Math.round(u.cached / u.pt * 100) + '%' : '') +
-        ', Out: ' + fmtTok(u.ct || 0) + '</span>'
+    const u = normUsage(usage);
+    const usageHtml = u
+      ? '<span class="act-usage" title="' + usageTip(u) + '">' + usageBrief(u) + '</span>'
       : '';
     return '<div class="msg-actions">' +
       '<span>' + fmtTime(ts) + '</span>' +
@@ -182,6 +193,19 @@
     const fullEl = card.querySelector('.tool-args-full');
     if (fullEl) fullEl.textContent = toolArgsFull(argsStr || '');
   }
+  // 把本回合 token 用量钉到工具卡时间行（与气泡 msg-actions 同款位置：时间戳后、操作钮前，
+  // 不占 summary 横向空间）：usage 是回合级（一条 assistant 消息一份，同回合并行调用共享同一数字，
+  // tooltip 已标「本回合」），不是单工具独立消耗；纯工具调用回合没有气泡，工具卡就是它唯一的落点。
+  function applyToolCardUsage(card, usage) {
+    const u = normUsage(usage);
+    if (!card || !u) return;
+    const row = card.querySelector('.tool-time');
+    if (!row || row.querySelector('.tool-usage')) return; // 早卡回填/历史重渲染等路径可能多次命中，不重复钉
+    const html = '<span class="tool-usage" title="本回合模型用量：' + usageTip(u) + '">' + usageBrief(u) + '</span>';
+    const firstAct = row.querySelector('.act');
+    if (firstAct) firstAct.insertAdjacentHTML('beforebegin', html); // 结果已回填过（补钉场景）：插到复制/删除钮之前，保持 时间·用量·操作 次序
+    else row.insertAdjacentHTML('beforeend', html); // 常规时序：助手消息先到，后面的 copy/del 自然排在用量后
+  }
   // tool 消息 content:纯文本,或含图片时的哨兵 JSON {"__blocks__":[...]}(read_file 读图回传)
   // 顺手剥掉旧数据里的「，图片见同条消息的 image_url 内容块」尾巴（新版文案已去掉，历史行还在库里）
   function parseToolContent(content) {
@@ -240,9 +264,11 @@
       const id = c.id || ('c' + Math.random().toString(36).slice(2, 10));
       if (state.toolCards[id]) { // 早卡(流式生成中)：回填完整参数收尾；否则跳过不重复建卡
         finalizeToolCardArgs(id, c.function && c.function.name, c.function && c.function.arguments);
+        applyToolCardUsage(state.toolCards[id], m.usage); // 回合 usage 落点：assistant_message 才带 usage，早卡建卡时还没有，此时补钉
         continue;
       }
       const card = renderToolCard(id, c.function && c.function.name || '工具', c.function && c.function.arguments, m.created_at);
+      applyToolCardUsage(card, m.usage);
       container.appendChild(card);
       state.toolCards[id] = card;
     }
