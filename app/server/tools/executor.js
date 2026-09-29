@@ -2,6 +2,8 @@
 // 工具名与参数 schema 来自 definitions.json；MCP 工具不在这里，见 ../mcp.js。
 const fs = require('fs');
 const path = require('path');
+const net = require('net'); // fetch SSRF 防护：IP 字面量/解析结果判私网
+const dns = require('dns').promises; // 同上：主机名 → IP 后统一判定
 const fsp = require('fs').promises;
 const { spawn } = require('child_process');
 const mcp = require('../mcp');
@@ -557,7 +559,9 @@ function killGroup(child) {
 }
 
 // fetch：抓取并转 Markdown。超时/取消覆盖到 body 读取完成（非仅响应头）；
-// 流式读取至多 cfg.fetch.max_bytes 字节；按响应 charset 解码（gbk 等依赖内置 full-icu）。
+// 流式读取至多 cfg.fetch.max_bytes 字节（下载上限，宽松）；按响应 charset 解码（gbk 等依赖内置 full-icu）。
+// 返回上限与下载解耦（cfg.fetch.max_chars/max_chars_hard）：超窗尾部拼 offset 续读提示，
+// 全文缓在 ctx.run 上（回合级），续读不重抓。SSRF 防护：主机名解析结果含私网即拒，重定向逐跳复查。
 // undici 网络错误的 message 恒为 "fetch failed"，真因窝在 err.cause 里——不解包模型分不清
 // 域名已死/被拒连/TLS 问题（评审实测：只能靠另跑 curl 才能诊断）。常见码翻成中文直述。
 const FETCH_NET_ERRORS = {
@@ -586,6 +590,89 @@ function isTextualContentType(ct) {
   if (/^application\/(?:[\w.-]+\+)?(?:json|xml|yaml|x-ndjson|ndjson)\b/.test(ct)) return true;
   if (/^application\/(?:javascript|ecmascript|xhtml\+xml)\b/.test(ct)) return true;
   return false;
+}
+
+// ---------- fetch 的 SSRF 防护 ----------
+// 私网/保留地址判定（IPv4：回环/私有/链路本地含云元数据 169.254.169.254/CGNAT/基准测试/文档段/组播及保留；
+// IPv6：未指定/回环/v4-mapped/ULA fc00::/7/链路本地 fe80::/10/组播）。
+function isPrivateIp(ip) {
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (v4) {
+    const a = Number(v4[1]), b = Number(v4[2]);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && (b === 0 || b === 168)) return true;
+    if (a === 198 && (b === 18 || b === 19 || b === 51)) return true;
+    if (a === 203 && b === 113) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+  const s = String(ip).toLowerCase();
+  const mapped = s.replace(/^::ffff:/, '');
+  if (mapped.includes('.')) return isPrivateIp(mapped);
+  if (s === '::' || s === '::1') return true;
+  if (/^f[cd][0-9a-f]{2}:/.test(s)) return true;
+  if (/^fe[89ab][0-9a-f]:/.test(s)) return true;
+  if (/^ff/.test(s)) return true;
+  return false;
+}
+
+// 主机名 → 全部解析结果逐个判，任一私网即拒（不能假定 undici 会连哪一条记录）。
+// 残余风险：本函数解析后 undici 建连时还会再解析一次，DNS 重绑定理论上可绕过；
+// 目标是拦住直球打内网与重定向借刀这两类主要路径，不承诺硬边界。fetchUserError 标记：
+// 这类已直述清楚的错误不走 describeFetchError 再包一层。
+async function assertFetchTargetAllowed(u, allowPrivate) {
+  const host = u.hostname.replace(/^\[|\]$/g, ''); // IPv6 字面量带方括号（URL.hostname 保留）
+  if (!host) throw Object.assign(new Error('URL 无主机名：' + u.href), { fetchUserError: true });
+  let ips;
+  if (net.isIP(host)) ips = [host];
+  else {
+    let recs;
+    try { recs = await dns.lookup(host, { all: true, verbatim: true }); }
+    catch (e) { throw Object.assign(new Error('无法解析主机 ' + host + (e && e.code ? '（' + e.code + '）' : '')), { fetchUserError: true }); }
+    ips = recs.map(r => r.address);
+  }
+  if (!allowPrivate && ips.some(isPrivateIp)) {
+    throw Object.assign(new Error('SSRF 防护：目标解析到回环/私有/内网地址（' + host + ' → ' + ips.join(', ') + '），拒绝抓取；' +
+      '确需抓内网服务请在 config 配 fetch.allow_private: true'), { fetchUserError: true });
+  }
+}
+
+// ---------- fetch 的回合级缓存 ----------
+// 返回窗截断时把转换后全文挂到 ctx.run（随 run 消亡，不跨轮污染）：offset 续读纯本地切片，
+// 不重走网络。键为请求 URL（归一化后）；LRU 保留 3 条，每条 ≤ max_bytes，内存上限个位数 MB。
+function fetchCacheGet(run, key) {
+  const c = run && run.fetchCache;
+  if (!c) return null;
+  const e = c.get(key);
+  if (e) { c.delete(key); c.set(key, e); } // 命中挪到最近使用端
+  return e || null;
+}
+function fetchCacheSet(run, key, entry) {
+  if (!run) return;
+  if (!run.fetchCache) run.fetchCache = new Map();
+  run.fetchCache.set(key, entry);
+  while (run.fetchCache.size > 3) run.fetchCache.delete(run.fetchCache.keys().next().value);
+}
+
+// 从全文切 [off, off+maxOut) 窗，尾部拼续读提示；窗内无内容单独说明。
+// 字节级截断（truncated）时本地「全文」本身就不完整，如实告知末尾可能缺失，
+// 避免模型对着不完整文本用 offset 无限续读。
+function fetchWindow(text, off, maxOut, hard, truncated, maxBytes) {
+  if (off >= text.length) {
+    return '（offset=' + off + ' 超出全文长度 ' + text.length + ' 字符，无内容可读）' +
+      (truncated ? '\n（源响应体超过抓取上限 ' + maxBytes + ' 字节，可用更大 max_bytes 重抓）' : '');
+  }
+  const end = Math.min(text.length, off + maxOut);
+  let out = text.slice(off, end);
+  if (end < text.length) {
+    out += '\n\n（已截断：全文 ' + text.length + ' 字符，本段 ' + off + '–' + end + '。' +
+      '续读传 offset=' + end + '（不重新下载）；单段可传 max_chars 放大，硬帽 ' + hard + '）';
+  }
+  if (truncated) out += '\n（源响应体超过抓取上限 ' + maxBytes + ' 字节，内容末尾可能不完整）';
+  return out;
 }
 
 function charsetOf(ct) {
@@ -629,17 +716,46 @@ async function toolFetch(ctx, args) {
   const fcfg = (ctx.cfg && ctx.cfg.fetch) || {};
   const timeoutMs = fcfg.timeout_ms || 30000;
   const maxBytes = fcfg.max_bytes || 1024 * 1024;
+  // 返回窗与下载上限解耦：下载不进上下文可宽松，返回收紧。模型显式传 max_chars 时夹在硬帽内，
+  // 非法值（0/负数/NaN）退回默认。
+  const hard = fcfg.max_chars_hard || 64000;
+  const want = Math.floor(Number(args.max_chars));
+  const maxOut = want > 0 ? Math.min(want, hard) : (fcfg.max_chars || 12000);
+  const off = Math.max(0, Math.floor(Number(args.offset)) || 0);
+
+  // 续读/重复抓：命中回合缓存直接本地切片，不再碰网络（回合内页面陈旧可接受，缓存续读场景）。
+  const hit = fetchCacheGet(ctx.run, url);
+  if (hit) {
+    return truncate('HTTP ' + hit.status + '\n' +
+      fetchWindow(hit.text, off, maxOut, hard, hit.byteTruncated, maxBytes), 1024 * 1024);
+  }
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   // 与 toolTerminal 同模式：等待中用户取消也能 abort 掉进行中的请求/读流。
   const cancelWatch = setInterval(() => { if (ctx.run.cancelled) ctrl.abort(); }, 200);
   try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      redirect: 'follow',
-      headers: { 'User-Agent': 'Mozilla/5.0 (agent-app)' },
-    });
+    // redirect:'manual' + 逐跳 SSRF 校验：自动跟随会让外站 302 直接把我们带进内网（SSRF 主路径）。
+    let res = null;
+    let cur = url;
+    for (let hop = 0; ; hop++) {
+      await assertFetchTargetAllowed(new URL(cur), !!fcfg.allow_private);
+      res = await fetch(cur, {
+        signal: ctrl.signal,
+        redirect: 'manual',
+        headers: { 'User-Agent': 'Mozilla/5.0 (agent-app)' },
+      });
+      const loc = res.headers.get('location');
+      if (!loc || res.status < 300 || res.status >= 400) break; // 非跳转：本跳即终答
+      if (hop >= 5) throw Object.assign(new Error('重定向次数超过上限（5 次）：' + url), { fetchUserError: true });
+      let next;
+      try { next = new URL(loc, cur); }
+      catch (_) { throw Object.assign(new Error('重定向 Location 非法：' + loc), { fetchUserError: true }); }
+      if (next.protocol !== 'http:' && next.protocol !== 'https:') {
+        throw Object.assign(new Error('重定向目标不是 http/https：' + next.href), { fetchUserError: true });
+      }
+      cur = next.href;
+    }
     const ct = (res.headers.get('content-type') || '').toLowerCase();
     // 非文本：不读 body，直接回报元信息（避免二进制白下载 + 乱码）。
     if (!isTextualContentType(ct)) {
@@ -664,10 +780,17 @@ async function toolFetch(ctx, args) {
       catch (_) { text = buf.toString('utf8'); }
     }
     let body = ct.includes('html') ? htmlToMarkdown(text) : text;
-    if (truncated) body += '\n（响应超过 ' + maxBytes + ' 字节，已截断）';
-    // 输出字符数兜底：engine 不截工具结果，这是返回值上最后一道护栏。
-    return 'HTTP ' + res.status + '\n' + truncate(body, 1024 * 1024);
+    // 字节截断可能切在多字节字符中间，尾部的 U+FFFD 是噪音，去掉。
+    if (truncated) body = body.replace(/\uFFFD+$/, '');
+    const win = fetchWindow(body, off, maxOut, hard, truncated, maxBytes);
+    // 窗后本地还有未读内容才缓存（续读场景）；一窗吃下全文的不值得存。
+    if (off + maxOut < body.length) {
+      fetchCacheSet(ctx.run, url, { status: res.status, text: body, byteTruncated: truncated });
+    }
+    // engine 不截工具结果；上面的返回窗是主闸门，这行 1MB 字符只是最后兜底。
+    return truncate('HTTP ' + res.status + '\n' + win, 1024 * 1024);
   } catch (err) {
+    if (err && err.fetchUserError) throw err; // SSRF/重定向等已直述清楚的错误，不再套一层
     // 超时与取消都表现为 signal.aborted（body 读流阶段的报错形态不定，按信号判定最稳）。
     if (ctrl.signal.aborted) {
       if (ctx.run.cancelled) throw new Error('已终止');
@@ -713,9 +836,17 @@ function decodeEntities(s) {
 }
 
 function htmlToMarkdown(html) {
+  // 标题在剥 head 之前取：head 整块删后页面身份只剩正文，一行标题是性价比最高的上下文。
+  const tm = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  const title = tm ? decodeEntities(strip(tm[1])).trim() : '';
   let s = html
     .replace(/<(script|style|noscript|svg|head)[\s\S]*?<\/\1>/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '');
+    // 语义样板整块剥：导航/页眉/页脚/侧栏/表单这类页壳的正文密度普遍低于信噪比门槛。
+    .replace(/<(nav|header|footer|aside|form)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    // class/id 命样板词的分块：按启发式整块丢（子串匹配，覆盖 navbar/comments/ad-slot 等变体；
+    // 同名标签嵌套时惰匹配只删到第一个闭标签，与既有剥除同样接受不完美）。
+    .replace(/<(div|section|ul|ol|article)\b[^>]*\b(?:class|id)\s*=\s*["'][^"']*(?:nav|menu|sidebar|breadcrumb|comment|footer|related|banner|promo|advert|popup|share|subscribe|masthead|cookie|social|toolbar)[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi, '');
   s = s
     .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (m, lv, t) => '\n' + '#'.repeat(Number(lv)) + ' ' + strip(t).trim() + '\n')
     .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (m, t) => '\n- ' + strip(t).trim())
@@ -724,7 +855,8 @@ function htmlToMarkdown(html) {
     .replace(/<\/(p|div|section|article|tr|ul|ol|table|blockquote)>/gi, '\n')
     .replace(/<[^>]+>/g, '');
   // 实体解码放在剥标签之后：&lt;p&gt; 这类转义文本不会被当成标签剥掉。
-  return decodeEntities(s).replace(/\n{3,}/g, '\n\n').trim();
+  const body = decodeEntities(s).replace(/\n{3,}/g, '\n\n').trim();
+  return (title ? '# ' + title + '\n\n' : '') + body;
 }
 
 function strip(s) { return s.replace(/<[^>]+>/g, ''); }

@@ -78,7 +78,11 @@ const DEFAULTS = {
   // 本配置文件内含密钥，只给 core 进程读，executor/wxbot 一律不挂不读。
   terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
   // fetch：timeout_ms 覆盖请求发出到 body 读完的全生命周期；max_bytes 为流式抓取字节上限（超限即断开）。
-  fetch: { timeout_ms: 30000, max_bytes: 1048576 },
+  // 下载与返回两上限解耦：下载不进上下文可宽松，返回默认收紧（max_chars），模型显式传 max_chars 时
+  // 夹在 max_chars_hard 硬帽内；超窗尾部提示 offset，续读走 ctx.run 上的回合缓存不重抓。
+  // allow_private=false 开 SSRF 防护：目标主机名解析到回环/私有/链路本地地址即拒绝（重定向逐跳复查）；
+  // 确需抓内网服务再显式开 true（注意 DNS 重绑定属残余风险）。
+  fetch: { timeout_ms: 30000, max_bytes: 1048576, max_chars: 12000, max_chars_hard: 64000, allow_private: false },
   // auto_compress_tokens：本轮 In token 峰值 ≥ 此值时推送「自动压缩」提议（0=关）。
   // auto_complete_ms：held（保持中）超过此时长自动收口为 completed（0=关）。key 非独占后 held 不占任何资源，
   //   收口是纯视觉动作：历史/绑定不动，再发言照常由 completed 分支续跑（见 engine.sweepHeldTimeouts）。

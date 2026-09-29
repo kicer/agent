@@ -42,7 +42,10 @@ terminal:
 
 fetch:
   timeout_ms: 30000                                # 抓取总超时（ms），覆盖响应头到 body 读完
-  max_bytes: 1048576                               # 单次响应最多抓多少字节，超限即断开
+  max_bytes: 1048576                               # 单次响应最多抓多少字节，超限即断开（下载不占上下文，可宽松）
+  max_chars: 12000                                 # 返回给模型的默认字符上限（与下载上限解耦；超窗尾部提示 offset 续读）
+  max_chars_hard: 64000                            # 模型显式传 max_chars 时的硬帽
+  allow_private: false                             # SSRF 防护：false=拒抓解析到内网/回环地址的目标；确需抓内网服务才开 true
 
 agent:
   temperature: 1.0                                 # 采样温度

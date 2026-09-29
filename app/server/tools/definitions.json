@@ -90,7 +90,7 @@
     "type": "function",
     "function": {
       "name": "fetch",
-      "description": "Fetches a URL and returns its content as Markdown. Only http and https are supported; if the scheme is omitted, https is assumed.\n\nHTML pages are converted to Markdown. JSON, XML, plain text, and Markdown responses are returned as-is. Binary responses are not returned — only their HTTP status, content-type, and size.\n\nThe response always starts with a line `HTTP <status>`, followed by the body. Check the status line: a non-2xx status means the fetch did not succeed, even if body content is present.\n\nRequests are subject to a timeout, and oversized responses are truncated. Redirects are followed automatically.",
+      "description": "Fetches a URL and returns its content as Markdown. Only http and https are supported; if the scheme is omitted, https is assumed.\n\nHTML pages are converted to Markdown. JSON, XML, plain text, and Markdown responses are returned as-is. Binary responses are not returned — only their HTTP status, content-type, and size.\n\nThe response always starts with a line `HTTP <status>`, followed by the body. Check the status line: a non-2xx status means the fetch did not succeed, even if body content is present.\n\nReturned text is capped per call (default is modest; raise one call with `max_chars` up to a hard cap). When truncated, the tail hint gives the total length and the `offset` to continue from — re-call with that `offset` to page through WITHOUT re-downloading. Most pages fit in the first window; only page further when you actually need more.\n\nTargets that resolve to private/loopback addresses are refused (SSRF guard). Redirects are followed up to 5 hops, each hop checked.",
       "parameters": {
         "type": "object",
         "required": [
@@ -100,6 +100,17 @@
           "url": {
             "type": "string",
             "description": "The URL to fetch. Must be http or https; if no scheme is given, https is assumed."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Character offset into the converted page body, for continuing a truncated fetch. Use the offset value given in the previous truncation hint. Requires no re-download."
+          },
+          "max_chars": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Max characters to return for this call. Optional; raise only when the default window clearly cut off content you need. Values above the hard cap are clamped."
           }
         }
       }
