@@ -117,7 +117,7 @@ function initDb(dbPath) {
     );
 
     -- 长期记忆（日记，memory.js）：一行 (用户, 天)，content = 当天累积的日记碎片块。
-    -- 碎片在会话轮换（换工作台）时生成，按【来源会话创建日】入当日条目；保留窗外即裁（appendFragment 顺带 + 启动兑底）。
+    -- 碎片在会话收口（下班）时生成，按【收口当日】入条目；保留窗外即裁（appendFragment 顺带 + 启动兑底）。
     -- 故意不建外键：记忆是用户级的，删会话不能抹掉它已记入的日记（与 channel_sessions 的懒解析同理）。
     CREATE TABLE IF NOT EXISTS memory_entries (
       user TEXT NOT NULL,
@@ -174,6 +174,13 @@ function initDb(dbPath) {
   // 升级老库：旧库补 held_at 列（进入 held 的时刻；现仅展示/自动压缩校验用，租约到期逻辑已随「key 不独占」一并移除）
   const cols = db.prepare('PRAGMA table_info(sessions)').all();
   if (!cols.some(c => c.name === 'held_at')) db.exec('ALTER TABLE sessions ADD COLUMN held_at INTEGER');
+  // 迁移：长期记忆收口时刻（memory/engine）：每会话唯一碎片的物理标记，兼做 4h 空闲扫描的预排除
+  //（updated_at 门槛一旦越过就永远成立，没有这个标记陈年会话会被每轮扫描重复摘要）。
+  if (!cols.some(c => c.name === 'journaled_at')) db.exec('ALTER TABLE sessions ADD COLUMN journaled_at INTEGER');
+  // 升级老库：scheduled_tasks 补 brief 列（人话描述「这个任务干什么」，AI 创建时必填；设定任务即下班，
+  // brief 直接充当会话的日记碎片底子，零 LLM 成本）。默认空串：存量任务无 brief，其下班碎片降级用 prompt 首行。
+  const schedCols = db.prepare('PRAGMA table_info(scheduled_tasks)').all();
+  if (!schedCols.some(c => c.name === 'brief')) db.exec("ALTER TABLE scheduled_tasks ADD COLUMN brief TEXT NOT NULL DEFAULT ''");
   // 迁移：model_slot 记会话粘住的具体池 key 槽位（「平台#key下标」，key 为共享资源不再独占），
   // 跨结版/重启保持（只有手动换绑或模型失效改选会动），model_id 存模型 id 供展示/统计（见 engine.applyBinding）。
   if (!cols.some(c => c.name === 'model_slot')) db.exec('ALTER TABLE sessions ADD COLUMN model_slot TEXT');

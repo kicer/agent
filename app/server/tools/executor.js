@@ -776,16 +776,19 @@ function toolScheduleTask(ctx, args) {
       const last = t.last_run_at
         ? scheduler.fmtTime(t.last_run_at) + '（状态 ' + (t.last_status || '-') + (t.last_note ? '，' + t.last_note : '') + '）'
         : '尚未执行';
-      return '本会话定时任务：cron=' + t.cron_expr + '（Asia/Shanghai），下次执行 ' +
+      return '本会话定时任务' + (t.brief ? '「' + t.brief + '」' : '') + '：cron=' + t.cron_expr + '（Asia/Shanghai），下次执行 ' +
         scheduler.fmtTime(t.next_run_at) + '，上次执行 ' + last + '。提示词：' + t.prompt;
     }
     case 'create': {
       if (!cronExpr) throw new Error('op=create 缺少必填参数 cron_expr');
       if (!prompt) throw new Error('op=create 缺少必填参数 prompt');
-      const t = scheduler.createTask(db, ctx.sessionId, cronExpr, prompt);
+      const brief = String(args.brief || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      const t = scheduler.createTask(db, ctx.sessionId, cronExpr, prompt, brief);
+      // 定时即下班：标记本回合收尾时由 engine 收口（brief 碎片 + 归档 + 通道解绑，见 engine.taskClockOut）。
+      if (ctx.onTaskCreated) ctx.onTaskCreated();
       return '定时任务已创建：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。' +
         '注意：每次触发前本会话的历史消息会被存档（AI 只看到任务 prompt），因此 prompt 需自包含；' +
-        '后续改动用 op=update，取消用 op=delete。';
+        '后续改动用 op=update，取消用 op=delete。' + (brief ? '' : '（下次创建记得带 brief：一句话说明任务干什么，它会写进你的长期记忆。）');
     }
     case 'update': {
       if (!cronExpr && !prompt) throw new Error('op=update 需要 cron_expr 和 prompt 至少提供一个');
@@ -800,7 +803,7 @@ function toolScheduleTask(ctx, args) {
       return '定时任务已删除（原定 ' + old + '）。要建新任务用 op=create。';
     }
     default:
-      throw new Error('未知的 op："' + op + '"。可用：get / create（需 cron_expr、prompt）/ update（需 cron_expr、prompt 至少一个）/ delete');
+      throw new Error('未知的 op："' + op + '"。可用：get / create（需 cron_expr、prompt、brief）/ update（需 cron_expr、prompt 至少一个）/ delete');
   }
 }
 

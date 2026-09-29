@@ -235,7 +235,7 @@
     "type": "function",
     "function": {
       "name": "schedule",
-      "description": "Manage the recurring scheduled task bound to the CURRENT session. At most one task per session; it is deleted together with the session. At each trigger, the prompt is sent to this session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get     No arguments.\nop=create  Requires cron_expr and prompt.\nop=update  Requires at least one of cron_expr, prompt; only the given fields change.\nop=delete  No arguments.",
+      "description": "Manage the recurring scheduled task bound to the CURRENT session. At most one task per session; it is deleted together with the session. At each trigger, the prompt is sent to this session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get     No arguments.\nop=create  Requires cron_expr, prompt and brief.\nop=update  Requires at least one of cron_expr, prompt; only the given fields change.\nop=delete  No arguments.",
       "parameters": {
         "type": "object",
         "required": [
@@ -259,6 +259,10 @@
           "prompt": {
             "type": "string",
             "description": "The message to send to this session at each trigger. Write it as a self-contained instruction: previous conversation history is archived before each run, so this prompt is the only input the model will see. The output stays in this session for the user to view; if it must reach the user proactively, state how in the prompt (e.g. via a skill or webhook). Required with op=create; optional with op=update."
+          },
+          "brief": {
+            "type": "string",
+            "description": "One short plain-language line (<= 40 chars) saying what this task actually accomplishes, e.g. 'collect and produce a daily news PDF report'. It is written into the assistant's long-term memory diary so the recurring job can be recalled later. Required with op=create."
           }
         }
       }

@@ -168,27 +168,38 @@ function syncModelPool() {
   startHeldSweeper();
 }
 
-// ---------- held 自动收口（保持中 → 已完成） ----------
-// held 自「key 共享非独占」后不再持有任何资源（旧 model_hold 租约已废弃，见 config.js 注释），
-// 只是给用户留着「还能追问」的视觉信号；但长期挂着会显得会话永不收口，出口只剩手动「断开」。
-// 超时翻 completed 是零行为影响的纯状态动作：历史与模型绑定都不动，用户再发言走
-// postUserMessage 的 completed 分支照常原模型续跑。
-// 护栏：阈值远大于 AUTO_COMPRESS_GRACE_MS，不会挤掉自动压缩提议的确认窗口（提议弹出后用户随时可确认，
-//   收口不拦 /summarize）；判据只看 status（held 定义上不在输出中，抢先发言已把状态翻离 held，不会误收）；
-//   held_at 为 NULL（无从判时长的存量数据）跳过；agent.auto_complete_ms = 0 关闭。
-// 扫描间隔随阈值自适应：生产默认 30 分钟封顶 60s；测试把阈值调小即可获得分钟级以下的扫描节奏。
-// 运行期改了 auto_complete_ms 不会重调间隔，重启生效（阈值本身每次 tick 重读，支持热关/热改）。
+// ---------- 会话闲置处理（30min held 归档 + 4h 记忆收口） ----------
+// 阶段一 held 自动收口：held 自「key 共享非独占」后不再持有任何资源（旧 model_hold 租约已废弃，见 config.js 注释），
+// 只是给用户留着「还能追问」的视觉信号；但长期挂着会显得会话永不收口。超时翻 completed 是零行为影响的纯状态动作：
+// 历史与模型绑定都不动，用户再发言走 postUserMessage 的 completed 分支照常原模型续跑。
+// 阶段二 记忆收口（长期日记）：从未收口（journaled_at 空）且静默超 memory.wrap_idle_ms（默认 4h）的
+// held/completed 会话 → 后台异步 journalFragment 摘要落碎片（fire-and-forget，绝不阻塞消息路径），
+// 落地即占坑不再二次收口；顺手归档 held、删 channel_sessions 绑定行——微信下条消息经 ensureSession
+// 自然新建工作台（网页无绑定行，DELETE 空操作；用户抢先复活旧会话则不撤台，只丢记忆不再补）。
+// 共用护栏：阈值远大于 AUTO_COMPRESS_GRACE_MS，不挤掉自动压缩提议确认窗口；判据只看 status
+//（held/completed 定义上不在输出中，抢先发言已把状态翻离）；held_at 为 NULL 的阶段一存量跳过；
+// agent.auto_complete_ms / memory.wrap_idle_ms 各自 0 = 关对应阶段；updated_at 门槛越过即永远成立，
+// 「不重复收口」全靠 journaled_at 物理标记（防陈年 completed 会话每轮扫描重复烧摘要 LLM）。
+// 扫描间隔随两阈值较小者自适应：生产封顶 60s，测试调小阈值即得分钟以下节奏；
+// 运行期改阈值不重调间隔，重启生效（阈值每次 tick 重读，支持热关/热改）。
 const HOLD_SWEEP_MIN_MS = 1000, HOLD_SWEEP_MAX_MS = 60000;
+const WRAP_SWEEP_BATCH = 5; // 收口单轮上限：摘要要发 LLM，服务重启后存量陈年会话分批消化，不成风暴
 let holdSweeper = null;
 function startHeldSweeper() {
   if (holdSweeper) return; // init 重复调用幂等
   const th = Math.floor(Number((cfg.agent || {}).auto_complete_ms) || 0);
-  if (th <= 0) return;     // 关闭态不建定时器
-  const interval = Math.max(HOLD_SWEEP_MIN_MS, Math.min(HOLD_SWEEP_MAX_MS, Math.floor(th / 4)));
-  holdSweeper = setInterval(sweepHeldTimeouts, interval);
+  const wh = Math.floor(Number((cfg.memory || {}).wrap_idle_ms) || 0);
+  if (th <= 0 && wh <= 0) return; // 两阶段全关不建定时器
+  const step = Math.min(th > 0 ? th : Infinity, wh > 0 ? wh : Infinity);
+  const interval = Math.max(HOLD_SWEEP_MIN_MS, Math.min(HOLD_SWEEP_MAX_MS, Math.floor(step / 4)));
+  holdSweeper = setInterval(sweepIdleSessions, interval);
   if (holdSweeper.unref) holdSweeper.unref(); // 同 scheduler：常驻轮询不阻止进程退出
 }
-function sweepHeldTimeouts() {
+function sweepIdleSessions() {
+  sweepAutoComplete();
+  sweepJournalWrap();
+}
+function sweepAutoComplete() {
   try {
     const ms = Math.floor(Number((cfg.agent || {}).auto_complete_ms) || 0);
     if (ms <= 0) return;
@@ -201,6 +212,29 @@ function sweepHeldTimeouts() {
     if (rows.length) log.info('engine', 'held 超时自动收口 ' + rows.length + ' 个会话（阈值 ' + ms + 'ms）');
   } catch (e) {
     log.warn('engine', 'held 收口扫描异常: ' + (e && e.message || e));
+  }
+}
+function sweepJournalWrap() {
+  try {
+    const ms = Math.floor(Number((cfg.memory || {}).wrap_idle_ms) || 0);
+    if (ms <= 0) return;
+    const rows = db.prepare(
+      "SELECT id FROM sessions WHERE journaled_at IS NULL AND status IN ('held','completed') AND updated_at <= ?"
+      + ' ORDER BY updated_at LIMIT ?'
+    ).all(now() - ms, WRAP_SWEEP_BATCH);
+    for (const r of rows) {
+      // 摘要落地（新增或去重命中）才解绑归档；生成中抢先发言（active）则本次撤台跳过，不打扰用户当下工作台。
+      journalFragment(r.id).then(landed => {
+        if (!landed) return;
+        const s = getSession(r.id);
+        if (!s || s.status === 'active') return;
+        if (s.status === 'held') { try { releaseHold(r.id); } catch (_) { /* 并发断开/删除，忽略 */ } }
+        db.prepare('DELETE FROM channel_sessions WHERE session_id = ?').run(r.id);
+        log.info('memory', r.id + ' 空闲收口：碎片已入日记，通道解绑退位（阈值 ' + ms + 'ms）');
+      });
+    }
+  } catch (e) {
+    log.warn('memory', '空闲收口扫描异常: ' + (e && e.message || e));
   }
 }
 
@@ -517,6 +551,9 @@ function finalize(sessionId, run) {
   bus.emit(sessionId, 'done', { status: 'held' });
   emitStatus(sessionId);
   maybeGenerateTitle(sessionId, s);
+  // 定时即下班：本回合创建过定时任务 → done 广播后收口（attachBus 监听已在 done 回调里同步捕获绑定入队投递，
+  // 此时删绑定不影响微信本次回复送达）。
+  if (run.taskWrap) taskClockOut(sessionId);
 }
 
 // 首次交互结束后自动生成会话标题：fire-and-forget，不阻塞回合收尾。
@@ -735,7 +772,9 @@ async function runLoopInner(sessionId, run) {
         isError = true;
       } else {
         try {
-          output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db, vision },
+          output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db, vision,
+            onTaskCreated: () => { run.taskWrap = true; } }, // 定时即下班：工具只打标记，收口在 finalize（回合结束后才能解绑归档）
+            
             tc.function.name, chk.args);
         } catch (err) {
           output = 'Error: ' + (err && err.message || String(err));
@@ -1224,15 +1263,18 @@ function journalFragment(sessionId) {
       if (!memory.isEnabled(cfg)) return done(false);
       if (journaling.has(sessionId)) return done(false);
       const s = getSession(sessionId);
-      if (!s) return done(false);
-      const day = memory.dayString(s.created_at);
+      if (!s || s.journaled_at) return done(false); // 已收口的会话不二次碎片（每会话唯一碎片的入口保证）
+      const day = memory.dayString(now()); // 时间线跟「下班那天」走，不跟建会话那天（定稿）：
+      // 长跨度会话的碎片若入创建日，可能落进已被裁掉的旧条目里永远看不见。
       const files = listTaskTopFiles(sessionId);
       // 无论成败都落一条：模型不可用/空回时降级为「标题 + 成果文件清单」，日记不断档。
       const finish = body => {
         journaling.delete(sessionId);
         const text = '【' + (s.title || '未命名会话') + ' · ' + s.id + '】\n'
           + (body || '- 本次工作未能生成摘要(模型不可用)；成果文件：' + (files.length ? files.join('、') : '无'));
-        return memory.appendFragment(db, cfg, s.user, day, text, s.id);
+        const r = memory.appendFragment(db, cfg, s.user, day, text, s.id);
+        if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now()); // dupe 也算收口，不重试
+        return r === 'added' || r === 'dupe';
       };
       if (!s.model_id) return done(finish(null)); // 未绑定：不跑模型，直接记降级版
       journaling.add(sessionId);
@@ -1248,6 +1290,33 @@ function journalFragment(sessionId) {
       done(false);
     }
   });
+}
+
+// 定时即下班（定稿）：创建定时任务 = 本工作台会话收口，碎片用任务 brief 纯模板，零 LLM。
+// 由 finalize 在回合 done 广播后调用（时序安全：attachBus 监听在 done 回调里已同步捕获绑定并入队投递，
+// 删 channel_sessions 不影响本次微信回复；投递只依赖 wechat_bindings 表）。
+// 收口三件套：碎片入创建日条目 + journaled 占坑（本会话从此退出 4h 空闲流程，任务执行痕迹不落日记，
+// 用户拿「任务是什么 + 成果文件」即可回溯全貌）+ 顺手归档 + 解绑退位。
+// 记忆整体关闭（retain_days=0）时不收口也不解绑：没有日记的下班毫无意义，别把用户工作台抽了。
+// 回合内任务又被删的边缘：查无任务即放弃，退回 4h 空闲轨道。
+function taskClockOut(sessionId) {
+  try {
+    if (!memory.isEnabled(cfg)) return;
+    const s = getSession(sessionId);
+    if (!s || s.journaled_at) return; // 空闲收口抢先落地过，不重复
+    const t = db.prepare('SELECT cron_expr, prompt, brief FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
+    if (!t) return;
+    const what = String(t.brief || t.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const text = '【设定周期任务 · ' + s.id + '】\n- 用户让我设了个闹钟：' + what
+      + '（频率 ' + t.cron_expr + '，到点自动执行，本会话是该任务的专柜）';
+    const r = memory.appendFragment(db, cfg, s.user, memory.dayString(now()), text, s.id); // 碎片入「下班当天」
+    if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now());
+    if (s.status === 'held') { try { releaseHold(sessionId); } catch (_) { /* 并发归档 */ } }
+    const un = db.prepare('DELETE FROM channel_sessions WHERE session_id = ?').run(sessionId);
+    log.info('memory', sessionId + ' 定时即下班：闹钟碎片入日记' + (un.changes ? '，通道解绑退位' : ''));
+  } catch (e) {
+    log.warn('memory', sessionId + ' 定时收口异常: ' + (e && e.message || e));
+  }
 }
 
 // 会话级 /tmp 的宿主机实体：<任务目录>/.tmp（executor wrapper 把它 bind 进容器 /tmp，HOME/TMPDIR 也指这里，
@@ -1290,7 +1359,8 @@ function clearSessionMessages(sessionId) {
   autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
   // 标题随历史一并清零：旧标题描述的是已删除的对话，留着会让新对话文不对题；
   // 新一轮交互结束后 maybeGenerateTitle 见 title 为空会自动重新生成。
-  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null, title: null, title_locked: 0, phase: 'advising' });
+  // journaled_at 清零：清空 = 这单作业被撕掉，旧碎片随对话作废，新一轮将来可再收口。
+  touch(sessionId, { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null, title: null, title_locked: 0, phase: 'advising', journaled_at: null });
   profile.freezeSnapshot(db, sessionId); // 回 advising 重新规划：画像快照随新一轮重新冻结
   bus.emit(sessionId, 'done', { status: 'completed' });
   bus.emit(sessionId, 'title', { title: null }); // 供其他打开同一会话的窗口同步清掉旧标题
