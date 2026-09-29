@@ -899,11 +899,20 @@ async function toolMintPublicLink(ctx, args) {
 // 用户不切会话，AI 代办一切。create 只落当前会话（定时即下班，建完本会话收口退位成专柜）。
 // 回执只给事实，零教学（怎么做写在 schema description 里，不每次复读）：
 // 列表/详情用编号条目 + key=value 分行，时间 ISO+08:00，prompt 截断；写操单一行短确认。
+// list 紧凑索引：认任务、看状态够用（name/last_note/prompt 等细节归 get）
 function schedEntry(t, idx) {
+  return [
+    idx + '. ' + (t.brief || t.title || t.session_id),
+    'id=' + t.session_id + (t.current ? '（本会话）' : ''),
+    'cron="' + t.cron_expr + '"',
+    'next=' + scheduler.fmtIso(t.next_run_at),
+    t.last_run_at ? 'last=' + scheduler.fmtIso(t.last_run_at) + ' last_status=' + (t.last_status || '-') : 'last=尚未执行',
+  ].join('\n');
+}
+// get 详情：索引之上补 name（会话标题）、brief、last_note、prompt（截断防污染上下文）——全量字段只在这出现
+function schedDetail(t) {
   const clip = s => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > 160 ? s.slice(0, 160) + '…' : s; };
-  const lines = [];
-  if (idx) lines.push((idx) + '. ' + (t.brief || t.title || t.session_id));
-  lines.push('id=' + t.session_id + (t.current ? '（本会话）' : ''));
+  const lines = ['id=' + t.session_id + (t.current ? '（本会话）' : '')];
   if (t.title) lines.push('name=' + t.title);
   if (t.brief) lines.push('brief=' + t.brief);
   lines.push('cron="' + t.cron_expr + '"');
@@ -934,7 +943,8 @@ function toolScheduleTask(ctx, args) {
       const sid = target();
       const t = scheduler.getTask(db, sid);
       if (!t) return sid === ctx.sessionId ? '本会话没有定时任务。' : '会话 ' + sid + ' 没有定时任务。';
-      return schedEntry(Object.assign({ session_id: sid, current: sid === ctx.sessionId }, t), 0);
+      const srow = db.prepare('SELECT title FROM sessions WHERE id = ?').get(sid);
+      return schedDetail(Object.assign({ session_id: sid, current: sid === ctx.sessionId, title: srow && srow.title }, t));
     }
     case 'create': {
       const raw = String(args.id == null ? '' : args.id).trim();
