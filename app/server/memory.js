@@ -15,8 +15,9 @@
 
 const TZ = 'Asia/Shanghai';
 const INJECT_CAP = 50; // inject_max 硬帽：防配置手滑把整个日记灌进上下文
-const DAY_MAX = 4000;  // 单日条目长度帽：溢出从头部裁（保最近片段）
 const FRAG_MAX = 600;  // 单碎片长度帽（含【会话id】头行）
+// 单日条目不设长度帽（曾有 DAY_MAX=4000 按字符合切——会把碎片削成孤儿残句，且职责已被
+// 两层取代：注入端 inject_max 按条数封顶，存储端 FRAG_MAX 限单碎片 + 每会话仅一片天然有界）。
 
 // 存储裁剪窗：0 = 永久（默认）。正数 = 只留最近 n 天，窗外条目物理删除。
 function retainDays(cfg) {
@@ -51,7 +52,6 @@ function appendFragment(db, cfg, user, day, text, sid) {
   const base = row ? String(row.content) : '';
   if (sid && base.includes(String(sid))) return 'dupe'; // 本会话已入日记
   let next = base ? base + '\n\n' + frag : frag;
-  if (next.length > DAY_MAX) next = next.slice(next.length - DAY_MAX);
   db.prepare(
     'INSERT INTO memory_entries (user, day, content, updated_at) VALUES (?,?,?,?)'
     + ' ON CONFLICT(user, day) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at'
@@ -159,5 +159,5 @@ module.exports = {
   retainDays, injectMax, dayString, cutoffDay,
   appendFragment, markJournaled, journalFor,
   searchFragments, daysIndex, dayEntry, prune,
-  INJECT_CAP, DAY_MAX, FRAG_MAX,
+  INJECT_CAP, FRAG_MAX,
 };
