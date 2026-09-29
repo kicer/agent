@@ -1191,10 +1191,12 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
   }
 }
 
-// ---------- 长期记忆碎片（日记）：会话轮换（换工作台）时为旧会话生成一条当日事件碎片 ----------
-// 与自动标题同模式：fire-and-forget + 内存防重入 + 失败降级；绝不阻塞轮换路径（微信先回信，
-// 日记后台慢慢落）。按【旧会话创建日】入 memory_entries（存储/去重/渲染全在 memory.js）。
-// /clear 不记：用户主动清零历史 = 不要这段记忆（已定调）。M0 只提供生成原语，轮换触发接线是 M1。
+// ---------- 长期记忆碎片（日记）：会话收口（下班）时为其生成一条当日事件碎片 ----------
+// 与自动标题同模式：fire-and-forget + 内存防重入；绝不阻塞轮换路径（微信先回信，
+// 日记后台慢慢落）。按【收口当日】入 memory_entries（存储/去重/渲染全在 memory.js）。
+// /clear 不记：用户主动清零历史 = 不要这段记忆（已定调）。
+// 摘要模型走候选链兜底（用户定调：日记错过即丢，不能死于会话原绑模型这一个单点）：
+// 原绑 → 同平台其它 → 配置序其它，最多 3 个；全链失败/无可用模型才记带真实原因的降级占坑。
 const journaling = new Set(); // 正在生成碎片的会话（防双发）
 // 存档、系统注入与开场日记都不是对话本体——尤其 memory_note：不跳会把上一本日记摘要进新日记，雪球增殖。
 const JOURNAL_SKIP_TYPES = new Set(['archived', 'channel_note', 'scheduler_note', 'memory_note']);
@@ -1247,6 +1249,25 @@ function cleanJournalText(raw) {
   return lines.map(x => '- ' + x.replace(/^-+\s*/, '')).join('\n');
 }
 
+// 摘要候选模型链：原绑仍在配置且未禁用 → 首选（日记口吻贴合本会话风格）；
+// 其后再取最多 2 个可用模型（同平台优先——避免整链死在同一家抖动的上游上）。
+// 会话 model_id 为空/指向已删禁用模型都很常见（换配置、删平台、重启归位），日记不能因此报废。
+const JOURNAL_MODEL_TRIES = 3;
+function journalCandidateModels(s) {
+  const all = (cfg.models || []).filter(m => m.enable !== false);
+  const cands = [];
+  const bound = s.model_id ? all.find(m => m.id === s.model_id) : null;
+  if (bound) cands.push({ id: bound.id, key_slot: s.model_slot || (bound.platform + '#' + bound.key_index) });
+  const plat = bound ? bound.platform : '';
+  const others = all.filter(m => !cands.some(c => c.id === m.id))
+    .sort((a, b) => (a.platform === plat ? 0 : 1) - (b.platform === plat ? 0 : 1));
+  for (const m of others) {
+    if (cands.length >= JOURNAL_MODEL_TRIES) break;
+    cands.push({ id: m.id, key_slot: m.platform + '#' + m.key_index });
+  }
+  return cands;
+}
+
 // 生成并落库一个会话的日记碎片；返回 Promise<boolean>（是否写入）。调用方不需要等它。
 function journalFragment(sessionId) {
   return new Promise(resolve => {
@@ -1257,22 +1278,38 @@ function journalFragment(sessionId) {
       const s = getSession(sessionId);
       if (!s || s.journaled_at) return done(false); // 已收口的会话不二次碎片（每会话唯一碎片的入口保证）
       const day = memory.dayString(now()); // 时间线跟「下班那天」走，不跟建会话那天（定稿）
-      // 无论成败都落一条：模型不可用/空回时降级版只留会话 id 索引（日记不断档，也不爆临时文件）。
-      const finish = body => {
+      // 无论成败都落一条：降级版写明真实原因（调试页可见），保留会话 id 索引（日记不断档）。
+      const finish = (body, reason) => {
         journaling.delete(sessionId);
         const text = '【' + s.id + '】\n'
-          + (body || '- 本次工作未能生成摘要(模型不可用)，详情可按本条会话 id 回忆');
+          + (body || '- 本次工作未能生成摘要（' + (reason || '原因未知') + '），详情可按本条会话 id 回忆');
         const r = memory.appendFragment(db, cfg, s.user, day, text, s.id);
         if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now()); // dupe 也算收口，不重试
         return r === 'added' || r === 'dupe';
       };
-      if (!s.model_id) return done(finish(null)); // 未绑定：不跑模型，直接记降级版
+      const cands = journalCandidateModels(s);
+      if (!cands.length) return done(finish(null, '配置中无可用模型'));
       journaling.add(sessionId);
-      callModel(cfg, s.model_id, journalMessages(loadHistory(sessionId)), null, { key_slot: s.model_slot })
-        .then(r => done(finish(cleanJournalText(r && r.content))))
+      const messages = journalMessages(loadHistory(sessionId));
+      // 候选逐个试：空回/报错即换下一个，全链失败才降级（单次失败不再杀日记）。
+      const attempt = i => {
+        const pick = cands[i];
+        return callModel(cfg, pick.id, messages, null, { key_slot: pick.key_slot })
+          .then(r => {
+            const body = cleanJournalText(r && r.content);
+            if (body) return body;
+            throw new Error('空回复');
+          })
+          .catch(e => {
+            log.warn('memory', sessionId + ' 日记摘要失败(' + pick.id + '): ' + (e && e.message || e));
+            return i + 1 < cands.length ? attempt(i + 1) : null;
+          });
+      };
+      attempt(0)
+        .then(body => done(finish(body, body ? null : '候选模型均调用失败')))
         .catch(e => {
-          log.warn('memory', sessionId + ' 日记摘要失败，写降级版: ' + (e && e.message || e));
-          done(finish(null));
+          log.warn('memory', sessionId + ' 日记摘要链异常: ' + (e && e.message || e));
+          done(finish(null, '摘要过程异常'));
         });
     } catch (e) {
       journaling.delete(sessionId);
