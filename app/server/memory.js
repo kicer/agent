@@ -55,19 +55,27 @@ function markJournaled(db, sessionId, ms) {
 }
 
 // ---------- 读：开场注入文本（wechat/web 新会话的数据源） ----------
-// 最近 inject_max 片（按收口时刻），渲染分天：新日在前、天内按发生顺序；【sid】头拼在这里。
+// 最近 inject_max 片按事件日优先（同序供 injectedIds/journalFor 共用），渲染分天：新日在前、天内按发生顺序。
+// 选取序单点定义在此（调试 API/页面走 injectedIds 取名单，不另算一套，避免两边错位）。
+const INJECT_ORDER = ' ORDER BY day DESC, created_at DESC';
+// 注入窗名单：与 journalFor 同选取规则的 session_id 列表（调试页打「已注入」标用）。
+function injectedIds(db, cfg, user) {
+  const cap = injectMax(cfg);
+  if (!cap) return [];
+  return db.prepare(
+    'SELECT session_id FROM memory_fragments WHERE user = ?' + INJECT_ORDER + ' LIMIT ?'
+  ).all(String(user || ''), cap).map(r => r.session_id);
+}
 function renderFrag(r) { return '【' + r.session_id + '】\n' + r.text; }
 function journalFor(db, cfg, user) {
   const cap = injectMax(cfg);
   if (!cap) return '';
   const rows = db.prepare(
-    // 选取按事件日（积压补记/迁移会令 created_at 同刻扎堆，按收口序会拿到「最晚补记」而非「最新事件」；
+    // 选取按事件日（积压补记/迁移会令 created_at 齐平，按收口序会拿到「最晚补记」而非「最新事件」；
     // 稳态下两者等价，事件日序更符合「最近记忆」直觉），同日并列再按收口时刻。
-    'SELECT session_id, day, text FROM memory_fragments WHERE user = ? ORDER BY day DESC, created_at DESC LIMIT ?'
+    'SELECT session_id, day, text FROM memory_fragments WHERE user = ?' + INJECT_ORDER + ' LIMIT ?'
   ).all(String(user || ''), cap);
   if (!rows.length) return '';
-  // 选取按收口序，展示按事件日重排（同日碎片可能异日落库，直接按日分组避免同一日出现两个头）
-  rows.sort((a, b) => a.day < b.day ? 1 : a.day > b.day ? -1 : 0);
   const head = '【长期记忆·日记(最近' + rows.length + '条)】收工时的当日事件摘要，新在前、天内按发生顺序；'
     + '每条【编号】是来源会话 id：更早的日记用 recall 工具 op=search 关键词检索、op=days 按日期翻页再 op=day 取整天；'
     + '那次工作的成果文件用 op=files 查、op=link 取。';
@@ -138,7 +146,7 @@ function prune(db, cfg) {
 
 module.exports = {
   retainDays, injectMax, dayString, cutoffDay,
-  appendFragment, markJournaled, journalFor,
+  appendFragment, markJournaled, journalFor, injectedIds,
   searchFragments, daysIndex, dayEntry, prune,
   INJECT_CAP, FRAG_MAX,
 };

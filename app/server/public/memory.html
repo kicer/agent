@@ -78,14 +78,14 @@ function render(d) {
 
   document.getElementById('injection').textContent = d.injection || '（无注入文本：无记忆或功能关闭）';
 
-  var frs = d.entries || []; // created_at 倒序的全量碎片行
-  // 注入窗 = 按收口时刻取最新 inject_max 片（与 journalFor 选取规则一致），直接标在卡上。
+  var frs = d.entries || []; // API 已按 day 降序、同日收口时刻降序（与注入选取同源）
+  // 「已注入」直接吃 API 给的名单（memory.injectedIds，与 journalFor 同序），页面不再自算窗。
   var injected = {};
-  for (var ii = 0; ii < Math.min(d.inject_max || 0, frs.length); ii++) injected[ii] = 1;
+  (d.injected || []).forEach(function (sid) { injected[sid] = 1; });
   var groups = {}, order = [];
-  frs.forEach(function (f, fi) {
+  frs.forEach(function (f) {
     if (!groups[f.day]) { groups[f.day] = []; order.push(f.day); }
-    groups[f.day].push({ f: f, fi: fi });
+    groups[f.day].push({ f: f });
   });
   order.sort(function (a, b) { return a < b ? 1 : -1; }); // 新日在前
   var cutoffStale = !d.retain_days ? '' : '（保留 ' + d.retain_days + ' 天）';
@@ -95,7 +95,7 @@ function render(d) {
       + (items[0].f.in_window ? '' : '<span class="badge out">窗外' + cutoffStale + '）</span>')
       + '<span class="t">' + items.length + ' 片</span></div>'
       + items.map(function (it) {
-          return '<div class="frag">' + (injected[it.fi] ? '<span class="badge on inj-tag">已注入</span>' : '')
+          return '<div class="frag">' + (injected[it.f.session_id] ? '<span class="badge on inj-tag">已注入</span>' : '')
             + sidLink(it.f.session_id) + ' <span class="t">收口 ' + fmtTime(it.f.created_at) + ' · 事件日 ' + esc(it.f.day) + '</span>\n' + esc(it.f.text)
             + '</div>';
         }).join('')
