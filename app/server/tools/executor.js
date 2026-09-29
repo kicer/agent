@@ -1236,6 +1236,8 @@ function toolDb(ctx, args) {
         const names = db
           .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
           .all().map(r => r.name);
+        // 空库直返 [] 易被读成「工具坏了」：补一句事实定性（首次使用属正常，建表走 op=exec）。
+        if (!names.length) return '[]（尚无表：空库首次使用属正常，用 op=exec 建表后即可 insert）';
         const out = names.map(n => ({ name: n, rows: db.prepare('SELECT COUNT(*) AS c FROM ' + quoteIdent(n)).get().c }));
         return JSON.stringify(out, null, 2);
       }

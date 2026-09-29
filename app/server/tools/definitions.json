@@ -19,7 +19,7 @@
               "tables",
               "schema"
             ],
-            "description": "Operation type:\n- exec: run a write statement (CREATE / UPDATE / DELETE / ALTER / DROP), in a transaction\n- query: run a read statement (SELECT), returns an array of rows\n- insert: insert one or more rows from row objects (structured, no SQL needed, one transaction)\n- tables: list all tables with row counts\n- schema: show column definitions for a table"
+            "description": "Operation type:\n- exec: run a write statement (CREATE / UPDATE / DELETE / ALTER / DROP), in a transaction\n- query: run a read-only statement (SELECT / WITH), returns an array of rows\n- insert: insert one or more rows from row objects (structured, no SQL needed, one transaction)\n- tables: list all tables with row counts\n- schema: show column definitions for a table"
           },
           "sql": {
             "type": "string",
@@ -90,7 +90,7 @@
     "type": "function",
     "function": {
       "name": "fetch",
-      "description": "Fetches a URL and returns its content as Markdown. Only http and https are supported; if the scheme is omitted, https is assumed.\n\nHTML pages are converted to Markdown. JSON, XML, plain text, and Markdown responses are returned as-is. Binary responses are not returned — only their HTTP status, content-type, and size.\n\nThe response always starts with a line `HTTP <status>`, followed by the body. Check the status line: a non-2xx status means the fetch did not succeed, even if body content is present.\n\nReturned text is capped per call (default is modest; raise one call with `max_chars` up to a hard cap). When truncated, the tail hint gives the total length and the `offset` to continue from — re-call with that `offset` to page through WITHOUT re-downloading. Most pages fit in the first window; only page further when you actually need more.\n\nTargets that resolve to private/loopback addresses are refused (SSRF guard). Redirects are followed up to 5 hops, each hop checked.",
+      "description": "Fetches a URL and returns its content as Markdown. Only http and https are supported; if the scheme is omitted, https is assumed.\n\nHTML pages are converted to Markdown. JSON, XML, plain text, and Markdown responses are returned as-is. Binary responses are not returned — only their HTTP status, content-type, and size.\n\nThe response always starts with a line `HTTP <status>`, followed by the body. Check the status line: a non-2xx status means the fetch did not succeed, even if body content is present.\n\nReturned text is capped per call (default 12000 chars; a call may raise it with `max_chars`, hard cap 64000). When truncated, the tail hint gives the total length and the `offset` to continue from — re-call with that `offset` to page through WITHOUT re-downloading. Most pages fit in the first window; only page further when you actually need more.\n\nTargets that resolve to private/loopback addresses are refused (SSRF guard). Redirects are followed up to 5 hops, each hop checked.",
       "parameters": {
         "type": "object",
         "required": [
@@ -177,7 +177,7 @@
     "type": "function",
     "function": {
       "name": "mint_public_link",
-      "description": "Create a short-lived, publicly reachable URL for a local file, so an external service that cannot authenticate can download it.\nUse this when another tool or API needs to fetch a local file by URL. Returns the URL as plain text on a single line.",
+      "description": "Create a short-lived (default 30 minutes, server-configurable 1min-24h), publicly reachable URL for a local file, so an external service that cannot authenticate can download it. The link works repeatedly until it expires; re-mint for a fresh one.\nUse this when another tool or API needs to fetch a local file by URL. Returns the URL as plain text on a single line.",
       "parameters": {
         "type": "object",
         "required": [
@@ -338,7 +338,7 @@
     "type": "function",
     "function": {
       "name": "skill",
-      "description": "Use the skills installed on this server. A skill is a directory under the skill root whose SKILL.md defines its purpose and input_schema.\n\nop=list  No arguments.\nop=get   Requires name.\nop=run   Requires name; input_args optional (default {}).\n\nop=list: lists all installed skills with a one-line description each, read live from the skill root; use it to choose among skills or to confirm what is installed. An empty skill set returns an empty list — that is not an error.\nop=get: returns the full raw SKILL.md (front matter included): purpose, input_schema, and usage notes. Call it before op=run with a skill you have not used in this conversation. A nonexistent skill returns an error.\nop=run: executes the skill with input_args validated against its input_schema (a validation error names the missing fields). The entry script receives a JSON string as its only CLI argument, so input_args must be a JSON object.\n- Returns the skill's combined stdout+stderr as plain text after it exits; exit 0 with no output yields '（无输出）'. A non-zero exit raises an error containing the output and [exit code: N].\n- Direct output files via arguments: relative paths in arguments are resolved against the session working directory; do not rely on the skill's cwd.\n- Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
+      "description": "Use the skills installed on this server. A skill is a directory under the skill root whose SKILL.md defines its purpose and input_schema.\n\nop=list  No arguments.\nop=get   Requires name.\nop=run   Requires name; input_args optional (default {}).\n\nop=list: lists all installed skills with a one-line description each, read live from the skill root; use it to choose among skills or to confirm what is installed. An empty skill set returns an empty list — that is not an error.\nop=get: returns the full raw SKILL.md (front matter included): purpose, input_schema, and usage notes. Call it before op=run with a skill you have not used in this conversation. A nonexistent skill returns an error.\nop=run: executes the skill with input_args validated against its input_schema (a validation error names the missing fields). The entry script receives a JSON string as its only CLI argument, so input_args must be a JSON object.\n- Returns the skill's combined stdout+stderr as plain text after it exits; exit 0 with no output yields '（无输出）'. A non-zero exit raises an error containing the output and [exit code: N].\n- Direct output files via arguments: relative paths in input_args are resolved against the session working directory; do not rely on the skill's cwd.\n- Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
       "parameters": {
         "type": "object",
         "required": [
@@ -370,7 +370,7 @@
     "type": "function",
     "function": {
       "name": "terminal",
-      "description": "Executes a shell one-liner and returns combined stdout/stderr output.\n\n- Run commands relative to the session working directory. Use the `cd` parameter to specify a different directory if needed.\n- Do not use shell substitutions or interpolations (e.g., `$VAR`, `${VAR}`, `$(...)`, backticks). Resolve values yourself first.\n- Do not pipe output to `head` or `tail`; use the `head_lines` and `tail_lines` parameters to limit what is returned while keeping full output visible to the user.\n- Avoid commands that run indefinitely (servers, watchers). For long-running commands, set `timeout_ms`.\n- Each invocation starts a new shell; do not rely on state from previous calls.\n- If a command may open a pager or editor, disable it using environment variables (e.g., `GIT_PAGER=cat`, `EDITOR=true`).",
+      "description": "Executes a shell one-liner and returns combined stdout/stderr output.\n\n- Run commands relative to the session working directory. Use the `cd` parameter to specify a different directory if needed.\n- Do not use shell substitutions or interpolations (e.g., `$VAR`, `${VAR}`, `$(...)`, backticks). Resolve values yourself first.\n- Do not pipe output to `head` or `tail`; use the `head_lines` and `tail_lines` parameters to limit what is returned while keeping full output visible to the user. Both can be combined: the result is the first head_lines lines, a blank line, then the last tail_lines lines.\n- Avoid commands that run indefinitely (servers, watchers). For long-running commands, set `timeout_ms`.\n- Each invocation starts a new shell; do not rely on state from previous calls.\n- If a command may open a pager or editor, disable it using environment variables (e.g., `GIT_PAGER=cat`, `EDITOR=true`).",
       "parameters": {
         "type": "object",
         "required": [
