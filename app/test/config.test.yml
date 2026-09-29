@@ -36,6 +36,7 @@ agent:
   temperature: 1.0
   max_tool_iterations: 20
   max_retries: 1
+  auto_complete_ms: 0   # 冒烟套件依赖 held 长期驻留（断言/追问/释放用例），关闭超时自动收口；专项覆盖见 test/hold-sweep.test.js
 
 # 冒烟测试用短租约，验证 held → 自动释放
 model_hold:

@@ -96,8 +96,8 @@ async function main() {
     ok(r2 && r2.delivered === 'live', 'held 期间追问直接送达（不排队）', r2 && r2.delivered);
     d = await waitSession(s.id, x => x.session.status === 'held' && x.messages.filter(m => m.role === 'assistant').length >= 2, 8000, '第二次回复');
     ok(d.session.model_id === 'mock-a/ds1', '追问复用同一模型', d.session.model_id);
-    // held 租约到期自动释放（测试配置 idle_release_ms=1500）
-    d = await waitSession(s.id, x => x.session.status === 'completed' && x.session.model_id === null, 6000, 'held 租约到期自动释放');
+    // held 自动收口（超时翻 completed、绑定保持）由 test/hold-sweep.test.js 专项覆盖；
+    // 旧租约语义（到期释放并清 model_id）已随「key 非独占」移除，本节会话保持 held 继续走后续用例。
 
     // ---- 2. 工具调用 write_file ----
     console.log('\n[2] 工具调用');
@@ -143,8 +143,8 @@ async function main() {
     const m1 = dp.session.model_id;
     await api('POST', '/api/sessions/' + sp.id + '/messages', { content: '回绑测试' });
     dp = await waitSession(sp.id, x => x.session.status === 'held', 8000, '回复完成 held');
-    await api('POST', '/api/sessions/' + sp.id + '/release'); // 主动断开：completed + 释放模型
-    dp = await waitSession(sp.id, x => x.session.status === 'completed' && !x.session.model_id, 3000, 'release 后释放');
+    await api('POST', '/api/sessions/' + sp.id + '/release'); // 主动断开：completed；key 非独占，断开不清绑定
+    dp = await waitSession(sp.id, x => x.session.status === 'completed' && x.session.model_id === m1, 3000, 'release 后收口、绑定保持');
     await api('POST', '/api/sessions/' + sp.id + '/messages', { content: '再来一句' });
     dp = await waitSession(sp.id, x => x.session.status !== 'queued', 5000, '新消息送达');
     ok(dp.session.model_id === m1, '释放后新消息回绑上次模型', dp.session.model_id + ' vs ' + m1);
@@ -167,7 +167,7 @@ async function main() {
     await api('POST', '/api/sessions/' + s.id + '/stop');
     d = await waitSession(s.id, x => x.session.status === 'cancelled', 6000, 'cancelled');
     ok(d.session.status === 'cancelled', '终止后状态为 cancelled');
-    ok(d.session.model_id === null, '终止后释放模型');
+    ok(d.session.model_id != null, '终止不算断开：绑定保持，再发言沿用（engine.stop 不清 model_id）');
 
     // ---- 5. 排队调度（ds1/ds2 都占用 → 第三个排队 → 释放后 FIFO 绑定）----
     console.log('\n[5] 排队调度');
@@ -266,8 +266,10 @@ async function main() {
     const fs9 = await api('POST', '/api/sessions', { title: uniqTitle });
     ok(fs9 && fs9.id, '创建搜索专用会话');
     await api('POST', '/api/sessions/' + fs9.id + '/messages', { content: 'zzq-unique 检索内容 12345' });
-    // 等到结版(completed 为终态,避免 active/done 归类断言撞上 held→completed 过渡态)
-    await waitSession(fs9.id, x => x.session.status === 'completed', 8000, 'AI 回复后租约到期结版,token 用量已落库');
+    // 等到终态（completed 归档分组断言用）：租约到期结版已移除，改手动 release 收口；token 用量回合内已落库
+    await waitSession(fs9.id, x => x.session.status === 'held' && x.messages.some(m => m.role === 'assistant'), 8000, 'AI 回复完成（held）');
+    await api('POST', '/api/sessions/' + fs9.id + '/release');
+    await waitSession(fs9.id, x => x.session.status === 'completed', 3000, '手动断开后结版');
     const st9 = (await api('GET', '/api/sessions/' + fs9.id)).session.status;
     const actSet = await api('GET', '/api/sessions?status=active&limit=200');
     const doneSet = await api('GET', '/api/sessions?status=done&limit=200');
