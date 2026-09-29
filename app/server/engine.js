@@ -1191,9 +1191,10 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
   }
 }
 
-// ---------- 长期记忆碎片（日记）：会话收口（下班）时为其生成一条当日事件碎片 ----------
+// ---------- 长期记忆碎片（日记）：会话收口（下班）时为其生成一条事件碎片 ----------
 // 与自动标题同模式：fire-and-forget + 内存防重入；绝不阻塞轮换路径（微信先回信，
-// 日记后台慢慢落）。按【收口当日】入 memory_entries（存储/去重/渲染全在 memory.js）。
+// 日记后台慢慢落）。一片一行入 memory_fragments，day=事件日（会话最后活跃日），
+// 去重靠 (user, session_id) 主键；渲染/检索全在 memory.js。
 // /clear 不记：用户主动清零历史 = 不要这段记忆（已定调）。
 // 摘要模型走候选链兜底（用户定调：日记错过即丢，不能死于会话原绑模型这一个单点）：
 // 原绑 → 同平台其它 → 配置序其它，最多 3 个；全链失败/无可用模型才记带真实原因的降级占坑。
@@ -1277,13 +1278,12 @@ function journalFragment(sessionId) {
       if (journaling.has(sessionId)) return done(false);
       const s = getSession(sessionId);
       if (!s || s.journaled_at) return done(false); // 已收口的会话不二次碎片（每会话唯一碎片的入口保证）
-      const day = memory.dayString(now()); // 时间线跟「下班那天」走，不跟建会话那天（定稿）
-      // 无论成败都落一条：降级版写明真实原因（调试页可见），保留会话 id 索引（日记不断档）。
+      const day = memory.dayString(s.updated_at || now()); // 事件日=会话最后活跃日（C 定稿）：人回忆问哪天干的活，不是哪天补记
+      // 无论成败都落一条：降级版写明真实原因（调试页可见）；来源会话 id 是表列，正文零元数据。
       const finish = (body, reason) => {
         journaling.delete(sessionId);
-        const text = '【' + s.id + '】\n'
-          + (body || '- 本次工作未能生成摘要（' + (reason || '原因未知') + '），详情可按本条会话 id 回忆');
-        const r = memory.appendFragment(db, cfg, s.user, day, text, s.id);
+        const r = memory.appendFragment(db, cfg, s.user, s.id, day,
+          body || '- 本次工作未能生成摘要（' + (reason || '原因未知') + '），详情可按会话 id 回忆');
         if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now()); // dupe 也算收口，不重试
         return r === 'added' || r === 'dupe';
       };
@@ -1322,7 +1322,7 @@ function journalFragment(sessionId) {
 // 定时即下班（定稿）：创建定时任务 = 本工作台会话收口，碎片用任务 brief 纯模板，零 LLM。
 // 由 finalize 在回合 done 广播后调用（时序安全：attachBus 监听在 done 回调里已同步捕获绑定并入队投递，
 // 删 channel_sessions 不影响本次微信回复；投递只依赖 wechat_bindings 表）。
-// 收口三件套：碎片入收口当日条目 + journaled 占坑（本会话从此退出 4h 空闲流程，任务执行痕迹不落日记，
+// 收口三件套：碎片按事件日入表（一片一行，本会话从此退出 4h 空闲流程；任务执行痕迹不落日记，
 // 用户拿「任务是什么 + 成果文件」即可回溯全貌）+ 顺手归档 + 解绑退位。
 // 回合内任务又被删的边缘：查无任务即放弃，退回 4h 空闲轨道。
 function taskClockOut(sessionId) {
@@ -1332,9 +1332,8 @@ function taskClockOut(sessionId) {
     const t = db.prepare('SELECT cron_expr, prompt, brief FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
     if (!t) return;
     const what = String(t.brief || t.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-    const text = '【' + s.id + '】\n- 用户让我设了个闹钟：' + what
-      + '（频率 ' + t.cron_expr + '，到点自动执行，本会话是该任务的专柜）';
-    const r = memory.appendFragment(db, cfg, s.user, memory.dayString(now()), text, s.id); // 碎片入「下班当天」
+    const r = memory.appendFragment(db, cfg, s.user, s.id, memory.dayString(s.updated_at || now()),
+      '- 用户让我设了个闹钟：' + what + '（频率 ' + t.cron_expr + '，到点自动执行，本会话是该任务的专柜）');
     if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now());
     if (s.status === 'held') { try { releaseHold(sessionId); } catch (_) { /* 并发归档 */ } }
     const un = db.prepare('DELETE FROM channel_sessions WHERE session_id = ?').run(sessionId);

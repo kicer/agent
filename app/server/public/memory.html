@@ -47,7 +47,7 @@
   <h2>注入预览（新会话实际带上的文本，与 journalFor 同源）</h2>
   <pre class="inj" id="injection">—</pre>
 
-  <h2>按天条目（memory_entries 原样）</h2>
+  <h2>碎片全量（memory_fragments 一片一行）</h2>
   <div id="entries"></div>
 
   <h2>已收口会话（journaled_at 非空，与碎片对照）</h2>
@@ -63,11 +63,9 @@ function fmtTime(ms) {
 }
 function fmtMs(ms) { return ms >= 3600000 ? (ms / 3600000).toFixed(ms % 3600000 ? 1 : 0) + ' 小时' : Math.round(ms / 60000) + ' 分钟'; }
 
-// 碎片头行【会话id】渲染成可点链接（新开标签看该会话原始 JSON，排查溯源用）
-function linkSids(html) {
-  return html.replace(/【(task-[0-9A-Za-z_\-]+)】/g, function (m, sid) {
-    return '【<a href="/api/sessions/' + encodeURIComponent(sid) + '" target="_blank">' + esc(sid) + '</a>】';
-  });
+// 碎片行 = memory_fragments 一行一片；session_id 是独立列，渲染成可点链接（新开标签看该会话原始 JSON，溯源用）
+function sidLink(sid) {
+  return '【<a href="/api/sessions/' + encodeURIComponent(sid) + '" target="_blank">' + esc(sid) + '</a>】';
 }
 
 function render(d) {
@@ -80,25 +78,29 @@ function render(d) {
 
   document.getElementById('injection').textContent = d.injection || '（无注入文本：无记忆或功能关闭）';
 
-  var eHtml = '';
-  // 镜像 journalFor 取序（天降序、天内从最新一片往回取）算出注入窗，条目卡上直接标出哪几片会被新会话开场带走。
+  var frs = d.entries || []; // created_at 倒序的全量碎片行
+  // 注入窗 = 按收口时刻取最新 inject_max 片（与 journalFor 选取规则一致），直接标在卡上。
   var injected = {};
-  if (d.inject_max) {
-    var left = d.inject_max;
-    (d.entries || []).forEach(function (e, ei) {
-      if (left <= 0) return;
-      var frs = String(e.content || '').split(/\n\n+/).filter(Boolean);
-      for (var i = frs.length - 1; i >= 0 && left > 0; i--, left--) injected[ei + ':' + i] = 1;
-    });
-  }
-  (d.entries || []).forEach(function (e, ei) {
-    var frags = String(e.content || '').split(/\n\n+/).filter(Boolean);
-    eHtml += '<div class="card"><div class="day">' + esc(e.day)
-      + (e.in_window ? '' : '<span class="badge out">窗外（待裁）</span>')
-      + '<span class="t">更新 ' + fmtTime(e.updated_at) + ' · ' + frags.length + ' 个碎片</span></div>'
-      + frags.map(function (f, fi) { return '<div class="frag">' + (injected[ei + ':' + fi] ? '<span class="badge on inj-tag">已注入</span>' : '') + linkSids(esc(f)) + '</div>'; }).join('')
-      + '</div>';
+  for (var ii = 0; ii < Math.min(d.inject_max || 0, frs.length); ii++) injected[ii] = 1;
+  var groups = {}, order = [];
+  frs.forEach(function (f, fi) {
+    if (!groups[f.day]) { groups[f.day] = []; order.push(f.day); }
+    groups[f.day].push({ f: f, fi: fi });
   });
+  order.sort(function (a, b) { return a < b ? 1 : -1; }); // 新日在前
+  var cutoffStale = !d.retain_days ? '' : '（保留 ' + d.retain_days + ' 天）';
+  var eHtml = order.map(function (day) {
+    var items = groups[day];
+    return '<div class="card"><div class="day">' + esc(day)
+      + (items[0].f.in_window ? '' : '<span class="badge out">窗外' + cutoffStale + '）</span>')
+      + '<span class="t">' + items.length + ' 片</span></div>'
+      + items.map(function (it) {
+          return '<div class="frag">' + (injected[it.fi] ? '<span class="badge on inj-tag">已注入</span>' : '')
+            + sidLink(it.f.session_id) + ' <span class="t">收口 ' + fmtTime(it.f.created_at) + ' · 事件日 ' + esc(it.f.day) + '</span>\n' + esc(it.f.text)
+            + '</div>';
+        }).join('')
+      + '</div>';
+  }).join('');
   document.getElementById('entries').innerHTML = eHtml || '<div class="empty">暂无条目——等一次收口，或先在微信/网页聊几句。</div>';
 
   var sHtml = '';

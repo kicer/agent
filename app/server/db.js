@@ -116,16 +116,20 @@ function initDb(dbPath) {
       PRIMARY KEY (user, channel)
     );
 
-    -- 长期记忆（日记，memory.js）：一行 (用户, 天)，content = 当天累积的日记碎片块。
-    -- 碎片在会话收口（下班）时生成，按【收口当日】入条目；保留窗外即裁（appendFragment 顺带 + 启动兑底）。
+    -- 长期记忆（日记，memory.js）：一片碎片一行——会话收口（下班）时落库，(user, session_id) 主键即去重。
+    -- day = 事件日（会话最后活跃日，Asia/Shanghai 与 cron 同时区）：人回忆问「哪天干的活」，不是「哪天补记的」。
+    -- text = 纯日记正文（- 行列表）；来源会话 id 存在 session_id 列，【id】展示样式只在渲染层拼，存储零冗余。
     -- 故意不建外键：记忆是用户级的，删会话不能抹掉它已记入的日记（与 channel_sessions 的懒解析同理）。
-    CREATE TABLE IF NOT EXISTS memory_entries (
+    CREATE TABLE IF NOT EXISTS memory_fragments (
       user TEXT NOT NULL,
-      day TEXT NOT NULL,             -- 'YYYY-MM-DD'（Asia/Shanghai，与 cron 同时区）
-      content TEXT NOT NULL,
-      updated_at INTEGER NOT NULL,
-      PRIMARY KEY (user, day)
+      session_id TEXT NOT NULL,
+      day TEXT NOT NULL,             -- 'YYYY-MM-DD'（事件日）
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL,   -- 收口时刻（注入/检索的时序键）
+      PRIMARY KEY (user, session_id)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_memfrag_day ON memory_fragments(user, day);
 
     -- 微信绑定（wechat.js）：一条 core 用户 ↔ 一个 wxbot iLink bot 实例（扫码登录后仅本人可与 bot 单线对话，
     -- 协议保证无陌生人入口）。binding id 同时用作 channel 键（'wx:'+id，走 routes/channel.js 同一套命令层）
@@ -218,6 +222,25 @@ function initDb(dbPath) {
   // 存量会话（旧值 planning/NULL）统一回填 executing——它们都有历史，行为与改造前一致、零打扰；
   // 只有新建会话进 advising（createSession 显式写入）。幂等，每次启动一条廉价 UPDATE。
   db.exec("UPDATE sessions SET phase='executing' WHERE phase IS NULL OR phase NOT IN ('advising','executing')");
+  // 迁移（C 重构）：memory_entries「一天一行拼 blob」→ memory_fragments「一片一行」。幂等：旧表存在才搬，
+  // 搬完即 drop；解析不出【sid】头的块（DAY_MAX 时代削出的孤儿残句）直接丢弃；
+  // 存量碎片的 day 顺手改判为来源会话最后活跃日（事件日语义修正，积压补记自然散布回真实日期）。
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_entries'").get()) {
+    const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' });
+    const mf = db.prepare('INSERT OR IGNORE INTO memory_fragments (user, session_id, day, text, created_at) VALUES (?,?,?,?,?)');
+    const getUpd = db.prepare('SELECT updated_at FROM sessions WHERE id = ?');
+    for (const r of db.prepare('SELECT user, day, content, updated_at FROM memory_entries').all()) {
+      for (const block of String(r.content || '').split('\n\n')) {
+        const m = /^【([^】]*)】\n?([\s\S]*)$/.exec(block.trim());
+        if (!m || !m[2].trim()) continue;
+        const sidM = /task-[0-9A-Za-z_-]+/.exec(m[1]); // 兼容三代头格式：【标题 · sid】/【sid】
+        if (!sidM) continue;
+        const srow = getUpd.get(sidM[0]);
+        mf.run(r.user, sidM[0], srow && srow.updated_at ? dayFmt.format(new Date(srow.updated_at)) : r.day, m[2].trim(), r.updated_at || Date.now());
+      }
+    }
+    db.exec('DROP TABLE memory_entries');
+  }
   return db;
 }
 

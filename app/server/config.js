@@ -87,9 +87,10 @@ const DEFAULTS = {
   upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10 },
   // 技能根目录：留空取 workspace_root 同级 skills（/workspace/tasks → /workspace/skills）。
   skills: { skills_root: '', timeout_ms: 120000 },
-  // 长期记忆（日记，memory.js）：会话收口（下班）时一条几十字的第一人称碎片，按【收口当日】入条目。
-  // 记忆分层：存储默认永久（虚拟人的过去不能到点就抹）；注入只取最近几条当「嘴边的工记」；
-  // inject_max = 新会话开场注入上限（嘴边的工记：近几片足以接上旧话，多了是噪音；0 = 只记录不自动注入）。
+  // 长期记忆（日记，memory.js）：会话收口（下班）时一条几十字的第一人称碎片，一片一行入 memory_fragments，
+  // day=事件日（会话最后活跃日：人回忆问哪天干的活，不是哪天补记）。记忆分层：存储默认永久
+  //（虚拟人的过去不能到点就抹）；注入只取最近几条当「嘴边的工记」（近几片足以接上旧话，多了是噪音）；
+  // inject_max = 新会话开场注入上限（默认 3，硬帽 50）；0 = 只记录不自动注入。
   // retain_days = 存储裁剪窗：0 = 默认永不删；正数 = 超窗硬删（自动清理/隐私抹除场景才用）。
   // wrap_idle_ms = 空闲收口阈值：held/completed 且超过此时长无更新 → 后台 LLM 摘要收口、
   // 归档、微信通道解绑退位（下次消息自然新工作台）；0 = 关。设定定时任务是显式收口，不受此开关影响。
