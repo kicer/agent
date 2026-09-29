@@ -1379,19 +1379,18 @@ function toolRecall(ctx, args) {
       const q = String(args.query || '').trim();
       if (!q) throw new Error('op=search 需要 query（关键词；空格分隔多个词更好，如「身份证 水印」）');
       const txt = memory.searchFragments(db, user, q, args.count);
-      return txt || '日记库里没有匹配「' + q + '」的条目。换个更宽泛的关键词再试，或 op=days 看哪天有什么；成果文件走 op=files。';
+      return txt || '日记中无「' + q + '」相关记录。';
     }
     case 'days': {
       const list = memory.daysIndex(db, user);
-      if (!list.length) return '日记库是空的：还没有任何收口条目（开场注入的日记也出自这里）。';
-      return '【日记日期索引】共 ' + list.length + ' 天有记录（新在前）：\n' + list.join('\n')
-        + '\n用 op=day {date} 看某天的完整日记；记得关键词就直接 op=search。';
+      if (!list.length) return '日记库为空（尚无收口碎片）。';
+      return '【日记索引】共 ' + list.length + ' 天（新在前）：\n' + list.join('\n');
     }
     case 'day': {
       const date = String(args.date || '').trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('op=day 需要 date（YYYY-MM-DD，先用 op=days 查有哪些天）');
       const txt = memory.dayEntry(db, user, date);
-      return txt ? date + ' 的日记：\n' + txt : date + ' 没有日记（当天无交互或条目已裁剪；op=days 可看有哪些天）。';
+      return txt ? date + ' 的日记：\n' + txt : date + ' 无日记。';
     }
     case 'files': {
       const t = resolveSession();
@@ -1402,13 +1401,12 @@ function toolRecall(ctx, args) {
           .map(d => d.name)
           .sort();
       } catch (_) {
-        return '会话「' + t.title + '」的任务目录不存在（已删或未产出），无成果文件。';
+        return '「' + t.title + '」任务目录不存在，无成果文件。';
       }
-      if (!names.length) return '会话「' + t.title + '」没有成果文件。';
+      if (!names.length) return '「' + t.title + '」无成果文件。';
       const shown = names.slice(0, 80);
-      return '会话「' + t.title + '」当前存在的文件（' + shown.length + (names.length > shown.length ? '/共 ' + names.length : '') + ' 个）：\n'
-        + shown.map(n => '- ' + n).join('\n')
-        + '\n（按磁盘实况列出：存在即未被删；取内容用 op=link {id, path}）';
+      return '「' + t.title + '」现存文件（顶层 ' + shown.length + (names.length > shown.length ? '/共 ' + names.length : '') + ' 个）：\n'
+        + shown.map(n => '- ' + n).join('\n');
     }
     case 'link': {
       const t = resolveSession();

@@ -76,9 +76,7 @@ function journalFor(db, cfg, user) {
     'SELECT session_id, day, text FROM memory_fragments WHERE user = ?' + INJECT_ORDER + ' LIMIT ?'
   ).all(String(user || ''), cap);
   if (!rows.length) return '';
-  const head = '【长期记忆·日记(最近' + rows.length + '条)】收工时的当日事件摘要，新在前、天内按发生顺序；'
-    + '每条【编号】是来源会话 id：更早的日记用 recall 工具 op=search 关键词检索、op=days 按日期翻页再 op=day 取整天；'
-    + '那次工作的成果文件用 op=files 查、op=link 取。';
+  const head = '【长期记忆·日记(最近' + rows.length + '条，非全部——更早的可用 recall 检索)】新在前、天内按发生顺序；每条【编号】是来源会话 id。';
   const groups = [];
   for (const r of rows) {
     const g = groups[groups.length - 1];
@@ -118,8 +116,7 @@ function searchFragments(db, user, query, count) {
   if (!hits.length) return '';
   hits.sort((a, b) => b.score - a.score || a.i - b.i);
   const shown = hits.slice(0, lim);
-  const parts = ['【日记检索】「' + String(query).trim() + '」命中 ' + hits.length + ' 条，按相关度列前 ' + shown.length + ' 条'
-    + (hits.length > shown.length ? '；要更多加大 count 或关键词收窄' : '') + '：'];
+  const parts = ['【日记检索】「' + String(query).trim() + '」命中 ' + hits.length + ' 条，按相关度列前 ' + shown.length + ' 条：'];
   for (const h of shown) parts.push('--- ' + h.r.day + '（' + Math.round(h.score * 100) + '% 匹配）---\n' + renderFrag(h.r));
   return parts.join('\n\n');
 }
