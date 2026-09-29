@@ -897,7 +897,23 @@ async function toolMintPublicLink(ctx, args) {
 // 任务住会话（表主键 session_id → 每会话至多一条），「哪个任务」就用所属会话 id 指认：
 // id 省略/'0' = 本会话（兼容旧调用）；跨会话操作带 op=list 里看到的 id，同用户校验——
 // 用户不切会话，AI 代办一切。create 只落当前会话（定时即下班，建完本会话收口退位成专柜）。
-// 条件必填在代码里校验（schema 只 required op），错误回显 op 与缺失字段；delete 不落 scheduler_note。
+// 回执只给事实，零教学（怎么做写在 schema description 里，不每次复读）：
+// 列表/详情用编号条目 + key=value 分行，时间 ISO+08:00，prompt 截断；写操单一行短确认。
+function schedEntry(t, idx) {
+  const clip = s => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > 160 ? s.slice(0, 160) + '…' : s; };
+  const lines = [];
+  if (idx) lines.push((idx) + '. ' + (t.brief || t.title || t.session_id));
+  lines.push('id=' + t.session_id + (t.current ? '（本会话）' : ''));
+  if (t.title) lines.push('name=' + t.title);
+  if (t.brief) lines.push('brief=' + t.brief);
+  lines.push('cron="' + t.cron_expr + '"');
+  lines.push('next=' + scheduler.fmtIso(t.next_run_at));
+  if (t.last_run_at) lines.push('last=' + scheduler.fmtIso(t.last_run_at) + ' last_status=' + (t.last_status || '-'));
+  else lines.push('last=尚未执行');
+  if (t.last_note) lines.push('last_note=' + clip(t.last_note));
+  if (t.prompt) lines.push('prompt="' + clip(t.prompt) + '"');
+  return lines.join('\n');
+}
 function toolScheduleTask(ctx, args) {
   const op = String(args.op || '').trim().toLowerCase();
   const cronExpr = String(args.cron_expr || '').trim();
@@ -913,17 +929,12 @@ function toolScheduleTask(ctx, args) {
     if (String(s.user || '') !== curUser()) throw new Error('无权操作其他用户的会话任务');
     return raw;
   };
-  const where = sid => sid === ctx.sessionId ? '' : '（会话 ' + sid + '）';
   switch (op) {
     case 'get': {
       const sid = target();
       const t = scheduler.getTask(db, sid);
-      if (!t) return '该会话' + (sid === ctx.sessionId ? '' : '（' + sid + '）') + '没有定时任务。要创建用 op=create（只落当前会话）。';
-      const last = t.last_run_at
-        ? scheduler.fmtTime(t.last_run_at) + '（状态 ' + (t.last_status || '-') + (t.last_note ? '，' + t.last_note : '') + '）'
-        : '尚未执行';
-      return '定时任务' + where(sid) + (t.brief ? '「' + t.brief + '」' : '') + '：cron=' + t.cron_expr + '（Asia/Shanghai），下次执行 ' +
-        scheduler.fmtTime(t.next_run_at) + '，上次执行 ' + last + '。提示词：' + t.prompt;
+      if (!t) return sid === ctx.sessionId ? '本会话没有定时任务。' : '会话 ' + sid + ' 没有定时任务。';
+      return schedEntry(Object.assign({ session_id: sid, current: sid === ctx.sessionId }, t), 0);
     }
     case 'create': {
       const raw = String(args.id == null ? '' : args.id).trim();
@@ -934,9 +945,8 @@ function toolScheduleTask(ctx, args) {
       const t = scheduler.createTask(db, ctx.sessionId, cronExpr, prompt, brief);
       // 定时即下班：标记本回合收尾时由 engine 收口（brief 碎片 + 归档 + 通道解绑，见 engine.taskClockOut）。
       if (ctx.onTaskCreated) ctx.onTaskCreated();
-      return '定时任务已创建：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。' +
-        '注意：每次触发前本会话的历史消息会被存档（AI 只看到任务 prompt），因此 prompt 需自包含；' +
-        '后续改动用 op=update，取消用 op=delete。' + (brief ? '' : '（下次创建记得带 brief：一句话说明任务干什么，它会写进你的长期记忆。）');
+      return '已创建 id=' + ctx.sessionId + '\ncron="' + t.cron_expr + '"\nnext=' + scheduler.fmtIso(t.next_run_at)
+        + '\n本会话即收口为该任务专柜（用户无感知，下条消息自动进新会话）。';
     }
     case 'update': {
       if (!cronExpr && !prompt) throw new Error('op=update 需要 cron_expr 和 prompt 至少提供一个');
@@ -945,28 +955,19 @@ function toolScheduleTask(ctx, args) {
         cronExpr: cronExpr || null,
         prompt: prompt || null,
       });
-      return '定时任务已更新' + where(sid) + '：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。';
+      return '已更新 id=' + sid + '\ncron="' + t.cron_expr + '"\nnext=' + scheduler.fmtIso(t.next_run_at);
     }
     case 'list': {
-      // 跨会话全览：每行尾挂所属会话 id，AI 拿 id 直接代办改删——不再出现任何
-      //「让用户切会话」式引导（用户不会切）。
+      // 跨会话全览：编号条目 + key=value 行，id 即行动把手（无任何教学/切会话引导）。
       const rows = scheduler.listUserTasks(db, curUser());
-      if (!rows.length) return '你目前没有任何定时任务。要创建用 op=create（落在本会话，建成后本会话退位成该任务专柜）。';
-      const lines = rows.map(t => {
-        const last = t.last_run_at
-          ? scheduler.fmtTime(t.last_run_at) + '（' + (t.last_status || '-') + (t.last_note ? '，' + t.last_note : '') + '）'
-          : '尚未执行';
-        return '- id=' + t.session_id + (t.session_id === ctx.sessionId ? '（本会话）' : '')
-          + ' 「' + (t.brief || String(t.prompt).slice(0, 40)) + '」 cron=' + t.cron_expr
-          + '，下次 ' + scheduler.fmtTime(t.next_run_at) + '，上次 ' + last;
-      });
-      return '全部定时任务（' + rows.length + ' 个，按下次执行排序）：\n' + lines.join('\n')
-        + '\n改/删直接 op=update / op=delete 并带对应 id；新建闹钟用 op=create（只落本会话，定时即下班）。';
+      if (!rows.length) return '当前没有任何定时任务。';
+      return '定时任务×' + rows.length + '（按下次执行排序）\n\n'
+        + rows.map((t, i) => schedEntry(Object.assign({}, t, { current: t.session_id === ctx.sessionId }), i + 1)).join('\n\n');
     }
     case 'delete': {
       const sid = target();
       const old = scheduler.deleteTask(db, sid);
-      return '定时任务已删除' + where(sid) + '（原定 ' + old + '）。要建新任务用 op=create（本会话）。';
+      return '已删除 id=' + sid + '（原定 cron="' + old + '"）';
     }
     default:
       throw new Error('未知的 op："' + op + '"。可用：get / list（跨会话全览，每行带 id）/ create（仅当前会话；需 cron_expr、prompt、brief）/ update（需 cron_expr、prompt 至少一个，可选 id）/ delete（可选 id）');

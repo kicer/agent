@@ -24,6 +24,16 @@ function fmtTime(t) {
   return new Date(t).toLocaleString('zh-CN', { timeZone: TZ, hour12: false });
 }
 
+// ISO 带时区偏移串（schedule 工具回执用）：上海无夏令时，固定 +08:00 安全；
+// formatToParts 逐件拼接，不依赖 ICU 区域格式串形状；h23 保证零点为 00:00:00 而非 24 点。
+function fmtIso(t) {
+  if (!t) return '';
+  const p = {};
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(t));
+  for (const { type, value } of parts) p[type] = value;
+  return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute + ':' + p.second + '+08:00';
+}
+
 // 下次到期时间。一律以当前时刻为基准（而非上次 next_run_at）：
 // 服务器停机跨过若干触发点后重启，算出的自然是「未来最近一次」，天然跳过补跑。
 function computeNext(cronExpr) {
@@ -202,4 +212,4 @@ function start(engine) {
   if (timer.unref) timer.unref(); // 不阻止进程退出
 }
 
-module.exports = { start, createTask, getTask, listUserTasks, updateTask, deleteTask, computeNext, validateCron, fmtTime };
+module.exports = { start, createTask, getTask, listUserTasks, updateTask, deleteTask, computeNext, validateCron, fmtTime, fmtIso };
