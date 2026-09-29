@@ -68,7 +68,7 @@ function createTask(db, sessionId, cronExpr, prompt, brief, script) {
   try {
     db.prepare(
       'INSERT INTO scheduled_tasks (session_id, cron_expr, prompt, brief, script, next_run_at, created_at) VALUES (?,?,?,?,?,?,?)'
-    ).run(sessionId, cronExpr, prompt, String(brief || '').slice(0, 80), String(script || '').replace(/\s+/g, ' ').trim().slice(0, 80), first, Date.now());
+    ).run(sessionId, cronExpr, prompt, String(brief || '').slice(0, 40), String(script || '').replace(/\s+/g, ' ').trim().slice(0, 80), first, Date.now());
   } catch (_) {
     // 单进程同步 API 下正常到不了这里（上一步已查重），仅作主键约束重复报错的兜底
     const ex = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);

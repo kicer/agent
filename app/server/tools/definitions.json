@@ -292,7 +292,7 @@
     "type": "function",
     "function": {
       "name": "schedule",
-      "description": "Manage your scheduled tasks (alarms). Each task lives on exactly one session (at most one per session) and is addressed by its home session id — the same id op=list shows (e.g. 'task-20260929-003'); omit id (or '0') to act on THIS session's task. At each trigger the prompt is delivered to the task's session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get     Optional id (default: this session).\nop=list    No arguments. Every task of the current user across all sessions, each row starting with its id — hand that id to get/update/delete to act on any task directly; never ask the user to switch sessions.\nop=create  Always targets THIS session (id is rejected). Requires cron_expr, prompt and brief; optional script. After creating, this session retires into the task's dedicated home (archived; the user's next message starts a fresh session).\nop=update  Optional id. Requires at least one of cron_expr, prompt; only given fields change.\nop=delete  Optional id. Cancels that task.",
+      "description": "Manage scheduled tasks (alarms). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nModel: each task lives on exactly one session (at most one per session) and is addressed by its task id — the home session id shown by op=list, format 'task-YYYYMMDD-NNN'. Omit id to act on THIS session's task. At each trigger the prompt is delivered to the task's session as a new user message; prior history is archived first. Cron times are Asia/Shanghai (UTC+8). Returns are compact key=value blocks; failures come back as 'Error: ...' and are safe to retry after fixing arguments.\n\nop=get     Optional id.\nop=list    No arguments. All tasks of the current user across sessions, one block per task starting with its id — pass that id straight to get/update/delete; never ask the user to switch sessions.\nop=create  THIS session only; id is rejected. Requires cron_expr, prompt and brief; optional script.\n           Side effect: the creating session retires into the task's dedicated home — it gets archived and the user's next message starts a fresh session.\nop=update  Optional id. Requires at least one of cron_expr, prompt; other fields unchanged.\nop=delete  Optional id. Cancels the task.",
       "parameters": {
         "type": "object",
         "required": [
@@ -308,27 +308,27 @@
               "update",
               "delete"
             ],
-            "description": "Operation to perform. Tasks are addressed by their home session id."
+            "description": "Operation to perform."
           },
           "id": {
             "type": "string",
-            "description": "Task handle: the session id the task lives on, exactly as listed by op=list. Omit (or '0') to act on THIS session's task. Allowed with get/update/delete; op=create rejects it (new tasks always live in this session)."
+            "description": "Task id as shown by op=list (the session the task lives on). Omit for THIS session's task. Not allowed with op=create."
           },
           "cron_expr": {
             "type": "string",
-            "description": "Standard 5-field cron expression in Asia/Shanghai (UTC+8), e.g. '0 9 * * *' for 09:00 Beijing time every day. The interval between two consecutive runs must be at least 1 hour. Required with op=create; optional with op=update (next run time is recomputed)."
+            "description": "Standard 5-field cron expression, e.g. '0 9 * * *' for 09:00 daily. Runs must be at least 1 hour apart — denser expressions are rejected (not silently adjusted). Required with op=create; optional with op=update (recomputes next run)."
           },
           "prompt": {
             "type": "string",
-            "description": "The message to send to this session at each trigger. Write it as a self-contained instruction: previous conversation history is archived before each run, so this prompt is the only input the model will see. The output stays in this session for the user to view; if it must reach the user proactively, state how in the prompt (e.g. via a skill or webhook). Required with op=create; optional with op=update."
+            "description": "Self-contained instruction delivered as the only input at each trigger (prior history is archived). Output stays in the task's session; if the result must reach the user proactively, say how inside the prompt (e.g. via a skill or webhook). Required with op=create; optional with op=update."
           },
           "brief": {
             "type": "string",
-            "description": "One short plain-language line (<= 40 chars) saying what this task actually accomplishes, e.g. 'collect and produce a daily news PDF report'. It is written into the assistant's long-term memory diary so the recurring job can be recalled later. Required with op=create."
+            "description": "One short plain line (<= 40 characters; CJK counts as 1) saying what the task accomplishes, e.g. 'collect and produce a daily news PDF report'. Goes into the assistant's long-term memory diary. Required with op=create; immutable afterwards."
           },
           "script": {
             "type": "string",
-            "description": "Optional marker for op=create: a script filename (relative to the session working dir) meant to carry this task's routine, so triggers reuse muscle memory instead of redoing everything. Supplying it signals you should distill the workflow into that script (language, invocation and how the prompt wires it are yours to decide). Existence is never validated — not at create, not at trigger."
+            "description": "Optional for op=create. A script filename (relative to the session working dir) meant to carry this task's routine so triggers reuse muscle memory instead of redoing everything. Supplying it means: distill the workflow into that script NOW (language, invocation and how the prompt references it are yours to decide). Never validated at create or trigger — a missing/broken script surfaces as a runtime error in the trigger turn. Immutable afterwards."
           }
         }
       }

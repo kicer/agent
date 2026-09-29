@@ -940,7 +940,7 @@ function toolScheduleTask(ctx, args) {
   // 目标会话解析：无 id → 本会话；有 id → 存在 + 同用户，否则报错（不静默降级，防 AI 拿错目标静默误删）。
   const target = () => {
     const raw = String(args.id == null ? '' : args.id).trim();
-    if (!raw || raw === '0' || raw === ctx.sessionId) return ctx.sessionId;
+    if (!raw || raw === ctx.sessionId) return ctx.sessionId;
     const s = db.prepare('SELECT user FROM sessions WHERE id = ?').get(raw);
     if (!s) throw new Error('id 指向的会话不存在：' + raw + '（op=list 可看各任务所属会话 id）');
     if (String(s.user || '') !== curUser()) throw new Error('无权操作其他用户的会话任务');
@@ -956,10 +956,10 @@ function toolScheduleTask(ctx, args) {
     }
     case 'create': {
       const raw = String(args.id == null ? '' : args.id).trim();
-      if (raw && raw !== '0' && raw !== ctx.sessionId) throw new Error('op=create 只作用于当前会话：新任务住进本会话并于本回合收尾后收口退位成专柜（定时即下班），无需也不能指定其它会话 id');
+      if (raw && raw !== ctx.sessionId) throw new Error('op=create 只作用于当前会话：新任务住进本会话并于本回合收尾后收口退位成专柜（定时即下班），无需也不能指定其它会话 id');
       if (!cronExpr) throw new Error('op=create 缺少必填参数 cron_expr');
       if (!prompt) throw new Error('op=create 缺少必填参数 prompt');
-      const brief = String(args.brief || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      const brief = String(args.brief || '').replace(/\s+/g, ' ').trim().slice(0, 40);
       // script 纯标记：存在即暗示模型把流程沉淀成脚本（怎么写、用什么跑、prompt 怎么引用由它自定）；
       // 创建与触发均不校验——缺脚本时 prompt 自身的指示就是回退面。
       const script = String(args.script || '').replace(/\s+/g, ' ').trim().slice(0, 80);
