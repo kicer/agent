@@ -24,6 +24,7 @@
   .day .t { color: #9aa4b2; font-weight: 400; font-size: 12px; margin-left: 8px; }
   .frag { margin-top: 8px; padding: 8px 10px; background: #f8fafc; border: 1px solid #eef1f6; border-radius: 8px; white-space: pre-wrap; word-break: break-all; }
   .frag .sid a { color: #4c6ef5; text-decoration: none; font-size: 12px; }
+  .inj-tag { display: block; width: fit-content; margin: 0 0 6px; }
   pre.inj { background: #fff; border: 1px solid #e3e8f0; border-radius: 10px; padding: 12px 14px;
             white-space: pre-wrap; word-break: break-all; margin: 0; font: 13px/1.7 ui-monospace, Menlo, monospace; }
   table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e3e8f0; border-radius: 10px; overflow: hidden; }
@@ -80,12 +81,22 @@ function render(d) {
   document.getElementById('injection').textContent = d.injection || '（无注入文本：无记忆或功能关闭）';
 
   var eHtml = '';
-  (d.entries || []).forEach(function (e) {
+  // 镜像 journalFor 取序（天降序、天内从最新一片往回取）算出注入窗，条目卡上直接标出哪几片会被新会话开场带走。
+  var injected = {};
+  if (d.inject_max) {
+    var left = d.inject_max;
+    (d.entries || []).forEach(function (e, ei) {
+      if (left <= 0) return;
+      var frs = String(e.content || '').split(/\n\n+/).filter(Boolean);
+      for (var i = frs.length - 1; i >= 0 && left > 0; i--, left--) injected[ei + ':' + i] = 1;
+    });
+  }
+  (d.entries || []).forEach(function (e, ei) {
     var frags = String(e.content || '').split(/\n\n+/).filter(Boolean);
     eHtml += '<div class="card"><div class="day">' + esc(e.day)
       + (e.in_window ? '' : '<span class="badge out">窗外（待裁）</span>')
       + '<span class="t">更新 ' + fmtTime(e.updated_at) + ' · ' + frags.length + ' 个碎片</span></div>'
-      + frags.map(function (f) { return '<div class="frag">' + linkSids(esc(f)) + '</div>'; }).join('')
+      + frags.map(function (f, fi) { return '<div class="frag">' + (injected[ei + ':' + fi] ? '<span class="badge on inj-tag">已注入</span>' : '') + linkSids(esc(f)) + '</div>'; }).join('')
       + '</div>';
   });
   document.getElementById('entries').innerHTML = eHtml || '<div class="empty">暂无条目——等一次收口，或先在微信/网页聊几句。</div>';
