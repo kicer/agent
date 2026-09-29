@@ -26,6 +26,8 @@ engine.init();
 // 定时任务调度器（scheduler.js）：必须在 engine.init() 之后启动——init 先把会话状态归位
 //（active/遗留 queued → held），首轮 tick 才不会看到脏状态。
 scheduler.start(engine);
+// 长期记忆保留窗裁剪（memory.js）：平时追加碎片顺带裁，这里兑底「窗口改小/长期无轮换」的表残留。
+require('./memory').prune(db, cfg);
 
 // 微信接入（wechat.js，可选能力）：env WXBOT_URL/WXBOT_TOKEN 未就位 = 全部静默关闭；配了但 wxbot 没起 =
 // restore 只留一行日志，不重试不报错（用户在设置页点刷新自愈），不影响 Web 主流程。

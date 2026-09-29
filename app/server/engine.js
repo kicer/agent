@@ -2,12 +2,13 @@
 // 单进程内存模型：JS 单线程 + better-sqlite3 同步 API，不存在跨进程竞争。
 const fs = require('fs');
 const path = require('path');
-const { buildMessages, callModel, encodeBlocks, compressMessages, titleMessages, setProfilePrompts } = require('./llm');
+const { buildMessages, callModel, encodeBlocks, decodeBlocks, compressMessages, titleMessages, setProfilePrompts } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const publicFiles = require('./public-files');
 const mcp = require('./mcp');
 const log = require('./log');
 const profile = require('./user-profile');
+const memory = require('./memory');
 
 const TOOL_DEFINITIONS = require('./tools/definitions.json');
 
@@ -1151,6 +1152,104 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
   }
 }
 
+// ---------- 长期记忆碎片（日记）：会话轮换（换工作台）时为旧会话生成一条当日事件碎片 ----------
+// 与自动标题同模式：fire-and-forget + 内存防重入 + 失败降级；绝不阻塞轮换路径（微信先回信，
+// 日记后台慢慢落）。按【旧会话创建日】入 memory_entries（存储/去重/渲染全在 memory.js）。
+// /clear 不记：用户主动清零历史 = 不要这段记忆（已定调）。M0 只提供生成原语，轮换触发接线是 M1。
+const journaling = new Set(); // 正在生成碎片的会话（防双发）
+const JOURNAL_SKIP_TYPES = new Set(['archived', 'channel_note', 'scheduler_note']); // 存档与系统注入不是对话本体
+const JOURNAL_BUDGET = 24000; // 转录输入字数预算：超长旧会话取首尾、截中段
+
+// 任务目录顶层成果文件名（去 dot 项）：降级碎片的底子 + 摘要输入提示。
+function listTaskTopFiles(sessionId) {
+  try {
+    return fs.readdirSync(taskDirOf(sessionId), { withFileTypes: true })
+      .filter(d => d.isFile() && !d.name.startsWith('.'))
+      .map(d => d.name).slice(0, 12);
+  } catch (_) { return []; } // 目录不存在（空会话）= 无成果
+}
+
+// 转录文本：只留 user/assistant 纯文本行（多模态块拆文本，工具调用/回执不进日记），每条截 400 字。
+function journalTranscript(s, hist, files) {
+  const lines = [];
+  for (const row of hist) {
+    if (row.role !== 'user' && row.role !== 'assistant') continue;
+    if (JOURNAL_SKIP_TYPES.has(row.type)) continue;
+    let content = row.content || '';
+    const blocks = decodeBlocks(content);
+    if (blocks) content = blocks.map(b => (b && b.type === 'text' ? b.text : '[图片]')).join('\n');
+    content = String(content).replace(/\s+/g, ' ').trim().slice(0, 400);
+    if (!content) continue;
+    lines.push((row.role === 'user' ? '用户' : '我') + ': ' + content);
+  }
+  const head = '会话标题: ' + (s.title || '未命名') + '\n创建日期: ' + memory.dayString(s.created_at)
+    + '\n成果文件(任务目录顶层): ' + (files.length ? files.join('、') : '无') + '\n--- 对话转录 ---\n';
+  let body = lines.join('\n');
+  const budget = JOURNAL_BUDGET - head.length - 40;
+  if (budget > 100 && body.length > budget) {
+    const half = Math.floor(budget / 2);
+    body = body.slice(0, half) + '\n……(中段省略)……\n' + body.slice(body.length - half);
+  }
+  return head + body;
+}
+
+function journalMessages(s, hist, files) {
+  const lang = (cfg.agent && cfg.agent.language) || '';
+  const sys = '你是 AI 助理的日记写手：一次工作会话结束（换工作台）时，把它压缩成第一人称的日记片段'
+    + '（这个 AI 记自己帮用户做过什么）。\n规则：\n'
+    + '- 只写「发生了什么/交付了什么/有什么悬着没办完」，1~4 行，每行以 "- " 开头，一行一件事；\n'
+    + '- 成果文件名、关键专名、数字原样保留，不写感想与空泛总结；\n'
+    + '- 纯文本，总长不超过 180 字；不要标题、不要解释、不要时间前缀。'
+    + (lang ? '\n使用语言：' + lang : '');
+  return [
+    { role: 'system', content: sys },
+    { role: 'user', content: journalTranscript(s, hist, files) },
+  ];
+}
+
+// 清洗模型返回的日记体：剥围栏包裹、限 6 行、每行强制 "- " 头；空返 '' 触发降级。
+function cleanJournalText(raw) {
+  let t = String(raw || '').replace(/^\s*```[^\n]*\n?/, '').replace(/\n?\s*```\s*$/, '').trim();
+  if (!t) return '';
+  const lines = t.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 6);
+  return lines.map(x => '- ' + x.replace(/^-+\s*/, '')).join('\n');
+}
+
+// 生成并落库一个会话的日记碎片；返回 Promise<boolean>（是否写入）。调用方不需要等它。
+function journalFragment(sessionId) {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = v => { if (!settled) { settled = true; resolve(v); } };
+    try {
+      if (!memory.isEnabled(cfg)) return done(false);
+      if (journaling.has(sessionId)) return done(false);
+      const s = getSession(sessionId);
+      if (!s) return done(false);
+      const day = memory.dayString(s.created_at);
+      const files = listTaskTopFiles(sessionId);
+      // 无论成败都落一条：模型不可用/空回时降级为「标题 + 成果文件清单」，日记不断档。
+      const finish = body => {
+        journaling.delete(sessionId);
+        const text = '【' + (s.title || '未命名会话') + ' · ' + s.id + '】\n'
+          + (body || '- 本次工作未能生成摘要(模型不可用)；成果文件：' + (files.length ? files.join('、') : '无'));
+        return memory.appendFragment(db, cfg, s.user, day, text, s.id);
+      };
+      if (!s.model_id) return done(finish(null)); // 未绑定：不跑模型，直接记降级版
+      journaling.add(sessionId);
+      callModel(cfg, s.model_id, journalMessages(s, loadHistory(sessionId), files), null, { key_slot: s.model_slot })
+        .then(r => done(finish(cleanJournalText(r && r.content))))
+        .catch(e => {
+          log.warn('memory', sessionId + ' 日记摘要失败，写降级版: ' + (e && e.message || e));
+          done(finish(null));
+        });
+    } catch (e) {
+      journaling.delete(sessionId);
+      log.warn('memory', sessionId + ' 日记碎片异常: ' + (e && e.message || e));
+      done(false);
+    }
+  });
+}
+
 // 会话级 /tmp 的宿主机实体：<任务目录>/.tmp（executor wrapper 把它 bind 进容器 /tmp，HOME/TMPDIR 也指这里，
 // 跨 /exec 保留）。清空对话时一并抹掉：临时产物不该带进新一轮；删了下次执行 executor 懒重建，无副作用。
 // 尽力而为：不存在不动；符号链接只断不跟进；失败只记日志不阻断清空。
@@ -1278,6 +1377,7 @@ module.exports = {
   recordModelUsage,
   modelUsageStats,
   bindToSession,
+  journalFragment,
   TOOL_DEFINITIONS,
   effectiveTools,
 };

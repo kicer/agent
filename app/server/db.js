@@ -116,6 +116,17 @@ function initDb(dbPath) {
       PRIMARY KEY (user, channel)
     );
 
+    -- 长期记忆（日记，memory.js）：一行 (用户, 天)，content = 当天累积的日记碎片块。
+    -- 碎片在会话轮换（换工作台）时生成，按【来源会话创建日】入当日条目；保留窗外即裁（appendFragment 顺带 + 启动兑底）。
+    -- 故意不建外键：记忆是用户级的，删会话不能抹掉它已记入的日记（与 channel_sessions 的懒解析同理）。
+    CREATE TABLE IF NOT EXISTS memory_entries (
+      user TEXT NOT NULL,
+      day TEXT NOT NULL,             -- 'YYYY-MM-DD'（Asia/Shanghai，与 cron 同时区）
+      content TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (user, day)
+    );
+
     -- 微信绑定（wechat.js）：一条 core 用户 ↔ 一个 wxbot iLink bot 实例（扫码登录后仅本人可与 bot 单线对话，
     -- 协议保证无陌生人入口）。binding id 同时用作 channel 键（'wx:'+id，走 routes/channel.js 同一套命令层）
     -- 和 wxbot 凭证目录名，权威在本表；投递游标 last_msg_id 落库，重启不重发旧回复。

@@ -52,6 +52,10 @@ agent:
   auto_compress_tokens: 60000                      # In token 超此值弹「自动压缩」提议；0=关
   auto_complete_ms: 1800000                        # 保持中(held)超此时长自动收口为已完成；0=关（纯状态动作，历史/模型绑定不动）
 
+# 长期记忆（日记，memory.js）：会话轮换时写当日事件碎片；新会话开场注入近 retain_days 天日记；0=关
+memory:
+  retain_days: 7                                   # 保留窗，硬帽 30 天
+
 upload:
   image_compress_threshold_kb: 1536                # 大图压缩提示阈值（KB）
   image_max_dim: 2000                              # 压缩后长边上限（px）
