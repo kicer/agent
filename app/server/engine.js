@@ -959,7 +959,12 @@ function checkToolArgs(tools, name, raw) {
   // 必填串参传空的场景由各工具自己的中文校验兑底（path 空→「路径不能为空」，url 空→「缺少参数 url」…）。
   const missing = required && required.length
     ? required.filter(k => args[k] == null) : [];
-  if (missing.length) return { args: null, error: 'Error: ToolCall Missing Params: ' + missing.join('、') };
+  if (missing.length) {
+    // 错误回显面向弱模型：点名缺失字段 + 枚举候选值 + 指出必须落在参数顶层（信封形错误现场教学）。
+    const props = (def && def.function.parameters && def.function.parameters.properties) || {};
+    const hints = missing.map(k => (props[k] && Array.isArray(props[k].enum)) ? k + '（可选值：' + props[k].enum.join('|') + '）' : k);
+    return { args: null, error: 'Error: ToolCall Missing Params: ' + hints.join('、') + '。必填参数缺失，请补全后重新调用（参数必须直接放在顶层，不要包在 arguments 等外层里）。' };
+  }
   return { args, error: null };
 }
 
@@ -990,8 +995,21 @@ function unwrapToolArgs(tools, name, raw) {
     }
     // {"function": {...}} 信封
     if (!inner && keys.length === 1 && keys[0] === 'function' && cur.function && typeof cur.function === 'object') inner = cur.function;
-    // {"name": "...", "arguments": {...}} 信封
-    if (!inner && !hasArgProp && cur.arguments && typeof cur.arguments === 'object') inner = cur.arguments;
+    // {"name": "...", "arguments": {...}} 信封（arguments 为字符串时先解一层再判）：若顶层除信封键外还有
+    // 兄弟键（如模型把 op 落在包裹外），必须合并保留——只剥层不吞键；
+    // 曾因吞掉顶层 op 造成「Missing Params: op」无限重试死循环。
+    if (!inner && !hasArgProp && cur.arguments != null && !Array.isArray(cur.arguments)) {
+      let a = cur.arguments;
+      if (typeof a === 'string') { try { a = JSON.parse(a); } catch (_) { a = null; } }
+      if (a && typeof a === 'object') {
+        if (Object.keys(cur).length === 1) inner = a;
+        else {
+          inner = Object.assign({}, cur);
+          delete inner.arguments;
+          Object.assign(inner, a);
+        }
+      }
+    }
     if (!inner) break;
     cur = inner;
     changed = true;
@@ -1467,6 +1485,8 @@ module.exports = {
   getRun,
   taskDirOf,
   loadHistory,
+  checkToolArgs, // 参数预检/信封解包两个纯函数：导出供探针与回归验证（运行链路由 runLoopInner 内部调用）
+  unwrapToolArgs,
   saveMessage,
   recordModelUsage,
   modelUsageStats,
