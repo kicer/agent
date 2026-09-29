@@ -1,6 +1,7 @@
 ---
 name: x2pdf
-description: 通用 PDF 转换:Markdown / HTML / txt / Word / Excel / PPT 转 PDF(推荐生成 PDF 一律用本技能,不要手写排版脚本)
+description: 通用 PDF 转换。把 Markdown / HTML / txt / Word / Excel / PPT 转为 PDF
+required: true
 input_schema:
   type: object
   properties:

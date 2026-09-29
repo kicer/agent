@@ -1,6 +1,6 @@
 ---
 name: data-page
-description: 数据页面脚手架：把 table/dashboard/kanban 模板复制到任务目录 .app/，配合 db 工具产出 /app/{task_id}/ 可访问、经 /api/db/{task_id}/query 读写 data.db 的查看/管理页
+description: 数据页面脚手架。提供 table/dashboard/kanban 模板，配合 db 工具读写数据，产出用户可直接访问的数据查看/管理页
 visit_url: /app/{task_id}/
 ---
 

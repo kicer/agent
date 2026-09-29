@@ -1,6 +1,6 @@
 ---
 name: sheet
-description: 表格文件（xls/xlsx/csv/ods）的读取与安全修改。inspect 看结构/公式/表头定位；apply 按「列名+值」或 cells 地址最小改动，自带 old 校验、全簿逐格自检、公式引用调整与自动重算。不用于新建工作簿、图表生成。
+description: 表格文件（xls/xlsx/csv/ods）的读取与安全修改。自带原文校验、全簿逐格自检、公式引用调整与自动重算。不用于新建工作簿，不用于生成图表
 required: true
 ---
 
