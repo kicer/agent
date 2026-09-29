@@ -11,6 +11,7 @@
 //   /new 尾随文本与普通消息是真实内容，照常入库。
 const express = require('express');
 const engine = require('../engine');
+const scheduler = require('../scheduler'); // 只依赖 log/cron-parser，无环；/tasks 与 schedule op=list_all 同源
 const log = require('../log');
 
 const router = express.Router();
@@ -113,6 +114,21 @@ function listReply(db, user, curId) {
   return ['**会话列表**'].concat(lines).join('\n');
 }
 
+// 定时任务全览（/tasks）：跨会话列出本用户的周期任务（schedule op=list_all 同源数据）。
+// 生命周期绑会话不拆：每行尾部标出会话 id，改删先 /switch 过去再让 AI 操作（与 /list 编号同源）。
+function tasksReply(db, user, curId) {
+  const rows = scheduler.listUserTasks(db, user);
+  if (!rows.length) return '**定时任务**\n还没有任何定时任务（聊天里让 AI 设个闹钟即可）';
+  const lines = rows.map(t => {
+    const last = t.last_run_at ? fmtTime(t.last_run_at) + ' ' + (t.last_status || '-') : '尚未执行';
+    return '- `' + (t.brief || String(t.prompt).slice(0, 24) + '…') + '` · cron `' + t.cron_expr + '` · 下次 ' + fmtTime(t.next_run_at)
+      + ' · 上次 ' + last
+      + (t.session_id === curId ? '（本会话）' : '｜会话 `' + t.session_id + '`');
+  });
+  lines.push('修改/取消：先 /switch 到对应会话，再让 AI 处理；删会话会连带删它的任务');
+  return ['**定时任务**'].concat(lines).join('\n');
+}
+
 // ---------- 模型清单（/models） ----------
 // cfg.models 按 key 展开（同平台多 key 每个模型重复多份），按 id 去重保配置序；
 // enable:false 不列（bind 会被 engine 拒，列出来只会诱导白点）。上限 15 行，同样为回执占额度。
@@ -143,7 +159,7 @@ function modelsReply(ms, curModelId) {
 // 严格匹配：整条消息恰好是命令词（ARG_CMDS 内的可带参数）才算命令。
 // 首词形如 /纯ASCII词 但不在清单 → 回「未知命令」提示、不转发模型（防弱模型就着 /hlep 演一段）；
 // 其余一律普通消息：/home/x、/a.b 这类路径代码，以及 /clear abc 这种裸命令带尾巴的（用户约定：强检查不匹配）。
-const CMDS = new Set(['new', 'stop', 'compact', 'clear', 'status', 'help', 'list', 'switch', 'rename', 'delete', 'models']);
+const CMDS = new Set(['new', 'stop', 'compact', 'clear', 'status', 'help', 'list', 'tasks', 'switch', 'rename', 'delete', 'models']);
 // 可带参数的命令：/new 尾随文本作首条消息；/switch /delete 吃 /list 编号（或会话 id 前缀）；
 // /rename 吃新标题；/models 可带模型编号或完整 id。清单外的命令带尾巴仍按普通消息回落。
 const ARG_CMDS = new Set(['new', 'switch', 'rename', 'delete', 'models']);
@@ -166,6 +182,7 @@ const HELP_TEXT = [
   '**可用命令**',
   '- `/new [msg]` 新建会话并切换',
   '- `/list` 会话列表',
+  '- `/tasks` 定时任务全览',
   '- `/switch <编号>` 切换当前会话',
   '- `/rename <标题>` 重命名当前会话',
   '- `/delete <编号>` 删除指定会话',
@@ -257,6 +274,10 @@ function handleSend(db, opts) {
 
   if (cmd === 'list') {
     return { kind: 'command', reply: listReply(db, user, s ? s.id : null), session_id: s ? s.id : null };
+  }
+
+  if (cmd === 'tasks') {
+    return { kind: 'command', reply: tasksReply(db, user, s ? s.id : null), session_id: s ? s.id : null };
   }
 
   if (cmd === 'switch') {

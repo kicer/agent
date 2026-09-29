@@ -799,12 +799,29 @@ function toolScheduleTask(ctx, args) {
       });
       return '定时任务已更新：' + t.cron_expr + '，下次执行 ' + t.next_text + '（Asia/Shanghai）。';
     }
+    case 'list_all': {
+      // 跨会话全览（用户问「我都有哪些定时任务」时的唯一入口）：只读不拆生命周期——
+      // update/delete 仍只作用本会话，其余任务靠清单里的会话 id 引导用户切过去操作。
+      const me = db.prepare('SELECT user FROM sessions WHERE id = ?').get(ctx.sessionId);
+      const rows = scheduler.listUserTasks(db, (me && me.user) || '');
+      if (!rows.length) return '你目前没有任何定时任务。要创建用 op=create（本会话' + (scheduler.getTask(db, ctx.sessionId) ? '已有任务，需先 delete' : '当前没有任务，可直接建') + '）。';
+      const lines = rows.map(t => {
+        const last = t.last_run_at
+          ? scheduler.fmtTime(t.last_run_at) + '（' + (t.last_status || '-') + (t.last_note ? '，' + t.last_note : '') + '）'
+          : '尚未执行';
+        return '- 「' + (t.brief || String(t.prompt).slice(0, 40)) + '」 cron=' + t.cron_expr
+          + '，下次 ' + scheduler.fmtTime(t.next_run_at) + '，上次 ' + last
+          + '，会话「' + (t.title || t.session_id) + '」' + t.session_id
+          + (t.session_id === ctx.sessionId ? '（本会话，可直接 op=update/delete）' : '（要改删请让用户先切到该会话：网页打开它，微信发 /switch ' + t.session_id + '）');
+      });
+      return '全部定时任务（' + rows.length + ' 个，按下次执行排序）：\n' + lines.join('\n');
+    }
     case 'delete': {
       const old = scheduler.deleteTask(db, ctx.sessionId);
       return '定时任务已删除（原定 ' + old + '）。要建新任务用 op=create。';
     }
     default:
-      throw new Error('未知的 op："' + op + '"。可用：get / create（需 cron_expr、prompt、brief）/ update（需 cron_expr、prompt 至少一个）/ delete');
+      throw new Error('未知的 op："' + op + '"。可用：get / create（需 cron_expr、prompt、brief）/ update（需 cron_expr、prompt 至少一个）/ delete / list_all（跨会话全览）');
   }
 }
 

@@ -275,7 +275,7 @@
     "type": "function",
     "function": {
       "name": "schedule",
-      "description": "Manage the recurring scheduled task bound to the CURRENT session. At most one task per session; it is deleted together with the session. At each trigger, the prompt is sent to this session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get     No arguments.\nop=create  Requires cron_expr, prompt and brief.\nop=update  Requires at least one of cron_expr, prompt; only the given fields change.\nop=delete  No arguments.",
+      "description": "Manage the recurring scheduled task bound to the CURRENT session. At most one task per session; it is deleted together with the session. At each trigger, the prompt is sent to this session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get       No arguments.\nop=list_all  No arguments. Lists every scheduled task of the current user across all sessions (update/delete still act on the CURRENT session only; other rows name their session id so the user can switch there).\nop=create  Requires cron_expr, prompt and brief.\nop=update  Requires at least one of cron_expr, prompt; only the given fields change.\nop=delete  No arguments.",
       "parameters": {
         "type": "object",
         "required": [
@@ -288,7 +288,8 @@
               "get",
               "create",
               "update",
-              "delete"
+              "delete",
+              "list_all"
             ],
             "description": "Operation to perform on the current session's scheduled task."
           },
