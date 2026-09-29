@@ -249,7 +249,7 @@ function handleSend(db, opts) {
     log.info('task', tag + ' channel /new → ' + r.s.id + (parsed.rest ? '（含首条消息）' : ''));
     return {
       kind: 'command',
-      reply: '已新建会话 ' + r.s.id + (parsed.rest ? '，首条消息已发出' : '（发普通消息或 /status 查看状态）'),
+      reply: '已新建会话 ' + r.s.id + (parsed.rest ? '，首条消息已发出' : ''),
       session_id: r.s.id,
       message_id: r.sent ? r.sent.message_id : undefined,
     };
