@@ -192,6 +192,9 @@ function initDb(dbPath) {
   // 触发不验存在（参数存在本身就是对 AI 的脚本化暗示，怎么写进 prompt、用 bash 还是 python 由它自定）；
   // get 详情里展示这个「肌肉记忆长在哪」。与 brief 同构，新库建表后也靠本迁移补列。
   if (!schedCols.some(c => c.name === 'script')) db.exec("ALTER TABLE scheduled_tasks ADD COLUMN script TEXT NOT NULL DEFAULT ''");
+  // 升级老库：scheduled_tasks 补 notify_channel 列——schedule op=create 时记下的微信通道（'wx:'+bid）：
+  // 谁设的闹钟通知谁，专柜退位后仍能找得到人。空串 = 存量任务/网页端建的任务，完成通知退回该用户全部在线绑定。
+  if (!schedCols.some(c => c.name === 'notify_channel')) db.exec("ALTER TABLE scheduled_tasks ADD COLUMN notify_channel TEXT NOT NULL DEFAULT ''");
   // 迁移：model_slot 记会话粘住的具体池 key 槽位（「平台#key下标」，key 为共享资源不再独占），
   // 跨结版/重启保持（只有手动换绑或模型失效改选会动），model_id 存模型 id 供展示/统计（见 engine.applyBinding）。
   if (!cols.some(c => c.name === 'model_slot')) db.exec('ALTER TABLE sessions ADD COLUMN model_slot TEXT');

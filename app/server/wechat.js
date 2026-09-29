@@ -749,6 +749,69 @@ function splitText(text, max = 1800) {
   return out;
 }
 
+// ---------- 定时任务完成通知（scheduler 注入入口，不走交互投递闸口）----------
+// 任务专柜下班即退位：执行 AI 夜里/清晨收尾的那句回复没人接——本入口补上这一段：
+// 「⏰ 任务 · 完成/失败」+ 收尾正文 + 本轮新增成果文件，直投微信。
+// 发给谁：优先创建时记下的 notify_channel（谁设的闹钟通知谁）；
+// 存量任务/网页端建的（channel 空）退回该用户全部在线绑定。与交互投递共用同一条
+// bid 串行链，通知不会插队用户对话回复；不碰 last_msg_id 游标（通知不是消息重放）。
+const NOTICE_MAX_SEGS = 6; // 通知正文最多 6 段（≈11k 字），超出走全文落文件转卡片——通知不该刷屏
+function notifyTask(p) {
+  if (!enabled() || !p) return Promise.resolve();
+  const bids = [];
+  const ch = String(p.channel || '');
+  if (ch.startsWith('wx:')) bids.push(ch.slice(3));
+  if (!bids.length) {
+    for (const b of db.prepare("SELECT id FROM wechat_bindings WHERE user = ? AND status = 'online'").all(String(p.user || ''))) bids.push(b.id);
+  }
+  if (!bids.length) return Promise.resolve(); // 无微信通道可发：静默跳过（任务结果网页端仍在）
+  for (const bid of bids) enqueueDelivery(bid, () => sendTaskNotice(bid, p));
+  return Promise.resolve();
+}
+
+async function sendTaskNotice(bid, p) {
+  const b = bindReady(bid);
+  if (!b) { log.warn('wechat', '任务通知跳过（绑定不在线）：' + bid + ' ' + String(p.head || '')); return; }
+  const text = String(p.text || '').trim();
+  let segs = splitText(String(p.head || '') + (text ? '\n' + text : ''));
+  const attach = collectTaskFiles(p);
+  if (segs.length > NOTICE_MAX_SEGS) { // 与交互投递同款语义：截头部 + 全文落文件，内容零丢失
+    const name = '任务通知全文-' + (Number(p.stamp) || now()) + '.md';
+    try {
+      const abs = path.join(engine.taskDirOf(String(p.sessionId || '')), name);
+      fs.writeFileSync(abs, String(p.head || '') + '\n\n' + text);
+      attach.unshift({ filename: name, b64: Buffer.from(fs.readFileSync(abs)).toString('base64') });
+      segs = [String(segs[0]).slice(0, 1500) + '\n……内容较长，全文见附件「' + name + '」'];
+    } catch (e) {
+      log.warn('wechat', '任务通知超长落文件失败，降级只截段：' + msg(e));
+      segs = segs.slice(0, NOTICE_MAX_SEGS);
+    }
+  }
+  for (const a of findAttachments(text, String(p.sessionId || ''))) attach.push(a); // 正文里的 /p/ 链同样转卡片（B 案同规则）
+  if (!await sendSegs(b, segs)) return;
+  const n = await sendAttachments(b, attach.slice(0, ATTACH_MAX_COUNT));
+  log.info('wechat', bid + ' 定时任务通知已投（' + segs.length + ' 段/' + n + ' 附件）：' + String(p.head || ''));
+}
+
+// scheduler 交来的文件 = 触发时刻后 files 表新增记录名；此处做任务目录沙箱 + 限额 + 单个失败跳过
+//（已删/超限/异常 → 不推微信，网页端可见）。
+function collectTaskFiles(p) {
+  const out = [];
+  let dir;
+  try { dir = engine.taskDirOf(String(p.sessionId || '')); } catch (_) { return out; }
+  for (const rel of (p.files || [])) {
+    if (out.length >= ATTACH_MAX_COUNT) break;
+    try {
+      const abs = path.resolve(dir, String(rel));
+      if (!abs.startsWith(dir + path.sep)) continue;
+      const st = fs.statSync(abs);
+      if (!st.isFile() || st.size > ATTACH_MAX_BYTES) continue;
+      out.push({ filename: path.basename(abs), b64: Buffer.from(fs.readFileSync(abs)).toString('base64') });
+    } catch (_) { /* 已删/异常：跳过 */ }
+  }
+  return out;
+}
+
 module.exports = {
   init,
   restore,
@@ -763,4 +826,5 @@ module.exports = {
   handleHook,
   handleInbox,
   findAttachments, // 投递前的附件解析（链接→文件）；导出供上电探针/未来其他投递面复用
+  notifyTask, // 定时任务完成通知入口（server.js 注入 scheduler；组装逻辑见 scheduler.fireNotify）
 };

@@ -320,7 +320,7 @@
           },
           "prompt": {
             "type": "string",
-            "description": "Self-contained instruction delivered as the only input at each trigger (prior history is archived). Output stays in the task's session; if the result must reach the user proactively, say how inside the prompt (e.g. via a skill or webhook). Required with op=create; optional with op=update."
+            "description": "Self-contained instruction delivered as the only input at each trigger (prior history is archived). Each run's closing reply plus newly written artifact files are automatically pushed to the user via WeChat, so do not wire a webhook/email push into the prompt. Required with op=create; optional with op=update."
           },
           "brief": {
             "type": "string",

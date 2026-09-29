@@ -25,7 +25,10 @@ engine.setModelPool(cfg, db, bus);
 engine.init();
 // 定时任务调度器（scheduler.js）：必须在 engine.init() 之后启动——init 先把会话状态归位
 //（active/遗留 queued → held），首轮 tick 才不会看到脏状态。
-scheduler.start(engine);
+// 通知面注入：定时轮收尾（完成/投递失败）经 wechat.notifyTask 转递微信（组装见 scheduler.fireNotify）。
+// scheduler 不反向 require wechat（engine→executor→scheduler→wechat→engine 成环会拿到半成品 exports），
+// 惰性闭包传递；wechat 未启用（无 WXBOT_URL）时 notifyTask 自带 enabled 闸门静默跳。
+scheduler.start(engine, p => wechat.notifyTask(p));
 // 长期记忆保留窗裁剪（memory.js）：平时追加碎片顺带裁，这里兑底「窗口改小/长期无轮换」的表残留。
 require('./memory').prune(db, cfg);
 

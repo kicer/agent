@@ -18,6 +18,7 @@ const MIN_INTERVAL_MS = 3600000;       // cron 最小间隔 1 小时：防 AI �
 const PROMPT_MAX_LEN = 20000;          // prompt 长度上限，与 routes/sessions.js PATCH 口径一致
 
 let eng = null;   // engine 引用（start 注入）
+let notify = null; // 完成通知投递面（server.js 注入 wechat.notifyTask；缺位则跳过通知）
 let timer = null;
 
 function fmtTime(t) {
@@ -60,15 +61,15 @@ function validateCron(cronExpr) {
 
 // sessionId 由调用方从工具 ctx 取（AI 无法指定别的会话）。校验顺序：
 // validateCron → 本会话尚无任务 → INSERT（主键冲突兜底）。
-function createTask(db, sessionId, cronExpr, prompt, brief, script) {
+function createTask(db, sessionId, cronExpr, prompt, brief, script, notifyChannel) {
   if (prompt.length > PROMPT_MAX_LEN) throw new Error('prompt 过长（上限 ' + PROMPT_MAX_LEN + ' 字符）');
   const first = validateCron(cronExpr);
   const exist = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
   if (exist) throw new Error('本会话已有定时任务（' + exist.cron_expr + '）。改频次或提示词用 op=update；确要换新任务先 op=delete 再 op=create');
   try {
     db.prepare(
-      'INSERT INTO scheduled_tasks (session_id, cron_expr, prompt, brief, script, next_run_at, created_at) VALUES (?,?,?,?,?,?,?)'
-    ).run(sessionId, cronExpr, prompt, String(brief || '').slice(0, 40), String(script || '').replace(/\s+/g, ' ').trim().slice(0, 80), first, Date.now());
+      'INSERT INTO scheduled_tasks (session_id, cron_expr, prompt, brief, script, notify_channel, next_run_at, created_at) VALUES (?,?,?,?,?,?,?,?)'
+    ).run(sessionId, cronExpr, prompt, String(brief || '').slice(0, 40), String(script || '').replace(/\s+/g, ' ').trim().slice(0, 80), String(notifyChannel || ''), first, Date.now());
   } catch (_) {
     // 单进程同步 API 下正常到不了这里（上一步已查重），仅作主键约束重复报错的兜底
     const ex = db.prepare('SELECT cron_expr FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
@@ -142,6 +143,35 @@ function deliver(sessionId, prompt) {
   return eng.postUserMessage(sessionId, prompt);
 }
 
+// 定时轮收尾通知（阶段 A ok / 阶段 B 投递失败时调）：正文=本执行窗口内最后一条纯文本
+// assistant 收尾消息（即白天交互时本会推给用户的那句），附件=触发时刻起 files 表新增记录。
+// notify 由 server.js 注入（wechat.notifyTask）；任何异常只记日志，绝不动调度主流程。
+function fireNotify(t, status, errNote) {
+  if (!notify) return;
+  try {
+    const dbh = eng.getDb();
+    const name = String(t.brief || t.prompt || t.session_id).replace(/\s+/g, ' ').trim().slice(0, 40) || t.session_id;
+    let text = String(errNote || '');
+    let files = [];
+    if (status === 'ok') {
+      const m = dbh.prepare(
+        "SELECT content FROM messages WHERE session_id = ? AND role = 'assistant' AND type IS NULL AND created_at >= ?" +
+        " AND content IS NOT NULL AND TRIM(content) != '' ORDER BY id DESC LIMIT 1"
+      ).get(t.session_id, t.last_run_at || 0);
+      text = String((m && m.content) || '').trim();
+      files = dbh.prepare('SELECT filename FROM files WHERE session_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 10')
+        .all(t.session_id, t.last_run_at || 0).map(r => r.filename);
+    }
+    Promise.resolve(notify({
+      user: t.user, channel: t.notify_channel || '', sessionId: t.session_id,
+      head: '⏰ ' + name + ' · ' + (status === 'ok' ? '完成' : '失败'),
+      text, files, stamp: t.last_run_at || Date.now(),
+    })).catch(e => log.warn('scheduler', '任务通知入队失败: ' + (e && e.message || e)));
+  } catch (e) {
+    log.warn('scheduler', '任务通知组装失败: ' + (e && e.message || e));
+  }
+}
+
 // ---------- tick ----------
 function drop(db, sessionId) {
   db.prepare('DELETE FROM scheduled_tasks WHERE session_id = ?').run(sessionId);
@@ -155,18 +185,23 @@ function tick() {
   // 阶段 A：收尾上一轮标记 running 的任务。runLoop 结束没有回调可挂，改为轮询推断：
   // 会话已转非 active = 回合结束 → ok（局限：异常结束的回合也会被标 ok）。
   // 会话仍 active → AI 还在跑，保持 running 等下轮再看。
-  for (const t of db.prepare("SELECT session_id FROM scheduled_tasks WHERE last_status='running'").all()) {
+  for (const t of db.prepare(
+    "SELECT t.session_id, t.brief, t.prompt, t.notify_channel, t.last_run_at, s.user" +
+    ' FROM scheduled_tasks t JOIN sessions s ON s.id = t.session_id WHERE t.last_status=\'running\''
+  ).all()) {
     const s = eng.getSession(t.session_id);
     if (!s) { drop(db, t.session_id); continue; }
     if (s.status !== 'active') {
       db.prepare("UPDATE scheduled_tasks SET last_status='ok' WHERE session_id=?").run(t.session_id);
+      fireNotify(t, 'ok'); // 跑完没人在看：把收尾那句话与成果文件主动送到微信
     }
   }
 
   // 阶段 B：投递到期任务。上一轮还 running 的不取（等阶段 A 收尾）；
   // 会话本身 active 直接跳过本次——防堆积以会话状态为准，不依赖 DB 标记的时序，更可靠。
   const due = db.prepare(
-    "SELECT * FROM scheduled_tasks WHERE next_run_at <= ? AND (last_status IS NULL OR last_status != 'running')"
+    "SELECT t.*, s.user FROM scheduled_tasks t JOIN sessions s ON s.id = t.session_id" +
+    " WHERE t.next_run_at <= ? AND (t.last_status IS NULL OR t.last_status != 'running')"
   ).all(now);
   for (const t of due) {
     const s = eng.getSession(t.session_id);
@@ -195,13 +230,15 @@ function tick() {
         "UPDATE scheduled_tasks SET last_run_at=?, last_status='error', last_note=?, next_run_at=? WHERE session_id=?"
       ).run(now, String(err && err.message || err).slice(0, 200), computeNext(t.cron_expr), t.session_id);
       log.error('scheduler', t.session_id + ' 定时任务失败: ' + (err && err.message || err));
+      fireNotify(t, 'error', String(err && err.message || err).slice(0, 200)); // 失败是最值得用户知道的通知
     }
   }
 }
 
-function start(engine) {
+function start(engine, notifyFn) {
   if (timer) return;
   eng = engine;
+  notify = typeof notifyFn === 'function' ? notifyFn : null;
   timer = setInterval(() => {
     try {
       tick();

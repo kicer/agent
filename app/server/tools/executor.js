@@ -963,12 +963,15 @@ function toolScheduleTask(ctx, args) {
       // script 纯标记：存在即暗示模型把流程沉淀成脚本（怎么写、用什么跑、prompt 怎么引用由它自定）；
       // 创建与触发均不校验——缺脚本时 prompt 自身的指示就是回退面。
       const script = String(args.script || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-      const t = scheduler.createTask(db, ctx.sessionId, cronExpr, prompt, brief, script);
+      // 谁设的闹钟通知谁：本会话当前的微信绑定落进任务行（专柜退位后 channel_sessions 就没了，就地捕获）。
+      const chRow = db.prepare("SELECT channel FROM channel_sessions WHERE session_id = ? AND channel LIKE 'wx:%'").get(ctx.sessionId);
+      const t = scheduler.createTask(db, ctx.sessionId, cronExpr, prompt, brief, script, chRow ? chRow.channel : '');
       // 定时即下班：标记本回合收尾时由 engine 收口（brief 碎片 + 归档 + 通道解绑，见 engine.taskClockOut）。
       if (ctx.onTaskCreated) ctx.onTaskCreated();
       return '已创建 id=' + ctx.sessionId + '\ncron="' + t.cron_expr + '"\nnext=' + scheduler.fmtIso(t.next_run_at)
         + (script ? '\nscript=' + script : '')
-        + '\n本会话即收口为该任务专柜（用户无感知，下条消息自动进新会话）。';
+        + '\n本会话即收口为该任务专柜（用户无感知，下条消息自动进新会话）。'
+        + (chRow ? '\n完成/失败结果自动通知微信。' : '');
     }
     case 'update': {
       if (!cronExpr && !prompt) throw new Error('op=update 需要 cron_expr 和 prompt 至少提供一个');
