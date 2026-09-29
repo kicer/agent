@@ -898,7 +898,7 @@ async function toolMintPublicLink(ctx, args) {
 // id 省略/'0' = 本会话（兼容旧调用）；跨会话操作带 op=list 里看到的 id，同用户校验——
 // 用户不切会话，AI 代办一切。create 只落当前会话（定时即下班，建完本会话收口退位成专柜）。
 // 回执只给事实，零教学（怎么做写在 schema description 里，不每次复读）：
-// 列表/详情用编号条目 + key=value 分行，时间 ISO+08:00，prompt 截断；写操单一行短确认。
+// list 紧凑索引/get 全量详情（编号条目 + key=value 分行，时间 ISO+08:00）；写操单一行短确认。
 // list 紧凑索引：认任务、看状态够用（name/last_note/prompt 等细节归 get）
 function schedEntry(t, idx) {
   return [
@@ -909,7 +909,8 @@ function schedEntry(t, idx) {
     t.last_run_at ? 'last=' + scheduler.fmtIso(t.last_run_at) + ' last_status=' + (t.last_status || '-') : 'last=尚未执行',
   ].join('\n');
 }
-// get 详情：索引之上补 name（会话标题）、brief、last_note、prompt（截断防污染上下文）——全量字段只在这出现
+// get 详情：索引之上补 name（会话标题）、last_note、prompt（原样全量——写入侧已有 2 万字硬帽，
+// 读取侧再截就废了 get 的存在意义）——详情字段只在这出现
 function schedDetail(t) {
   const clip = s => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > 160 ? s.slice(0, 160) + '…' : s; };
   const lines = ['id=' + t.session_id + (t.current ? '（本会话）' : '')];
@@ -920,7 +921,7 @@ function schedDetail(t) {
   if (t.last_run_at) lines.push('last=' + scheduler.fmtIso(t.last_run_at) + ' last_status=' + (t.last_status || '-'));
   else lines.push('last=尚未执行');
   if (t.last_note) lines.push('last_note=' + clip(t.last_note));
-  if (t.prompt) lines.push('prompt="' + clip(t.prompt) + '"');
+  if (t.prompt) lines.push('prompt=' + t.prompt);
   return lines.join('\n');
 }
 function toolScheduleTask(ctx, args) {
