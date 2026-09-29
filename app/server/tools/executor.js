@@ -11,6 +11,7 @@ const rexec = require('../remote-exec');
 const publicFiles = require('../public-files');
 const scheduler = require('../scheduler'); // 只依赖 log/cron-parser，不成环（engine→executor→scheduler 单向）
 const profile = require('../user-profile'); // profile 工具的数据面（仅 llm/log 依赖，无环）
+const memory = require('../memory'); // recall 工具的数据面（日记翻阅；零依赖模块，无环）
 // lab 的 help 伪工具要读全量定义：与 engine 同路径 require → node 缓存同一对象，单一事实源。
 const BUILTIN_TOOL_DEFS = require('./definitions.json');
 
@@ -1188,6 +1189,64 @@ async function toolHandoff(ctx, args) {
   return '已接收交接（reason: ' + reason + '），本批工具跑完后系统将切换到执行阶段。';
 }
 
+// recall：长期记忆（工作日记）的回忆入口（定稿 B 方案：极简三 op，描述短不挤占工具位）。
+// 日记按会话收口持久存储（memory.js），开场只注入最近 N 条；更早的条目与某次工作的成果文件由本工具按需取。
+// 只读数据面：仅能碰本用户的日记与会话（id 同用户校验防互探）；link 产出的外链与 mint_public_link 同机制同时效。
+function toolRecall(ctx, args) {
+  const op = String(args.op || '').trim().toLowerCase();
+  const db = ctx.db;
+  const me = db.prepare('SELECT user FROM sessions WHERE id = ?').get(ctx.sessionId);
+  const user = String((me && me.user) || '');
+  // files/link 共用：解析并校验目标会话（存在 + 同用户 + id 形态），返回 {sid, title, dir}
+  const resolveSession = () => {
+    const sid = String(args.id || '').trim();
+    if (!/^task-[0-9A-Za-z_\-]+$/.test(sid)) throw new Error('需要 id：日记碎片【编号】里的会话 id（形如 task-YYYYMMDD-NNN）');
+    const s = db.prepare('SELECT id, user, title FROM sessions WHERE id = ?').get(sid);
+    if (!s) throw new Error('会话 ' + sid + ' 不存在（可能已删除）');
+    if (String(s.user || '') !== user) throw new Error('无权访问该会话（非当前用户）');
+    const root = String((ctx.cfg && ctx.cfg.workspace_root) || '');
+    if (!root) throw new Error('workspace_root 未配置');
+    return { sid: sid, title: s.title || sid, dir: path.join(root, sid) };
+  };
+  switch (op) {
+    case 'list': {
+      const txt = memory.olderFragments(db, ctx.cfg, user, args.skip, args.count);
+      return txt || '更早的日记没有了：开场注入的就是全部记忆。需要某次工作的成果文件用 op=files。';
+    }
+    case 'files': {
+      const t = resolveSession();
+      let names = [];
+      try {
+        names = fs.readdirSync(t.dir, { withFileTypes: true })
+          .filter(d => d.isFile() && !d.name.startsWith('.'))
+          .map(d => d.name)
+          .sort();
+      } catch (_) {
+        return '会话「' + t.title + '」的任务目录不存在（已删或未产出），无成果文件。';
+      }
+      if (!names.length) return '会话「' + t.title + '」没有成果文件。';
+      const shown = names.slice(0, 80);
+      return '会话「' + t.title + '」当前存在的文件（' + shown.length + (names.length > shown.length ? '/共 ' + names.length : '') + ' 个）：\n'
+        + shown.map(n => '- ' + n).join('\n')
+        + '\n（按磁盘实况列出：存在即未被删；取内容用 op=link {id, path}）';
+    }
+    case 'link': {
+      const t = resolveSession();
+      const rel = String(args.path || '').trim();
+      if (!rel) throw new Error('op=link 需要 path（op=files 清单里的文件名）');
+      const abs = resolveInTask(t.dir, rel); // 路径沙箱：只允许该会话任务目录内
+      let st;
+      try { st = fs.statSync(abs); } catch (_) { throw new Error('文件不存在：' + rel + '（先 op=files 看现存清单）'); }
+      if (!st.isFile()) throw new Error('不是普通文件：' + rel);
+      const pl = ctx.cfg && ctx.cfg.public_link;
+      if (!pl || !pl.base_url) throw new Error('public_link 未配置，无法生成外链');
+      return pl.base_url + '/p/' + publicFiles.mint({ sessionId: t.sid, rel: rel, ttlMs: pl.ttl_ms });
+    }
+    default:
+      throw new Error('未知的 op："' + op + '"。可用：list（翻更早日记，可选 skip/count）/ files（需 id，列那次会话现存成果文件）/ link（需 id+path，产临时下载链接）');
+  }
+}
+
 const HANDLERS = {
   read_file: toolReadFile,
   handoff: toolHandoff,
@@ -1198,6 +1257,7 @@ const HANDLERS = {
   fetch: toolFetch,
   schedule: toolScheduleTask,
   profile: toolProfile,
+  recall: toolRecall,
   db: toolDb,
   skill: toolSkill,
   lab: toolLab,

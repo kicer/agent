@@ -234,6 +234,46 @@
   {
     "type": "function",
     "function": {
+      "name": "recall",
+      "description": "Access your long-term memory: the work diary. Each finished session leaves one short fragment (a few dozen characters, headed by the source session id), stored permanently; only the newest fragments were injected at session start. Read-only.\n\nop=list   Older diary fragments beyond the injected window. Optional: skip (default = skip the injected window), count (default 20, max 50).\nop=files  List files of a past session that still exist on disk right now. Requires id (the session id from a diary fragment's 【…】 heading).\nop=link   Mint a temporary download link for one of those files. Requires id and path (a name from op=files).",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "list",
+              "files",
+              "link"
+            ],
+            "description": "What to recall: list = older diary fragments; files = a past session's current artifacts; link = a download link for one of them."
+          },
+          "skip": {
+            "type": "integer",
+            "description": "op=list: how many newest fragments to skip. Default = the window already injected at session start."
+          },
+          "count": {
+            "type": "integer",
+            "description": "op=list: fragments to return (default 20, max 50)."
+          },
+          "id": {
+            "type": "string",
+            "description": "op=files / op=link: the source session id as written inside a diary fragment's 【…】 heading (e.g. 'task-20260929-003')."
+          },
+          "path": {
+            "type": "string",
+            "description": "op=link: file name inside that session's task directory, exactly as listed by op=files."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "schedule",
       "description": "Manage the recurring scheduled task bound to the CURRENT session. At most one task per session; it is deleted together with the session. At each trigger, the prompt is sent to this session as a new user message. Schedule times are interpreted in Asia/Shanghai (UTC+8). Call this ONLY when the user explicitly asks for something to run periodically or at a specific time.\n\nop=get     No arguments.\nop=create  Requires cron_expr, prompt and brief.\nop=update  Requires at least one of cron_expr, prompt; only the given fields change.\nop=delete  No arguments.",
       "parameters": {

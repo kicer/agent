@@ -6,8 +6,8 @@
 // - 存储默认永久：会话收口（4h 空闲 / 设定定时任务）= 一条几十字的第一人称碎片，按【收口当日】
 //   入 (user, day) 条目；同日多片按到达顺序拼接，不做 LLM 二次合并（确定性、零成本）——
 //   虚拟人的过去不能到点就抹，「只记 7 天」会把人做成金鱼；
-// - 注入 =「嘴上的工作记忆」：新会话开场只带最近 inject_max 条碎片（默认 10），更早的记忆
-//   不自动出现但也没消失——等 M3 回忆工具按会话 id 下钻；
+// - 注入 =「嘴上的工作记忆」：新会话开场只带最近 inject_max 条碎片（默认 10）；更早的记忆
+//   不自动出现但也没消失——recall 工具按会话 id 下钻（op=list 翻旧条目 / files/link 查成果文件）；
 // - retain_days > 0 才按天硬裁（默认 0 = 永不删除），留给确要自动清理/隐私抹除的场景。
 // - sid 去重：同一会话只贡献一条碎片（防收口竞态双写；主闸是 sessions.journaled_at 物理占坑，
 //   这里是末道防线）。
@@ -87,8 +87,33 @@ function journalFor(db, cfg, user) {
     groups[groups.length - 1].frags.unshift(p.frag);
   }
   const head = '【长期记忆·日记(最近' + picked.length + '条)】收工时的当日事件摘要，近日的在前、天内按发生顺序；'
-    + '每条【编号】是来源会话 id，可用于回溯那次工作的对话与成果。';
+    + '每条【编号】是来源会话 id：更早的日记用 recall 工具 op=list 翻，那次工作的成果文件用 op=files 查、op=link 取。';
   const parts = [head];
+  for (const g of groups) parts.push('=== ' + g.day + ' ===\n' + g.frags.join('\n\n'));
+  return parts.join('\n\n');
+}
+
+// ---------- 读：回忆更早碎片（recall 工具 op=list 的数据源） ----------
+// 与 journalFor 同展开顺序（全局新在前）；skip 默认跳过开场注入窗，count 默认 20 上限 50。
+// 尾部标注剩余更早条数与续翻参数，AI 读完自然知道怎么翻页。
+function olderFragments(db, cfg, user, skip, count) {
+  const rows = db.prepare('SELECT day, content FROM memory_entries WHERE user = ? ORDER BY day DESC').all(String(user || ''));
+  const flat = [];
+  for (const r of rows) {
+    const frags = String(r.content || '').split('\n\n').filter(Boolean);
+    for (let i = frags.length - 1; i >= 0; i--) flat.push({ day: r.day, frag: frags[i] });
+  }
+  const skipN = Number.isFinite(Number(skip)) ? Math.max(0, Math.floor(Number(skip))) : injectMax(cfg);
+  const lim = Math.max(1, Math.min(50, Number(count) || 20));
+  const page = flat.slice(skipN, skipN + lim);
+  if (!page.length) return '';
+  const groups = [];
+  for (const p of page) {
+    if (!groups.length || groups[groups.length - 1].day !== p.day) groups.push({ day: p.day, frags: [] });
+    groups[groups.length - 1].frags.unshift(p.frag);
+  }
+  const rest = flat.length - skipN - page.length;
+  const parts = ['【更早的日记】第 ' + (skipN + 1) + ' 条起共 ' + page.length + ' 条' + (rest > 0 ? '，继续翻：skip=' + (skipN + page.length) : '，这已是全部记忆')];
   for (const g of groups) parts.push('=== ' + g.day + ' ===\n' + g.frags.join('\n\n'));
   return parts.join('\n\n');
 }
@@ -103,6 +128,6 @@ function prune(db, cfg) {
 
 module.exports = {
   retainDays, injectMax, dayString, cutoffDay,
-  appendFragment, markJournaled, journalFor, prune,
+  appendFragment, markJournaled, journalFor, olderFragments, prune,
   INJECT_CAP, DAY_MAX, FRAG_MAX,
 };

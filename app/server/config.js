@@ -108,11 +108,12 @@ const DEFAULTS = {
   // 模型 profile（prompt + tools 名单组合）：platforms 里的模型用 profile: <名> 引用。
   model_profiles: {
     // advising：顾问阶段（sessions.phase）专用组合——不由模型配置引用，而是 resolveProfileName 在
-    // advising 时强制命中：顾问只聊和读、不写（write_file 已移除，批内幻觉调用另由引擎挡下），
-    // 例外是 profile（画像元信息，不碰任务目录；顾问问答恰是收集称谓/偏好密度最高的时刻）；
+        // advising 时强制命中：顾问只聊和读、不写（write_file 已移除，批内幻觉调用另由引擎挡下），
+        // 例外是 profile（画像元信息，不碰任务目录；顾问问答恰是收集称谓/偏好密度最高的时刻）
+        // 与 recall（日记只读翻阅；用户和顾问聊「上次那个事」恰是回忆查询的高峰场景）；
     // 唯一出口是 handoff；tools_deny 必须显式清空：不配 = 继承全局 ['lab','handoff']，
     // allow 滤完再叠 deny 会把 handoff 自己禁掉（同 lab 组合的教训）。
-    advising: { tools_allow: ['read_file', 'fetch', 'handoff', 'profile'], tools_deny: [], system_prompt_file: 'advising-system.txt' },
+    advising: { tools_allow: ['read_file', 'fetch', 'handoff', 'profile', 'recall'], tools_deny: [], system_prompt_file: 'advising-system.txt' },
     // lab：统一入口元工具自测组合——tools 收缩到 1 个，其余能力经 lab(help) 现场发现。
     // tools_deny 必须显式清空：不配 = 继承全局 ['lab']，deny 后叠加会把 lab 自己禁掉 → 零工具。
     lab: { tools_allow: ['lab'], tools_deny: [], system_prompt_file: 'lab-system.txt' },
