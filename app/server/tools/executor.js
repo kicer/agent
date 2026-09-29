@@ -909,8 +909,8 @@ function schedEntry(t, idx) {
     t.last_run_at ? 'last=' + scheduler.fmtIso(t.last_run_at) + ' last_status=' + (t.last_status || '-') : 'last=尚未执行',
   ].join('\n');
 }
-// get 详情：索引之上补 name（会话标题）、last_note、prompt（原样全量——写入侧已有 2 万字硬帽，
-// 读取侧再截就废了 get 的存在意义）——详情字段只在这出现
+// get 详情：索引之上补 name（会话标题）、last_note、prompt（原样全量、fence 包裹为引用数据——
+// 写入侧已有 2 万字硬帽，读取侧再截就废了 get 的存在意义）——详情字段只在这出现
 function schedDetail(t) {
   const clip = s => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > 160 ? s.slice(0, 160) + '…' : s; };
   const lines = ['id=' + t.session_id + (t.current ? '（本会话）' : '')];
@@ -921,7 +921,13 @@ function schedDetail(t) {
   if (t.last_run_at) lines.push('last=' + scheduler.fmtIso(t.last_run_at) + ' last_status=' + (t.last_status || '-'));
   else lines.push('last=尚未执行');
   if (t.last_note) lines.push('last_note=' + clip(t.last_note));
-  if (t.prompt) lines.push('prompt=' + t.prompt);
+  if (t.prompt) {
+    // fence 包裹：prompt 本体是指令句式，裸贴会被当成对当前模型的命令；`` 标记把它隔成引用数据。
+    // 动态加长防碰撞：AI 写的 prompt 自身常含 ```（代码样例），固定三反引号会被内容提前闭合并逃逸。
+    let fence = '```';
+    while (t.prompt.includes(fence)) fence += '`';
+    lines.push('prompt=' + fence, t.prompt, fence);
+  }
   return lines.join('\n');
 }
 function toolScheduleTask(ctx, args) {
