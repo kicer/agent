@@ -692,26 +692,39 @@ async function deliverConclusion(bid, m, sessionId) {
 }
 
 // 扫回复文本里的 /p/<22位id> 链 → 可卡片化的本地附件（{filename, b64}，最多 5 个，单文件限 20MB）。
-// 归属硬校验：只转本会话签发的链接（AI 复述他会话/被注入的链接时不外流文件）；过期（resolve 为
-// 空）、文件已删、跳出任务目录、超限全部静默跳过——链接文字本身留在正文，用户仍可点。
+// 归属校验按「同用户」放行（B 案定稿）：recall op=link 合法取旧会话文件，原「同会话」规矩会打断
+// 记忆链最后一公里；pid 是 22 位随机不可猜的 bearer 能力，真正要防的是跨用户外流——签发会话查不到
+// 主人（已删）也拒。过期（resolve 空）、文件已删、跳出任务目录、超限全部静默跳过——链接文字留在正文可点。
 const ATTACH_MAX_BYTES = 20 * 1024 * 1024;
 const ATTACH_MAX_COUNT = 5;
 function findAttachments(content, sessionId) {
   const out = [];
   const seen = new Set();
+  // 会话 id → 用户 的小缓存（一次投递通常命中同几个签发会话）；查无此会话记 null 拒转。
+  const userCache = new Map();
+  const ownerOf = sid => {
+    const key = String(sid || '');
+    if (!userCache.has(key)) {
+      const row = db.prepare('SELECT user FROM sessions WHERE id = ?').get(key);
+      userCache.set(key, row ? String(row.user || '') : null);
+    }
+    return userCache.get(key);
+  };
+  const me = ownerOf(sessionId);
+  if (me == null) return out; // 当前会话已不存在：无人可收，全跳
   for (const m of String(content).matchAll(/\/p\/([A-Za-z0-9_-]{22})(?![A-Za-z0-9_-])/g)) {
     const pid = m[1];
     if (seen.has(pid) || out.length >= ATTACH_MAX_COUNT) continue;
     seen.add(pid);
     try {
       const f = publicFiles.resolve(pid);
-      if (!f || String(f.sessionId) !== String(sessionId)) continue;
-      const dir = engine.taskDirOf(sessionId);
+      if (!f || ownerOf(f.sessionId) !== me) continue; // 同用户即可（含本会话）
+      const dir = engine.taskDirOf(String(f.sessionId)); // 从签发会话的目录取件
       const abs = path.resolve(dir, String(f.rel));
       if (!abs.startsWith(dir + path.sep)) continue; // rel 签发时已验，此处再兑一层
       const st = fs.statSync(abs);
       if (!st.isFile() || st.size > ATTACH_MAX_BYTES) continue;
-      out.push({ filename: path.basename(abs), b64: fs.readFileSync(abs).toString('base64') });
+      out.push({ filename: path.basename(abs), b64: Buffer.from(fs.readFileSync(abs)).toString('base64') });
     } catch (_) { /* 过期/已删/异常：跳过 */ }
   }
   return out;
@@ -747,4 +760,5 @@ module.exports = {
   qrSvg,
   handleHook,
   handleInbox,
+  findAttachments, // 投递前的附件解析（链接→文件）；导出供上电探针/未来其他投递面复用
 };
