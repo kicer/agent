@@ -674,8 +674,21 @@ async function runLoopInner(sessionId, run) {
       for (const tc of result.tool_calls) {
         const fixed = unwrapToolArgs(tools, tc.name, tc.arguments);
         if (fixed) {
-          log.debug('tool', sessionId + ' ' + tc.name + ' 参数包裹外层已自动解包');
+          log.debug('tool', sessionId + ' ' + tc.name + ' 参数包裹外层已自动解包（原形头: ' + String(tc.arguments).slice(0, 120).replace(/\s+/g, ' ') + '）');
           tc.arguments = JSON.stringify(fixed);
+        }
+        // schedule 兑底（有意识的务实特例）：GLM 系模型习惯把 op 当「操作名的一部分」省略（思考链里写
+        // "Use schedule create"）——op 缺失但 create 参数形齐（brief 只属于 create）时推断补全并
+        // 写回，让落库/送检/历史回放三处一致；形状有歧义仍走 Missing 报错，绝不猜。
+        if (tc.name === 'schedule' && tc.arguments) {
+          try {
+            const a = JSON.parse(tc.arguments);
+            if (a && typeof a === 'object' && a.op == null && a.brief && a.cron_expr && a.prompt) {
+              a.op = 'create';
+              tc.arguments = JSON.stringify(a);
+              log.debug('tool', sessionId + ' schedule 缺 op，按 create 参数形推断补全并写回');
+            }
+          } catch (_) { /* 非法 JSON 交给预检报错 */ }
         }
       }
     }
@@ -688,7 +701,12 @@ async function runLoopInner(sessionId, run) {
     let isErrAck = false;
     if (hasTools) {
       for (const tc of result.tool_calls) {
-        if (checkToolArgs(tools, tc.name, tc.arguments).error) { isErrAck = true; break; }
+        if (checkToolArgs(tools, tc.name, tc.arguments).error) {
+          isErrAck = true;
+          // 落一条现场拍证：解包后仍缺参的原始拼接串头——区分「模型真没写」与「写到哪被弄丢」，日志不再靠猜。
+          log.debug('tool', sessionId + ' 参数预检失败 ' + tc.name + '（拼接串头: ' + String(tc.arguments || '').slice(0, 160).replace(/\s+/g, ' ') + '）');
+          break;
+        }
       }
     }
     const msgRow = {
@@ -774,7 +792,7 @@ async function runLoopInner(sessionId, run) {
         try {
           output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db, vision,
             onTaskCreated: () => { run.taskWrap = true; } }, // 定时即下班：工具只打标记，收口在 finalize（回合结束后才能解绑归档）
-            
+
             tc.function.name, chk.args);
         } catch (err) {
           output = 'Error: ' + (err && err.message || String(err));
@@ -1351,7 +1369,7 @@ function taskClockOut(sessionId) {
     if (!t) return;
     const what = String(t.brief || t.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 80);
     const r = memory.appendFragment(db, cfg, s.user, s.id, memory.dayString(s.updated_at || now()),
-      '- 用户让我设了个闹钟：' + what + '（频率 ' + t.cron_expr + '，到点自动执行，本会话是该任务的专柜）');
+      '- 用户让我设了个闹钟：' + what + '（频率 ' + t.cron_expr + '）');
     if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now());
     if (s.status === 'held') { try { releaseHold(sessionId); } catch (_) { /* 并发归档 */ } }
     const un = db.prepare('DELETE FROM channel_sessions WHERE session_id = ?').run(sessionId);

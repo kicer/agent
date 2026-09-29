@@ -203,18 +203,24 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
         let calls = [];
         try { calls = JSON.parse(row.tool_calls || '[]') || []; } catch (_) {}
         const errs = [];
+        const echo = [];
         for (const c of calls) {
           if (!c || !c.id) continue;
           dropToolCallIds.add(c.id);
           const tr = toolRowById.get(c.id);
           const txt = tr && typeof tr.content === 'string' ? tr.content : '';
           if (txt.startsWith('Error:')) errs.push(txt);
+          // 回显你上轮实际提交的参数形：errAck 整轮移除后模型看不到自己的作答，光挨骂无法改——
+          // 给它「答卷」对照着修形状（标注为错误样本，不被当作合法调用模仿）。
+          echo.push(c.function && c.function.name ? c.function.name + '(' + String(c.function.arguments || '').slice(0, 200) + ')' : '');
         }
         messages.push({
           role: 'user',
-          content: '[系统] 你上一轮的 tool call 参数有误，未正确执行并已从对话历史中移除。错误详情：\n' +
+          content: '[系统] 你上一轮的 tool call 参数有误，未正确执行并已从对话历史中移除。\n' +
+            (echo.length ? '你上轮实际提交的参数（仅供纠错对照，不要原样重复）：\n' + echo.join('\n') + '\n' : '') +
+            '错误详情：\n' +
             (errs.join('\n') || 'Error: ToolCall Invalid Params') +
-            '\n请严格按工具参数定义重新生成正确的调用。',
+            '\n请严格按工具参数定义修正后重新调用。',
         });
         return;
       }
