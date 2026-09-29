@@ -87,35 +87,64 @@ function journalFor(db, cfg, user) {
     groups[groups.length - 1].frags.unshift(p.frag);
   }
   const head = '【长期记忆·日记(最近' + picked.length + '条)】收工时的当日事件摘要，近日的在前、天内按发生顺序；'
-    + '每条【编号】是来源会话 id：更早的日记用 recall 工具 op=list 翻，那次工作的成果文件用 op=files 查、op=link 取。';
+    + '每条【编号】是来源会话 id：更早的日记用 recall 工具 op=search 关键词检索、op=days 按日期翻页再 op=day 取整天；'
+    + '那次工作的成果文件用 op=files 查、op=link 取。';
   const parts = [head];
   for (const g of groups) parts.push('=== ' + g.day + ' ===\n' + g.frags.join('\n\n'));
   return parts.join('\n\n');
 }
 
-// ---------- 读：回忆更早碎片（recall 工具 op=list 的数据源） ----------
-// 与 journalFor 同展开顺序（全局新在前）；skip 默认跳过开场注入窗，count 默认 20 上限 50。
-// 尾部标注剩余更早条数与续翻参数，AI 读完自然知道怎么翻页。
-function olderFragments(db, cfg, user, skip, count) {
+// ---------- 读：关键词检索（recall 主入口：用户记起的是「一段事」不是「第几条」） ----------
+// 碎片级全库搜索：存储量小（每天一行、内容几十行），内存打分足够，不引入 FTS。
+// 分词：空白/标点切词（多词命中多者为先）；单字命中 = 子串包含；CJK 长词未整串命中时
+// 按二元字组兼容（过半才算模糊命中，得分打折）——支撑「记个大概」的模糊查。英文词大小写不敏感。
+// 无命中返回 ''（友好提示由调用方给）。
+const CJK_RE = /[\u4e00-\u9fff]/;
+function tokenScore(fl, t) {
+  if (fl.includes(t)) return 1;
+  if (t.length < 2 || !CJK_RE.test(t)) return 0;
+  let hit = 0;
+  for (let i = 0; i + 2 <= t.length; i++) if (fl.includes(t.slice(i, i + 2))) hit++;
+  const frac = hit / (t.length - 1);
+  return frac >= 0.5 ? frac * 0.9 : 0;
+}
+function searchFragments(db, user, query, count) {
+  const toks = String(query || '').toLowerCase().split(/[\s,，、;；。.!！?？]+/).filter(Boolean).slice(0, 8);
+  if (!toks.length) return '';
+  const lim = Math.max(1, Math.min(30, Number(count) || 10));
   const rows = db.prepare('SELECT day, content FROM memory_entries WHERE user = ? ORDER BY day DESC').all(String(user || ''));
-  const flat = [];
+  const hits = [];
+  let seq = 0;
   for (const r of rows) {
     const frags = String(r.content || '').split('\n\n').filter(Boolean);
-    for (let i = frags.length - 1; i >= 0; i--) flat.push({ day: r.day, frag: frags[i] });
+    for (let i = frags.length - 1; i >= 0; i--) { // 天内新在前，seq 自然全局新在前
+      const frag = frags[i];
+      seq++;
+      const fl = frag.toLowerCase();
+      let sum = 0;
+      for (const t of toks) sum += tokenScore(fl, t);
+      if (sum > 0) hits.push({ day: r.day, frag: frag, score: sum / toks.length, seq: seq });
+    }
   }
-  const skipN = Number.isFinite(Number(skip)) ? Math.max(0, Math.floor(Number(skip))) : injectMax(cfg);
-  const lim = Math.max(1, Math.min(50, Number(count) || 20));
-  const page = flat.slice(skipN, skipN + lim);
-  if (!page.length) return '';
-  const groups = [];
-  for (const p of page) {
-    if (!groups.length || groups[groups.length - 1].day !== p.day) groups.push({ day: p.day, frags: [] });
-    groups[groups.length - 1].frags.unshift(p.frag);
-  }
-  const rest = flat.length - skipN - page.length;
-  const parts = ['【更早的日记】第 ' + (skipN + 1) + ' 条起共 ' + page.length + ' 条' + (rest > 0 ? '，继续翻：skip=' + (skipN + page.length) : '，这已是全部记忆')];
-  for (const g of groups) parts.push('=== ' + g.day + ' ===\n' + g.frags.join('\n\n'));
+  if (!hits.length) return '';
+  hits.sort((a, b) => b.score - a.score || a.seq - b.seq);
+  const shown = hits.slice(0, lim);
+  const parts = ['【日记检索】「' + String(query).trim() + '」命中 ' + hits.length + ' 条，按相关度列前 ' + shown.length + ' 条'
+    + (hits.length > shown.length ? '；要更多加大 count 或关键词收窄' : '') + '：'];
+  for (const h of shown) parts.push('--- ' + h.day + '（' + Math.round(h.score * 100) + '% 匹配）---\n' + h.frag);
   return parts.join('\n\n');
+}
+
+// ---------- 读：日期索引（只记得「大概哪天」时，先看有哪些天有账） ----------
+function daysIndex(db, user) {
+  const rows = db.prepare('SELECT day, content FROM memory_entries WHERE user = ? ORDER BY day DESC').all(String(user || ''));
+  return rows.map(r => '- ' + r.day + '（' + String(r.content || '').split('\n\n').filter(Boolean).length + ' 条）');
+}
+
+// ---------- 读：某天的完整日记 ----------
+function dayEntry(db, user, date) {
+  const r = db.prepare('SELECT content FROM memory_entries WHERE user = ? AND day = ?').get(String(user || ''), String(date || '').trim());
+  return r ? String(r.content) : '';
 }
 
 // ---------- 裁剪：day 为 ISO 串，字典序即日期序；默认永久存储为 no-op ----------
@@ -128,6 +157,7 @@ function prune(db, cfg) {
 
 module.exports = {
   retainDays, injectMax, dayString, cutoffDay,
-  appendFragment, markJournaled, journalFor, olderFragments, prune,
+  appendFragment, markJournaled, journalFor,
+  searchFragments, daysIndex, dayEntry, prune,
   INJECT_CAP, DAY_MAX, FRAG_MAX,
 };

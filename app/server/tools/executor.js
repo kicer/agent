@@ -1226,9 +1226,23 @@ function toolRecall(ctx, args) {
     return { sid: sid, title: s.title || sid, dir: path.join(root, sid) };
   };
   switch (op) {
-    case 'list': {
-      const txt = memory.olderFragments(db, ctx.cfg, user, args.skip, args.count);
-      return txt || '更早的日记没有了：开场注入的就是全部记忆。需要某次工作的成果文件用 op=files。';
+    case 'search': {
+      const q = String(args.query || '').trim();
+      if (!q) throw new Error('op=search 需要 query（关键词；空格分隔多个词更好，如「身份证 水印」）');
+      const txt = memory.searchFragments(db, user, q, args.count);
+      return txt || '日记库里没有匹配「' + q + '」的条目。换个更宽泛的关键词再试，或 op=days 看哪天有什么；成果文件走 op=files。';
+    }
+    case 'days': {
+      const list = memory.daysIndex(db, user);
+      if (!list.length) return '日记库是空的：还没有任何收口条目（开场注入的日记也出自这里）。';
+      return '【日记日期索引】共 ' + list.length + ' 天有记录（新在前）：\n' + list.join('\n')
+        + '\n用 op=day {date} 看某天的完整日记；记得关键词就直接 op=search。';
+    }
+    case 'day': {
+      const date = String(args.date || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('op=day 需要 date（YYYY-MM-DD，先用 op=days 查有哪些天）');
+      const txt = memory.dayEntry(db, user, date);
+      return txt ? date + ' 的日记：\n' + txt : date + ' 没有日记（当天无交互或条目已裁剪；op=days 可看有哪些天）。';
     }
     case 'files': {
       const t = resolveSession();
@@ -1260,7 +1274,7 @@ function toolRecall(ctx, args) {
       return pl.base_url + '/p/' + publicFiles.mint({ sessionId: t.sid, rel: rel, ttlMs: pl.ttl_ms });
     }
     default:
-      throw new Error('未知的 op："' + op + '"。可用：list（翻更早日记，可选 skip/count）/ files（需 id，列那次会话现存成果文件）/ link（需 id+path，产临时下载链接）');
+      throw new Error('未知的 op："' + op + '"。可用：search（需 query，可选 count）/ days（日期索引）/ day（需 date）/ files（需 id）/ link（需 id+path）');
   }
 }
 

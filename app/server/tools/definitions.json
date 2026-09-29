@@ -235,7 +235,7 @@
     "type": "function",
     "function": {
       "name": "recall",
-      "description": "Access your long-term memory: the work diary. Each finished session leaves one short fragment (a few dozen characters, headed by the source session id), stored permanently; only the newest fragments were injected at session start. Read-only.\n\nop=list   Older diary fragments beyond the injected window. Optional: skip (default = skip the injected window), count (default 20, max 50).\nop=files  List files of a past session that still exist on disk right now. Requires id (the session id from a diary fragment's 【…】 heading).\nop=link   Mint a temporary download link for one of those files. Requires id and path (a name from op=files).",
+      "description": "Access your long-term memory: the work diary. Each finished session leaves one short fragment (a few dozen characters, headed by the source session id), stored permanently; only the newest fragments were injected at session start. When the user vaguely recalls something from the past, search is your primary entry — you cannot know what you have forgotten. Read-only.\n\nop=search  Requires query (keywords; space-separated words rank better, e.g. '身份证 水印'). Fuzzy fragment-level match across ALL dates (Chinese tolerant to partial phrases), best matches first. Optional count (default 10, max 30).\nop=days    No arguments. Index of diary days (date + fragment count) — use when the user remembers roughly WHEN but not what; then op=day.\nop=day     Requires date (YYYY-MM-DD, as listed by op=days). Full fragments of that day.\nop=files   Requires id (the session id from a diary fragment's 【…】 heading). Files of that past session that still exist on disk right now.\nop=link    Requires id and path (a name from op=files). Mint a temporary download link.",
       "parameters": {
         "type": "object",
         "required": [
@@ -245,19 +245,25 @@
           "op": {
             "type": "string",
             "enum": [
-              "list",
+              "search",
+              "days",
+              "day",
               "files",
               "link"
             ],
-            "description": "What to recall: list = older diary fragments; files = a past session's current artifacts; link = a download link for one of them."
+            "description": "What to recall: search = keyword fuzzy over all diary fragments (primary); days = which dates have entries; day = one date's full diary; files = a past session's current artifacts; link = a download link for one of them."
           },
-          "skip": {
-            "type": "integer",
-            "description": "op=list: how many newest fragments to skip. Default = the window already injected at session start."
+          "query": {
+            "type": "string",
+            "description": "op=search: keywords to look for (space-separated words rank best, e.g. '身份证 水印'). Chinese and English both supported, case-insensitive."
           },
           "count": {
             "type": "integer",
-            "description": "op=list: fragments to return (default 20, max 50)."
+            "description": "op=search: max fragments to return (default 10, max 30)."
+          },
+          "date": {
+            "type": "string",
+            "description": "op=day: the day to open, YYYY-MM-DD exactly as shown by op=days."
           },
           "id": {
             "type": "string",
