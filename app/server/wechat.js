@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const engine = require('./engine');
 const log = require('./log');
+const memory = require('./memory');
 const publicFiles = require('./public-files');
 const channel = require('./routes/channel'); // 只用 handleSend/ensureSession/newSessionFor/parseCommand（模块加载无副作用；engine 不 require 本模块，无环）
 
@@ -253,6 +254,11 @@ const CHANNEL_NOTE = [
   '- 接收文件：用户发来的文件会自动存入当前工作目录，可直接读取。',
 ].join('\n');
 
+// 开场日记（M2）的角色提示：日记是「你」的记忆，不是用户的新输入——拟人化人格锚点。
+const MEMORY_NOTE_HEAD = '以下日记是你（助理）过去几天亲笔记录的工作记忆，系统随新工作台自动带来。'
+  + '把它当作连续对话的背景自然使用：不要向用户逐条复述或声明「我看到日记」；'
+  + '用户提起旧事时基于日记作答；日记之外没有的细节，直说不确定，不要编造。\n\n';
+
 function ensureChannelContext(s) {
   if (!s) return;
   if (s.phase !== 'executing') {
@@ -262,6 +268,15 @@ function ensureChannelContext(s) {
   if (!db.prepare("SELECT 1 FROM messages WHERE session_id = ? AND type = 'channel_note' LIMIT 1").get(s.id)) {
     engine.saveMessage(s.id, { role: 'user', type: 'channel_note', content: CHANNEL_NOTE });
     log.info('wechat', s.id + ' 渠道上下文注入（executing + channel_note）');
+  }
+  // 开场日记：近几天长期记忆一次性写入，会话中途不补——与画像快照同「新会话冻结」语义，
+  // 轮换后新会话再带最新全文；无记忆/功能关闭时不写，省一条消息行也稳前缀缓存。
+  if (!db.prepare("SELECT 1 FROM messages WHERE session_id = ? AND type = 'memory_note' LIMIT 1").get(s.id)) {
+    const journal = memory.journalFor(db, cfg, s.user);
+    if (journal) {
+      engine.saveMessage(s.id, { role: 'user', type: 'memory_note', content: MEMORY_NOTE_HEAD + journal });
+      log.info('wechat', s.id + ' 开场日记注入（' + journal.length + ' 字）');
+    }
   }
 }
 

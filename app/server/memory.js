@@ -75,7 +75,7 @@ function journalFor(db, cfg, user) {
   ).all(String(user || ''), ...days);
   if (!rows.length) return '';
   const head = '【长期记忆·日记(近' + n + '天)】近期交互的当日事件记录；'
-    + '【… · 】内的编号是当时会话 id，需要当时的对话细节或成果文件时，用回忆工具按它下钻。';
+    + '各条【标题 · 编号】里的编号是当时会话的 id，可用它回溯那次工作。';
   const parts = [head];
   for (const r of rows) parts.push('=== ' + r.day + ' ===\n' + r.content);
   return parts.join('\n\n');

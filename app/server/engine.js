@@ -1196,7 +1196,8 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
 // 日记后台慢慢落）。按【旧会话创建日】入 memory_entries（存储/去重/渲染全在 memory.js）。
 // /clear 不记：用户主动清零历史 = 不要这段记忆（已定调）。M0 只提供生成原语，轮换触发接线是 M1。
 const journaling = new Set(); // 正在生成碎片的会话（防双发）
-const JOURNAL_SKIP_TYPES = new Set(['archived', 'channel_note', 'scheduler_note']); // 存档与系统注入不是对话本体
+// 存档、系统注入与开场日记都不是对话本体——尤其 memory_note：不跳会把上一本日记摘要进新日记，雪球增殖。
+const JOURNAL_SKIP_TYPES = new Set(['archived', 'channel_note', 'scheduler_note', 'memory_note']);
 const JOURNAL_BUDGET = 24000; // 转录输入字数预算：超长旧会话取首尾、截中段
 
 // 任务目录顶层成果文件名（去 dot 项）：降级碎片的底子 + 摘要输入提示。
