@@ -110,11 +110,11 @@ function shortTitle(r) {
 function listReply(db, user, curId) {
   const res = listedSessions(db, user);
   const rows = res.rows;
-  if (!rows.length) return '**会话列表**\n还没有会话：直接发条消息会自动新建';
-  const lines = rows.map((r, i) => (i + 1) + '. ' + r.id + ', ' + shortTitle(r) + (r.id === curId ? ' [当前]' : ''));
+  if (!rows.length) return '**会话列表**\n暂无会话';
+  const lines = rows.map((r, i) => (i + 1) + '. `' + r.id + '`: ' + shortTitle(r) + (r.id === curId ? ' [当前]' : ''));
   lines.push(res.total > rows.length
-    ? '共 ' + res.total + ' 个会话，只列最近 ' + rows.length + ' 个'
-    : '用 /switch <编号或id> 切换，/delete <编号> 删除');
+    ? '---\n*共 ' + res.total + ' 个会话，只列最近 ' + rows.length + ' 个*'
+    : '');
   return ['**会话列表**'].concat(lines).join('\n');
 }
 
@@ -137,10 +137,9 @@ function modelChoices() {
 function modelsReply(ms, curModelId) {
   if (!ms.length) return '**模型清单**\n配置里没有启用的模型（网页端设置页添加后重启）';
   const shown = ms.slice(0, MODELS_LIMIT);
-  const lines = shown.map((m, i) => '- ' + (i + 1) + '. `' + m.id + '`'
-    + (m.vision ? ' · 支持读图' : '') + (m.id === curModelId ? ' [当前]' : ''));
+  const lines = shown.map((m, i) => '' + (i + 1) + '. `' + m.id + '`'
+    + (m.id === curModelId ? ' [当前]' : ''));
   if (ms.length > shown.length) lines.push('共 ' + ms.length + ' 个，只列前 ' + MODELS_LIMIT + ' 个');
-  lines.push('用 /models <编号> 给当前会话换模型');
   return ['**模型清单**'].concat(lines).join('\n');
 }
 
@@ -169,15 +168,23 @@ function parseCommand(text) {
 // 微信端渲染适配在 wxbot 出口：默认透传 markdown（微信已支持渲染），env WXBOT_STRIP_MARKDOWN=1 才 stripMarkdown 纯文化——格式信息留在生产方，渲染适配在消费方。
 const HELP_TEXT = [
   '**可用命令**',
-  '- `/new [msg]` 新建会话并切换',
+  '---',
+  '**会话**',
   '- `/list` 会话列表',
-  '- `/switch <编号或id>` 切换当前会话（编号来自 /list）',
-  '- `/rename <标题>` 重命名当前会话',
+  '- `/new [msg]` 新建会话并切换',
+  '- `/switch <编号>` 切换当前会话',
   '- `/delete <编号>` 删除指定会话',
+  '- `/rename <标题>` 重命名当前会话',
+  '',
+  '**模型**',
   '- `/models [编号]` 切换指定模型',
+  '',
+  '**上下文**',
   '- `/stop` 终止当前回合',
-  '- `/compact` 压缩上下文',
   '- `/clear` 清空当前会话',
+  '- `/compact` 压缩上下文',
+  '',
+  '**信息**',
   '- `/status` 查看当前状态',
   '- `/help` 显示本帮助',
 ].join('\n');
