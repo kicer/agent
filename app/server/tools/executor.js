@@ -45,14 +45,14 @@ function relOf(taskDir, abs) {
 const PAST_RE = /^@([^\s/]+)(?:\/([\s\S]*))?$/;
 function resolvePastPath(ctx, p) {
   const m = PAST_RE.exec(p);
-  if (!m) throw new Error('@ 路径格式：@<会话id>/<相对路径>，如 @task-20260929-003/out/a.png');
+  if (!m) throw new Error('@ 路径格式: @<session-id>/<rel>, 如 @task-20260929-003/out.png');
   const sid = m[1];
   const rel = m[2] || '.';
-  if (!/^task-[0-9A-Za-z_\-]+$/.test(sid)) throw new Error('@ 后面需要会话 id（形如 task-YYYYMMDD-NNN，来自日记碎片【编号】）：' + sid);
+  if (!/^task-[0-9A-Za-z_\-]+$/.test(sid)) throw new Error('@ 后需会话 id, 形如 task-YYYYMMDD-NNN: ' + sid);
   const s = ctx.db.prepare('SELECT id, user, title FROM sessions WHERE id = ?').get(sid);
-  if (!s) throw new Error('会话 ' + sid + ' 不存在（可能已删除，目录随会话一并销毁）');
+  if (!s) throw new Error('会话不存在: ' + sid);
   const me = ctx.db.prepare('SELECT user FROM sessions WHERE id = ?').get(ctx.sessionId);
-  if (String(s.user || '') !== String((me && me.user) || '')) throw new Error('无权访问该会话（非当前用户）');
+  if (String(s.user || '') !== String((me && me.user) || '')) throw new Error('无权访问该会话: ' + sid);
   const root = String((ctx.cfg && ctx.cfg.workspace_root) || '');
   if (!root) throw new Error('workspace_root 未配置');
   const dir = path.join(root, sid);
@@ -74,13 +74,13 @@ async function walkCopyBudget(srcAbs) {
     for (const e of entries) {
       const abs = path.join(d, e.name);
       if (e.isSymbolicLink()) {
-        throw new Error('源包含符号链接（拒拷贝，防沿链接跳出源目录）：' + path.relative(srcAbs, abs));
+        throw new Error('源含符号链接, 拒绝拷贝: ' + path.relative(srcAbs, abs));
       }
       if (e.isDirectory()) stack.push(abs);
       else if (e.isFile()) {
         n++; bytes += (await fsp.stat(abs)).size;
         if (n > COPY_MAX_FILES || bytes > COPY_MAX_BYTES) {
-          throw new Error('源过大（上限 ' + COPY_MAX_FILES + ' 文件 / ' + Math.round(COPY_MAX_BYTES / 1048576) + ' MB）；先用 list_directory 看清结构，分批挑');
+          throw new Error('源过大, 上限 ' + COPY_MAX_FILES + ' 文件 / ' + Math.round(COPY_MAX_BYTES / 1048576) + ' MB');
         }
       }
     }
@@ -214,7 +214,7 @@ async function toolReadFile(ctx, args) {
   let st;
   try { st = await fsp.stat(abs); }
   catch (_) { throw new Error('文件不存在：' + args.path); }
-  if (st.isDirectory()) throw new Error(args.path + ' 是目录不是文件，请用 list_directory 查看（历史会话传 @<会话id>/<路径>）。');
+  if (st.isDirectory()) throw new Error(args.path + ' 是目录不是文件，用 list_directory 查看。');
   if (IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
     const rel = relOf(ctx.taskDir, abs);
     if (!ctx.vision) {
@@ -264,13 +264,12 @@ async function toolReadFile(ctx, args) {
 // .task-history/.tmp 等内部态）不列；确切知道名字时仍可直接把它喂给 copy_path。
 async function toolListDirectory(ctx, args) {
   const p = typeof args.path === 'string' ? args.path.trim() : '';
-  let abs; let prefix; let title = '';
+  let abs; let prefix;
   if (p.startsWith('@')) {
     const past = resolvePastPath(ctx, p);
     abs = past.abs;
     const inner = relOf(past.dir, abs);
     prefix = '@' + past.sid + (inner === '.' ? '/' : '/' + inner + '/');
-    title = '「' + past.title + '」（历史会话，只读；条目可直接作为 copy_path 的 source_path 导入）\n';
   } else {
     abs = resolveInTask(ctx.taskDir, p || '.');
     const inner = relOf(ctx.taskDir, abs);
@@ -280,7 +279,7 @@ async function toolListDirectory(ctx, args) {
   try {
     entries = await fsp.readdir(abs, { withFileTypes: true });
   } catch (e) {
-    if (e.code === 'ENOENT') throw new Error('目录不存在：' + p + (p.startsWith('@') ? '（先用 list_directory 逐层确认该历史会话的文件结构）' : ''));
+    if (e.code === 'ENOENT') throw new Error('目录不存在: ' + p);
     throw e;
   }
   const dirs = []; const files = [];
@@ -290,14 +289,14 @@ async function toolListDirectory(ctx, args) {
   }
   dirs.sort(); files.sort();
   const total = dirs.length + files.length;
-  if (total === 0) return title + '目录为空';
+  if (total === 0) return '目录为空';
   const shownDirs = dirs.slice(0, LIST_MAX_ENTRIES);
   const shownFiles = files.slice(0, LIST_MAX_ENTRIES - shownDirs.length);
   const sections = [];
   if (shownDirs.length) sections.push('# Folders:\n' + shownDirs.join('\n'));
   if (shownFiles.length) sections.push('# Files:\n' + shownFiles.join('\n'));
-  let out = title + sections.join('\n\n');
-  if (shownDirs.length + shownFiles.length < total) out += '\n\n...（共 ' + total + ' 项，本层只展示前 ' + LIST_MAX_ENTRIES + ' 项；传更深路径下钻）';
+  let out = sections.join('\n\n');
+  if (shownDirs.length + shownFiles.length < total) out += '\n\n...(' + total + ' entries total, truncated)';
   return out;
 }
 
@@ -308,41 +307,40 @@ async function toolCopyPath(ctx, args) {
   const sp = String(args.source_path || '').trim();
   const dp = String(args.destination_path || '').trim();
   if (!sp || !dp) throw new Error('source_path 与 destination_path 都必填');
-  if (dp.startsWith('@')) throw new Error('destination_path 不支持 @ 记号——历史只读，导入只会落进本会话目录');
+  if (dp.startsWith('@')) throw new Error('destination_path 不支持 @ (历史只读)');
   const dst = resolveInTask(ctx.taskDir, dp);
-  if (path.resolve(dst) === path.resolve(ctx.taskDir)) throw new Error('destination_path 不能是本任务目录本身');
-  let src; let srcTitle = '';
+  if (path.resolve(dst) === path.resolve(ctx.taskDir)) throw new Error('destination_path 不能是任务目录本身');
+  let src;
   if (sp.startsWith('@')) {
     const past = resolvePastPath(ctx, sp);
     src = past.abs;
-    srcTitle = '（来自「' + past.title + '」）';
   } else {
     src = resolveInTask(ctx.taskDir, sp);
   }
-  if (path.resolve(src) === path.resolve(dst)) throw new Error('源与目标是同一个路径');
+  if (path.resolve(src) === path.resolve(dst)) throw new Error('源与目标相同');
   let lst;
   try {
     lst = await fsp.lstat(src);
   } catch (_) {
-    throw new Error('源不存在：' + sp + (sp.startsWith('@') ? '（历史会话目录以 list_directory 实际列举为准）' : ''));
+    throw new Error('源不存在: ' + sp);
   }
-  if (lst.isSymbolicLink()) throw new Error('源是符号链接，拒绝拷贝（防沿链接跳出任务目录）：' + sp);
+  if (lst.isSymbolicLink()) throw new Error('源是符号链接: ' + sp);
   let budget = null;
   if (lst.isFile()) {
-    if (lst.size > COPY_MAX_BYTES) throw new Error('源文件 ' + Math.round(lst.size / 1048576) + ' MB，超过单次 ' + Math.round(COPY_MAX_BYTES / 1048576) + ' MB 上限');
+    if (lst.size > COPY_MAX_BYTES) throw new Error('源文件超限: ' + Math.round(lst.size / 1048576) + ' MB, 上限 ' + Math.round(COPY_MAX_BYTES / 1048576) + ' MB');
   } else if (lst.isDirectory()) {
     budget = await walkCopyBudget(src);
   } else {
-    throw new Error('源不是普通文件或目录：' + sp);
+    throw new Error('源不是文件或目录: ' + sp);
   }
   let exists = true;
   try { await fsp.stat(dst); } catch (_) { exists = false; }
-  if (exists) throw new Error('目标已存在，拒绝覆盖：' + relOf(ctx.taskDir, dst) + '（换个目标名，或先 terminal 删除本会话的同名旧物）');
+  if (exists) throw new Error('目标已存在, 拒绝覆盖: ' + relOf(ctx.taskDir, dst));
   await fsp.mkdir(path.dirname(dst), { recursive: true });
   await fsp.cp(src, dst, { recursive: true });
   recordFile(ctx, dst); // 文件表只记普通文件（目录自然跳过），供前端/微信附件展示
-  const sizeNote = budget ? '（' + budget.files + ' 个文件，' + Math.round(budget.bytes / 1024) + ' KB）' : '';
-  return '已复制 ' + sp + srcTitle + ' → ' + relOf(ctx.taskDir, dst) + sizeNote;
+  const sizeNote = budget ? ' (' + budget.files + ' files, ' + Math.round(budget.bytes / 1024) + ' KB)' : '';
+  return '已复制 ' + sp + ' -> ' + relOf(ctx.taskDir, dst) + sizeNote;
 }
 
 async function toolWriteFile(ctx, args) {
@@ -1129,7 +1127,7 @@ function toolScheduleTask(ctx, args) {
       // 跨会话全览：编号条目 + key=value 行，id 即行动把手（无任何教学/切会话引导）。
       const rows = scheduler.listUserTasks(db, curUser());
       if (!rows.length) return '当前没有任何定时任务。';
-      return '定时任务×' + rows.length + '（按下次执行排序）\n\n'
+      return '定时任务×' + rows.length + '\n\n'
         + rows.map((t, i) => schedEntry(Object.assign({}, t, { current: t.session_id === ctx.sessionId }), i + 1)).join('\n\n');
     }
     case 'delete': {
@@ -1554,7 +1552,7 @@ function toolRecall(ctx, args) {
       return txt ? date + ' 的日记：\n' + txt : date + ' 无日记。';
     }
     default:
-      throw new Error('未知的 op："' + op + '"。可用：search（需 query，可选 count）/ days（日期索引）/ day（需 date）。历史会话文件请用 list_directory / copy_path 的 @<会话id>/<路径> 记号');
+      throw new Error('未知的 op: "' + op + '", 可用: search / days / day');
   }
 }
 

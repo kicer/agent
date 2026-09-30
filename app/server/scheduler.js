@@ -150,7 +150,7 @@ function fireNotify(t, status, errNote) {
   if (!notify) return;
   try {
     const dbh = eng.getDb();
-    const name = String(t.brief || t.prompt || t.session_id).replace(/\s+/g, ' ').trim().slice(0, 40) || t.session_id;
+    const name = String(t.brief || t.session_id).replace(/\s+/g, ' ').trim().slice(0, 40) || t.session_id;
     let text = String(errNote || '');
     let files = [];
     if (status === 'ok') {
@@ -164,7 +164,7 @@ function fireNotify(t, status, errNote) {
     }
     Promise.resolve(notify({
       user: t.user, channel: t.notify_channel || '', sessionId: t.session_id,
-      head: '⏰ ' + name + ' · ' + (status === 'ok' ? '完成' : '失败'),
+      head: '`' + name + ', ' + status + '`\n---\n',
       text, files, stamp: t.last_run_at || Date.now(),
     })).catch(e => log.warn('scheduler', '任务通知入队失败: ' + (e && e.message || e)));
   } catch (e) {

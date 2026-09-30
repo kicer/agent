@@ -3,7 +3,7 @@
     "type": "function",
     "function": {
       "name": "copy_path",
-      "description": "Copies a file or directory, preserving the original; directories are copied recursively. More efficient than reading then writing contents. Returns confirmation with the destination path.\n\nImport past work: source_path accepts '@<session-id>/<rel>' to copy from your OWN past session (id from a diary fragment's 【…】 heading; use recall to find it, list_directory to browse it). destination_path never accepts '@' — past stays read-only, imports land in the current session directory. The destination must not exist yet; nothing is overwritten (pick a new name, or delete yours first via terminal).\n\nAfter import the file is fully local: read_file (including images via vision), terminal, mint_public_link all work on it.\n\nLimits per call: ≤200 MB total, ≤200 files for a directory tree; symlinks are refused (as a source or inside a copied tree) to prevent escaping the directory.",
+      "description": "Copies a file or directory, preserving the original; directories are copied recursively. More efficient than reading then writing contents. Returns confirmation with the destination path.\n\nImport past work: source_path accepts '@<session-id>/<rel>' to copy from your OWN past session (find the id with recall, browse with list_directory). destination_path never accepts '@' - past stays read-only, imports land in the current session directory. The destination must not exist yet; nothing is overwritten.\n\nAfter import the file is fully local: read_file (images included), terminal, mint_public_link all work on it.\n\nLimits: max 200 MB / 200 files per call; symlinks refused.",
       "parameters": {
         "type": "object",
         "required": [
@@ -201,13 +201,13 @@
     "type": "function",
     "function": {
       "name": "list_directory",
-      "description": "Lists the entries directly inside one directory (one level, like `ls`): folders and files, sorted; hidden entries (starting with '.') omitted; max 200 per call — go deeper by passing a deeper path.\n\npath is relative to the session working directory (absolute paths inside it accepted); empty/omitted lists the current task directory.\n\nPast sessions: '@<session-id>/<rel>' lists a PAST session's own directory, same user only (read-only view). The id is the 【…】 heading of a diary fragment — find it with recall op=search. In '@' mode entries are printed as complete '@<session-id>/...' paths — copy them straight into copy_path's source_path.",
+      "description": "Lists the entries directly inside one directory (one level, like `ls`): folders and files, sorted; hidden entries (starting with '.') omitted; max 200 per call, go deeper with a deeper path.\n\npath is relative to the session working directory (absolute paths inside it accepted); empty/omitted lists the current task directory.\n\nPast sessions: '@<session-id>/<rel>' lists a PAST session's own directory, same user only (read-only view). Find the id with recall op=search. In '@' mode entries print as complete '@<session-id>/...' paths, ready to feed copy_path.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {
             "type": "string",
-            "description": "Directory to list, relative to the session working directory. Absolute paths accepted. '@<session-id>/<rel>' lists that past session's directory (same user only; id from a diary fragment's 【…】 heading)."
+            "description": "Directory to list, relative to the session working directory. Absolute paths accepted. '@<session-id>/<rel>' lists that past session's directory (same user only; id from recall)."
           }
         }
       }
@@ -286,7 +286,7 @@
     "type": "function",
     "function": {
       "name": "recall",
-      "description": "Access your long-term memory: the work diary. Each finished session leaves one short fragment (a few dozen chars) there, headed by its source session id in 【…】; fragments are kept permanently, but only the newest were injected at session start — recall reads the whole archive on demand. Read-only.\n\nop=search  Fuzzy keyword match over ALL fragments, best first. Primary entry when the user vaguely recalls something — you cannot know what you have forgotten.\nop=days    Index of days that have entries (newest first) — when the user remembers roughly WHEN but not what.\nop=day     Full fragments of one day.\n\nReturns are plain text: search hits print '--- date (match%) ---' followed by 【id】 and the fragment; days list '- date（n 条）'; day lists fragments. A miss comes back as a short 'no records / no diary' line — a normal answer, not an error.",
+      "description": "Access your long-term memory: the work diary. Each finished session leaves one short fragment (a few dozen chars) there, headed by its source session id; fragments are kept permanently, but only the newest were injected at session start - recall reads the whole archive on demand. Read-only.\n\nop=search  Fuzzy keyword match over ALL fragments, best first. Primary entry when the user vaguely recalls something - you cannot know what you have forgotten.\nop=days    Index of days that have entries (newest first) - when the user remembers roughly WHEN but not what.\nop=day     Full fragments of one day.\n\nReturns are plain text: search hits print '--- date (match%) ---' then the session id and fragment; days list dates with entry counts; day lists fragments. A miss comes back as a short 'no records' line - a normal answer, not an error.",
       "parameters": {
         "type": "object",
         "required": [
