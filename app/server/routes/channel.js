@@ -93,6 +93,15 @@ function pickSession(rows, arg) {
   return hit.length === 1 ? hit[0] : null;
 }
 
+// /switch 目标解析：编号（/list 行号）、id 前缀，或完整 id 直查——完整 id 不受列表 10 行窗口限制。
+function findSession(db, user, arg) {
+  if (/^task-[0-9A-Za-z_\-]+$/.test(arg)) {
+    return db.prepare('SELECT id, title, status, updated_at FROM sessions WHERE id = ? AND user = ?')
+      .get(arg, String(user || '').trim()) || null;
+  }
+  return pickSession(listedSessions(db, user).rows, arg);
+}
+
 function shortTitle(r) {
   const t = String(r.title || '').trim() || '未命名';
   return t.length > 24 ? t.slice(0, 24) + '…' : t;
@@ -102,14 +111,10 @@ function listReply(db, user, curId) {
   const res = listedSessions(db, user);
   const rows = res.rows;
   if (!rows.length) return '**会话列表**\n还没有会话：直接发条消息会自动新建';
-  const lines = rows.map((r, i) => {
-    const line = '- ' + (i + 1) + '. `' + shortTitle(r) + '` · ' + (r.model_id || '未绑模型')
-      + ' · ' + (STATUS_TEXT[r.status] || r.status) + ' · ' + fmtTime(r.updated_at);
-    return line + (r.id === curId ? ' [当前]' : '');
-  });
+  const lines = rows.map((r, i) => (i + 1) + '. ' + r.id + ', ' + shortTitle(r) + (r.id === curId ? ' [当前]' : ''));
   lines.push(res.total > rows.length
     ? '共 ' + res.total + ' 个会话，只列最近 ' + rows.length + ' 个'
-    : '用 /switch <编号> 切换，/delete <编号> 删除');
+    : '用 /switch <编号或id> 切换，/delete <编号> 删除');
   return ['**会话列表**'].concat(lines).join('\n');
 }
 
@@ -144,7 +149,7 @@ function modelsReply(ms, curModelId) {
 // 首词形如 /纯ASCII词 但不在清单 → 回「未知命令」提示、不转发模型（防弱模型就着 /hlep 演一段）；
 // 其余一律普通消息：/home/x、/a.b 这类路径代码，以及 /clear abc 这种裸命令带尾巴的（用户约定：强检查不匹配）。
 const CMDS = new Set(['new', 'stop', 'compact', 'clear', 'status', 'help', 'list', 'switch', 'rename', 'delete', 'models']);
-// 可带参数的命令：/new 尾随文本作首条消息；/switch /delete 吃 /list 编号（或会话 id 前缀）；
+// 可带参数的命令：/new 尾随文本作首条消息；/switch /delete 吃 /list 编号或会话 id；
 // /rename 吃新标题；/models 可带模型编号或完整 id。清单外的命令带尾巴仍按普通消息回落。
 const ARG_CMDS = new Set(['new', 'switch', 'rename', 'delete', 'models']);
 
@@ -166,7 +171,7 @@ const HELP_TEXT = [
   '**可用命令**',
   '- `/new [msg]` 新建会话并切换',
   '- `/list` 会话列表',
-  '- `/switch <编号>` 切换当前会话',
+  '- `/switch <编号或id>` 切换当前会话（编号来自 /list）',
   '- `/rename <标题>` 重命名当前会话',
   '- `/delete <编号>` 删除指定会话',
   '- `/models [编号]` 切换指定模型',
@@ -261,18 +266,24 @@ function handleSend(db, opts) {
 
   if (cmd === 'switch') {
     if (!parsed.rest) {
-      return { kind: 'command', reply: '用法：/list 查看编号，再 /switch <编号>', session_id: s ? s.id : null };
+      return { kind: 'command', reply: '用法：/switch <编号或会话id>（编号来自 /list）', session_id: s ? s.id : null };
     }
-    const t = pickSession(listedSessions(db, user).rows, parsed.rest);
+    const t = findSession(db, user, parsed.rest);
     if (!t) {
-      return { kind: 'command', reply: '没找到 ' + parsed.rest + ' 对应的会话（编号以最新的 /list 为准）', session_id: s ? s.id : null };
+      return {
+        kind: 'command',
+        reply: /^task-/.test(parsed.rest)
+          ? '没找到会话 ' + parsed.rest + '（不存在或不属于你）'
+          : '没找到 ' + parsed.rest + '（编号来自 /list，也可直接发会话 id）',
+        session_id: s ? s.id : null,
+      };
     }
     if (s && s.id === t.id) {
-      return { kind: 'command', reply: '当前就是会话「' + shortTitle(t) + '」', session_id: t.id };
+      return { kind: 'command', reply: '当前已是 ' + t.id, session_id: t.id };
     }
     setBinding(db, user, channel, t.id);
     log.info('task', tag + ' channel /switch → ' + t.id);
-    return { kind: 'command', reply: '已切到会话「' + shortTitle(t) + '」（' + (STATUS_TEXT[t.status] || t.status) + ' · ' + fmtTime(t.updated_at) + '）', session_id: t.id };
+    return { kind: 'command', reply: '已切到 ' + t.id + ', ' + shortTitle(t), session_id: t.id };
   }
 
   if (cmd === 'delete') {
