@@ -2,6 +2,30 @@
   {
     "type": "function",
     "function": {
+      "name": "copy_path",
+      "description": "Copies a file or directory, preserving the original; directories are copied recursively. More efficient than reading then writing contents. Returns confirmation with the destination path.\n\nImport past work: source_path accepts '@<session-id>/<rel>' to copy from your OWN past session (id from a diary fragment's 【…】 heading; use recall to find it, list_directory to browse it). destination_path never accepts '@' — past stays read-only, imports land in the current session directory. The destination must not exist yet; nothing is overwritten (pick a new name, or delete yours first via terminal).\n\nAfter import the file is fully local: read_file (including images via vision), terminal, mint_public_link all work on it.\n\nLimits per call: ≤200 MB total, ≤200 files for a directory tree; symlinks are refused (as a source or inside a copied tree) to prevent escaping the directory.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "source_path",
+          "destination_path"
+        ],
+        "properties": {
+          "source_path": {
+            "type": "string",
+            "description": "File or directory to copy, relative to the session working directory (absolute paths inside it accepted). '@<session-id>/<rel>' imports from a same-user past session."
+          },
+          "destination_path": {
+            "type": "string",
+            "description": "Where to place the copy inside the CURRENT session directory (relative, or absolute inside it). '@' paths are rejected here. Must not already exist."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "db",
       "description": "Execute operations on the session's SQLite database (data.db in the session working directory). The database file is isolated per session and auto-created on first use. For inserting rows (especially batches), prefer op=insert which avoids writing SQL by hand; use exec/query for DDL, updates, deletes and complex SQL.",
       "parameters": {
@@ -176,6 +200,22 @@
   {
     "type": "function",
     "function": {
+      "name": "list_directory",
+      "description": "Lists the entries directly inside one directory (one level, like `ls`): folders and files, sorted; hidden entries (starting with '.') omitted; max 200 per call — go deeper by passing a deeper path.\n\npath is relative to the session working directory (absolute paths inside it accepted); empty/omitted lists the current task directory.\n\nPast sessions: '@<session-id>/<rel>' lists a PAST session's own directory, same user only (read-only view). The id is the 【…】 heading of a diary fragment — find it with recall op=search. In '@' mode entries are printed as complete '@<session-id>/...' paths — copy them straight into copy_path's source_path.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory to list, relative to the session working directory. Absolute paths accepted. '@<session-id>/<rel>' lists that past session's directory (same user only; id from a diary fragment's 【…】 heading)."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "mint_public_link",
       "description": "Create a short-lived (default 30 minutes, server-configurable 1min-24h), publicly reachable URL for a local file, so an external service that cannot authenticate can download it. The link works repeatedly until it expires; re-mint for a fresh one.\nUse this when another tool or API needs to fetch a local file by URL. Returns the URL as plain text on a single line.",
       "parameters": {
@@ -246,7 +286,7 @@
     "type": "function",
     "function": {
       "name": "recall",
-      "description": "Access your long-term memory: the work diary. Each finished session leaves one short fragment (a few dozen characters, headed by the source session id), stored permanently; only the newest fragments were injected at session start. When the user vaguely recalls something from the past, search is your primary entry — you cannot know what you have forgotten. Read-only.\n\nop=search  Requires query (keywords; space-separated words rank better, e.g. '身份证 水印'). Fuzzy fragment-level match across ALL dates (Chinese tolerant to partial phrases), best matches first. Optional count (default 10, max 30).\nop=days    No arguments. Index of diary days (date + fragment count) — use when the user remembers roughly WHEN but not what; then op=day.\nop=day     Requires date (YYYY-MM-DD, as listed by op=days). Full fragments of that day.\nop=files   Requires id (the session id from a diary fragment's 【…】 heading). Files of that past session that still exist on disk right now.\nop=link    Requires id and path (a name from op=files). Mint a temporary download link.",
+      "description": "Access your long-term memory: the work diary. Each finished session leaves one short fragment (a few dozen chars) there, headed by its source session id in 【…】; fragments are kept permanently, but only the newest were injected at session start — recall reads the whole archive on demand. Read-only.\n\nop=search  Fuzzy keyword match over ALL fragments, best first. Primary entry when the user vaguely recalls something — you cannot know what you have forgotten.\nop=days    Index of days that have entries (newest first) — when the user remembers roughly WHEN but not what.\nop=day     Full fragments of one day.\n\nReturns are plain text: search hits print '--- date (match%) ---' followed by 【id】 and the fragment; days list '- date（n 条）'; day lists fragments. A miss comes back as a short 'no records / no diary' line — a normal answer, not an error.",
       "parameters": {
         "type": "object",
         "required": [
@@ -258,31 +298,24 @@
             "enum": [
               "search",
               "days",
-              "day",
-              "files",
-              "link"
+              "day"
             ],
-            "description": "What to recall: search = keyword fuzzy over all diary fragments (primary); days = which dates have entries; day = one date's full diary; files = a past session's current artifacts; link = a download link for one of them."
+            "description": "Recall operation; what each op does is in the tool description."
           },
           "query": {
             "type": "string",
-            "description": "op=search: keywords to look for (space-separated words rank best, e.g. '身份证 水印'). Chinese and English both supported, case-insensitive."
+            "description": "op=search: keywords; space-separated words rank best (e.g. '身份证 水印'). Chinese and English, case-insensitive; Chinese tolerates partial phrases."
           },
           "count": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 10,
             "description": "op=search: max fragments to return (default 10, max 30)."
           },
           "date": {
             "type": "string",
             "description": "op=day: the day to open, YYYY-MM-DD exactly as shown by op=days."
-          },
-          "id": {
-            "type": "string",
-            "description": "op=files / op=link: the source session id as written inside a diary fragment's 【…】 heading (e.g. 'task-20260929-003')."
-          },
-          "path": {
-            "type": "string",
-            "description": "op=link: file name inside that session's task directory, exactly as listed by op=files."
           }
         }
       }

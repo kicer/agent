@@ -37,6 +37,57 @@ function relOf(taskDir, abs) {
   return path.relative(path.resolve(taskDir), abs) || '.';
 }
 
+// ---------- 跨会话路径：@<会话id>/<rel>（历史只读，数据过墙只走 copy_path 一道门） ----------
+// 背景：terminal 在远端 executor 容器里跑（compose：wrapper 启动即 unmount host-tasks），
+// 别的会话目录在 shell 物理视图里根本不存在；core 进程内的文件工具又被 resolveInTask
+// 锁死本会话。跨会话取旧成果只剩这一个口子，同用户校验单点在此（承自 recall 旧 files/link，
+// 那两个 op 是 ls/mint 的沙箱外克隆，已整删——克隆会漂移：link 漏抄 mint 的 realpath 防线）。
+const PAST_RE = /^@([^\s/]+)(?:\/([\s\S]*))?$/;
+function resolvePastPath(ctx, p) {
+  const m = PAST_RE.exec(p);
+  if (!m) throw new Error('@ 路径格式：@<会话id>/<相对路径>，如 @task-20260929-003/out/a.png');
+  const sid = m[1];
+  const rel = m[2] || '.';
+  if (!/^task-[0-9A-Za-z_\-]+$/.test(sid)) throw new Error('@ 后面需要会话 id（形如 task-YYYYMMDD-NNN，来自日记碎片【编号】）：' + sid);
+  const s = ctx.db.prepare('SELECT id, user, title FROM sessions WHERE id = ?').get(sid);
+  if (!s) throw new Error('会话 ' + sid + ' 不存在（可能已删除，目录随会话一并销毁）');
+  const me = ctx.db.prepare('SELECT user FROM sessions WHERE id = ?').get(ctx.sessionId);
+  if (String(s.user || '') !== String((me && me.user) || '')) throw new Error('无权访问该会话（非当前用户）');
+  const root = String((ctx.cfg && ctx.cfg.workspace_root) || '');
+  if (!root) throw new Error('workspace_root 未配置');
+  const dir = path.join(root, sid);
+  return { sid: sid, title: s.title || sid, dir: dir, abs: resolveInTask(dir, rel) };
+}
+
+// list_directory 单层展示上限 / copy_path 单次导入预算（文件数 + 字节）
+const LIST_MAX_ENTRIES = 200;
+const COPY_MAX_FILES = 200;
+const COPY_MAX_BYTES = 200 * 1048576;
+
+// 目录源先整趟预算：计数、累字节、遇符号链接即拒（防沿链接跳出源目录把 core 文件系统拽进任务目录）。
+async function walkCopyBudget(srcAbs) {
+  let n = 0; let bytes = 0;
+  const stack = [srcAbs];
+  while (stack.length) {
+    const d = stack.pop();
+    const entries = await fsp.readdir(d, { withFileTypes: true });
+    for (const e of entries) {
+      const abs = path.join(d, e.name);
+      if (e.isSymbolicLink()) {
+        throw new Error('源包含符号链接（拒拷贝，防沿链接跳出源目录）：' + path.relative(srcAbs, abs));
+      }
+      if (e.isDirectory()) stack.push(abs);
+      else if (e.isFile()) {
+        n++; bytes += (await fsp.stat(abs)).size;
+        if (n > COPY_MAX_FILES || bytes > COPY_MAX_BYTES) {
+          throw new Error('源过大（上限 ' + COPY_MAX_FILES + ' 文件 / ' + Math.round(COPY_MAX_BYTES / 1048576) + ' MB）；先用 list_directory 看清结构，分批挑');
+        }
+      }
+    }
+  }
+  return { files: n, bytes: bytes };
+}
+
 function isProbablyBinary(abs) {
   let fd;
   try {
@@ -163,7 +214,7 @@ async function toolReadFile(ctx, args) {
   let st;
   try { st = await fsp.stat(abs); }
   catch (_) { throw new Error('文件不存在：' + args.path); }
-  if (st.isDirectory()) throw new Error(args.path + ' 是目录不是文件，请用 terminal 执行 ls 查看目录内容。');
+  if (st.isDirectory()) throw new Error(args.path + ' 是目录不是文件，请用 list_directory 查看（历史会话传 @<会话id>/<路径>）。');
   if (IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
     const rel = relOf(ctx.taskDir, abs);
     if (!ctx.vision) {
@@ -200,6 +251,98 @@ async function toolReadFile(ctx, args) {
   }
   lines = lines.slice(startLine - 1, Math.min(endLine, total));
   return lines.map((l, i) => String(startLine + i).padStart(6, ' ') + '\t' + l).join('\n');
+}
+
+// 对齐 Zed list_directory 的输出格式：
+//   # Folders:
+//   <dir>/<name>
+//
+//   # Files:
+//   <dir>/<name>
+// 本会话路径：条目相对任务目录（同旧版）。'@<sid>/<rel>' 历史模式：条目带 '@<sid>/' 全形前缀，
+// 可直接抄进 copy_path 的 source_path——列得出来就导得进来。隐藏项（'.' 开头的 .imgcache/
+// .task-history/.tmp 等内部态）不列；确切知道名字时仍可直接把它喂给 copy_path。
+async function toolListDirectory(ctx, args) {
+  const p = typeof args.path === 'string' ? args.path.trim() : '';
+  let abs; let prefix; let title = '';
+  if (p.startsWith('@')) {
+    const past = resolvePastPath(ctx, p);
+    abs = past.abs;
+    const inner = relOf(past.dir, abs);
+    prefix = '@' + past.sid + (inner === '.' ? '/' : '/' + inner + '/');
+    title = '「' + past.title + '」（历史会话，只读；条目可直接作为 copy_path 的 source_path 导入）\n';
+  } else {
+    abs = resolveInTask(ctx.taskDir, p || '.');
+    const inner = relOf(ctx.taskDir, abs);
+    prefix = inner === '.' ? '' : inner + '/';
+  }
+  let entries;
+  try {
+    entries = await fsp.readdir(abs, { withFileTypes: true });
+  } catch (e) {
+    if (e.code === 'ENOENT') throw new Error('目录不存在：' + p + (p.startsWith('@') ? '（先用 list_directory 逐层确认该历史会话的文件结构）' : ''));
+    throw e;
+  }
+  const dirs = []; const files = [];
+  for (const e of entries) {
+    if (e.name.startsWith('.')) continue;
+    (e.isDirectory() ? dirs : files).push(prefix + e.name);
+  }
+  dirs.sort(); files.sort();
+  const total = dirs.length + files.length;
+  if (total === 0) return title + '目录为空';
+  const shownDirs = dirs.slice(0, LIST_MAX_ENTRIES);
+  const shownFiles = files.slice(0, LIST_MAX_ENTRIES - shownDirs.length);
+  const sections = [];
+  if (shownDirs.length) sections.push('# Folders:\n' + shownDirs.join('\n'));
+  if (shownFiles.length) sections.push('# Files:\n' + shownFiles.join('\n'));
+  let out = title + sections.join('\n\n');
+  if (shownDirs.length + shownFiles.length < total) out += '\n\n...（共 ' + total + ' 项，本层只展示前 ' + LIST_MAX_ENTRIES + ' 项；传更深路径下钻）';
+  return out;
+}
+
+// copy_path：普通复制 + 历史成果的唯一进口。源可 '@<sid>/<rel>'（同用户校验在 resolvePastPath）；
+// 目标永不接受 @——历史只读、写只进本会话，「导入后文件即本地」让 read_file/vision/mint 全量生效，
+// 不必给它们开跨墙特例。撞名拒绝覆盖（保用户现作）。
+async function toolCopyPath(ctx, args) {
+  const sp = String(args.source_path || '').trim();
+  const dp = String(args.destination_path || '').trim();
+  if (!sp || !dp) throw new Error('source_path 与 destination_path 都必填');
+  if (dp.startsWith('@')) throw new Error('destination_path 不支持 @ 记号——历史只读，导入只会落进本会话目录');
+  const dst = resolveInTask(ctx.taskDir, dp);
+  if (path.resolve(dst) === path.resolve(ctx.taskDir)) throw new Error('destination_path 不能是本任务目录本身');
+  let src; let srcTitle = '';
+  if (sp.startsWith('@')) {
+    const past = resolvePastPath(ctx, sp);
+    src = past.abs;
+    srcTitle = '（来自「' + past.title + '」）';
+  } else {
+    src = resolveInTask(ctx.taskDir, sp);
+  }
+  if (path.resolve(src) === path.resolve(dst)) throw new Error('源与目标是同一个路径');
+  let lst;
+  try {
+    lst = await fsp.lstat(src);
+  } catch (_) {
+    throw new Error('源不存在：' + sp + (sp.startsWith('@') ? '（历史会话目录以 list_directory 实际列举为准）' : ''));
+  }
+  if (lst.isSymbolicLink()) throw new Error('源是符号链接，拒绝拷贝（防沿链接跳出任务目录）：' + sp);
+  let budget = null;
+  if (lst.isFile()) {
+    if (lst.size > COPY_MAX_BYTES) throw new Error('源文件 ' + Math.round(lst.size / 1048576) + ' MB，超过单次 ' + Math.round(COPY_MAX_BYTES / 1048576) + ' MB 上限');
+  } else if (lst.isDirectory()) {
+    budget = await walkCopyBudget(src);
+  } else {
+    throw new Error('源不是普通文件或目录：' + sp);
+  }
+  let exists = true;
+  try { await fsp.stat(dst); } catch (_) { exists = false; }
+  if (exists) throw new Error('目标已存在，拒绝覆盖：' + relOf(ctx.taskDir, dst) + '（换个目标名，或先 terminal 删除本会话的同名旧物）');
+  await fsp.mkdir(path.dirname(dst), { recursive: true });
+  await fsp.cp(src, dst, { recursive: true });
+  recordFile(ctx, dst); // 文件表只记普通文件（目录自然跳过），供前端/微信附件展示
+  const sizeNote = budget ? '（' + budget.files + ' 个文件，' + Math.round(budget.bytes / 1024) + ' KB）' : '';
+  return '已复制 ' + sp + srcTitle + ' → ' + relOf(ctx.taskDir, dst) + sizeNote;
 }
 
 async function toolWriteFile(ctx, args) {
@@ -1382,25 +1525,16 @@ async function toolHandoff(ctx, args) {
   return '已接收交接（reason: ' + reason + '），本批工具跑完后系统将切换到执行阶段。';
 }
 
-// recall：长期记忆（工作日记）的回忆入口（定稿 B 方案：极简三 op，描述短不挤占工具位）。
-// 日记按会话收口持久存储（memory.js），开场只注入最近 N 条；更早的条目与某次工作的成果文件由本工具按需取。
-// 只读数据面：仅能碰本用户的日记与会话（id 同用户校验防互探）；link 产出的外链与 mint_public_link 同机制同时效。
+// recall：长期记忆（工作日记）的回忆入口——纯记忆三 op。
+// 日记按会话收口持久存储（memory.js），开场只注入最近 N 条；更早的条目由本工具按需取。
+// 历史成果文件不再归日记管：浏览/导入走 list_directory / copy_path 的 @<会话id>/<路径> 记号
+// （校验单点 resolvePastPath），导入后就是本会话普通文件，read_file/mint 照常处理。
+// 旧 files/link 两 op 是 ls/mint 的沙箱外克隆，已整删（克隆必漂移：link 漏抄 mint 的 realpath 防线）。
 function toolRecall(ctx, args) {
   const op = String(args.op || '').trim().toLowerCase();
   const db = ctx.db;
   const me = db.prepare('SELECT user FROM sessions WHERE id = ?').get(ctx.sessionId);
   const user = String((me && me.user) || '');
-  // files/link 共用：解析并校验目标会话（存在 + 同用户 + id 形态），返回 {sid, title, dir}
-  const resolveSession = () => {
-    const sid = String(args.id || '').trim();
-    if (!/^task-[0-9A-Za-z_\-]+$/.test(sid)) throw new Error('需要 id：日记碎片【编号】里的会话 id（形如 task-YYYYMMDD-NNN）');
-    const s = db.prepare('SELECT id, user, title FROM sessions WHERE id = ?').get(sid);
-    if (!s) throw new Error('会话 ' + sid + ' 不存在（可能已删除）');
-    if (String(s.user || '') !== user) throw new Error('无权访问该会话（非当前用户）');
-    const root = String((ctx.cfg && ctx.cfg.workspace_root) || '');
-    if (!root) throw new Error('workspace_root 未配置');
-    return { sid: sid, title: s.title || sid, dir: path.join(root, sid) };
-  };
   switch (op) {
     case 'search': {
       const q = String(args.query || '').trim();
@@ -1419,41 +1553,15 @@ function toolRecall(ctx, args) {
       const txt = memory.dayEntry(db, user, date);
       return txt ? date + ' 的日记：\n' + txt : date + ' 无日记。';
     }
-    case 'files': {
-      const t = resolveSession();
-      let names = [];
-      try {
-        names = fs.readdirSync(t.dir, { withFileTypes: true })
-          .filter(d => d.isFile() && !d.name.startsWith('.'))
-          .map(d => d.name)
-          .sort();
-      } catch (_) {
-        return '「' + t.title + '」任务目录不存在，无成果文件。';
-      }
-      if (!names.length) return '「' + t.title + '」无成果文件。';
-      const shown = names.slice(0, 80);
-      return '「' + t.title + '」现存文件（顶层 ' + shown.length + (names.length > shown.length ? '/共 ' + names.length : '') + ' 个）：\n'
-        + shown.map(n => '- ' + n).join('\n');
-    }
-    case 'link': {
-      const t = resolveSession();
-      const rel = String(args.path || '').trim();
-      if (!rel) throw new Error('op=link 需要 path（op=files 清单里的文件名）');
-      const abs = resolveInTask(t.dir, rel); // 路径沙箱：只允许该会话任务目录内
-      let st;
-      try { st = fs.statSync(abs); } catch (_) { throw new Error('文件不存在：' + rel + '（先 op=files 看现存清单）'); }
-      if (!st.isFile()) throw new Error('不是普通文件：' + rel);
-      const pl = ctx.cfg && ctx.cfg.public_link;
-      if (!pl || !pl.base_url) throw new Error('public_link 未配置，无法生成外链');
-      return pl.base_url + '/p/' + publicFiles.mint({ sessionId: t.sid, rel: rel, ttlMs: pl.ttl_ms });
-    }
     default:
-      throw new Error('未知的 op："' + op + '"。可用：search（需 query，可选 count）/ days（日期索引）/ day（需 date）/ files（需 id）/ link（需 id+path）');
+      throw new Error('未知的 op："' + op + '"。可用：search（需 query，可选 count）/ days（日期索引）/ day（需 date）。历史会话文件请用 list_directory / copy_path 的 @<会话id>/<路径> 记号');
   }
 }
 
 const HANDLERS = {
   read_file: toolReadFile,
+  list_directory: toolListDirectory,
+  copy_path: toolCopyPath,
   handoff: toolHandoff,
   write_file: toolWriteFile,
   edit_file: toolEditFile,

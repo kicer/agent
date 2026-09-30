@@ -345,7 +345,8 @@ function effectiveTools(profileName) {
 
 // ---------- 阶段（sessions.phase：advising 顾问 / executing 执行） ----------
 // advising：新建会话与「清空」的落点。profile 被 resolveProfileName 强制为 'advising'，
-// 只聊和读不写（write_file/edit_file 不在其 schema，批内幻觉调用也在 runLoopInner 挡下）；
+// 只聊和读不写（write_file/edit_file/copy_path 不在其 schema，批内幻觉调用也在 runLoopInner 挡下；
+// list_directory 在白名单里——顾问翻阅历史目录正当其用）；
 // 唯一出口 = handoff 工具成功返回（brief 由 handler 落盘任务目录根 task.md，见 tools/executor.js）。
 // executing：一路走到底，只有清空才回 advising；压缩不碰 phase（压完仍回原模式）。
 
@@ -783,7 +784,7 @@ async function runLoopInner(sessionId, run) {
         output = chk.error;
         isError = true;
       } else if (session.phase === 'advising'
-          && (tc.function.name === 'write_file' || tc.function.name === 'edit_file')) {
+          && (tc.function.name === 'write_file' || tc.function.name === 'edit_file' || tc.function.name === 'copy_path')) {
         // 顾问单入口硬约束：写类工具不在其 schema，但「名单外照跑」是全局策略（executeTool 全表），
         // 幻觉调用会真写文件、绕过出口制造假承诺——阶段契约优先，挡下并指向 handoff。
         output = 'Error: 顾问阶段不能写文件。任务书请通过 handoff 工具的 brief 参数提交。';
