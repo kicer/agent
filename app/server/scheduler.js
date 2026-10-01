@@ -164,6 +164,7 @@ function fireNotify(t, status, errNote) {
     }
     Promise.resolve(notify({
       user: t.user, channel: t.notify_channel || '', sessionId: t.session_id,
+      status, // notifyTask 的去重闸门用：ok 且会话仍是该通道当前会话 → 回复已实时投递过，不重发
       head: '`' + name + ', ' + status + '`\n---\n',
       text, files, stamp: t.last_run_at || Date.now(),
     })).catch(e => log.warn('scheduler', '任务通知入队失败: ' + (e && e.message || e)));

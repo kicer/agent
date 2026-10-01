@@ -251,7 +251,6 @@ const CHANNEL_NOTE = [
   '本会话来自微信单聊，用户只能收发文本与文件，无可点击界面。',
   '- 交流风格：简短口语化，适配手机阅读；内容较长时整理成文件交付，不刷屏。',
   '- 交付文件：生成文件后，在回复时用mint_public_link给出可公开下载的链接，链接文字保留作兜底。',
-  '- 接收文件：用户发来的文件会自动存入当前工作目录，可直接读取。',
 ].join('\n');
 
 // 开场日记（M2）的角色提示：日记是「你」的记忆，不是用户的新输入——拟人化人格锚点。
@@ -766,7 +765,19 @@ function notifyTask(p) {
     for (const b of db.prepare("SELECT id FROM wechat_bindings WHERE user = ? AND status = 'online'").all(String(p.user || ''))) bids.push(b.id);
   }
   if (!bids.length) return Promise.resolve(); // 无微信通道可发：静默跳过（任务结果网页端仍在）
-  for (const bid of bids) enqueueDelivery(bid, () => sendTaskNotice(bid, p));
+  const sid = String(p.sessionId || '');
+  for (const bid of bids) {
+    // 去重：任务会话此刻仍是该 bid 的当前会话 → 本轮回复已被交互投递链实时送过（attachBus），
+    // ok 通知不再重发；error 时本轮根本没跑起来（实时链上无话可推），照常通知。
+    if (p.status === 'ok' && sid) {
+      const cur = db.prepare('SELECT session_id FROM channel_sessions WHERE channel = ?').get('wx:' + bid);
+      if (cur && String(cur.session_id) === sid) {
+        log.info('wechat', bid + ' 定时任务通知跳过（本会话回复已实时送达）：' + String(p.head || ''));
+        continue;
+      }
+    }
+    enqueueDelivery(bid, () => sendTaskNotice(bid, p));
+  }
   return Promise.resolve();
 }
 
