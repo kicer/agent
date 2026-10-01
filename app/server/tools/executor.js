@@ -9,6 +9,7 @@ const { spawn } = require('child_process');
 const mcp = require('../mcp');
 const skills = require('./skills');
 const Database = require('better-sqlite3'); // db 工具：会话目录下的 data.db（同步 API，与单进程模型契合）
+const TurndownService = require('turndown'); // fetch 工具：HTML→Markdown 用真解析器（内置 htmlparser2，容错截断/畸形文档）
 const rexec = require('../remote-exec');
 const publicFiles = require('../public-files');
 const scheduler = require('../scheduler'); // 只依赖 log/cron-parser，不成环（engine→executor→scheduler 单向）
@@ -804,7 +805,7 @@ function fetchCacheSet(run, key, entry) {
 function fetchWindow(text, off, maxOut, hard, truncated, maxBytes) {
   if (off >= text.length) {
     return '（offset=' + off + ' 超出全文长度 ' + text.length + ' 字符，无内容可读）' +
-      (truncated ? '\n（源响应体超过抓取上限 ' + maxBytes + ' 字节，可用更大 max_bytes 重抓）' : '');
+      (truncated ? '\n（源响应体在 ' + maxBytes + ' 字节处截断，正文尾部缺失；可用更大 max_bytes 重抓）' : '');
   }
   const end = Math.min(text.length, off + maxOut);
   let out = text.slice(off, end);
@@ -812,7 +813,7 @@ function fetchWindow(text, off, maxOut, hard, truncated, maxBytes) {
     out += '\n\n（已截断：全文 ' + text.length + ' 字符，本段 ' + off + '–' + end + '。' +
       '续读传 offset=' + end + '（不重新下载）；单段可传 max_chars 放大，硬帽 ' + hard + '）';
   }
-  if (truncated) out += '\n（源响应体超过抓取上限 ' + maxBytes + ' 字节，内容末尾可能不完整）';
+  if (truncated) out += '\n（源响应体在 ' + maxBytes + ' 字节处截断，正文尾部缺失，并非解析错误；传更大 max_bytes 重抓可拿完整正文）';
   return out;
 }
 
@@ -920,7 +921,15 @@ async function toolFetch(ctx, args) {
       try { text = new TextDecoder(charset, { fatal: false }).decode(buf); }
       catch (_) { text = buf.toString('utf8'); }
     }
-    let body = ct.includes('html') ? htmlToMarkdown(text) : text;
+    let body;
+    if (ct.includes('html')) {
+      // DOM 树内存约为原始字节的 3–5 倍：超解析硬帽不再做 DOM 解析，降级轻量剥标签——脏但别空手而归。
+      body = buf.length > HTML_PARSE_HARD_CAP
+        ? '[响应体超解析上限 ' + HTML_PARSE_HARD_CAP + ' 字节，已降级为剥标签纯文本]\n\n' + fallbackStripHtml(text)
+        : htmlToMarkdown(text, cur); // base=重定向终址：链接绝对化的根
+    } else {
+      body = text;
+    }
     // 字节截断可能切在多字节字符中间，尾部的 U+FFFD 是噪音，去掉。
     if (truncated) body = body.replace(/\uFFFD+$/, '');
     const win = fetchWindow(body, off, maxOut, hard, truncated, maxBytes);
@@ -944,63 +953,92 @@ async function toolFetch(ctx, args) {
   }
 }
 
-// 单遍实体解码：旧版链式 replace 会把 &amp;lt; 双重解码成 <；HTML5 全量表 2000+ 条，
-// 这里只收网页文本真正常见的命名实体，数字实体（十进制/十六进制）通吃，认不出的原样保留。
-const HTML_ENTITIES = {
-  nbsp: ' ', ensp: '\u2002', emsp: '\u2003', thinsp: '\u2009', zwnj: '\u200c', zwj: '\u200d', shy: '\u00ad',
-  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
-  copy: '\u00a9', reg: '\u00ae', trade: '\u2122', deg: '\u00b0', hellip: '\u2026',
-  mdash: '\u2014', ndash: '\u2013', lsquo: '\u2018', rsquo: '\u2019', sbquo: '\u2018',
-  ldquo: '\u201c', rdquo: '\u201d', bdquo: '\u201e', laquo: '\u00ab', raquo: '\u00bb',
-  lsaquo: '\u2039', rsaquo: '\u203a', prime: '\u2032', Prime: '\u2033', bull: '\u2022', middot: '\u00b7',
-  times: '\u00d7', divide: '\u00f7', plusmn: '\u00b1', frac12: '\u00bd', frac14: '\u00bc', frac34: '\u00be',
-  sup1: '\u00b9', sup2: '\u00b2', sup3: '\u00b3', micro: '\u00b5', para: '\u00b6', sect: '\u00a7',
-  dagger: '\u2020', Dagger: '\u2021', permil: '\u2030',
-  euro: '\u20ac', pound: '\u00a3', yen: '\u00a5', cent: '\u00a2', curren: '\u00a4',
-  agrave: '\u00e0', aacute: '\u00e1', acirc: '\u00e2', atilde: '\u00e3', auml: '\u00e4', aring: '\u00e5', ccedil: '\u00e7',
-  egrave: '\u00e8', eacute: '\u00e9', ecirc: '\u00ea', euml: '\u00eb',
-  igrave: '\u00ec', iacute: '\u00ed', icirc: '\u00ee', iuml: '\u00ef',
-  ograve: '\u00f2', oacute: '\u00f3', ocirc: '\u00f4', otilde: '\u00f5', ouml: '\u00f6',
-  ugrave: '\u00f9', uacute: '\u00fa', ucirc: '\u00fb', uuml: '\u00fc',
-  yacute: '\u00fd', yuml: '\u00ff', ntilde: '\u00f1', szlig: '\u00df',
-  ne: '\u2260', le: '\u2264', ge: '\u2265', infin: '\u221e', sup: '\u2283', sub: '\u2286',
-};
-function decodeEntities(s) {
-  return s.replace(/&#x([0-9a-f]+);|&#(\d+);|&([a-zA-Z][a-zA-Z0-9]*);/gi, (m, hx, dec, name) => {
-    try {
-      if (hx) return String.fromCodePoint(parseInt(hx, 16));
-      if (dec) return String.fromCodePoint(parseInt(dec, 10));
-      // hasOwnProperty：防 &constructor; 这类名字踩到原型链。
-      return Object.prototype.hasOwnProperty.call(HTML_ENTITIES, name) ? HTML_ENTITIES[name] : m;
-    } catch (_) { return m; } // 码点越界等原样保留
+// ---------- HTML → Markdown 转换（turndown：真 DOM 解析器） ----------
+// 为什么不再用正则剥标签：截断的 HTML 让正则方案必然漏——缺 </script> 时 [\s\S]*?<\/\1>
+// 整体失配，半截 JS 源码会当正文漏出；未闭合的开标签残片同理穿过 <[^>]+> 掉进正文。
+// turndown 内置 htmlparser2 按容错规则建树：EOF 前的残文统一归进 script 节点、随节点丢弃。
+// 剥壳/标题/链接绝对化全走 DOM 谓词，不碰字符串；实体解码由解析器完成（decodeEntities 表删）。
+// DOM 树内存约为原始字节的 3–5 倍：响应体超解析硬帽时不做 DOM 解析，降级轻量剥标签（脏但不空手而归）。
+const HTML_PARSE_HARD_CAP = 10 * 1024 * 1024;
+
+// 页面外壳标签：正文密度低于信噪比门槛，整块丢。head 不在列——title 子节点还要靠它产出
+// 首行标题，其余 head 子节点（meta/link/base/style/script）已各自在列。
+const HTML_CHROME_TAGS = new Set([
+  'script', 'style', 'noscript', 'svg', 'template', 'nav', 'header', 'footer', 'aside',
+  'form', 'iframe', 'button', 'input', 'select', 'textarea', 'label', 'meta', 'link', 'base',
+]);
+// class/id 启发式限定块级容器：不限标签会连坐删掉 <p class="comment-text"> 这类正文。
+// 子串匹配保留旧版口径（navbar/comments/ad-slot 等变体都命中），接受误杀换召回。
+const HTML_CHROME_CONTAINERS = new Set(['div', 'section', 'article', 'ul', 'ol', 'main']);
+const HTML_CHROME_CLASS_ID =
+  /nav|menu|sidebar|breadcrumb|comment|footer|related|banner|promo|advert|popup|share|subscribe|masthead|cookie|social|toolbar/i;
+
+// turndown 的 htmlparser2 不规格化属性名大小写（CLASS= 在 attribs 里就是 CLASS），且 domhandler
+// 的 getAttribute 按精确键查 → 大小写不敏感地扫一遍（标签名不受影响，解析时已统一小写）。
+function domAttr(node, name) {
+  const a = node.attribs || {};
+  if (a[name] != null) return a[name];
+  for (const k in a) { if (k.toLowerCase() === name) return a[k]; }
+  return '';
+}
+
+// 每次抓取新建实例：链接绝对化要把本次重定向后的终址闭进规则，共享单例会被并发抓取互踩；
+// 构造成本可忽略，解析才是大头。
+function makeTurndown(baseUrl) {
+  const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', hr: '---', bulletListMarker: '-' });
+  td.remove((node) => {
+    if (!node || node.nodeType !== 1) return false;
+    const tag = String(node.nodeName).toLowerCase();
+    if (HTML_CHROME_TAGS.has(tag)) return true;
+    if (!HTML_CHROME_CONTAINERS.has(tag)) return false;
+    return HTML_CHROME_CLASS_ID.test(domAttr(node, 'class') + ' ' + domAttr(node, 'id'));
   });
+  // <title> → 首行标题（对齐旧版“剥 head 前先取 title”的意图：一行标题是性价比最高的页面身份）。
+  td.addRule('pageTitle', {
+    filter: 'title',
+    replacement: (content) => (content.trim() ? '\n\n# ' + content.trim() + '\n\n' : ''),
+  });
+  // 相对 href/src 绝对化（对重定向后的终址）：相对路径对模型是死链，抓回的 Markdown 里链接
+  // 能直接当下一次 fetch 的参数，是换解析器白拿的最大收益。带 scheme 的（含 mailto/data）原样留。
+  const abs = (raw) => {
+    if (!raw) return '';
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return raw;
+    try { return new URL(raw, baseUrl).href; } catch (_) { return raw; }
+  };
+  td.addRule('absLink', {
+    filter: (node) => node.nodeType === 1 && String(node.nodeName).toLowerCase() === 'a' && !!domAttr(node, 'href'),
+    replacement: (content, node) => '[' + content + '](' + abs(domAttr(node, 'href')) + ')',
+  });
+  td.addRule('absImage', {
+    filter: (node) => node.nodeType === 1 && String(node.nodeName).toLowerCase() === 'img',
+    replacement: (content, node) => {
+      const src = domAttr(node, 'src');
+      if (!src || /^data:/i.test(src)) return ''; // base64 内联图对模型是纯噪音
+      const alt = domAttr(node, 'alt').replace(/[[\]]/g, ' '); // ] 会提前闭合 markdown 链接
+      return '![' + alt + '](' + abs(src) + ')';
+    },
+  });
+  return td;
 }
 
-function htmlToMarkdown(html) {
-  // 标题在剥 head 之前取：head 整块删后页面身份只剩正文，一行标题是性价比最高的上下文。
-  const tm = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  const title = tm ? decodeEntities(strip(tm[1])).trim() : '';
-  let s = html
-    .replace(/<(script|style|noscript|svg|head)[\s\S]*?<\/\1>/gi, '')
-    // 语义样板整块剥：导航/页眉/页脚/侧栏/表单这类页壳的正文密度普遍低于信噪比门槛。
-    .replace(/<(nav|header|footer|aside|form)[\s\S]*?<\/\1>/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    // class/id 命样板词的分块：按启发式整块丢（子串匹配，覆盖 navbar/comments/ad-slot 等变体；
-    // 同名标签嵌套时惰匹配只删到第一个闭标签，与既有剥除同样接受不完美）。
-    .replace(/<(div|section|ul|ol|article)\b[^>]*\b(?:class|id)\s*=\s*["'][^"']*(?:nav|menu|sidebar|breadcrumb|comment|footer|related|banner|promo|advert|popup|share|subscribe|masthead|cookie|social|toolbar)[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi, '');
-  s = s
-    .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (m, lv, t) => '\n' + '#'.repeat(Number(lv)) + ' ' + strip(t).trim() + '\n')
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (m, t) => '\n- ' + strip(t).trim())
-    .replace(/<a[^>]*href=["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/a>/gi, (m, href, t) => '[' + strip(t).trim() + '](' + href + ')')
-    .replace(/<(br|hr)[^>]*>/gi, '\n')
-    .replace(/<\/(p|div|section|article|tr|ul|ol|table|blockquote)>/gi, '\n')
-    .replace(/<[^>]+>/g, '');
-  // 实体解码放在剥标签之后：&lt;p&gt; 这类转义文本不会被当成标签剥掉。
-  const body = decodeEntities(s).replace(/\n{3,}/g, '\n\n').trim();
-  return (title ? '# ' + title + '\n\n' : '') + body;
+function htmlToMarkdown(html, baseUrl) {
+  try {
+    return makeTurndown(baseUrl).turndown(html).replace(/\n{3,}/g, '\n\n').trim();
+  } catch (_) {
+    return fallbackStripHtml(html); // 容错解析是概率性描述不是保证：极端脏数据下宁可脏也不能空
+  }
 }
 
-function strip(s) { return s.replace(/<[^>]+>/g, ''); }
+// 降级路径（解析抛异常/超解析硬帽）：不建 DOM 的轻量剥标签。截断的 script/style 连行尾（$）
+// 一起吞，防 JS 体漏成正文；实体不处理，降级产物本就声明了不可靠。
+function fallbackStripHtml(html) {
+  return html
+    .replace(/<(script|style)[\s\S]*?(?:<\/\1>|$)/gi, '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 function recordFile(ctx, abs) {
   try {
