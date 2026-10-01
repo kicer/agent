@@ -799,22 +799,23 @@ function fetchCacheSet(run, key, entry) {
   while (run.fetchCache.size > 3) run.fetchCache.delete(run.fetchCache.keys().next().value);
 }
 
-// 从全文切 [off, off+maxOut) 窗，尾部拼续读提示；窗内无内容单独说明。
-// 字节级截断（truncated）时本地「全文」本身就不完整，如实告知末尾可能缺失，
-// 避免模型对着不完整文本用 offset 无限续读。
-function fetchWindow(text, off, maxOut, hard, truncated, maxBytes) {
+// 从全文切 [off, off+maxOut) 窗。窗外的元信息统一收进「空行 + --- 分隔线 + 单行方括号」块，
+// 与正文视觉断开；只陈述事实（截断位置、续读游标），用法教学归工具描述，这里不重复。
+// 字节级截断（truncated）时本地「全文」本身就不完整，如实告知末尾缺失，避免模型无限续读。
+function fetchWindow(text, off, maxOut, truncated, maxBytes) {
+  let out = '';
+  const notes = [];
   if (off >= text.length) {
-    return '（offset=' + off + ' 超出全文长度 ' + text.length + ' 字符，无内容可读）' +
-      (truncated ? '\n（源响应体在 ' + maxBytes + ' 字节处截断，正文尾部缺失；可用更大 max_bytes 重抓）' : '');
+    notes.push('offset=' + off + ' 超出全文 ' + text.length + ' 字符');
+  } else {
+    const end = Math.min(text.length, off + maxOut);
+    out = text.slice(off, end);
+    if (end < text.length) notes.push('全文 ' + text.length + ' 字符，续读 offset=' + end);
   }
-  const end = Math.min(text.length, off + maxOut);
-  let out = text.slice(off, end);
-  if (end < text.length) {
-    out += '\n\n（已截断：全文 ' + text.length + ' 字符，本段 ' + off + '–' + end + '。' +
-      '续读传 offset=' + end + '（不重新下载）；单段可传 max_chars 放大，硬帽 ' + hard + '）';
-  }
-  if (truncated) out += '\n（源响应体在 ' + maxBytes + ' 字节处截断，正文尾部缺失，并非解析错误；传更大 max_bytes 重抓可拿完整正文）';
-  return out;
+  if (truncated) notes.push('源响应体截断于 ' + maxBytes + ' 字节，尾部缺失');
+  if (!notes.length) return out;
+  // 前置空行：防“HTTP 200\n---”被 Markdown 解析成 setext 标题。
+  return out + '\n\n---\n[' + notes.join(' · ') + ']';
 }
 
 function charsetOf(ct) {
@@ -869,7 +870,7 @@ async function toolFetch(ctx, args) {
   const hit = fetchCacheGet(ctx.run, url);
   if (hit) {
     return truncate('HTTP ' + hit.status + '\n' +
-      fetchWindow(hit.text, off, maxOut, hard, hit.byteTruncated, maxBytes), 1024 * 1024);
+      fetchWindow(hit.text, off, maxOut, hit.byteTruncated, maxBytes), 1024 * 1024);
   }
 
   const ctrl = new AbortController();
@@ -925,14 +926,14 @@ async function toolFetch(ctx, args) {
     if (ct.includes('html')) {
       // DOM 树内存约为原始字节的 3–5 倍：超解析硬帽不再做 DOM 解析，降级轻量剥标签——脏但别空手而归。
       body = buf.length > HTML_PARSE_HARD_CAP
-        ? '[响应体超解析上限 ' + HTML_PARSE_HARD_CAP + ' 字节，已降级为剥标签纯文本]\n\n' + fallbackStripHtml(text)
+        ? '---\n[超解析硬帽 ' + HTML_PARSE_HARD_CAP + ' 字节，降级剥标签]\n\n' + fallbackStripHtml(text)
         : htmlToMarkdown(text, cur); // base=重定向终址：链接绝对化的根
     } else {
       body = text;
     }
     // 字节截断可能切在多字节字符中间，尾部的 U+FFFD 是噪音，去掉。
     if (truncated) body = body.replace(/\uFFFD+$/, '');
-    const win = fetchWindow(body, off, maxOut, hard, truncated, maxBytes);
+    const win = fetchWindow(body, off, maxOut, truncated, maxBytes);
     // 窗后本地还有未读内容才缓存（续读场景）；一窗吃下全文的不值得存。
     if (off + maxOut < body.length) {
       fetchCacheSet(ctx.run, url, { status: res.status, text: body, byteTruncated: truncated });
