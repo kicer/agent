@@ -151,7 +151,7 @@ function cachedDecodeBlocks(session, row) {
 // profile：本轮生效的 prompt+tools 组合名（model_profiles，见 engine.resolveProfileName），
 // 空 = 默认全量组合。
 // withProfile=false 时跳过画像快照注入（压缩回合专用，见 compressMessages）。
-function buildMessages(session, language, mintUrl, profile, withProfile) {
+function buildMessages(session, language, mintUrl, profile, withProfile, trimOn) {
   const messages = [{ role: 'system', content: systemPromptText(language, profile) }];
   // 用户画像快照（sessions.profile_snapshot，建会话/清空时冻结，见 user-profile.js）：
   // 作为 system 后首条 user 注入，会话内字节恒定不破坏前缀缓存；
@@ -162,6 +162,25 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
   if (session.blocksCache && session.blocksCache.size > history.length) {
     const ids = new Set(history.map(r => r.id));
     for (const k of Array.from(session.blocksCache.keys())) if (!ids.has(k)) session.blocksCache.delete(k);
+  }
+  // 裁剪预扫：① 每行距尾的 assistant 轮数（从尾往头扫）；② tool_call id → function
+  // （给 fetch/read_file 占位回填 url/path）。trimOn=false 时整个跳过（压缩回合）。
+  const trimActive = trimOn !== false && (TRIM.writeRounds > 0 || TRIM.resultRounds > 0);
+  const roundsAfter = new Map();
+  const callById = new Map();
+  if (trimActive) {
+    let n = 0;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const r = history[i];
+      roundsAfter.set(r.id, n);
+      if (r.role === 'assistant' && r.type !== 'archived' && r.type !== 'errAck') n++;
+    }
+    if (TRIM.resultRounds > 0) {
+      for (const r of history) {
+        if (r.role !== 'assistant' || !r.tool_calls) continue;
+        try { for (const c of JSON.parse(r.tool_calls) || []) if (c && c.id && c.function) callById.set(c.id, c.function); } catch (_) {}
+      }
+    }
   }
   // tool 回执按 tool_call_id 索引：给 errAck 行拼错误提示时取执行时挡下的原因
   const toolRowById = new Map();
@@ -225,7 +244,10 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
         return;
       }
       const m = { role: 'assistant', content: row.content || '' };
-      if (row.tool_calls) m.tool_calls = JSON.parse(row.tool_calls);
+      if (row.tool_calls) {
+        m.tool_calls = JSON.parse(row.tool_calls);
+        if (trimActive && TRIM.writeRounds > 0) trimWriteCalls(m.tool_calls, roundsAfter.get(row.id) || 0);
+      }
       if (!m.content) delete m.content;
       messages.push(m);
       return;
@@ -271,6 +293,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
       }
     }
     if (row.role === 'tool') {
+      if (trimActive && typeof content === 'string') content = trimToolContent(content, row, callById, roundsAfter);
       messages.push({ role: 'tool', tool_call_id: row.tool_call_id, name: row.name, content });
     } else {
       messages.push({ role: row.role, content });
@@ -292,6 +315,51 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
   return messages;
 }
 
+// ---------- 重负载占位裁剪（历史重放省 token） ----------
+// fetch/read_file 回执与 write_file 参数正文是重放里最贵的存量，且都可再生：文件在盘上、
+// 页面可重抓；write 参数只是当时快照（后续 edit_file 一次就失真，本就不该被当现势引用）。
+// 组装请求时对「距尾 ≥N 个 assistant 轮」的行换单行占位：纯函数、DB 不动（UI 工具卡照旧
+// 可展全量）、与压缩归档正交（archived 行本来就不进模型）。距离按现存行数 assistant 轮：
+// 删中间消息可让已占位行短暂复活全文（一次性断前缀缓存，与图片消费 i<lastAssistant 同一
+// 语义，接受）。阈值可配（config agent.trim_write_rounds / trim_result_rounds，0=关），
+// 启动时 setPayloadTrim 注入。
+let TRIM = { writeRounds: 1, resultRounds: 2 };
+const TRIM_MIN_CHARS = 600; // 短正文不裁：占位行自身成本接近原文，裁了反而胀
+function setPayloadTrim(agentCfg) {
+  const a = agentCfg || {};
+  const toN = (v, d) => { const n = Math.floor(Number(v)); return Number.isFinite(n) ? Math.max(0, n) : d; };
+  TRIM = { writeRounds: toN(a.trim_write_rounds, 1), resultRounds: toN(a.trim_result_rounds, 2) };
+}
+// write_file 参数占位：只洗 content，path 留着（模型回看自己发言时知道文件在哪）；
+// 改写的是已 parse 的副本，DB 行不动；arguments 重新 stringify 保持 JSON 合法。
+function trimWriteCalls(calls, rounds) {
+  if (rounds < TRIM.writeRounds) return;
+  for (const c of calls || []) {
+    if (!c || !c.function || c.function.name !== 'write_file') continue;
+    let args;
+    try { args = JSON.parse(c.function.arguments || ''); } catch (_) { continue; }
+    if (!args || typeof args.content !== 'string' || args.content.length < TRIM_MIN_CHARS) continue;
+    args.content = '[正文省略：本调用已写入 ' + String(args.path || '') + '，' + args.content.length + ' 字]';
+    c.function.arguments = JSON.stringify(args);
+  }
+}
+// fetch/read_file 回执占位：url/path 从对应 tool_call 参数回填（回执行自身不存调用目标），
+// 占位行里留目标就是留恢复指针。图片回执（blocks 非空）不碰：已有自己的消费省略逻辑。
+function trimToolContent(content, row, callById, roundsAfter) {
+  if (TRIM.resultRounds <= 0 || content.length < TRIM_MIN_CHARS) return content;
+  if ((roundsAfter.get(row.id) || 0) < TRIM.resultRounds) return content;
+  const fn = callById.get(row.tool_call_id);
+  const name = row.name || (fn && fn.name) || '';
+  if (name !== 'fetch' && name !== 'read_file') return content;
+  let arg = {};
+  try { arg = JSON.parse((fn && fn.arguments) || '{}') || {}; } catch (_) {}
+  if (name === 'fetch') {
+    const hm = /^HTTP (\d{3})/.exec(content);
+    return '[fetch 省略：' + String(arg.url || '?') + (hm ? '｜HTTP ' + hm[1] : '') + '｜原 ' + content.length + ' 字]';
+  }
+  return '[read_file 省略：' + String(arg.path || '?') + '｜原 ' + content.length + ' 字]';
+}
+
 // 拼压缩回合的 messages（参考 titleMessages 的拼法）：默认 system prompt + 正常历史
 //（与 buildMessages 同取舍：archived 不发、旧摘要/工具轮照常），末尾追加一条 user
 //（compress-prompt.txt 原文，历史就在它前面的 messages 里，不再填占位符）。
@@ -300,7 +368,8 @@ function buildMessages(session, language, mintUrl, profile, withProfile) {
 // 无需烧进摘要；一旦模型把画像转述进摘要，摘要会以 type='summary' 落库，
 // 再经 titleMessages（只排 archived）混进标题生成的输入里。
 function compressMessages(session, language, mintUrl, profile) {
-  const messages = buildMessages(session, language, mintUrl, profile, false);
+  // trim 显式关：摘要需要 fetch/read 的原料原文，且压缩是一次性成本，省它得不偿失。
+  const messages = buildMessages(session, language, mintUrl, profile, false, false);
   messages.push({ role: 'user', content: COMPRESS_PROMPT_TEMPLATE });
   return messages;
 }
@@ -556,4 +625,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setPayloadTrim, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages };

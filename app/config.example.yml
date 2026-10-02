@@ -53,6 +53,8 @@ agent:
   max_retries: 2                                   # 上游失败重试次数
   language: "Simplified Chinese"                   # 强制回复语言；留空不限
   auto_compress_tokens: 60000                      # In token 超此值弹「自动压缩」提议；0=关
+  trim_write_rounds: 1                             # 历史重放裁剪：write_file 参数正文距尾 ≥N 个 assistant 轮换单行占位（0=关；DB/UI 不动，盘上可重读）
+  trim_result_rounds: 2                            # fetch/read_file 回执正文距尾 ≥N 个 assistant 轮换单行占位（0=关；占位留 url/path 作恢复指针）
   auto_complete_ms: 1800000                        # 保持中(held)超此时长自动收口为已完成；0=关（纯状态动作，历史/模型绑定不动）
 
 # 长期记忆（日记，memory.js）：收口时一条几十字第一人称碎片入当日条目；存储默认永久，旧记忆靠回忆下钻

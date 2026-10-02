@@ -18,6 +18,7 @@ const log = require('./log');
 
 const cfg = loadConfig(process.env.AGENT_CONFIG);
 log.setLevel(cfg.log_level); // 分级日志开关(log.js;config.yml log_level,重启生效)
+llm.setPayloadTrim(cfg.agent); // 历史重放的重负载占位裁剪阈值（llm.buildMessages；config agent.trim_*）
 const db = initDb(cfg.db_path);
 const bus = createBus();
 
