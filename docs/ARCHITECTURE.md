@@ -680,7 +680,7 @@ sequenceDiagram
 
 ### 11.4 加一个模型 / 平台
 
-改 `config.yml` 的 `platforms`：加新平台 `{name, url, type, keys:[{api_key, models:[{id, display_name, vision?, enable?, extra_params?, thinking_params?}]}]}`，**或**在已有平台加新 key/新 model。重启生效。`enable: false` 的模型不进模型池。小模型可加 `profile: <名>` 引用顶层 `model_profiles` 的 prompt+tools 组合（见 §5.8）。
+改 `config.yml` 的 `platforms`：加新平台 `{name, url, type, keys:[{api_key, models:[{id, display_name, vision?, enable?, extra_params?, thinking_params?}]}]}`，**或**在已有平台加新 key/新 model。重启生效。`enable: false` 的模型不进模型池；`vision` 缺省开启（现在模型基本都带视觉），不支持的模型显式配 `vision: false`。小模型可加 `profile: <名>` 引用顶层 `model_profiles` 的 prompt+tools 组合（见 §5.8）。
 
 模型内部唯一键 = `平台名/模型id`（用于历史回绑、token 用量统计）—— **重命名平台等于重建其下所有模型**。
 

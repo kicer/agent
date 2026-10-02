@@ -1155,7 +1155,7 @@
     $('mpe-title').textContent = add ? '新增平台' : '编辑平台';
     $('mpe-name').value = add ? '' : (p.name || '');
     $('mpe-url').value = add ? '' : (p.url || '');
-    if (add) { pfEdit.keys.push({ ref: null, api_key: '' }); pfEdit.models.push({ ref: null, id: '', vision: false, enable: true }); }
+    if (add) { pfEdit.keys.push({ ref: null, api_key: '' }); pfEdit.models.push({ ref: null, id: '', vision: true, enable: true }); }
     $('mpe-del-btn').classList.toggle('hidden', add);
     renderPfRows();
     $('model-edit-modal').classList.remove('hidden');
@@ -1191,7 +1191,7 @@
     $('mpe-models').innerHTML = pfEdit.models.map(pfModelsRowHtml).join('') || '<div class="model-group-empty">至少保留一个模型</div>';
   }
   function addPfKey() { if (!pfEdit) return; pfEdit.keys.push({ ref: null, api_key: '' }); renderPfRows(); }
-  function addPfModel() { if (!pfEdit) return; pfEdit.models.push({ ref: null, id: '', vision: false, enable: true }); renderPfRows(); }
+  function addPfModel() { if (!pfEdit) return; pfEdit.models.push({ ref: null, id: '', vision: true, enable: true }); renderPfRows(); }
   function delPfKey(i) {
     if (!pfEdit) return;
     if (pfEdit.keys.length <= 1) return toast('至少保留一个 Key');
@@ -1244,7 +1244,7 @@
       } else {
         const id = String(r.id || '').trim();
         const nv = { id };
-        if (r.vision) nv.vision = true;
+        if (r.vision === false) nv.vision = false; // 后端缺省已改 true：勾上靠缺省不落键，取消勾选必须显式写 false
         if (r.enable === false) nv.enable = false;
         edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'models'], value: nv });
       }
@@ -1278,7 +1278,7 @@
           models: pfEdit.models.map(r => {
             const id = String(r.id).trim();
             const nv = { id };
-            if (r.vision) nv.vision = true;
+            if (r.vision === false) nv.vision = false; // 同上：缺省 true，只在取消勾选时显式落键
             if (r.enable === false) nv.enable = false;
             return nv;
           }),

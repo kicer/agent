@@ -171,7 +171,7 @@ function migrateLegacyModels(models) {
       byKey.set(gk, p);
       groups.push(p);
     }
-    p.models.push({ id: m.id, display_name: m.display_name || m.id, vision: m.vision === true });
+    p.models.push({ id: m.id, display_name: m.display_name || m.id, vision: m.vision !== false });
   }
   return groups;
 }
@@ -217,7 +217,7 @@ function normalizePlatforms(rawPlatforms, profileNames) {
       models.push({
         id: String(m.id),
         display_name: m.display_name ? String(m.display_name) : String(m.id), // 缺省 = id
-        vision: m.vision === true, // 支持时 read_file 读图会回传图片内容
+        vision: m.vision !== false, // 缺省支持（现在模型基本都带视觉）；不支持时配 vision: false 显式关——关后 read_file 读图不回传像素
         enable: m.enable !== false, // 选填，默认启用；禁用后不进模型池，不参与分配/绑定（重启生效）
         // 选填：模型特有的请求体参数对象。发往上游时整体合并进 body 顶层。
         extra_params: (m.extra_params && typeof m.extra_params === 'object' && !Array.isArray(m.extra_params)) ? m.extra_params : {},
