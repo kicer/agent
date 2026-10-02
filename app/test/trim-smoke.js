@@ -34,9 +34,12 @@ msgs = llm.buildMessages({ history: rows.slice(0, 5), profile_snapshot: '', bloc
 assert(msgs.find(m => m.role === 'tool' && m.tool_call_id === 'c1').content.length > 7000, 'fetch 距尾 1 轮应保留');
 assert.strictEqual(JSON.parse(msgs.filter(m => m.tool_calls).pop().tool_calls[0].function.arguments).content.length, 12000, 'write 参数距尾 0 轮应保留');
 
-// C) 压缩回合不裁
+// C) 压缩回合与常规拼装字节同构，仅尾部多一条指令（前缀缓存铁律）
+const normal = llm.buildMessages(session(), 'Simplified Chinese', null, null);
 const cm = llm.compressMessages(session(), 'Simplified Chinese', null, null);
-assert(cm.find(m => m.role === 'tool' && m.tool_call_id === 'c1').content.length > 7000, '压缩回合保留原文');
+assert(cm.length === normal.length + 1, '压缩=常规+尾指令');
+assert(JSON.stringify(cm.slice(0, -1)) === JSON.stringify(normal), '前缀字节同构');
+assert(/compact|concise/.test(cm.at(-1).content), '尾指令在位');
 
 // D) read_file 回执同款
 const r3orig = rows[2];

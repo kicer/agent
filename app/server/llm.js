@@ -367,18 +367,14 @@ function trimToolContent(content, row, callById, roundsAfter) {
 //（与 buildMessages 同取舍：archived 不发、旧摘要/工具轮照常），末尾追加一条 user
 //（prompt-compress.txt 原文，历史就在它前面的 messages 里，不再填占位符）。
 // 调用方（engine.runLoopInner 的 compressing 分支）需同时不传 tools。
-// 不注入画像快照（withProfile=false）：画像是每轮瞬态注入的，压缩后照常带上，
-// 无需烧进摘要；一旦模型把画像转述进摘要，摘要会以 type='summary' 落库，
-// 再经 titleMessages（summary 在白名单内）混进标题生成的输入里。
-// 不进压缩的注入行：跨会话/系统噪音。memory_note 是近几天开场日记——当时事实已陈旧，喂给摘要
-// 会被当本会话内容、且每轮压缩滚雪球（engine 的 JOURNAL_SKIP_TYPES 同虑）；scheduler_note/
-// errAck/旧 summarize_request 同理非正文。channel_note 刻意保留：压缩落库会存档全部行，
-// 微信约束只能靠摘要转世；task_brief/summary 是会话本体，照常进。
-const COMPRESS_SKIP_TYPES = new Set(['memory_note', 'scheduler_note', 'errAck', 'summarize_request']);
+// 【缓存铁律】压缩请求必须与上一次常规请求字节同构、只在尾部追加指令：画像快照与
+// 占位裁剪一律照常（不传 withProfile/trim = 同一拼法），也不裁历史中间任何注入行——
+// 从首个被删/被改动行起前缀缓存全断，等于全价重读（旧代码 withProfile=false 把坐在
+// 第 1 条的快照抽掉，比裁历史更隐蔽）。模型把画像转述进摘要无伤大雅：快照本就每轮
+// 瞬态重发，重复几行字换整段缓存命中，划算。标题回合是另一套无缓存最小请求，
+// 才能用白名单狠筛——两套逻辑不可串用。
 function compressMessages(session, language, mintUrl, profile) {
-  const history = (session.history || []).filter(r => !COMPRESS_SKIP_TYPES.has(r.type));
-  // trim 显式关：摘要需要 fetch/read 的原料原文，且压缩是一次性成本，省它得不偿失。
-  const messages = buildMessages({ ...session, history }, language, mintUrl, profile, false, false);
+  const messages = buildMessages(session, language, mintUrl, profile);
   messages.push({ role: 'user', content: COMPRESS_PROMPT_TEMPLATE });
   return messages;
 }
