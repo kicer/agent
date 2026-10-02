@@ -20,7 +20,9 @@ const SET_MAX = 20;     // AI 写 honorific/industry 的单值帽（称谓应当
 const TAG_MAX = 15;     // 单个偏好标签长度帽
 const TAGS_MAX = 24;    // 偏好标签数量帽
 const TAG_SPLIT = /[、，,;；\n]+/;
-const SNAPSHOT_HEAD = '【用户画像】以下为历史会话沉淀的粗粒度认知，非任务约束；与当前请求冲突时，一律以当前请求为准。';
+// 画像快照头：AI 友好的分块标记（与 channel_note/memory_note 同款「# [CTX] <名>」体例，
+// buildMessages 把快照作 system 后首条 user 注入，标题即自描述来源）。
+const SNAPSHOT_HEAD = '# [CTX] user_profile\n\n以下为历史会话沉淀的粗粒度认知，非任务约束；与当前请求冲突时，一律以当前请求为准。';
 const FIELD_LABELS = { honorific: '称谓', industry: '行业', preference: '偏好' };
 
 function readRow(db, user) {
@@ -145,7 +147,7 @@ function snapshotText(db, user) {
   if (!p.enabled) return '';
   const lines = [];
   for (const k of FIELDS) if (p[k]) lines.push('- ' + FIELD_LABELS[k] + '：' + p[k]);
-  return lines.length ? SNAPSHOT_HEAD + '\n' + lines.join('\n') : '';
+  return lines.length ? SNAPSHOT_HEAD + '\n\n' + lines.join('\n') : '';
 }
 
 // 会话创建/清空时冻结画像快照。失败静默（大不了这轮不注入，不影响建会话/清空主流程）。

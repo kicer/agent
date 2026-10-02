@@ -65,7 +65,8 @@ function markJournaled(db, sessionId, ms) {
 }
 
 // ---------- 读：开场注入文本（wechat/web 新会话的数据源） ----------
-// 最近 inject_max 片按事件日优先（同序供 injectedIds/journalFor 共用），渲染分天：新日在前、天内按发生顺序。
+// 最近 inject_max 片按事件日优先（同序供 injectedIds/journalFor 共用），逐片「## id,day」自描述：
+// 新日在前、天内按发生顺序。
 // 选取序单点定义在此（调试 API/页面走 injectedIds 取名单，不另算一套，避免两边错位）。
 const INJECT_ORDER = ' ORDER BY day DESC, created_at DESC';
 // 注入窗名单：与 journalFor 同选取规则的 session_id 列表（调试页打「已注入」标用）。
@@ -76,7 +77,9 @@ function injectedIds(db, cfg, user) {
     'SELECT session_id FROM memory_fragments WHERE user = ?' + INJECT_ORDER + ' LIMIT ?'
   ).all(String(user || ''), cap).map(r => r.session_id);
 }
-function renderFrag(r) { return '【' + r.session_id + '】\n' + r.text; }
+// 渲染逐片自描述：「## id=…, day=…」——新在前、天内按发生顺序；id/day 进标题即机器可读，
+// 分天组头退役。
+function renderFrag(r) { return '## id=' + r.session_id + ', day=' + r.day + '\n' + r.text; }
 function journalFor(db, cfg, user) {
   const cap = injectMax(cfg);
   if (!cap) return '';
@@ -92,7 +95,7 @@ function journalFor(db, cfg, user) {
     if (!g || g.day !== r.day) groups.push({ day: r.day, items: [renderFrag(r)] });
     else g.items.unshift(renderFrag(r));
   }
-  return groups.map(g => '=== ' + g.day + ' ===\n' + g.items.join('\n\n')).join('\n\n');
+  return groups.map(g => g.items.join('\n\n')).join('\n\n');
 }
 
 // ---------- 读：关键词检索（recall 主入口：用户记起的是「一段事」不是「第几条」） ----------
@@ -125,8 +128,9 @@ function searchFragments(db, user, query, count) {
   if (!hits.length) return '';
   hits.sort((a, b) => b.score - a.score || a.i - b.i);
   const shown = hits.slice(0, lim);
+  // 条目自带 day（renderFrag 标题），行内只留相关度不重复日期
   const parts = ['【日记检索】「' + String(query).trim() + '」命中 ' + hits.length + ' 条，按相关度列前 ' + shown.length + ' 条：'];
-  for (const h of shown) parts.push('--- ' + h.r.day + '（' + Math.round(h.score * 100) + '% 匹配）---\n' + renderFrag(h.r));
+  for (const h of shown) parts.push('--- 匹配 ' + Math.round(h.score * 100) + '% ---\n' + renderFrag(h.r));
   return parts.join('\n\n');
 }
 
