@@ -63,7 +63,7 @@ agent/
 │   │   │   ├── profile-default.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
 │   │   │   ├── profile-advising.txt 顾问阶段提示词（内置 profile:advising，phase=advising 时强制命中，见 §4.1）
 │   │   │   ├── prompt-compress.txt 上下文压缩提示词（压缩回合末尾追加为 user 消息，历史照常走 messages）
-│   │   │   └── prompt-title.txt   会话标题自动生成提示词（首次交互结束后触发，{{language}} 填配置语言）
+│   │   │   └── prompt-title.txt   会话标题自动生成提示词（回合结束过门槛触发：本轮有工具，或纯聊≥ 3 正题轮且字数达标；{{language}} 填配置语言）
 │   │   └── public/                前端 H5 SPA（无构建，Vanilla JS 经典脚本多文件 + SSE）
 │   │       ├── index.html         主页（HTML+样式；脚本全部在 js/，按序加载共享全局作用域）
 │   │       ├── login.html         登录页
@@ -554,7 +554,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - `skills.skills_root` —— 缺省取 `workspace_root` 的同级 `skills/`。
 - ~~`model_hold`~~ —— 已废弃（旧版保持租约：held 到期自动释放）；新调度下 key 不独占、不排队，held 不再到期，字段仅为旧配置解析兼容保留。
 - 上下文压缩 —— 无配置项：压缩回合沿用当前 profile 的 system prompt（无 profile = 默认模板）+ 正常历史，末尾追加一条 user（固定模板 `server/templates/prompt-compress.txt` 原文），该回合不传 tools；调整压缩策略直接改该文件。
-- 会话标题自动生成 —— 无配置项：首次交互回合结束（`finalize` 成功分支）后触发，用会话当前 model_id 发一次**不带 system、不传 tools** 的标题请求（历史 user/assistant 原文 + 模板 `server/templates/prompt-title.txt` 作末条 user，`{{language}}` 填 `agent.language`）；结果清洗后写入 `sessions.title` 并 SSE 推 `title` 事件。失败静默（title 仍空，下个回合结束自动重试）；已有标题（建会话时填写或手动重命名）不覆盖。
+- 会话标题自动生成 —— 无配置项：每回合结束（`finalize` 成功分支）过门槛才触发，防「你好」开局把题定了：①本轮真实执行过工具（`run.toolWorked`，errAck 批不算）即立题；②零工具纯聊由历史现推（无计数器，重启/压缩免疫）：非注入 user 正文行（type IS NULL，[CTX] 各段与 task_brief 天然排除）≥3 条且总字数 ≥30。触发后用会话当前 model_id 发一次**不带 system、不传 tools** 的标题请求（历史 user/assistant 原文，注入行不进——`llm.titleMessages` 白名单只留 null/summary/task_brief；末尾追加模板 `server/templates/prompt-title.txt` 作 user，`{{language}}` 填 `agent.language`）；结果清洗后写入 `sessions.title` 并 SSE 推 `title` 事件。失败静默（title 仍空，下个回合结束自动重试）；已有标题（建会话时填写、handoff 顾问自写或手动重命名 title_locked）不覆盖——阶段切换的「过程题→任务书题」升级由 toolHandoff 的 title 参数直写完成，非自动重生成。
 - `auth.users` —— 明文密码配在配置里（自用场景）；`secret` 留空则随机生成（重启掉登录态，建议固定随机串）。
 - `mcp_servers[].enable: false` —— 启动不加载该服务（配置保留），其余工具不受影响。
 - `mcp_servers[].timeout_ms` —— 该服务单次 `tools/call` 的最大等待，默认 60000（夹在 1s~10min）；工具发现/握手用固定 15s，不受本项影响。

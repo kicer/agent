@@ -551,22 +551,36 @@ function finalize(sessionId, run) {
   runs.delete(sessionId);
   bus.emit(sessionId, 'done', { status: 'held' });
   emitStatus(sessionId);
-  maybeGenerateTitle(sessionId, s);
+  maybeGenerateTitle(sessionId, s, run);
   // 定时即下班：本回合创建过定时任务 → done 广播后收口（attachBus 监听已在 done 回调里同步捕获绑定入队投递，
   // 此时删绑定不影响微信本次回复送达）。
   if (run.taskWrap) taskClockOut(sessionId);
 }
 
-// 首次交互结束后自动生成会话标题：fire-and-forget，不阻塞回合收尾。
-// 不带 system prompt：历史 user/assistant 原文 + 末尾一条标题指令 user（见 llm.titleMessages），
-// 用会话当前 model_id 发一次不传 tools 的调用。失败静默（title 仍空，下个回合结束自动重试）。
-function maybeGenerateTitle(sessionId, s) {
+// 自动生成标题：每回合结束（finalize 成功分支）过门槛才触发，fire-and-forget 不阻塞收尾。
+// 门槛（防「你好」开局把题定了）：
+// ① 本轮真实执行过工具（run.toolWorked）→ 立题；
+// ② 零工具纯聊不加计数器、由历史现推（重启/压缩免疫）：非注入 user 正文行（type IS NULL，
+//    天然排掉 [CTX] channel/memory/scheduler 与 task_brief）≥3 条且总字数 ≥30 才立题，
+//    连环「嗯」不算有效对话；不满足等下个 finalize 再判。
+// 不带 system prompt：历史 user/assistant 原文（注入行不进，白名单见 llm.titleMessages）+
+// 末尾一条标题指令 user，用会话当前 model_id 发一次不传 tools 的调用。
+// 失败静默（title 仍空，下个回合结束自动重试）；handoff 时顾问自写的标题占位后不再覆盖。
+function maybeGenerateTitle(sessionId, s, run) {
   try {
     if (s.title) return;
     const modelId = s.model_id;
     if (!modelId || titling.has(sessionId)) return;
+    const history = loadHistory(sessionId);
+    if (!run || !run.toolWorked) {
+      let n = 0, chars = 0;
+      for (const r of history) {
+        if (r.role === 'user' && !r.type) { n++; chars += String(r.content || '').trim().length; }
+      }
+      if (n < 3 || chars < 30) return;
+    }
     titling.add(sessionId);
-    const messages = titleMessages(loadHistory(sessionId), cfg.agent.language);
+    const messages = titleMessages(history, cfg.agent.language);
     callModel(cfg, modelId, messages, null, { key_slot: s.model_slot })
       .then(r => {
         const title = cleanTitle(r && r.content);
@@ -770,6 +784,9 @@ async function runLoopInner(sessionId, run) {
     // 执行工具
     const vision = modelVision(session);
     let handoffDone = false; // 本批工具里是否有 handoff 成功返回（批量跑完统一切换，见循环尾注释）
+    // 标题门槛信号：本批参数预检通过并真实执行 = 会话在干实事（finalize 据此判是否立题，
+    // 见 maybeGenerateTitle）；errAck 批（参数畸形、下轮整轮对模型不可见）不算。
+    if (!isErrAck) run.toolWorked = true;
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
       const id = tc.id;
