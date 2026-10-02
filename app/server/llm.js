@@ -19,10 +19,15 @@ const TITLE_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 
 // 拼标题回合的 messages：历史原样（只留 user/assistant 纯文本行）+ 末尾一条标题指令 user。
 // 与 buildMessages 同取舍：archived 行不进；__blocks__ 哨兵 JSON 还原为文字，图片以 [图片] 占位；
 // 含 tool_calls 的 assistant 行无文本内容则跳过，tool 回执行整体跳过（只要对话主干）。
+// 注入行不进（白名单制，新合成 type 默认排除）：[CTX] channel/memory 是固定模板文本，
+// 喂给标题模型等于拿广告词做摘要；scheduler_note/errAck/旧 summarize_request 同类系统噪音。
+// 白名单里 summary 与 task_brief 例外保留：它们本身就是会话主题的最佳凝缩（阶段切换后
+// 旧历史全 archived，只剩 task_brief 可读）；profile 快照不在 messages 表，天然不进。
+const TITLE_ROW_TYPES = new Set([null, undefined, 'summary', 'task_brief']);
 function titleMessages(history, language) {
   const messages = [];
   for (const row of history || []) {
-    if (row.type === 'archived') continue;
+    if (!TITLE_ROW_TYPES.has(row.type)) continue;
     if (row.role !== 'user' && row.role !== 'assistant') continue;
     let content = row.content || '';
     const blocks = decodeBlocks(content);
