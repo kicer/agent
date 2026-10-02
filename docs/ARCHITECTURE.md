@@ -60,10 +60,10 @@ agent/
 │   │   │   ├── public-files.js    GET /p/<id> 公网临时文件取用（匿名）
 │   │   │   └── system.js          /api/system/status + /restart 优雅重启
 │   │   ├── templates/
-│   │   │   ├── system-prompt.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
-│   │   │   ├── advising-system.txt 顾问阶段提示词（内置 profile:advising，phase=advising 时强制命中，见 §4.1）
-│   │   │   ├── compress-prompt.txt 上下文压缩提示词（压缩回合末尾追加为 user 消息，历史照常走 messages）
-│   │   │   └── title-prompt.txt   会话标题自动生成提示词（首次交互结束后触发，{{language}} 填配置语言）
+│   │   │   ├── profile-default.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
+│   │   │   ├── profile-advising.txt 顾问阶段提示词（内置 profile:advising，phase=advising 时强制命中，见 §4.1）
+│   │   │   ├── prompt-compress.txt 上下文压缩提示词（压缩回合末尾追加为 user 消息，历史照常走 messages）
+│   │   │   └── prompt-title.txt   会话标题自动生成提示词（首次交互结束后触发，{{language}} 填配置语言）
 │   │   └── public/                前端 H5 SPA（无构建，Vanilla JS 经典脚本多文件 + SSE）
 │   │       ├── index.html         主页（HTML+样式；脚本全部在 js/，按序加载共享全局作用域）
 │   │       ├── login.html         登录页
@@ -295,7 +295,7 @@ stateDiagram-v2
 - `run.cancelled = true` 是停止的最终信号；远端子进程通过 `run.procs` 注册（local spawn 用 child、remote-exec 用 `remoteKill` 句柄），`killRunProcs` 按类型分别处理。
 - `lastIncludedId` 跟踪本轮已纳入模型请求的最新消息 id；流式期间到达的新 user 消息靠它在下一轮迭代时自动带上。
 - **errAck 机制**：工具参数结构性错误（JSON 非法/缺必填）→ 整条 assistant 标 `type='errAck'`，关联 tool 回执一并丢弃，发请求时由 user 错误提示替代（`llm.buildMessages`）—— 防止模型模仿自己的坏样本死循环。
-- **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。压缩回合**不插入任何指令消息**：由 `engine.summarizeContext` 在内存 run 上标 `summarizing`，`runLoopInner` 据此走 `llm.compressMessages`：沿用默认 system prompt + 正常历史 messages，末尾追加一条 user（`server/templates/compress-prompt.txt` 原文，参考标题回合的拼法），且不传 tools；回合内首条无 tool_calls 的收尾回复即摘要。（`llm.buildMessages` 仍保留旧库 `summarize_request` 行的处理，仅为历史数据兼容。）
+- **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。压缩回合**不插入任何指令消息**：由 `engine.summarizeContext` 在内存 run 上标 `summarizing`，`runLoopInner` 据此走 `llm.compressMessages`：沿用默认 system prompt + 正常历史 messages，末尾追加一条 user（`server/templates/prompt-compress.txt` 原文，参考标题回合的拼法），且不传 tools；回合内首条无 tool_calls 的收尾回复即摘要。（`llm.buildMessages` 仍保留旧库 `summarize_request` 行的处理，仅为历史数据兼容。）
 - **图片（多模态）**：`messages.content` 列是 TEXT，含图时存 `{"__blocks__":[content...]}` 哨兵 JSON。新版 `read_file` 读图：sharp 压缩产物落任务目录 `.imgcache/`（前端文件列表隐带点的项），库里只存 `image_ref` 轻量块；`buildMessages` 发送前经调用方传入的 `mintUrl` 回调现签成公网外链（同 `mint_public_link` 那套 `GET /p/<id>`）成 `image_url` 块，base64 不进 DB 也不进请求体；签不到降级为文字占位。**图不塞在 tool 回执里发**（tool 角色带 `image_url` 是非标准形态，大量 OpenAI 兼容上游整批忽略或只认批次最后一张，模型看不到图会反复 read_file 补看成死循环）：回执降级为纯文本，未消费的图统一并入该批之后的一条 `user` 消息（逐图对应说明合并置顶为一段文字、图块按回执顺序紧随——对齐官方示例排布；探针实测 DS 对交替排布也兼容，取低风险形态），并附「先逐张简述每图内容再继续任务」指令兼作送达自检；旧库/用户粘贴附件的 `data:` URL 块原样透传。图块**保留到最后一条收尾 assistant（无 tool_calls）之前**（`lastAssistant` 判定）——只发 tool_calls 的中间轮不算已阅、图继续携带（实测过图已进上下文而模型仍自述没看到的行为，鲁棒优先于极致省 token）；更早的换成"已省略"文字描述（措辞不催促重读）；同回合同一图只投递一次（`run.imgDelivered` 去重，再读同图只回文字提示；多图同请求经探针实测可行，曾按批限"每轮一张"已撤）；发送前 `log.debug('req', 发送形态...)` 打每轮图块计数，一眼区分发送侧漏拼与上游吞图。UI 渲染走带 cookie 的会话内下载路由，历史永不裂图。
 - **key 共享并发，无租约**：`model_pool.is_busy`/`current_session_id` 已废弃不再读写（旧库残留列，启动时清零）；同一 key 可被多个会话同时绑定并发 looping（上游 key 本身支持多并发）。held 不再自动到期，顶部「保持中 · 模型」持续展示，唯一出口是手动「断开」或换绑。
 - **task_brief（任务书锚点，advising→executing 切换）**：runLoopInner 工具批跑完后，若 advising 回合内有 `handoff` 成功返回（brief 已由 handler 原样落盘根 task.md 并记 files 表；批量末尾统一切，防父 assistant 先存档、后落库回执成孤儿行被上游拒收；同批多次 handoff 后写覆盖 last-wins），`enterExecuting` 当场重建上下文：全史标 `archived` → 插一条 `type='task_brief'` user 行（内容 = task.md 磁盘快照，非引用）→ phase='executing' + SSE `phase`/`status` 事件；下一迭代重读历史 + 重解 profile，天然切默认组合、同回合开工。压缩不碰 phase（task_brief 与其它历史一样会被后续压缩存档，漂移可控：压缩本就由用户主导）。
@@ -388,7 +388,7 @@ stateDiagram-v2
 - 兼容：旧版 `models[]`（扁平）自动迁移到 `platforms[]` 层级；旧版 `web_search.*` 迁移到 `mcp_servers[]`（log.info 提示）。
 - 规范化：`normalizePlatforms` 校验 `name/url/type`，key 层 `concurrency`，model 层 `{id, display_name, vision, enable, extra_params, thinking_params, profile}`；同平台内 model id 必须唯一（内部唯一键 = 平台名/模型id）；`profile` 引用不存在的名字直接报错。
 - `model_profiles`（顶层，`normalizeModelProfiles`）：多套可复用的 prompt+tools 组合，每项 `{tools_allow?, tools_deny?, system_prompt_file?}`，三者至少配一个。`tools_allow` 按**最终发给模型的工具名**匹配（内置 + MCP，含 `服务名__` 前缀，与 prompt.txt dump 同源可对）；未配 = 全量，**空数组 `[]` = 零工具（纯文本组合）**——与 MCP 的 `tools_allow`（空名单视作未配）有意不同。`tools_deny` 在 allow 之后叠加生效（deny 赢）；profile 未配 = 继承全局 `tools_deny`（DEFAULTS 屏蔽元工具 `lab`），`[]` = 显式清空（lab profile 靠它换回元工具），非空 = 替换全局。`system_prompt_file` 相对 `server/templates/`（compose 已 bind-mount ./app/server，宿主直接可改），**配置加载时一次性读入常驻内存**，缺失/为空报错拦在保存/重启预检；自定义文件 = 完全接管模板正文，技能清单靠模板内 `{APP_SKILLS}` 占位符就地插入（不放 = 无技能段；默认模板同机制，见 §5.2），语言指令始终尾拼。运行期切换（前端传参）零 IO、不碰本配置。
-- 默认值（`DEFAULTS`）：port=8090、workspace_root/data_root=`/workspace/tasks` `/workspace/data`、log_level=info、terminal 30s/10K、fetch 30s/1MB、agent temperature=1.0、max_tool_iterations=100、max_retries=2、上传 1.5MB/2000px/0.85（旧 `model_hold` 已废弃，字段仅为旧 config.yml 解析兼容保留）；顶层默认 `tools_deny: [lab]`；内置 `model_profiles` 含 `lab`（元工具自测：`tools_allow:[lab]` + 显式清空 deny + `lab-system.txt`）与 `zero`（零工具 + `zero-system.txt`）。`config.yml` 只覆盖 deploy 相关段，其余走默认值；整份清单见 `app/config.example.yml`。
+- 默认值（`DEFAULTS`）：port=8090、workspace_root/data_root=`/workspace/tasks` `/workspace/data`、log_level=info、terminal 30s/10K、fetch 30s/1MB、agent temperature=1.0、max_tool_iterations=100、max_retries=2、上传 1.5MB/2000px/0.85（旧 `model_hold` 已废弃，字段仅为旧 config.yml 解析兼容保留）；顶层默认 `tools_deny: [lab]`；内置 `model_profiles` 含 `lab`（元工具自测：`tools_allow:[lab]` + 显式清空 deny + `profile-lab.txt`）与 `zero`（零工具 + `profile-zero.txt`）。`config.yml` 只覆盖 deploy 相关段，其余走默认值；整份清单见 `app/config.example.yml`。
 - 读写：`readConfigText` / `writeConfigText`（先校验后写，无原子 rename，因 bind mount 上 rename 会 EBUSY）；`applyEditsToText` 用 `YAML.Document` 保留注释。
 - `getConfig` 是浅引用，路由层拿到的就是运行中实例，**改完 in-memory 不影响**（要重启）。
 
@@ -553,8 +553,8 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - `fetch.allow_private`（默认 false）—— SSRF 防护开关：目标主机名解析到回环/私有/链路本地地址即拒抓（重定向逐跳复查）；确需抓内网服务才显式开 true。
 - `skills.skills_root` —— 缺省取 `workspace_root` 的同级 `skills/`。
 - ~~`model_hold`~~ —— 已废弃（旧版保持租约：held 到期自动释放）；新调度下 key 不独占、不排队，held 不再到期，字段仅为旧配置解析兼容保留。
-- 上下文压缩 —— 无配置项：压缩回合沿用当前 profile 的 system prompt（无 profile = 默认模板）+ 正常历史，末尾追加一条 user（固定模板 `server/templates/compress-prompt.txt` 原文），该回合不传 tools；调整压缩策略直接改该文件。
-- 会话标题自动生成 —— 无配置项：首次交互回合结束（`finalize` 成功分支）后触发，用会话当前 model_id 发一次**不带 system、不传 tools** 的标题请求（历史 user/assistant 原文 + 模板 `server/templates/title-prompt.txt` 作末条 user，`{{language}}` 填 `agent.language`）；结果清洗后写入 `sessions.title` 并 SSE 推 `title` 事件。失败静默（title 仍空，下个回合结束自动重试）；已有标题（建会话时填写或手动重命名）不覆盖。
+- 上下文压缩 —— 无配置项：压缩回合沿用当前 profile 的 system prompt（无 profile = 默认模板）+ 正常历史，末尾追加一条 user（固定模板 `server/templates/prompt-compress.txt` 原文），该回合不传 tools；调整压缩策略直接改该文件。
+- 会话标题自动生成 —— 无配置项：首次交互回合结束（`finalize` 成功分支）后触发，用会话当前 model_id 发一次**不带 system、不传 tools** 的标题请求（历史 user/assistant 原文 + 模板 `server/templates/prompt-title.txt` 作末条 user，`{{language}}` 填 `agent.language`）；结果清洗后写入 `sessions.title` 并 SSE 推 `title` 事件。失败静默（title 仍空，下个回合结束自动重试）；已有标题（建会话时填写或手动重命名）不覆盖。
 - `auth.users` —— 明文密码配在配置里（自用场景）；`secret` 留空则随机生成（重启掉登录态，建议固定随机串）。
 - `mcp_servers[].enable: false` —— 启动不加载该服务（配置保留），其余工具不受影响。
 - `mcp_servers[].timeout_ms` —— 该服务单次 `tools/call` 的最大等待，默认 60000（夹在 1s~10min）；工具发现/握手用固定 15s，不受本项影响。
@@ -791,5 +791,5 @@ sequenceDiagram
 - `docs/DEPLOY.md` —— 部署（Docker，IP:端口直连；外部网络、配置绝对路径、SSE 缓冲坑）
 - `docs/v2-develop.md` —— v2 移动单聊视图
 - `app/config.example.yml` —— 配置模板（字段与 `DEFAULTS` 一一对应，每个字段一行注释）
-- `app/server/templates/system-prompt.txt` —— AI system prompt 全文
+- `app/server/templates/profile-default.txt` —— AI system prompt 全文
 - `executor/server.js` 头注释 —— executor 协议、安全约束、日志/资源护栏一览

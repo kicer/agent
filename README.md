@@ -127,7 +127,7 @@ models:
 ### 7.1 System Prompt（完整）
 
 ```
-# /app/server/templates/system-prompt.txt
+# /app/server/templates/profile-default.txt
 ```
 
 > 注：system prompt 完全静态（所有会话共用，利于前缀缓存）。动态会话信息（日期、任务目录、模型显示名）在新建会话时作为首条 user 消息自动发送，跟会话走。`<available_skills>` 当前为空，预留扩展。

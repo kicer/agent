@@ -21,7 +21,7 @@ app/
 │   ├── tools/
 │   │   ├── definitions.json # 内置 16 个工具的 JSON Schema
 │   │   └── executor.js      # 内置工具执行器（任务目录沙箱；未知工具名转 MCP）
-│   ├── templates/system-prompt.txt  # System prompt 模板（直接编辑）
+│   ├── templates/profile-default.txt  # System prompt 模板（直接编辑）
 │   └── public/              # H5 前端（Vanilla JS + SSE；无构建，index.html + js/ 六模块按序加载）
 ├── test/                    # mock 上游 + 端到端冒烟测试
 ├── config.example.yml       # core 专属配置模板（部署时生成/复制为仓库根 config.yml 挂进容器）
@@ -46,7 +46,7 @@ npm test            # 启动 mock 上游 + 真实 server 的端到端冒烟测�
 
 ## 提示词与工具 schema
 
-System prompt 完全静态（所有会话共用，利于上游前缀缓存），在 `server/templates/system-prompt.txt` 直接编辑；工具定义在 `server/tools/definitions.json`。改完重启服务。
+System prompt 完全静态（所有会话共用，利于上游前缀缓存），在 `server/templates/profile-default.txt` 直接编辑；工具定义在 `server/tools/definitions.json`。改完重启服务。
 
 ## 关键行为速查
 

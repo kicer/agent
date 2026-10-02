@@ -17,14 +17,14 @@ model_profiles:
   advising:                                        # 顾问阶段：只聊和读不写（profile 画像元信息除外），唯一出口 handoff，配专属提示词
     tools_allow: [read_file, fetch, handoff, profile]
     tools_deny: []                                 # 必须显式清空全局黑名单，否则 handoff 自己也被 deny（同 lab 的教训）
-    system_prompt_file: advising-system.txt
+    system_prompt_file: profile-advising.txt
   lab:                                             # 统一入口自测：tools 只有 lab，其余能力经 lab(help) 现场发现
     tools_allow: [lab]
     tools_deny: []                                 # 必须显式清空全局黑名单，否则 lab 自己也被 deny → 零工具
-    system_prompt_file: lab-system.txt             # 相对 server/templates/（也接受绝对路径）
+    system_prompt_file: profile-lab.txt             # 相对 server/templates/（也接受绝对路径）
   zero:                                            # 纯文本对话：一个工具都不发
     tools_allow: []
-    system_prompt_file: zero-system.txt
+    system_prompt_file: profile-zero.txt
 
 port: 8090                                         # 服务监听端口
 workspace_root: "/workspace/tasks"                 # 任务工作区根目录，AI 文件操作限制在此

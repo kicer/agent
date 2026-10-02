@@ -1154,7 +1154,7 @@ function deleteSession(sessionId, deleteDir) {
 
 // 上下文压缩：phase-bar「压缩」按钮触发。不再往会话里插入指令消息：
 // 压缩回合沿用默认 system prompt + 正常历史消息，末尾追加一条 user
-//（templates/compress-prompt.txt 原文，见 llm.compressMessages），且不传 tools
+//（templates/prompt-compress.txt 原文，见 llm.compressMessages），且不传 tools
 //（见 runLoopInner 的 compressing 分支），模型直接基于历史输出摘要。
 // 识别标记 = run.summarizing（仅在内存 run 上，不入库）：runLoopInner 据此换 prompt/去 tools，
 // 并在压缩回合的收尾答复 emit 时带 is_summary: true，前端据此把气泡装进摘要卡片并淡出存档旧历史。

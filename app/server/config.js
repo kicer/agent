@@ -121,12 +121,12 @@ const DEFAULTS = {
         // 与 recall（日记只读翻阅；用户和顾问聊「上次那个事」恰是回忆查询的高峰场景）；
     // 唯一出口是 handoff；tools_deny 必须显式清空：不配 = 继承全局 ['lab','handoff']，
     // allow 滤完再叠 deny 会把 handoff 自己禁掉（同 lab 组合的教训）。
-    advising: { tools_allow: ['read_file', 'list_directory', 'fetch', 'handoff', 'profile', 'recall'], tools_deny: [], system_prompt_file: 'advising-system.txt' },
+    advising: { tools_allow: ['read_file', 'list_directory', 'fetch', 'handoff', 'profile', 'recall'], tools_deny: [], system_prompt_file: 'profile-advising.txt' },
     // lab：统一入口元工具自测组合——tools 收缩到 1 个，其余能力经 lab(help) 现场发现。
     // tools_deny 必须显式清空：不配 = 继承全局 ['lab']，deny 后叠加会把 lab 自己禁掉 → 零工具。
-    lab: { tools_allow: ['lab'], tools_deny: [], system_prompt_file: 'lab-system.txt' },
+    lab: { tools_allow: ['lab'], tools_deny: [], system_prompt_file: 'profile-lab.txt' },
     // 纯文本对话：一个工具都不发。
-    zero: { tools_allow: [], system_prompt_file: 'zero-system.txt' },
+    zero: { tools_allow: [], system_prompt_file: 'profile-zero.txt' },
   },
   // 登录认证：{users:[{user,password}], secret?, ttl_ms?}；null / users 空 = 不启用。
   auth: null,

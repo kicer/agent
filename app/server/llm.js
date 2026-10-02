@@ -3,18 +3,18 @@
 const fs = require('fs');
 const path = require('path');
 
-const SYSTEM_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'system-prompt.txt'), 'utf8');
+const SYSTEM_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'profile-default.txt'), 'utf8');
 
-// 上下文压缩提示词（templates/compress-prompt.txt）：点「压缩」时不插入指令消息。
+// 上下文压缩提示词（templates/prompt-compress.txt）：点「压缩」时不插入指令消息。
 // 压缩回合（见 compressMessages）沿用默认 system prompt + 正常历史消息，
 // 末尾追加一条 user（本模板原文，参考 titleMessages 的拼法），且该回合不传 tools。
 // 需要调整压缩策略时直接改这个模板文件。
-const COMPRESS_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'compress-prompt.txt'), 'utf8');
+const COMPRESS_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'prompt-compress.txt'), 'utf8');
 
-// 自动生成会话标题提示词（templates/title-prompt.txt）：会话建立后第 1 次交互完成时触发。
+// 自动生成会话标题提示词（templates/prompt-title.txt）：会话建立后第 1 次交互完成时触发。
 // 与压缩回合不同，这里**不带 system prompt**：直接复用历史里的 user/assistant 文本消息，
 // 末尾追加一条 user（本模板，{{language}} 占位符替换为配置语言），见 titleMessages。
-const TITLE_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'title-prompt.txt'), 'utf8');
+const TITLE_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'prompt-title.txt'), 'utf8');
 
 // 拼标题回合的 messages：历史原样（只留 user/assistant 纯文本行）+ 末尾一条标题指令 user。
 // 与 buildMessages 同取舍：archived 行不进；__blocks__ 哨兵 JSON 还原为文字，图片以 [图片] 占位；
@@ -365,14 +365,20 @@ function trimToolContent(content, row, callById, roundsAfter) {
 
 // 拼压缩回合的 messages（参考 titleMessages 的拼法）：默认 system prompt + 正常历史
 //（与 buildMessages 同取舍：archived 不发、旧摘要/工具轮照常），末尾追加一条 user
-//（compress-prompt.txt 原文，历史就在它前面的 messages 里，不再填占位符）。
+//（prompt-compress.txt 原文，历史就在它前面的 messages 里，不再填占位符）。
 // 调用方（engine.runLoopInner 的 compressing 分支）需同时不传 tools。
 // 不注入画像快照（withProfile=false）：画像是每轮瞬态注入的，压缩后照常带上，
 // 无需烧进摘要；一旦模型把画像转述进摘要，摘要会以 type='summary' 落库，
-// 再经 titleMessages（只排 archived）混进标题生成的输入里。
+// 再经 titleMessages（summary 在白名单内）混进标题生成的输入里。
+// 不进压缩的注入行：跨会话/系统噪音。memory_note 是近几天开场日记——当时事实已陈旧，喂给摘要
+// 会被当本会话内容、且每轮压缩滚雪球（engine 的 JOURNAL_SKIP_TYPES 同虑）；scheduler_note/
+// errAck/旧 summarize_request 同理非正文。channel_note 刻意保留：压缩落库会存档全部行，
+// 微信约束只能靠摘要转世；task_brief/summary 是会话本体，照常进。
+const COMPRESS_SKIP_TYPES = new Set(['memory_note', 'scheduler_note', 'errAck', 'summarize_request']);
 function compressMessages(session, language, mintUrl, profile) {
+  const history = (session.history || []).filter(r => !COMPRESS_SKIP_TYPES.has(r.type));
   // trim 显式关：摘要需要 fetch/read 的原料原文，且压缩是一次性成本，省它得不偿失。
-  const messages = buildMessages(session, language, mintUrl, profile, false, false);
+  const messages = buildMessages({ ...session, history }, language, mintUrl, profile, false, false);
   messages.push({ role: 'user', content: COMPRESS_PROMPT_TEMPLATE });
   return messages;
 }
