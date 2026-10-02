@@ -52,10 +52,10 @@ function setBinding(db, user, channel, sessionId) {
 }
 
 // /new 与「无绑定时发普通消息」共用：新建（engine 立即绑模型，空池 503 冒泡）+ 换绑 + 可选首条消息
-function newSessionFor(db, user, channel, firstText) {
+function newSessionFor(db, user, channel, firstText, opts) {
   const s = engine.createSession('', '', 'secretary', user);
   setBinding(db, user, channel, s.id);
-  const sent = firstText ? engine.postUserMessage(s.id, firstText) : null;
+  const sent = firstText ? engine.postUserMessage(s.id, firstText, opts) : null;
   return { s, sent };
 }
 
@@ -147,10 +147,11 @@ function modelsReply(ms, curModelId) {
 // 严格匹配：整条消息恰好是命令词（ARG_CMDS 内的可带参数）才算命令。
 // 首词形如 /纯ASCII词 但不在清单 → 回「未知命令」提示、不转发模型（防弱模型就着 /hlep 演一段）；
 // 其余一律普通消息：/home/x、/a.b 这类路径代码，以及 /clear abc 这种裸命令带尾巴的（用户约定：强检查不匹配）。
-const CMDS = new Set(['new', 'stop', 'compact', 'clear', 'status', 'help', 'list', 'switch', 'rename', 'delete', 'models']);
+const CMDS = new Set(['new', 'stop', 'compact', 'clear', 'status', 'help', 'list', 'switch', 'rename', 'delete', 'models', 'think']);
 // 可带参数的命令：/new 尾随文本作首条消息；/switch /delete 吃 /list 编号或会话 id；
-// /rename 吃新标题；/models 可带模型编号或完整 id。清单外的命令带尾巴仍按普通消息回落。
-const ARG_CMDS = new Set(['new', 'switch', 'rename', 'delete', 'models']);
+// /rename 吃新标题；/models 可带模型编号或完整 id；/think 吃 on|off（1|0 同样认，隐式不写 help）。
+// 清单外的命令带尾巴仍按普通消息回落。
+const ARG_CMDS = new Set(['new', 'switch', 'rename', 'delete', 'models', 'think']);
 
 function parseCommand(text) {
   const t = String(text || '').trim();
@@ -178,6 +179,7 @@ const HELP_TEXT = [
   '',
   '**模型**',
   '- `/models [编号]` 切换指定模型',
+  '- `/think on|off` 微信深度思考开关',
   '',
   '**上下文**',
   '- `/stop` 终止当前回合',
@@ -199,7 +201,7 @@ function fmtTime(ts) {
   return (d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
-function statusReply(db, s) {
+function statusReply(db, s, channel) {
   const run = engine.getRun(s.id);
   const looping = !!(run && run.looping);
   const lines = [
@@ -208,6 +210,11 @@ function statusReply(db, s) {
     '- 状态：' + (looping ? '回合进行中' : (STATUS_TEXT[s.status] || s.status)),
     '- 模型：`' + (s.model_id || '未绑定') + '`',
   ];
+  // 思考开关只对微信通道有意义（web 端用按钮，不读这列）
+  if (String(channel || '').startsWith('wx:')) {
+    const bt = db.prepare('SELECT deep_think FROM wechat_bindings WHERE id = ?').get(String(channel).slice(3));
+    if (bt) lines.push('- 深度思考：' + (bt.deep_think !== 0 ? '开' : '关'));
+  }
   const t = db.prepare('SELECT cron_expr, next_run_at, last_run_at, last_status FROM scheduled_tasks WHERE session_id = ?').get(s.id);
   lines.push(t
     ? '- 定时任务：cron `' + t.cron_expr + '`，下次 ' + fmtTime(t.next_run_at) + '（上次 ' + fmtTime(t.last_run_at) + ' ' + (t.last_status || '-') + '）'
@@ -228,15 +235,19 @@ function handleSend(db, opts) {
 
   const parsed = parseCommand(text);
 
-  // 普通消息：解析当前会话，无绑定自动新建（IM 用户不会先打 /new 才能聊天）
+  // 普通消息：解析当前会话，无绑定自动新建（IM 用户不会先打 /new 才能聊天）。
+  // 微信通道以 binding 行的全局 deep_think 开关作消息的 deepThink 取值（与 H5 按钮 body 同义，
+  // 只是没得点、改用 /think 拨）；非 wx 通道照旧不传 opts，行为零变化。
   if (!parsed || parsed.normal) {
+    const wx = String(channel).startsWith('wx:');
+    const deepThink = wx ? ((db.prepare('SELECT deep_think FROM wechat_bindings WHERE id = ?').get(channel.slice(3)) || {}).deep_think !== 0) : undefined;
     let s = boundSession(db, user, channel);
     let sent;
     if (!s) {
-      const r = newSessionFor(db, user, channel, text);
+      const r = newSessionFor(db, user, channel, text, wx ? { deepThink } : undefined);
       s = r.s; sent = r.sent;
     } else {
-      sent = engine.postUserMessage(s.id, text);
+      sent = engine.postUserMessage(s.id, text, wx ? { deepThink } : undefined);
     }
     log.info('msg', tag + ' channel 消息 → ' + s.id);
     return { kind: 'message', reply: '已发送到会话 ' + s.id, session_id: s.id, message_id: sent.message_id };
@@ -313,6 +324,26 @@ function handleSend(db, opts) {
     return { kind: 'command', reply: modelsReply(modelChoices(), s ? s.model_id : ''), session_id: s ? s.id : null };
   }
 
+  // /think：微信全局深度思考开关——存用户 binding 行（不随会话/switch 丢），投递时替进
+  // 既有 deepThink 参数（开=沿用现链路合并模型 thinking_params，关=什么都不带，
+  // 与 H5 按钮勾选/取消完全同构）。裸 /think 报当前态；1|0 隐式同义（不写 help）。
+  if (cmd === 'think') {
+    const v = /^(on|1)$/i.test(parsed.rest) ? 1 : /^(off|0)$/i.test(parsed.rest) ? 0 : null;
+    if (parsed.rest && v === null) {
+      return { kind: 'command', reply: '用法：/think on|off', session_id: s ? s.id : null };
+    }
+    const b = db.prepare('SELECT id, deep_think FROM wechat_bindings WHERE user = ?').get(user);
+    if (!b) {
+      return { kind: 'command', reply: '未绑定微信，此开关不适用', session_id: s ? s.id : null };
+    }
+    if (v === null) {
+      return { kind: 'command', reply: '微信深度思考当前：' + (b.deep_think !== 0 ? '开' : '关') + '（/think on|off 切换）', session_id: s ? s.id : null };
+    }
+    if (v !== b.deep_think) db.prepare('UPDATE wechat_bindings SET deep_think = ? WHERE id = ?').run(v, b.id);
+    log.info('task', tag + ' channel /think → ' + (v ? 'on' : 'off') + '（用户全局，binding ' + b.id + '）');
+    return { kind: 'command', reply: '微信深度思考已' + (v ? '开启（后续消息带思考参数）' : '关闭（后续消息不带）'), session_id: s ? s.id : null };
+  }
+
   // 其余命令都作用于当前会话；无绑定时不隐式新建（那不是用户点这条命令的意图）
   if (!s) {
     return { kind: 'command', reply: '当前没有会话，请直接发送消息', session_id: null };
@@ -363,7 +394,7 @@ function handleSend(db, opts) {
   }
 
   // cmd === 'status'
-  return { kind: 'command', reply: statusReply(db, s), session_id: s.id };
+  return { kind: 'command', reply: statusReply(db, s, channel), session_id: s.id };
 }
 
 // HTTP 入口：POST /api/channel/send {channel?, text} → handleSend 结果。

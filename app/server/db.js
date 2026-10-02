@@ -145,6 +145,8 @@ function initDb(dbPath) {
       bot_account_id TEXT,                      -- bot 上线后的微信账号标识（登录回调带回，展示用）
       wx_to_user TEXT,                          -- 最近来话人 userId（deliver 回发对象；实际上只会是主人自己）
       last_msg_id INTEGER NOT NULL DEFAULT 0,   -- 投递游标：id ≤ 此值的 assistant 消息已送过微信
+      deep_think INTEGER NOT NULL DEFAULT 1,    -- 微信端全局深度思考开关（/think；= H5 按钮的微信形态，
+                                                -- 随绑定不随会话；投递时替进消息 API 的 deepThink 字段）
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -228,6 +230,10 @@ function initDb(dbPath) {
   // 迁移：title_locked 用户手动重命名过标题（renameSession 置 1）：handoff 的自动标题见锁即跳过，
   // 不得静默冲掉用户给会话起的名字；清空会话时随标题一并复位（旧名字已文不对题）。
   if (!cols.some(c => c.name === 'title_locked')) db.exec("ALTER TABLE sessions ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0");
+  // 迁移：wechat_bindings 补 deep_think 列——微信端全局深度思考开关（routes/channel.js /think 读写，
+  // 投递时作为既有 deepThink 参数的取值来源）；缺行/旧库默认 1=开（微信没按钮，默认按开走）。
+  const bindCols = db.prepare('PRAGMA table_info(wechat_bindings)').all();
+  if (!bindCols.some(c => c.name === 'deep_think')) db.exec('ALTER TABLE wechat_bindings ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 1');
   // 迁移：phase 语义重定义为 advising（顾问：澄清需求/规划）/ executing（执行）。
   // 存量会话（旧值 planning/NULL）统一回填 executing——它们都有历史，行为与改造前一致、零打扰；
   // 只有新建会话进 advising（createSession 显式写入）。幂等，每次启动一条廉价 UPDATE。

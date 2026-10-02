@@ -433,7 +433,7 @@ function attachBus() {
   busAttached = true;
   bus.onInternal((sessionId, event, data) => {
     if (event === 'assistant_message') { if (!data) return; }
-    else if (event !== 'done' && event !== 'tool_call' && event !== 'tool_result') return;
+    else if (event !== 'done' && event !== 'tool_call' && event !== 'tool_result' && event !== 'reasoning_delta') return;
     try {
       const cs = db.prepare('SELECT user, channel FROM channel_sessions WHERE session_id = ?').get(sessionId);
       if (!cs || !String(cs.channel || '').startsWith('wx:')) return;
@@ -441,12 +441,13 @@ function attachBus() {
       if (event === 'assistant_message') enqueueDelivery(bid, () => onAssistantEvent(bid, data, sessionId));
       else if (event === 'done') enqueueDelivery(bid, () => flushHeld(bid));
       else {
-        // 工具调用/回执：心跳 + 台账记账；攒满一屏即经串行队列独立发台账（见策略注释第 4 条）
+        // 工具调用/回执：心跳 + 台账记账；攒满一屏即经串行队列独立发台账（见策略注释第 4 条）。
+        // reasoning_delta（思考流）不进台账，只走下面的心跳——微信用户能看到「正在输入」在思考。
         if (event === 'tool_call') {
           toolDigestPush(bid, data);
           if (getTurn(bid).tools.length >= DIGEST_MAX_LINES) enqueueDelivery(bid, () => flushLedger(bid, DIGEST_MAX_LINES));
         } else if (event === 'tool_result') toolDigestMark(bid, data);
-        maybeTypingPing(bid); // 「正在输入」心跳：微信端在长工具回合里能看到 AI 还在干活
+        maybeTypingPing(bid); // 「正在输入」心跳：长工具/思考回合里微信持续看到 AI 还在干活
       }
     } catch (e) {
       log.warn('wechat', '投递监听异常：' + msg(e));
@@ -463,15 +464,16 @@ function enqueueDelivery(key, fn) {
   next.then(() => { if (deliveryQ.get(key) === next) deliveryQ.delete(key); });
 }
 
-// sendTyping 心跳：tool_call/tool_result 事件驱动（并行工具批会连发，2s 冷却去重）；
+// sendTyping 心跳：tool_call/tool_result 与 reasoning_delta（逐 token 高频）事件驱动；
+// 冷却判定前置在查库之前，思考流的每帧开销只是两次 Map 读写（并行工具批/思考流都靠它去重）；
 // 纯 UI 锦上添花，一切失败静默（wxbot 不可达/实例已销都不值得刷日志），不进入投递队列。
 const typingLast = new Map(); // bid -> 上次发出时间戳
 function maybeTypingPing(bid) {
   try {
-    const b = getBinding(bid);
-    if (!b || b.status !== 'online' || !b.wx_to_user) return;
     const t = now();
     if (t - (typingLast.get(bid) || 0) < 2000) return;
+    const b = getBinding(bid);
+    if (!b || b.status !== 'online' || !b.wx_to_user) return;
     typingLast.set(bid, t);
     wxbotApi('POST', '/api/typing', { id: b.id, to: b.wx_to_user }, 5000).catch(() => {});
   } catch (_) { /* 心跳尽力而为 */ }
