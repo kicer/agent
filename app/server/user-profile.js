@@ -20,7 +20,7 @@ const SET_MAX = 20;     // AI 写 honorific/industry 的单值帽（称谓应当
 const TAG_MAX = 15;     // 单个偏好标签长度帽
 const TAGS_MAX = 24;    // 偏好标签数量帽
 const TAG_SPLIT = /[、，,;；\n]+/;
-const SNAPSHOT_HEAD = '【用户画像 · 背景参考】以下为历史会话沉淀的粗粒度认知，非任务约束；与当前请求冲突时，一律以当前请求为准。';
+const SNAPSHOT_HEAD = '【用户画像】以下为历史会话沉淀的粗粒度认知，非任务约束；与当前请求冲突时，一律以当前请求为准。';
 const FIELD_LABELS = { honorific: '称谓', industry: '行业', preference: '偏好' };
 
 function readRow(db, user) {

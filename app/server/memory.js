@@ -86,14 +86,13 @@ function journalFor(db, cfg, user) {
     'SELECT session_id, day, text FROM memory_fragments WHERE user = ?' + INJECT_ORDER + ' LIMIT ?'
   ).all(String(user || ''), cap);
   if (!rows.length) return '';
-  const head = '【长期记忆·日记(最近' + rows.length + '条，非全部——更早的可用 recall 检索)】新在前、天内按发生顺序；每条【编号】是来源会话 id。';
   const groups = [];
   for (const r of rows) {
     const g = groups[groups.length - 1];
     if (!g || g.day !== r.day) groups.push({ day: r.day, items: [renderFrag(r)] });
     else g.items.unshift(renderFrag(r));
   }
-  return [head].concat(groups.map(g => '=== ' + g.day + ' ===\n' + g.items.join('\n\n'))).join('\n\n');
+  return groups.map(g => '=== ' + g.day + ' ===\n' + g.items.join('\n\n')).join('\n\n');
 }
 
 // ---------- 读：关键词检索（recall 主入口：用户记起的是「一段事」不是「第几条」） ----------

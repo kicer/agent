@@ -22,11 +22,11 @@ const session = () => ({ history: rows.slice(), profile_snapshot: '', blocksCach
 let msgs = llm.buildMessages(session(), 'Simplified Chinese', null, null);
 const a = msgs.filter(m => m.role === 'assistant' && m.tool_calls);
 const argsNotes = JSON.parse(a.find(m => m.tool_calls[0].id === 'c2').tool_calls[0].function.arguments);
-assert(/^\[正文省略：本调用已写入 notes\.md，12000 字\]$/.test(argsNotes.content), 'write_file 大参数应占位: ' + argsNotes.content);
+assert(argsNotes.content === '[OMITTED, size=12000]', 'write_file 大参数应占位: ' + argsNotes.content);
 const argsSum = JSON.parse(a.find(m => m.tool_calls[0].id === 'c3').tool_calls[0].function.arguments);
 assert.strictEqual(argsSum.content, '小内容', '低于 TRIM_MIN 不裁');
 const t = msgs.find(m => m.role === 'tool' && m.tool_call_id === 'c1');
-assert(/^\[fetch 省略：https:\/\/e\.com\/x｜HTTP 200｜原 8009 字\]$/.test(t.content), 'fetch 回执应占位: ' + t.content);
+assert(t.content === '[OMITTED, http_status=200, size=8009]', 'fetch 回执应占位: ' + t.content);
 assert(msgs.find(m => m.role === 'tool' && m.tool_call_id === 'c2').content.includes('已创建文件'), 'write 回执不动');
 
 // B) 截到第 5 行（write 刚落盘的当次调用）：都太新鲜，不裁
@@ -43,7 +43,7 @@ const r3orig = rows[2];
 rows[2] = mk(3, 'tool', { tool_call_id: 'c1', name: 'read_file', content: 'HTTP 200\n' + big(8000) });
 rows[1] = mk(2, 'assistant', { tool_calls: JSON.stringify([call('c1', 'read_file', { path: 'a.md' })]) });
 msgs = llm.buildMessages(session(), 'Simplified Chinese', null, null);
-assert(/^\[read_file 省略：a\.md｜原 8009 字\]$/.test(msgs.find(m => m.tool_call_id === 'c1' && m.role === 'tool').content), 'read_file 应占位');
+assert(msgs.find(m => m.tool_call_id === 'c1' && m.role === 'tool').content === '[OMITTED, size=8009]', 'read_file 应占位');
 rows[2] = r3orig;
 rows[1] = mk(2, 'assistant', { tool_calls: JSON.stringify([call('c1', 'fetch', { url: 'https://e.com/x' })]) });
 
@@ -59,6 +59,6 @@ rows.push(mk(10, 'tool', { tool_call_id: 'c9', name: 'fetch', content: 'HTTP 404
 rows.push(mk(11, 'assistant', { content: '页面不存在，换个 url？' }));
 rows.push(mk(12, 'assistant', { tool_calls: JSON.stringify([call('c12', 'read_file', { path: 'notes.md' })]) }));
 msgs = llm.buildMessages(session(), 'Simplified Chinese', null, null);
-assert(/\[fetch 省略：\?｜HTTP 404/.test(msgs.find(m => m.tool_call_id === 'c9').content), '缺 url 仍占位: ' + msgs.find(m => m.tool_call_id === 'c9').content);
+assert(msgs.find(m => m.tool_call_id === 'c9').content === '[OMITTED, http_status=404, size=709]', '缺 url 仍占位: ' + msgs.find(m => m.tool_call_id === 'c9').content);
 
 console.log('TRIM-SMOKE-OK');

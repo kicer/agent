@@ -330,8 +330,8 @@ function setPayloadTrim(agentCfg) {
   const toN = (v, d) => { const n = Math.floor(Number(v)); return Number.isFinite(n) ? Math.max(0, n) : d; };
   TRIM = { writeRounds: toN(a.trim_write_rounds, 1), resultRounds: toN(a.trim_result_rounds, 2) };
 }
-// write_file 参数占位：只洗 content，path 留着（模型回看自己发言时知道文件在哪）；
-// 改写的是已 parse 的副本，DB 行不动；arguments 重新 stringify 保持 JSON 合法。
+// write_file 参数占位：只洗 content。AI 友好记号风格：键值对、不写整句——path 不必重复，
+// 本条 arguments 里就还在；改写的是已 parse 副本，DB 行不动，重新 stringify 保持 JSON 合法。
 function trimWriteCalls(calls, rounds) {
   if (rounds < TRIM.writeRounds) return;
   for (const c of calls || []) {
@@ -339,25 +339,23 @@ function trimWriteCalls(calls, rounds) {
     let args;
     try { args = JSON.parse(c.function.arguments || ''); } catch (_) { continue; }
     if (!args || typeof args.content !== 'string' || args.content.length < TRIM_MIN_CHARS) continue;
-    args.content = '[正文省略：本调用已写入 ' + String(args.path || '') + '，' + args.content.length + ' 字]';
+    args.content = '[OMITTED, size=' + args.content.length + ']';
     c.function.arguments = JSON.stringify(args);
   }
 }
-// fetch/read_file 回执占位：url/path 从对应 tool_call 参数回填（回执行自身不存调用目标），
-// 占位行里留目标就是留恢复指针。图片回执（blocks 非空）不碰：已有自己的消费省略逻辑。
+// fetch/read_file 回执占位：同款键值记号。url/path 不进占位——发起调用的 assistant 行仍载着
+// 它们，参数本身就是恢复指针。图片回执（blocks 非空）不碰：已有自己的消费省略逻辑。
 function trimToolContent(content, row, callById, roundsAfter) {
   if (TRIM.resultRounds <= 0 || content.length < TRIM_MIN_CHARS) return content;
   if ((roundsAfter.get(row.id) || 0) < TRIM.resultRounds) return content;
   const fn = callById.get(row.tool_call_id);
   const name = row.name || (fn && fn.name) || '';
   if (name !== 'fetch' && name !== 'read_file') return content;
-  let arg = {};
-  try { arg = JSON.parse((fn && fn.arguments) || '{}') || {}; } catch (_) {}
   if (name === 'fetch') {
     const hm = /^HTTP (\d{3})/.exec(content);
-    return '[fetch 省略：' + String(arg.url || '?') + (hm ? '｜HTTP ' + hm[1] : '') + '｜原 ' + content.length + ' 字]';
+    return '[OMITTED' + (hm ? ', http_status=' + hm[1] : '') + ', size=' + content.length + ']';
   }
-  return '[read_file 省略：' + String(arg.path || '?') + '｜原 ' + content.length + ' 字]';
+  return '[OMITTED, size=' + content.length + ']';
 }
 
 // 拼压缩回合的 messages（参考 titleMessages 的拼法）：默认 system prompt + 正常历史
