@@ -38,11 +38,14 @@ function relOf(taskDir, abs) {
   return path.relative(path.resolve(taskDir), abs) || '.';
 }
 
-// ---------- 跨会话路径：@<会话id>/<rel>（历史只读，数据过墙只走 copy_path 一道门） ----------
+// ---------- 跨会话路径：@<会话id>/<rel>（历史只读，「看一眼」可过墙，「字节落地」只走 copy_path） ----------
 // 背景：terminal 在远端 executor 容器里跑（compose：wrapper 启动即 unmount host-tasks），
 // 别的会话目录在 shell 物理视图里根本不存在；core 进程内的文件工具又被 resolveInTask
-// 锁死本会话。跨会话取旧成果只剩这一个口子，同用户校验单点在此（承自 recall 旧 files/link，
+// 锁死本会话。跨会话只有这一个解析口子，同用户校验单点在此（承自 recall 旧 files/link，
 // 那两个 op 是 ls/mint 的沙箱外克隆，已整删——克隆会漂移：link 漏抄 mint 的 realpath 防线）。
+// 接受 @ 的三个入口都是只读语义：list_directory（列举）、read_file（读文本进上下文）、
+// copy_path 的 source_path（导入）。写侧 write_file / edit_file / copy_path 目标一律显式拒绝，
+// 否则 '@task-x/y' 会被 resolveInTask 当相对路径、在本会话里造出字面 '@task-x' 目录。
 const PAST_RE = /^@([^\s/]+)(?:\/([\s\S]*))?$/;
 function resolvePastPath(ctx, p) {
   const m = PAST_RE.exec(p);
@@ -211,12 +214,34 @@ async function readImageAsBlocks(ctx, abs, rel, size) {
 }
 
 async function toolReadFile(ctx, args) {
-  const abs = resolveInTask(ctx.taskDir, args.path);
+  const p = typeof args.path === 'string' ? args.path.trim() : '';
+  const isPast = p.startsWith('@');
+  let abs; let disp;
+  if (isPast) {
+    // 历史会话只读「看一眼」：形状/存在/同用户/沙箱校验全在 resolvePastPath，与另两个 @ 入口同源。
+    // 字节不落本会话 → terminal/grep/edit_file 看不见它；图片在此拒绝（见下），要干活仍须 copy_path。
+    const past = resolvePastPath(ctx, p);
+    abs = past.abs;
+    const inner = relOf(past.dir, abs);
+    disp = inner === '.' ? '@' + past.sid : '@' + past.sid + '/' + inner;
+  } else {
+    abs = resolveInTask(ctx.taskDir, args.path);
+    // 本会话沿用绝对路径做展示（大纲/首 1KB 头，历史行为不变）；历史会话只暴露 @<sid>/<rel> 形，
+    // 不把别的会话的 workspace_root 绝对路径喂进上下文。
+    disp = abs;
+  }
   let st;
   try { st = await fsp.stat(abs); }
-  catch (_) { throw new Error('文件不存在：' + args.path); }
-  if (st.isDirectory()) throw new Error(args.path + ' 是目录不是文件，用 list_directory 查看。');
+  catch (_) { throw new Error('文件不存在：' + p); }
+  if (st.isDirectory()) throw new Error(p + ' 是目录不是文件，用 list_directory 查看。');
   if (IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
+    if (isPast) {
+      // 不做「偷偷复制」：图片要出现在模型视野里，字节必须落到本会话才能签外链（engine 的
+      // mintImageUrl 与前端下载路由都以当前 taskDir 为根），那本质已是一次导入——与其藏进
+      // .imgcache 不进文件表，不如让模型明确知道历史图片必须先 copy_path。
+      return '[图片文件] ' + disp + '（' + st.size + ' 字节）历史会话图片不支持直接读取。' +
+        '图片需要先 copy_path（source_path 用这个 @ 路径）导入本会话，再 read_file——导入后图片、terminal、mint 全量生效。';
+    }
     const rel = relOf(ctx.taskDir, abs);
     if (!ctx.vision) {
       return '[图片文件] ' + rel + '（' + st.size + ' 字节）。图片文件，当前模型不支持视觉识别，无法回传图片内容。';
@@ -226,7 +251,7 @@ async function toolReadFile(ctx, args) {
     }
     return await readImageAsBlocks(ctx, abs, rel, st.size);
   }
-  if (isProbablyBinary(abs)) return '[二进制文件，跳过文本读取] ' + relOf(ctx.taskDir, abs);
+  if (isProbablyBinary(abs)) return '[二进制文件，跳过文本读取] ' + (isPast ? disp : relOf(ctx.taskDir, abs));
   if (st.size > TEXT_FULL_READ_CAP) {
     return '（文件过大：' + Math.round(st.size / 1048576) + ' MB，超过 read_file 全文读取上限 '
       + (TEXT_FULL_READ_CAP / 1048576) + ' MB，拒绝整读；请用 terminal 的 grep -n / head / sed -n 定位阅读）';
@@ -244,11 +269,11 @@ async function toolReadFile(ctx, args) {
   if (endLine < startLine) throw new Error('end_line 必须 >= start_line（got start_line=' + startLine + ', end_line=' + args.end_line + '）');
   // 对齐 Zed：未指定范围且文件超过 16KB 时返回大纲；提取不到大纲则回退回首 1KB。
   if (!args.start_line && !args.end_line && Buffer.byteLength(text, 'utf8') > AUTO_OUTLINE_SIZE) {
-    const outline = buildOutline(abs, text);
+    const outline = buildOutline(disp, text);
     if (outline) return outlineWrapper(outline);
     let head = text.slice(0, 1024);
     try { while (Buffer.byteLength(head, 'utf8') > 1024) head = head.slice(0, -1); } catch (_) {}
-    return outlineWrapper('# First 1KB of ' + abs + ' (file too large to show full content, and no outline available)\n\n' + head);
+    return outlineWrapper('# First 1KB of ' + disp + ' (file too large to show full content, and no outline available)\n\n' + head);
   }
   lines = lines.slice(startLine - 1, Math.min(endLine, total));
   return lines.map((l, i) => String(startLine + i).padStart(6, ' ') + '\t' + l).join('\n');
@@ -301,9 +326,10 @@ async function toolListDirectory(ctx, args) {
   return out;
 }
 
-// copy_path：普通复制 + 历史成果的唯一进口。源可 '@<sid>/<rel>'（同用户校验在 resolvePastPath）；
-// 目标永不接受 @——历史只读、写只进本会话，「导入后文件即本地」让 read_file/vision/mint 全量生效，
-// 不必给它们开跨墙特例。撞名拒绝覆盖（保用户现作）。
+// copy_path：普通复制 + 历史成果的唯一「落地」进口。源可 '@<sid>/<rel>'（同用户校验在 resolvePastPath）；
+// 目标永不接受 @——历史只读、写只进本会话。「导入后文件即本地」仍是完整能力的前提：
+// terminal/grep 检索、edit_file 修改、vision 回图、mint 外链都只对本地文件生效（read_file 可只读
+// 窥看历史文本，但不落盘，替代不了导入）。撞名拒绝覆盖（保用户现作）。
 async function toolCopyPath(ctx, args) {
   const sp = String(args.source_path || '').trim();
   const dp = String(args.destination_path || '').trim();
@@ -345,6 +371,7 @@ async function toolCopyPath(ctx, args) {
 }
 
 async function toolWriteFile(ctx, args) {
+  if (String(args.path || '').trim().startsWith('@')) throw new Error('write_file 不支持 @ 路径（历史只读；要改旧成果先 copy_path 导入本会话）');
   const abs = resolveInTask(ctx.taskDir, args.path);
   // 纵深防御：引擎 checkToolArgs 已把 null 判缺，但直调 executor（测试等）不经过它；
   // 旧版 `?? ''` 会把 null 洗成空串静默清空已有文件，这里显式拒绝。
@@ -585,6 +612,7 @@ function applyEdit(text, edit, i) {
 // 对齐 Zed：edits 顺序应用到内存态；若第 N 条失败，前 N-1 条仍保存落盘，
 // 错误信息告知模型已应用了多少、需重新 read_file。
 async function toolEditFile(ctx, args) {
+  if (String(args.path || '').trim().startsWith('@')) throw new Error('edit_file 不支持 @ 路径（历史只读；要改旧成果先 copy_path 导入本会话）');
   const abs = resolveInTask(ctx.taskDir, args.path);
   let st;
   try { st = await fsp.stat(abs); }

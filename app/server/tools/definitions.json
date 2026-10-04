@@ -3,7 +3,7 @@
     "type": "function",
     "function": {
       "name": "copy_path",
-      "description": "Copies a file or directory, preserving the original; directories are copied recursively. More efficient than reading then writing contents. Returns confirmation with the destination path.\n\nImport past work: source_path accepts '@<session-id>/<rel>' to copy from your OWN past session (find the id with recall, browse with list_directory). destination_path never accepts '@' - past stays read-only, imports land in the current session directory. The destination must not exist yet; nothing is overwritten.\n\nAfter import the file is fully local: read_file (images included), terminal, mint_public_link all work on it.\n\nLimits: max 200 MB / 200 files per call; symlinks refused.",
+      "description": "Copies a file or directory, preserving the original; directories are copied recursively. More efficient than reading then writing contents. Returns confirmation with the destination path.\n\nImport past work: source_path accepts '@<session-id>/<rel>' to copy from your OWN past session (find the id with recall, browse with list_directory). destination_path never accepts '@' - past stays read-only, imports land in the current session directory. The destination must not exist yet; nothing is overwritten.\n\nAfter import the file is fully local: read_file (images included), terminal, mint_public_link all work on it. You can peek a past text file without importing (read_file takes the same '@' form); importing is what makes it workable (terminal, edit_file, images).\n\nLimits: max 200 MB / 200 files per call; symlinks refused.",
       "parameters": {
         "type": "object",
         "required": [
@@ -83,7 +83,7 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "Path of the file to edit, relative to the session working directory. Absolute paths are also accepted."
+            "description": "Path of the file to edit, relative to the session working directory. Absolute paths are also accepted. '@' paths are rejected here — copy a past file in with copy_path first."
           },
           "edits": {
             "type": "array",
@@ -253,7 +253,7 @@
     "type": "function",
     "function": {
       "name": "read_file",
-      "description": "Reads the content of a file.\n\nText files: each returned line is prefixed with a line number right-aligned in a 6-character field, followed by a tab, then the line content.\n\nLarge text files (roughly over 16 KB) are not returned in full: you get an outline listing top-level symbols (or Markdown headings) with line numbers instead. The outline IS a successful response — do NOT retry the same call without a line range; use the outline line numbers with `start_line` / `end_line` to read specific sections. If no outline can be extracted, a first-1KB excerpt is returned instead. Supplying `start_line` or `end_line` disables outline mode.\n\nImage files (PNG, JPEG, WebP, GIF, BMP, TIFF) are returned as visual content you can analyze directly, but only if the current model supports vision; otherwise a text placeholder is returned — that placeholder is not an error. The tool result itself carries a text notice only; the actual image pixels arrive in a separate user message right after the batch of tool results: that message lists per-image labels matching each image to its read_file receipt, then the image blocks in receipt order, and asks you to briefly describe each image before continuing. Never re-read an image already delivered in the current turn; if pixels never arrive, tell the user instead of retrying. Very large images (roughly over 50 MB) are skipped, and images may be downscaled (long edge ~2000 px, re-encoded as JPEG) before being returned.\n\nBinary files are not returned as text; a short notice is returned instead. Text files over 32 MB cannot be read by this tool — use `terminal` (grep -n / head / sed -n).",
+      "description": "Reads the content of a file.\n\nText files: each returned line is prefixed with a line number right-aligned in a 6-character field, followed by a tab, then the line content.\n\nCross-session peek: `path` accepts '@<session-id>/<rel>' to read a text file from your OWN past session, read-only (find the id with recall op=search, browse with list_directory). It is a look, not an import: nothing lands in your session directory, so `terminal`, grep and `edit_file` cannot see it, and past images are refused. When you need to work with a file or view a past image, `copy_path` it first (its `source_path` takes the same '@' form). '@' is never accepted by `write_file` or `edit_file`.\n\nLarge text files (roughly over 16 KB) are not returned in full: you get an outline listing top-level symbols (or Markdown headings) with line numbers instead. The outline IS a successful response — do NOT retry the same call without a line range; use the outline line numbers with `start_line` / `end_line` to read specific sections. If no outline can be extracted, a first-1KB excerpt is returned instead. Supplying `start_line` or `end_line` disables outline mode.\n\nImage files (PNG, JPEG, WebP, GIF, BMP, TIFF) are returned as visual content you can analyze directly, but only if the current model supports vision; otherwise a text placeholder is returned — that placeholder is not an error. The tool result itself carries a text notice only; the actual image pixels arrive in a separate user message right after the batch of tool results: that message lists per-image labels matching each image to its read_file receipt, then the image blocks in receipt order, and asks you to briefly describe each image before continuing. Never re-read an image already delivered in the current turn; if pixels never arrive, tell the user instead of retrying. Very large images (roughly over 50 MB) are skipped, and images may be downscaled (long edge ~2000 px, re-encoded as JPEG) before being returned.\n\nBinary files are not returned as text; a short notice is returned instead. Text files over 32 MB cannot be read by this tool — use `terminal` (grep -n / head / sed -n).",
       "parameters": {
         "type": "object",
         "required": [
@@ -262,7 +262,7 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "Path of the file to read, relative to the session working directory. Absolute paths are also accepted."
+            "description": "Path of the file to read, relative to the session working directory. Absolute paths are also accepted. '@<session-id>/<rel>' reads a same-user past session's file (text only; past images need copy_path first)."
           },
           "start_line": {
             "type": "integer",
@@ -457,7 +457,7 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "Path of the file to create or overwrite, relative to the session working directory. Absolute paths inside the working directory are also accepted."
+            "description": "Path of the file to create or overwrite, relative to the session working directory. Absolute paths inside the working directory are also accepted. '@' paths are rejected here — the past is read-only."
           },
           "content": {
             "type": "string",
