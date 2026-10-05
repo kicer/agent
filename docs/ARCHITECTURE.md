@@ -214,7 +214,7 @@ channel_sessions  user + channel 复合 PK / session_id / updated_at
                   # /api/channel/send 是唯一读写方，Web 路由不碰这张表
 
 wechat_bindings   id PK（wx+10hex）/ user / status (pending|online|expired|error) / note /
-                  bot_account_id / wx_to_user / last_msg_id / created_at / updated_at
+                  bot_account_id / wx_to_user / last_msg_id / deep_think（默认 0=关）/ created_at / updated_at
                   # 微信绑定权威表（§5.13）：一条 core 用户 ↔ 一个 wxbot iLink bot 实例（一人一绑，换号先解绑）；
                   # id 兼作 channel 键（channel='wx:'+id，复用 channel_sessions 全套机制）与 wxbot 凭证目录名；
                   # last_msg_id 是投递游标（assistant 消息 id ≤ 此值已送微信），落库防 core 重启重发
@@ -496,7 +496,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 | `/api/platforms` | `routes/platforms.js` | `GET /balance?pi=&ki=` 余额 |
 | `/api/system` | `routes/system.js` | `GET /status` + `/restart?force=...`（原 `model_profiles` 可用名单字段已删，前端无消费方） |
 | `/api/profile` | `routes/profile.js` | `GET /` 读画像、`PUT /` 保存（三字段 + enabled）；按 `req.user` 隔离，逻辑全在 `user-profile.js`（快照冻结见 engine `createSession`/`clearSessionMessages`；日常更新由 AI 经 `profile` 工具增量维护，见 §5.4） |
-| `/api/channel` | `routes/channel.js` | `POST /send {channel, text}` 文本命令接入端（IM/CLI 等无 UI 客户端，走 Basic/cookie 鉴权）：命令仅在本入口解析（Web 消息路由不受影响，防误伤路径/代码文本）；严格匹配白名单 `/new[文本] /list /switch[编号] /rename[标题] /delete[编号] /models[编号] /think[on|off] /stop /compact /clear /status /help`（可带参数命令走 ARG_CMDS：switch/delete 编号=最近 /list 行号或 id 前缀，delete 删会话连同任务目录（同 Web 删除弹窗默认勾选），models 换绑复用 engine.bindToSession，think 读写用户 wechat_bindings.deep_think——微信全局深度思考开关（H5 按钮的指令形态，默认开，投递时替进既有 deepThink 参数）），未知斜杠词回提示、不像命令的当普通消息；(user,channel) 经 `channel_sessions` 表绑定当前会话（普通消息无绑定自动建）；命令动作不落消息行（与 Web 按钮对称），AI 回复由接入端复用既有 SSE/详情接口获取；`handleSend()` 另供微信桥接直调 |
+| `/api/channel` | `routes/channel.js` | `POST /send {channel, text}` 文本命令接入端（IM/CLI 等无 UI 客户端，走 Basic/cookie 鉴权）：命令仅在本入口解析（Web 消息路由不受影响，防误伤路径/代码文本）；严格匹配白名单 `/new[文本] /list /switch[编号] /rename[标题] /delete[编号] /models[编号] /think[on|off] /stop /compact /clear /status /help`（可带参数命令走 ARG_CMDS：switch/delete 编号=最近 /list 行号或 id 前缀，delete 删会话连同任务目录（同 Web 删除弹窗默认勾选），models 换绑复用 engine.bindToSession，think 读写用户 wechat_bindings.deep_think——微信全局深度思考开关（H5 按钮的指令形态，默认关，/think on 手动开，投递时替进既有 deepThink 参数）），未知斜杠词回提示、不像命令的当普通消息；(user,channel) 经 `channel_sessions` 表绑定当前会话（普通消息无绑定自动建）；命令动作不落消息行（与 Web 按钮对称），AI 回复由接入端复用既有 SSE/详情接口获取；`handleSend()` 另供微信桥接直调 |
 | `/api/wechat` | `routes/wechat.js` | 微信绑定管理（设置页，cookie 鉴权 + req.user 隔离）：`GET /`（enabled/alive/我的绑定）、`POST /`（新建绑定，一人一绑）、`GET /:id/qr`（登录二维码 SVG 代理）、`POST /:id/refresh`（重发登录）、`DELETE /:id`（解绑，销毁实例与凭证）；业务全在 `wechat.js`（§5.13） |
 | `/wxhook` | `routes/wechat.js`（hookRouter） | wxbot → core 内网回调（**挂 auth.middleware 与全局 express.json 之前**，自带 32mb 解析器容纳媒体 base64）：`POST /inbox {id, from, text, media?}` 文本/媒体转 channel 层——media={kind:image\|video\|file, b64, filename?}，core 按 magic 嗅探定扩展名、落会话任务目录（文件保留消毒原名，图/视频生成 wximg-/wxvid- 时间戳名）+ 记 files 表 + 拼「用户上传了文件：<名>」告知行（同 web 附件模式，vision 模型 read_file 即见）；非 2xx 时 wxbot 把 error 文案回给微信用户；`POST /hook {id, event}` 实例状态回报；Bearer 共享服务 token（哈希后定长比较，未配一律 503） |
 | `/api/models` | `server.js` | 模型池（在用会话数 slots_used / 在用会话列表，非独占展示）+ token 用量 |

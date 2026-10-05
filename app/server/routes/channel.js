@@ -213,7 +213,7 @@ function statusReply(db, s, channel) {
   // 思考开关只对微信通道有意义（web 端用按钮，不读这列）
   if (String(channel || '').startsWith('wx:')) {
     const bt = db.prepare('SELECT deep_think FROM wechat_bindings WHERE id = ?').get(String(channel).slice(3));
-    if (bt) lines.push('- 深度思考：' + (bt.deep_think !== 0 ? '开' : '关'));
+    if (bt) lines.push('- 深度思考：' + (bt.deep_think ? '开' : '关'));
   }
   const t = db.prepare('SELECT cron_expr, next_run_at, last_run_at, last_status FROM scheduled_tasks WHERE session_id = ?').get(s.id);
   lines.push(t
@@ -240,7 +240,7 @@ function handleSend(db, opts) {
   // 只是没得点、改用 /think 拨）；非 wx 通道照旧不传 opts，行为零变化。
   if (!parsed || parsed.normal) {
     const wx = String(channel).startsWith('wx:');
-    const deepThink = wx ? ((db.prepare('SELECT deep_think FROM wechat_bindings WHERE id = ?').get(channel.slice(3)) || {}).deep_think !== 0) : undefined;
+    const deepThink = wx ? !!((db.prepare('SELECT deep_think FROM wechat_bindings WHERE id = ?').get(channel.slice(3)) || {}).deep_think) : undefined;
     let s = boundSession(db, user, channel);
     let sent;
     if (!s) {
@@ -337,7 +337,7 @@ function handleSend(db, opts) {
       return { kind: 'command', reply: '未绑定微信，此开关不适用', session_id: s ? s.id : null };
     }
     if (v === null) {
-      return { kind: 'command', reply: '微信深度思考当前：' + (b.deep_think !== 0 ? '开' : '关') + '（/think on|off 切换）', session_id: s ? s.id : null };
+      return { kind: 'command', reply: '微信深度思考当前：' + (b.deep_think ? '开' : '关') + '（/think on|off 切换）', session_id: s ? s.id : null };
     }
     if (v !== b.deep_think) db.prepare('UPDATE wechat_bindings SET deep_think = ? WHERE id = ?').run(v, b.id);
     log.info('task', tag + ' channel /think → ' + (v ? 'on' : 'off') + '（用户全局，binding ' + b.id + '）');
