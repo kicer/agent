@@ -308,7 +308,7 @@ stateDiagram-v2
 | `systemPromptText(language, profile?)` | 按 profile 名选 prompt 源（缺省 = 默认模板）；`{APP_SKILLS}` 占位符就地替换为技能清单（自定义文件没放占位符 = 无技能段；默认模板没放时兑底尾拼），末尾统一拼语言指令；拼接结果按 (profile, 语言) 缓存（`_promptTextCache` Map） |
 | `setSkillListText(text)` | 技能列表变更后清缓存，强制重拼 |
 | `setProfilePrompts(map)` | profile 自定义 prompt 注册表（name→全文，文本已随配置加载读入）；engine.init 调一次，运行期选取零 IO |
-| `buildMessages(session, lang, mintUrl?)` | DB 行 → OpenAI messages 数组；处理 summary/archived/errAck/图片消费；`image_ref` 块用 `mintUrl` 现签成公网 `image_url` 外链 |
+| `buildMessages(session, lang, mintUrl?)` | DB 行 → OpenAI messages 数组；处理 summary/archived/errAck/图片消费；`image_ref` 块用 `mintUrl` 现签成公网 `image_url` 外链；assistant 行存库 reasoning 挂内部键 `__reasoning` 下传（callModel 消费后必剥） |
 | `forEachSSEData(res, onEvent, onMeta, onBadData)` | 通用 SSE 帧解析（空行分隔，data: 行 JSON.parse，注释行走 onMeta） |
 | `callModel(cfg, modelId, messages, tools, opts)` | 一次模型调用；`opts.deepThink` 启用时合并 `thinking_params`；返回 `{content, reasoning, tool_calls, finish_reason, usage, aborted, sseFrames}` |
 
@@ -316,7 +316,8 @@ stateDiagram-v2
 
 - 模型内部唯一键 = `平台名/模型id`（`model_id` 列），发上游用原始 `mid`。
 - `extra_params` 与 `thinking_params` 通过 `deepMergeInto` 合入 body；`thinking_params` 覆盖 `extra_params` 同名键。
-- `reasoning` 字段兼容 `reasoning` 与 `reasoning_content`（各家上游不一致），只走一个。
+- `reasoning` 字段兼容 `reasoning` 与 `reasoning_content`（各家上游不一致），只走一个；接收解析与回传配置解耦。
+- 思维链回传：模型配了 `reasoning_ack_field`（如 `reasoning_content`，DeepSeek 系要求历史轮把思考链喂回）时，callModel 发请求前把 assistant 行的 `__reasoning` 按该字段名写回；纯配置闸门不看 tools，对话/压缩/标题回合同规则；未配 = 不回传（只剥内部键，零变化）。回传字节恒定，不破坏前缀缓存；代价是 prompt token 变多，逐模型 opt-in。
 - 上游错误帧（`choices=[]` 且 `usage` 也无）通过 `onBadEvent` 落 warn 日志，不再静默。
 
 ### 5.3 `mcp.js` —— 极简 MCP 客户端
@@ -386,7 +387,7 @@ stateDiagram-v2
 
 - 加载：`loadConfig(AGENT_CONFIG)` 读文件 → `parseAndValidate`。
 - 兼容：旧版 `models[]`（扁平）自动迁移到 `platforms[]` 层级；旧版 `web_search.*` 迁移到 `mcp_servers[]`（log.info 提示）。
-- 规范化：`normalizePlatforms` 校验 `name/url/type`，key 层 `concurrency`，model 层 `{id, display_name, vision, enable, extra_params, thinking_params, profile}`；同平台内 model id 必须唯一（内部唯一键 = 平台名/模型id）；`profile` 引用不存在的名字直接报错。
+- 规范化：`normalizePlatforms` 校验 `name/url/type`，key 层 `concurrency`，model 层 `{id, display_name, vision, enable, extra_params, thinking_params, reasoning_ack_field, profile}`；同平台内 model id 必须唯一（内部唯一键 = 平台名/模型id）；`profile` 引用不存在的名字直接报错。
 - `model_profiles`（顶层，`normalizeModelProfiles`）：多套可复用的 prompt+tools 组合，每项 `{tools_allow?, tools_deny?, system_prompt_file?}`，三者至少配一个。`tools_allow` 按**最终发给模型的工具名**匹配（内置 + MCP，含 `服务名__` 前缀，与 prompt.txt dump 同源可对）；未配 = 全量，**空数组 `[]` = 零工具（纯文本组合）**——与 MCP 的 `tools_allow`（空名单视作未配）有意不同。`tools_deny` 在 allow 之后叠加生效（deny 赢）；profile 未配 = 继承全局 `tools_deny`（DEFAULTS 屏蔽元工具 `lab`），`[]` = 显式清空（lab profile 靠它换回元工具），非空 = 替换全局。`system_prompt_file` 相对 `server/templates/`（compose 已 bind-mount ./app/server，宿主直接可改），**配置加载时一次性读入常驻内存**，缺失/为空报错拦在保存/重启预检；自定义文件 = 完全接管模板正文，技能清单靠模板内 `{APP_SKILLS}` 占位符就地插入（不放 = 无技能段；默认模板同机制，见 §5.2），语言指令始终尾拼。运行期切换（前端传参）零 IO、不碰本配置。
 - 默认值（`DEFAULTS`）：port=8090、workspace_root/data_root=`/workspace/tasks` `/workspace/data`、log_level=info、terminal 30s/10K、fetch 30s/1MB、agent temperature=1.0、max_tool_iterations=100、max_retries=2、上传 1.5MB/2000px/0.85（旧 `model_hold` 已废弃，字段仅为旧 config.yml 解析兼容保留）；顶层默认 `tools_deny: [lab]`；内置 `model_profiles` 含 `lab`（元工具自测：`tools_allow:[lab]` + 显式清空 deny + `profile-lab.txt`）与 `zero`（零工具 + `profile-zero.txt`）。`config.yml` 只覆盖 deploy 相关段，其余走默认值；整份清单见 `app/config.example.yml`。
 - 读写：`readConfigText` / `writeConfigText`（先校验后写，无原子 rename，因 bind mount 上 rename 会 EBUSY）；`applyEditsToText` 用 `YAML.Document` 保留注释。
@@ -680,7 +681,7 @@ sequenceDiagram
 
 ### 11.4 加一个模型 / 平台
 
-改 `config.yml` 的 `platforms`：加新平台 `{name, url, type, keys:[{api_key, models:[{id, display_name, vision?, enable?, extra_params?, thinking_params?}]}]}`，**或**在已有平台加新 key/新 model。重启生效。`enable: false` 的模型不进模型池；`vision` 缺省开启（现在模型基本都带视觉），不支持的模型显式配 `vision: false`。小模型可加 `profile: <名>` 引用顶层 `model_profiles` 的 prompt+tools 组合（见 §5.8）。
+改 `config.yml` 的 `platforms`：加新平台 `{name, url, type, keys:[{api_key, models:[{id, display_name, vision?, enable?, extra_params?, thinking_params?, reasoning_ack_field?}]}]}`，**或**在已有平台加新 key/新 model。重启生效。`enable: false` 的模型不进模型池；`vision` 缺省开启（现在模型基本都带视觉），不支持的模型显式配 `vision: false`。小模型可加 `profile: <名>` 引用顶层 `model_profiles` 的 prompt+tools 组合（见 §5.8）。
 
 模型内部唯一键 = `平台名/模型id`（用于历史回绑、token 用量统计）—— **重命名平台等于重建其下所有模型**。
 

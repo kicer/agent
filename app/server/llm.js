@@ -249,6 +249,9 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
         return;
       }
       const m = { role: 'assistant', content: row.content || '' };
+      // 思维链回传原料：存库 reasoning 随原样带给 callModel（中性内部键，按模型
+      // reasoning_ack_field 改名注入后此键必被剥除，不会泄往上游）。
+      if (row.reasoning) m.__reasoning = row.reasoning;
       if (row.tool_calls) {
         m.tool_calls = JSON.parse(row.tool_calls);
         if (trimActive && TRIM.writeRounds > 0) trimWriteCalls(m.tool_calls, roundsAfter.get(row.id) || 0);
@@ -517,6 +520,19 @@ async function callModel(cfg, modelId, messages, tools, options) {
   }
   if (opts.deepThink && modelCfg.thinking_params && Object.keys(modelCfg.thinking_params).length) {
     deepMergeInto(body, modelCfg.thinking_params);
+  }
+  // 思维链回传（逐模型 opt-in，纯配置闸门不看 tools）：reasoning_ack_field 非空时，把
+  // buildMessages 挂的内部键 __reasoning 按该字段名写回 assistant 行（对话/压缩/标题回合同规则；
+  // 没配/无思考的行零变化）。无论配与否都剥一遍 __reasoning，内部键不出仓库。
+  if (body.messages && body.messages.length) {
+    const ack = modelCfg.reasoning_ack_field;
+    body.messages = body.messages.map(mm => {
+      if (!mm || !mm.__reasoning) return mm;
+      const c = Object.assign({}, mm);
+      if (ack) c[ack] = c.__reasoning;
+      delete c.__reasoning;
+      return c;
+    });
   }
 
   const headers = { 'Content-Type': 'application/json' };

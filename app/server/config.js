@@ -223,6 +223,10 @@ function normalizePlatforms(rawPlatforms, profileNames) {
         extra_params: (m.extra_params && typeof m.extra_params === 'object' && !Array.isArray(m.extra_params)) ? m.extra_params : {},
         // 选填：前端启用「深度思考」时合并进 body。可覆盖 extra_params 的同名键。
         thinking_params: (m.thinking_params && typeof m.thinking_params === 'object' && !Array.isArray(m.thinking_params)) ? m.thinking_params : {},
+        // 选填：思维链回传字段名（如 reasoning_content——DeepSeek 系平台要求历史轮把思考链喂回）。
+        // 非空时发请求前给历史 assistant 行挂该字段；空（缺省）= 不回传。纯发送侧旋钮，
+        // 与接收解析无关（接收早已兼容 reasoning/reasoning_content 双名）。
+        reasoning_ack_field: typeof m.reasoning_ack_field === 'string' ? m.reasoning_ack_field.trim() : '',
         profile,
       });
     }
@@ -270,6 +274,7 @@ function parseAndValidate(rawText, configPath) {
       id: p.name + '/' + m.id, mid: m.id,
       display_name: m.display_name, vision: m.vision, enable: m.enable,
       extra_params: m.extra_params, thinking_params: m.thinking_params,
+      reasoning_ack_field: m.reasoning_ack_field,
       profile: m.profile,
       url: p.url, api_key: k.api_key, platform: p.name, type: p.type, concurrency: k.concurrency,
       platform_index: pi, key_index: ki, model_index: mi,
