@@ -208,6 +208,7 @@ function sweepAutoComplete() {
       touch(r.id, { status: 'completed', completed_at: now(), held_at: null });
       bus.emit(r.id, 'done', { status: 'completed' }); // 与手动 releaseHold 同链路，前端胶囊/列表自然收起
       emitStatus(r.id);
+      wrapTitleFallback(r.id); // 翻 completed = 本会话退出 finalize 循环，标题在此兑底补一次
     }
     if (rows.length) log.info('engine', 'held 超时自动收口 ' + rows.length + ' 个会话（阈值 ' + ms + 'ms）');
   } catch (e) {
@@ -223,6 +224,7 @@ function sweepJournalWrap() {
       + ' ORDER BY updated_at LIMIT ?'
     ).all(now() - ms, WRAP_SWEEP_BATCH);
     for (const r of rows) {
+      wrapTitleFallback(r.id); // 收口退位前同样补题（阶段一空转/auto_complete_ms=0 时的兑底；已有题则秒跳）
       // 摘要落地（新增或去重命中）才解绑归档；生成中抢先发言（active）则本次撤台跳过，不打扰用户当下工作台。
       journalFragment(r.id).then(landed => {
         if (!landed) return;
@@ -595,6 +597,25 @@ function maybeGenerateTitle(sessionId, s, run) {
   } catch (e) {
     titling.delete(sessionId);
     log.warn('task', sessionId + ' 生成标题异常：' + String(e && e.message || e));
+  }
+}
+
+// 收口补题（finalize 的兑底）：finalize 是唯一的立题触发点，而纯聊未过门槛、标题 LLM
+// 失败（注释里的「下回合重试」）、取消收尾等路径会让会话带着空 title 被空闲扫描收口，
+// 此后再无触发点。两个 sweep（翻 completed / 记忆收口退位）各补一次，门槛语义与 finalize 对齐：
+// 历史里存在真实执行过的工具轮（非 errAck 的 tool_calls assistant 行）视作 toolWorked 直接立题；
+// 纯聊仍走 ≥3 条/≥30 字现推。fire-and-forget，防重入/非空即跳均由 maybeGenerateTitle 自带；
+// 与碎片摘要并行各发各的 LLM，无先后耦合（journalFragment 不读 title）。
+function wrapTitleFallback(sessionId) {
+  try {
+    const s = getSession(sessionId);
+    if (!s || s.title || !s.model_id) return;
+    const toolWorked = !!db.prepare(
+      "SELECT 1 FROM messages WHERE session_id = ? AND role='assistant' AND type IS NULL AND tool_calls IS NOT NULL LIMIT 1"
+    ).get(sessionId);
+    maybeGenerateTitle(sessionId, s, toolWorked ? { toolWorked: true } : null);
+  } catch (e) {
+    log.warn('task', sessionId + ' 收口补题异常：' + String(e && e.message || e));
   }
 }
 
