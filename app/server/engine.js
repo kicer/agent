@@ -568,13 +568,16 @@ function finalize(sessionId, run) {
 // 不带 system prompt：历史 user/assistant 原文（注入行不进，白名单见 llm.titleMessages）+
 // 末尾一条标题指令 user，用会话当前 model_id 发一次不传 tools 的调用。
 // 失败静默（title 仍空，下个回合结束自动重试）；handoff 时顾问自写的标题占位后不再覆盖。
-function maybeGenerateTitle(sessionId, s, run) {
+// force=true（仅收口兑底 wrapTitleFallback 传）：跳过 n/chars 现推门槛无条件立题——
+// 收口是最后一站，没有下个回合了，差一点的标题也比永远无名强；其余守卫（非空即跳/防重入/
+// 清空校验）不受 force 影响，finalize 路径不传维持原门槛。
+function maybeGenerateTitle(sessionId, s, run, force) {
   try {
     if (s.title) return;
     const modelId = s.model_id;
     if (!modelId || titling.has(sessionId)) return;
     const history = loadHistory(sessionId);
-    if (!run || !run.toolWorked) {
+    if (!force && (!run || !run.toolWorked)) {
       let n = 0, chars = 0;
       for (const r of history) {
         if (r.role === 'user' && !r.type) { n++; chars += String(r.content || '').trim().length; }
@@ -602,18 +605,15 @@ function maybeGenerateTitle(sessionId, s, run) {
 
 // 收口补题（finalize 的兑底）：finalize 是唯一的立题触发点，而纯聊未过门槛、标题 LLM
 // 失败（注释里的「下回合重试」）、取消收尾等路径会让会话带着空 title 被空闲扫描收口，
-// 此后再无触发点。两个 sweep（翻 completed / 记忆收口退位）各补一次，门槛语义与 finalize 对齐：
-// 历史里存在真实执行过的工具轮（非 errAck 的 tool_calls assistant 行）视作 toolWorked 直接立题；
-// 纯聊仍走 ≥3 条/≥30 字现推。fire-and-forget，防重入/非空即跳均由 maybeGenerateTitle 自带；
+// 此后再无触发点。两个 sweep（翻 completed / 记忆收口退位）各补一次，force 无条件立题：
+// 收口是最后一站，没有下个回合，现推门槛（防「你好」抢题）在此不再适用——差标题也比没标题强。
+// 非空即跳/防重入/清空校验等守卫仍由 maybeGenerateTitle 自带；fire-and-forget，
 // 与碎片摘要并行各发各的 LLM，无先后耦合（journalFragment 不读 title）。
 function wrapTitleFallback(sessionId) {
   try {
     const s = getSession(sessionId);
     if (!s || s.title || !s.model_id) return;
-    const toolWorked = !!db.prepare(
-      "SELECT 1 FROM messages WHERE session_id = ? AND role='assistant' AND type IS NULL AND tool_calls IS NOT NULL LIMIT 1"
-    ).get(sessionId);
-    maybeGenerateTitle(sessionId, s, toolWorked ? { toolWorked: true } : null);
+    maybeGenerateTitle(sessionId, s, null, true);
   } catch (e) {
     log.warn('task', sessionId + ' 收口补题异常：' + String(e && e.message || e));
   }

@@ -63,7 +63,7 @@ agent/
 │   │   │   ├── profile-default.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
 │   │   │   ├── profile-advising.txt 顾问阶段提示词（内置 profile:advising，phase=advising 时强制命中，见 §4.1）
 │   │   │   ├── prompt-compress.txt 上下文压缩提示词（压缩回合末尾追加为 user 消息，历史照常走 messages）
-│   │   │   └── prompt-title.txt   会话标题自动生成提示词（回合结束过门槛触发：本轮有工具，或纯聊≥ 3 正题轮且字数达标；空闲扫描自动收口时兜底补一次（wrapTitleFallback）；{{language}} 填配置语言）
+│   │   │   └── prompt-title.txt   会话标题自动生成提示词（回合结束过门槛触发：本轮有工具，或纯聊≥ 3 正题轮且字数达标；空闲扫描自动收口时无条件补题（wrapTitleFallback，跳过现推门槛——差标题也比没标题强）；{{language}} 填配置语言）
 │   │   └── public/                前端 H5 SPA（无构建，Vanilla JS 经典脚本多文件 + SSE）
 │   │       ├── index.html         主页（HTML+样式；脚本全部在 js/，按序加载共享全局作用域）
 │   │       ├── login.html         登录页
