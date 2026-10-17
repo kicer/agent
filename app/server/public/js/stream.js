@@ -136,18 +136,9 @@
     es.addEventListener('status', ev => {
       const d = JSON.parse(ev.data);
       state.status = d.status;
-      state.phase = d.phase || '';
       renderHeader();
       updatePhaseBar(d);
       updateScrollBottomBtn(); // 状态切换同步右下角转圈(开始/结束干活)
-    });
-    // 阶段切换（advising↔executing）：任务书落地自动转执行时给一句明确反馈；
-    // 回 advising（清空）由发起动作自带反馈，不重复弹。
-    es.addEventListener('phase', ev => {
-      const d = JSON.parse(ev.data);
-      state.phase = d.phase || '';
-      renderHeader();
-      if (state.phase === 'executing') toast('任务书已确认，进入执行模式');
     });
     es.addEventListener('assistant_delta', ev => {
       const d = JSON.parse(ev.data);

@@ -42,7 +42,7 @@ agent/
 │   │   ├── balance.js             余额查询适配器（按 platform.type 分发）
 │   │   ├── version.js             版本信息（package.json + git 短提交号）
 │   │   ├── tools/
-│   │   │   ├── definitions.json   内置工具的 OpenAI function 格式定义（现 12 项，含元工具 lab 与全局屏蔽的 handoff）
+│   │   │   ├── definitions.json   内置工具的 OpenAI function 格式定义（现 14 项，含元工具 lab）
 │   │   │   ├── executor.js        工具执行器（文件类 + terminal + skill 委托）
 │   │   │   └── skills.js          Skill Manager（skill 工具的 list/get/run + 路径预处理）
 │   │   ├── download-token.js      下载链接签名（浏览器原生下载用；密钥进程内随机）
@@ -61,7 +61,6 @@ agent/
 │   │   │   └── system.js          /api/system/status + /restart 优雅重启
 │   │   ├── templates/
 │   │   │   ├── profile-default.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
-│   │   │   ├── profile-advising.txt 顾问阶段提示词（内置 profile:advising，phase=advising 时强制命中，见 §4.1）
 │   │   │   ├── prompt-compress.txt 上下文压缩提示词（压缩回合末尾追加为 user 消息，历史照常走 messages）
 │   │   │   └── prompt-title.txt   会话标题自动生成提示词（回合结束过门槛触发：本轮有工具，或纯聊≥ 3 正题轮且字数达标；空闲扫描自动收口时无条件补题（wrapTitleFallback，跳过现推门槛——差标题也比没标题强）；{{language}} 填配置语言）
 │   │   └── public/                前端 H5 SPA（无构建，Vanilla JS 经典脚本多文件 + SSE）
@@ -170,7 +169,7 @@ graph LR
 ### 4.1 SQLite 表（`db.js`）
 
 ```
-sessions          id (PK='task-YYYYMMDD-NNN') / title / status / phase /
+sessions          id (PK='task-YYYYMMDD-NNN') / title / status /
                   model_id / last_model_id / assistant_type / user / profile /
                   created_at / updated_at / completed_at / cancelled_at / held_at
 
@@ -178,12 +177,13 @@ messages          id PK / session_id FK / role (system|user|assistant|tool) /
                   content (TEXT, 含 __blocks__ 哨兵 JSON 多模态) / reasoning /
                   tool_calls (JSON) / tool_call_id / name / type /
                   is_error / created_at
-                  # type 取值: summary / archived / errAck / task_brief (任务书快照，advising→executing 切换后首条上下文) /
+                  # type 取值: summary / archived / errAck /
                   #   session_context (name 列 = SESSION_CONTEXT_NAME) /
                   #   scheduler_note（定时任务删除通知）/ channel_note（微信渠道上下文说明，每微信会话一条）/
                   #   wx_media（微信单发媒体留痕行，落盘不触发回合，同 scheduler_note 语义；
                   #   未知 type 一律按普通 user 消息发模型、UI 照常展示）
-                  # 旧版遗留: summarize_request（压缩指令 user 消息，已废弃，仅 buildMessages 兼容旧库）
+                  # 旧版遗留（只读兼容，不再生成）: summarize_request（压缩指令 user 消息，已废弃，仅 buildMessages 兼容旧库）/
+                  #   task_brief（已废弃 advising 阶段切换时代的任务书快照行，标题白名单保留读兼容）
 
 files             id PK / session_id / filename / size / created_at
                   # 仅记录元数据；文件本体在 workspace 目录里
@@ -240,29 +240,9 @@ stateDiagram-v2
 会话永远粘着自己的 model_slot（跨重启/结版/终止保持），换绑只有两条路：用户手动「选择模型」，
 或绑定失效（配置删模型/禁用/改名）后由 `ensureBinding` 自动改选（优先留原平台）。
 
-**session.phase 状态机**（advising/executing，`engine.js`）：
-
-```mermaid
-stateDiagram-v2
-    [*] --> advising: createSession
-    advising --> executing: handoff 工具（handler 落盘 task.md → enterExecuting，同回合继续开工）
-    executing --> advising: clearSessionMessages（旧 task.md mv 进 .task-history/）
-```
-
-- advising（顾问）：profile 被 `resolveProfileName` 强制为内置 `advising` 组合（问答/判意图/引导澄清需求），
-  只聊和读不写（`write_file`/`edit_file` 不在其白名单，批内幻觉调用也被 runLoopInner 挡下；例外 `profile`——
-  画像元信息不碰任务目录，顾问问答恰是收集称谓/偏好密度最高的时刻），
-  唯一出口是 `handoff` 工具：handler 把 `brief` 原样落盘根 `task.md`（reason ∈ ready/user_skip/user_stuck，
-  空 brief 拒回不切）；`handoff` 与 `lab` 同入全局 `tools_deny`，advising 组合显式 `tools_deny: []` 独享可见。
-- executing（执行）：回到常规 profile 链路（模型配置 > 默认全量）；单会话只解决一个问题，一路走到底，回头路只有「清空」。
-- 上下文压缩对 phase 中性（原来什么模式、压完仍什么模式）；定时任务投递与微信渠道消息前强制 `executing`（无人值守/异步接入不能被顾问话术卡住，微信侧由 wechat.ensureChannelContext 幂等保证，见 §5.13）。
-- 切换瞬间全史标 `archived`、插一条 `type='task_brief'` user 行（task.md 磁盘快照）作执行阶段唯一上下文起点；
-  幂等：执行中再改 task.md 只是普通文件编辑。
-- 存量会话启动时统一回填 `executing`（旧值 planning 废弃，见 db.js 迁移）；与 status 状态机正交，不影响模型调度。
-
 ### 4.2 文件布局
 
-**任务目录**（`cfg.workspace_root/<session-id>/`）：每个会话一个目录；Core 与 Executor 都可读写；sh 命令默认 cwd 即此目录。`task.md` = 当前轮任务书（由 `handoff` handler 落盘，phase 切换唯一入口）；`.task-history/` = 清空会话时旧任务书归档（点目录，文件列表默认隐藏，同 `.imgcache` 约定）。
+**任务目录**（`cfg.workspace_root/<session-id>/`）：每个会话一个目录；Core 与 Executor 都可读写；sh 命令默认 cwd 即此目录。（旧 advising 时代的 `task.md`/`.task-history/` 特殊语义已随顾问模式一并移除，存量目录里若还有只是普通文件。）
 
 **技能目录**（`cfg.skills_root/<skill-name>/`）：所有会话共享；`deps/` 子目录是 pip `--target` 共享的 Python 依赖（只放镜像缺失的包，镜像已带的不重复装），**与技能目录同级**（不是技能子目录）。`RESERVED_DIRS = {deps}` 在 `routes/skills.js` 里被排除以免被当成技能。
 
@@ -280,13 +260,12 @@ stateDiagram-v2
 | `applyBinding` / `bindingValid` / `ensureBinding` | 会话粘住 key+模型（model_slot/model_id/last_model_id + 刷新槽位 last_used_at）；绑定失效（配置删模型/禁用/改名）时按优先级自动改选，优先留原平台；空池抛 503 |
 | `chooseKey` / `chooseModel` | 优先级选 key（**无排队、无独占**）：looping 回合数少 → 在用（active/held）会话数少 → 最久未用（轮转摊平）→ id；具体模型在同平台内选（偏好旧模型 > 绑得最少的） |
 | `getRun` / `killRunProcs` | 每会话的运行控制（`cancelled` / `procs` / `abortController` / `looping`） |
-| `runLoop` / `runLoopInner` | Agent 主循环：解析 profile → buildMessages → callModel → 解包 tool args → 校验 → saveMessage → executeTool → saveMessage(tool) → SSE 广播。每迭代现解 profile（`resolveProfileName`：advising 阶段强制内置 `advising` 组合 > 模型配置 > 默认全量），prompt 与 tools 集（`effectiveTools` 按 `tools_allow`/`tools_deny` 过滤）跟着组合切换 |
+| `runLoop` / `runLoopInner` | Agent 主循环：解析 profile → buildMessages → callModel → 解包 tool args → 校验 → saveMessage → executeTool → saveMessage(tool) → SSE 广播。每迭代现解 profile（`resolveProfileName`：模型配置 > 默认全量），prompt 与 tools 集（`effectiveTools` 按 `tools_allow`/`tools_deny` 过滤）跟着组合切换 |
 | `streamAssistant` | 单次上游调用：拿 abortSignal / shouldCancel / 各类回调，把流式 chunk 转 SSE 事件（`assistant_delta` / `reasoning_delta`） |
-| `createSession` | 生成 id（`task-YYYYMMDD-NNN`，序号从历史 + `meta.task_seq` 取大）→ mkdir 任务目录 → phase 默认 advising → **创建即绑模型落 held**（指定模型优先其平台，无效退回全局；空池直接报错不建吊着会话） |
+| `createSession` | 生成 id（`task-YYYYMMDD-NNN`，序号从历史 + `meta.task_seq` 取大）→ mkdir 任务目录 → **创建即绑模型落 held**（指定模型优先其平台，无效退回全局；空池直接报错不建吊着会话） |
 | `postUserMessage` | 用户消息入口；除 looping（下一迭代自动带上新消息）外任意状态都是「保绑定→转 active→立即开跑」，`delivered` 恒 `'live'` |
 | `bindToSession` / `releaseHold` | 手动换绑（任意模型即点即换，仅输出中拒绝，无「占用」概念）；「断开」= held→completed 纯状态动作（无资源可释放，绑定仍在可继续用） |
-| `summarizeContext` / `clearSessionMessages` / `deleteMessage` | 收尾 + 上下文压缩（清空同时把 phase 打回 advising、归档旧 task.md、连带清空会话 .tmp 即执行容器里的 /tmp） |
-| `enterExecuting` / `archiveTaskBrief` | 阶段切换：批尾接 `handoff` 成功标记（brief 已由 handler 落盘）→ 全史存档 + 插 task_brief 快照 + phase='executing' + SSE 广播；清空时旧 task.md mv 进 `.task-history/` |
+| `summarizeContext` / `clearSessionMessages` / `deleteMessage` | 收尾 + 上下文压缩（清空连带清空会话 .tmp 即执行容器里的 /tmp） |
 | `checkToolArgs` / `unwrapToolArgs` | 工具参数校验 + 部分弱模型参数包裹外层自动解包 |
 | `ensureSessionContext` | 注入/刷新"会话上下文"首条 user 消息（日期/任务目录/模型名/vision 能力） |
 
@@ -298,8 +277,7 @@ stateDiagram-v2
 - **archived/summary 机制**（上下文压缩）：`type='archived'` 的消息 UI 照常展示但不再发模型；`type='summary'` 是压缩后的"上下文起点"。压缩回合**不插入任何指令消息**：由 `engine.summarizeContext` 在内存 run 上标 `summarizing`，`runLoopInner` 据此走 `llm.compressMessages`：沿用默认 system prompt + 正常历史 messages，末尾追加一条 user（`server/templates/prompt-compress.txt` 原文，参考标题回合的拼法），且不传 tools；回合内首条无 tool_calls 的收尾回复即摘要。（`llm.buildMessages` 仍保留旧库 `summarize_request` 行的处理，仅为历史数据兼容。）
 - **图片（多模态）**：`messages.content` 列是 TEXT，含图时存 `{"__blocks__":[content...]}` 哨兵 JSON。新版 `read_file` 读图：sharp 压缩产物落任务目录 `.imgcache/`（前端文件列表隐带点的项），库里只存 `image_ref` 轻量块；`buildMessages` 发送前经调用方传入的 `mintUrl` 回调现签成公网外链（同 `mint_public_link` 那套 `GET /p/<id>`）成 `image_url` 块，base64 不进 DB 也不进请求体；签不到降级为文字占位。**图不塞在 tool 回执里发**（tool 角色带 `image_url` 是非标准形态，大量 OpenAI 兼容上游整批忽略或只认批次最后一张，模型看不到图会反复 read_file 补看成死循环）：回执降级为纯文本，未消费的图统一并入该批之后的一条 `user` 消息（逐图对应说明合并置顶为一段文字、图块按回执顺序紧随——对齐官方示例排布；探针实测 DS 对交替排布也兼容，取低风险形态），并附「先逐张简述每图内容再继续任务」指令兼作送达自检；旧库/用户粘贴附件的 `data:` URL 块原样透传。图块**保留到最后一条收尾 assistant（无 tool_calls）之前**（`lastAssistant` 判定）——只发 tool_calls 的中间轮不算已阅、图继续携带（实测过图已进上下文而模型仍自述没看到的行为，鲁棒优先于极致省 token）；更早的换成"已省略"文字描述（措辞不催促重读）；同回合同一图只投递一次（`run.imgDelivered` 去重，再读同图只回文字提示；多图同请求经探针实测可行，曾按批限"每轮一张"已撤）；发送前 `log.debug('req', 发送形态...)` 打每轮图块计数，一眼区分发送侧漏拼与上游吞图。UI 渲染走带 cookie 的会话内下载路由，历史永不裂图。
 - **key 共享并发，无租约**：`model_pool.is_busy`/`current_session_id` 已废弃不再读写（旧库残留列，启动时清零）；同一 key 可被多个会话同时绑定并发 looping（上游 key 本身支持多并发）。held 不再自动到期，顶部「保持中 · 模型」持续展示，唯一出口是手动「断开」或换绑。
-- **task_brief（任务书锚点，advising→executing 切换）**：runLoopInner 工具批跑完后，若 advising 回合内有 `handoff` 成功返回（brief 已由 handler 原样落盘根 task.md 并记 files 表；批量末尾统一切，防父 assistant 先存档、后落库回执成孤儿行被上游拒收；同批多次 handoff 后写覆盖 last-wins），`enterExecuting` 当场重建上下文：全史标 `archived` → 插一条 `type='task_brief'` user 行（内容 = task.md 磁盘快照，非引用）→ phase='executing' + SSE `phase`/`status` 事件；下一迭代重读历史 + 重解 profile，天然切默认组合、同回合开工。压缩不碰 phase（task_brief 与其它历史一样会被后续压缩存档，漂移可控：压缩本就由用户主导）。
-- **profile（prompt+tools 组合）**：顶层 `model_profiles` 定义多套组合，`platforms[].models[].profile` 引用（见 §5.8）——这是唯一的引用来源：运行期手动切换已全部移除（消息级 profile 参数、`sessions.profile` 会话绑定均废弃，列保留不读写）；`advising` 例外，不走引用、由 phase 强制命中。名单外工具被调用不拦（`checkToolArgs` 查不到 def 不报错，`executeTool` 全表照跑），但阶段契约类例外：advising 内 `write_file`/`edit_file` 在批内挡下、`handoff` 在 handler 里带 phase 守卫；tools schema 只活在请求体不进历史，所以切换不脏化旧消息。压缩回合同样跟随（小模型会话点压缩不会回退到默认大模板）。
+- **profile（prompt+tools 组合）**：顶层 `model_profiles` 定义多套组合，`platforms[].models[].profile` 引用（见 §5.8）——这是唯一的引用来源：运行期手动切换已全部移除（消息级 profile 参数、`sessions.profile` 会话绑定均废弃，列保留不读写）；未配 profile = 默认全量组合（profile-default.txt）。名单外工具被调用不拦（`checkToolArgs` 查不到 def 不报错，`executeTool` 全表照跑）；tools schema 只活在请求体不进历史，所以切换不脏化旧消息。压缩回合同样跟随（小模型会话点压缩不会回退到默认大模板）。
 
 ### 5.2 `llm.js` —— 上游调用
 
@@ -329,7 +307,7 @@ stateDiagram-v2
 - session 补偿：MCP 规范的 `Mcp-Session-Id` 缓存在 `server.sessionId`；过期（400 + 含 "session" 字样）自动重 initialize 后重试一次。
 - 某些老服务无 `initialize` → catch `Method not found` 不阻断。
 
-### 5.4 `tools/executor.js` —— 内置工具（现 12 项，含元工具 `lab`）的派发器
+### 5.4 `tools/executor.js` —— 内置工具（现 14 项，含元工具 `lab`）的派发器
 
 `HANDLERS` 是 `name → async(ctx, args) → result` 的表；`executeTool(ctx, name, args)` 按 `name` 派发；**未知名直接转发给 MCP**（若 `mcp.hasTool(name)`，调 `mcp.callTool`）。
 
@@ -337,13 +315,13 @@ stateDiagram-v2
 |---|---|
 | `read_file` | 走 `resolveInTask` 防路径穿越；图像（PNG/JPEG/WebP/GIF/BMP/TIFF）按 vision 能力走 `sharp` 压缩后落盘 `.imgcache/` 并回传 `image_rel`（长边 ≤ 2000px，JPEG q=80；文件名带源文件 mtime+size 指纹，重读复用不增殖；重编码无收益时不落盘、直指原文件），发送前由 `llm.buildMessages` 现签成公网外链（engine 侧 mint 前 realpath 复核）；大文本/二进制给 outline，超 32MB 拒读并引导 terminal；`path` 可 `@<sid>/<rel>` 只读窥看同用户历史会话的文本（校验单点 `resolvePastPath`，与 list_directory/copy_path 同源）——字节不落本会话，terminal/edit_file 看不见它，历史图片直接拒绝并引导 copy_path（图片进模型视野必须经本会话签外链，藏进 .imgcache 等于偷偷导入）；行号前缀格式 "`<6位右对齐行号>\\t<原文>`"（`edit_file` 用） |
 | `write_file` / `edit_file` | `edit_file` 用模糊定位（Zed 风格）：先精确匹配，失败后用 Levenshtein DP 找最相似行；超 32MB 拒绝整文件读写（OOM 防护）；DP 候选区间不连续（中间跳过无关 buffer 行）即弃用，防静默吞行；空 `new_text` = 整行干净删除（精确/模糊两层统一，对齐 `"".lines()` 零行语义）；`old_text`/`new_text` 协议见 `definitions.json` |
-| 已移除的工具（部分复活） | `list_directory` / `copy_path` 于 2026-09 复活并加 `@<session-id>/<rel>` 只读记号：当年删除理由是「环境固定，统一走 terminal」，但生产 terminal 在远端 executor 容器（compose：wrapper 启动即 unmount host-tasks），其他会话目录在 shell 物理视图里不存在——跨会话取旧成果只剩 core 进程一个口子。校验单点 `resolvePastPath`（形状+存在+同用户，承自 recall 旧 files/link）；list_directory 单层 ls（≤200 条、隐藏项不列，@ 模式条目带 '@<sid>/' 全形前缀可直接抄进 copy_path）；copy_path 源可 @、目标拒 @（历史只读，导入落本会话后 read_file/vision/mint 全量生效），预算 200 文件/200MB，符号链接拒收防逃逸（mint 同款防线）；2026-10 给 read_file 开了只读窥看特例：跨墙不变量从「数据过墙只走 copy_path 一道门」放宽为「查看可过墙（list/read 文本），字节落地仍只走 copy_path」，写侧 write_file/edit_file 显式拒 @（否则 resolveInTask 会把 @ 当相对路径、在本会话造出字面 @ 目录）。同批拆除 recall 的 files/link 两 op（沙箱外克隆必漂移：link 漏抄 mint 的 realpath 防线），recall 收敛为纯记忆 search/days/day。仍移除：`create_directory` / `delete_path` / `move_path` / `find_path` / `grep`（写删检索继续走 terminal）；17→10 大盘不变，复活两件+后续 db/profile → 现 15 项 |
+| 已移除的工具（部分复活） | `list_directory` / `copy_path` 于 2026-09 复活并加 `@<session-id>/<rel>` 只读记号：当年删除理由是「环境固定，统一走 terminal」，但生产 terminal 在远端 executor 容器（compose：wrapper 启动即 unmount host-tasks），其他会话目录在 shell 物理视图里不存在——跨会话取旧成果只剩 core 进程一个口子。校验单点 `resolvePastPath`（形状+存在+同用户，承自 recall 旧 files/link）；list_directory 单层 ls（≤200 条、隐藏项不列，@ 模式条目带 '@<sid>/' 全形前缀可直接抄进 copy_path）；copy_path 源可 @、目标拒 @（历史只读，导入落本会话后 read_file/vision/mint 全量生效），预算 200 文件/200MB，符号链接拒收防逃逸（mint 同款防线）；2026-10 给 read_file 开了只读窥看特例：跨墙不变量从「数据过墙只走 copy_path 一道门」放宽为「查看可过墙（list/read 文本），字节落地仍只走 copy_path」，写侧 write_file/edit_file 显式拒 @（否则 resolveInTask 会把 @ 当相对路径、在本会话造出字面 @ 目录）。同批拆除 recall 的 files/link 两 op（沙箱外克隆必漂移：link 漏抄 mint 的 realpath 防线），recall 收敛为纯记忆 search/days/day。仍移除：`create_directory` / `delete_path` / `move_path` / `find_path` / `grep`（写删检索继续走 terminal）；17→10 大盘不变，复活两件+后续 db/profile → 2026-10 随顾问模式（advising）拆除 handoff → 现 14 项 |
 | `terminal` | **唯一一个走 executor 的内置工具**（当 `rexec.isRemote(cfg)`）；本地分支用 `spawn` + `detached` + 进程组 kill；远端分支 `rexec.run` SSE 收流，结果套上超时/截断/取消注解后 `truncate(text, cfg.terminal.max_output_chars)` 返回 |
 | `fetch` | `AbortController` 覆盖全生命周期（响应头之后的 body 读流同样被超时/取消打断，取消用与 terminal 同款的 200ms 轮询）；content-type 先行，非文本只回状态/类型/尺寸不读 body；**下载/返回双上限解耦**：流式读到 `cfg.fetch.max_bytes`（默认 1MB）即断开（下载不占上下文可宽松），返回窗默认 `max_chars`（12000）字符，模型显式传 `max_chars` 夹在 `max_chars_hard`（64000）硬帽内；超窗尾部拼 `offset` 续读提示，转换后全文缓在 `ctx.run.fetchCache`（回合级 LRU 3 条），续读纯本地切片不重抓；**SSRF 防护**：主机名解析结果含回环/私有/链路本地地址即拒（`allow_private: true` 才放行），`redirect:'manual'` 逐跳复查至多 5 次（残余风险：undici 建连时二次解析，DNS 重绑定不可根治）；按响应 charset 解码（full-icu 支持 gbk/gb18030 等，未知编码退回 UTF-8）；HTML 用 `htmlToMarkdown` 转（剥 script/style/head 及 nav/header/footer/aside/form 整块，class/id 样板词启发式丢块，`<title>` 提成首行）；HTML 实体单遍解码（常见命名实体+数字实体通吃，修 `&amp;` 双重解码）；字节截断切在多字节字符中时尾 U+FFFD 去噪；网络错误解包 `err.cause` 直述 ENOTFOUND/TLS 等真因，SSRF/重定向类错误带 `fetchUserError` 标记直接冒泡；engine 不截工具结果，返回值末尾另有 `truncate` 1MB 字符兜底护栏 |
 | `mint_public_link` | **唯一的 mint 入口**：与 core 同进程，直接 `publicFiles.mint()`，不绕任何 HTTP；`ctx.taskDir` 就是会话目录，`relOf` 的结果正是取用侧要的 `rel`。校验：`public_link.base_url` 已配 + `resolveInTask` 沙箱 + 确认是文件 + `realpath` 未沿符号链接跳出任务目录；返回单行 URL |
 | `skill` | op 分派 list/get/run（三件套合并：同一 `name` 标识空间 + 同一生命周期，见 `docs/tool-design.md` §一）；委托 `tools/skills.js`；`input_args` 仅 op=run 且可缺省 `{}`，缺参由各技能 `input_schema` 校验点名报错；front matter 带 `visit_url` 的技能在 op=run 成功后由 executor 层拼 `public_link.base_url`（与 mint 同源）追加完整「访问地址」行（技能进程不知公网前缀，AI 拿相对路径会原样转给用户） |
 | `schedule` | **当前会话**（`ctx.sessionId`，AI 不可指定他会话）定时任务的完整生命周期：op 分派 get/create/update/delete（表主键 session_id → 每会话至多一条，无 id 参数）；条件必填在代码里校验、错误回显 op 与缺失字段；数据层在 `scheduler.js`（cron 可解析 → 间隔 ≥1h → prompt ≤20000 → 查重/存在性检查），delete 不落 scheduler_note；描述里限定「仅用户明确要求时调用」（安全缓解，见 §5.12） |
-| `profile` | 用户画像增量维护（op 分派：list / set(honorific\|industry 单值≤20字，空串清除) / add / remove(preference 顿号标签)）；user 取自会话行，AI 不可指定他人；护栏单标≤15字×≤24个×总≤300字，整批原子（任一超限不落库）；停用（enabled=0）拒写不拒读；写入自新会话生效（快照冻结语义不变），list 永远给 live 状态——取代了原 handoff 落槌一次性提取链路 |
+| `profile` | 用户画像增量维护（op 分派：list / set(honorific\|industry 单值≤20字，空串清除) / add / remove(preference 顿号标签)）；user 取自会话行，AI 不可指定他人；护栏单标≤15字×≤24个×总≤300字，整批原子（任一超限不落库）；停用（enabled=0）拒写不拒读；写入自新会话生效（快照冻结语义不变），list 永远给 live 状态——取代了早期的画像一次性提取链路 |
 | `lab` | 元工具统一入口：`tool` + 自由 `args` 转发内置 + MCP 全部能力（目标 schema 定义期不可知，条件校验归内层 handler）；`help` 伪工具做现场发现（无参列名单、带 `args.tool` 出完整 schema），未知名回显全清单，禁嵌套、内层错误冒泡不包装。默认被全局 `tools_deny: ['lab']` 屏蔽，仅 `lab` profile（allow `[lab]` + deny `[]` 清空）下发，见 §5.8 |
 
 `resolveInTask(taskDir, relOrAbs)`：把相对路径或绝对路径解析为绝对路径并校验落在 `taskDir` 之内（含根），防穿越。
@@ -419,7 +397,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - **形态**：`start(engine)` 注入 engine（避免 engine→executor→scheduler 顶层循环 require），`setInterval` 30s + `unref`，单次异常只 `log.error` 不中断定时器。周期/最小间隔是模块常量，不进 config.yml。
 - **cron**：`cron-parser@5.10.1`（锁版；v5 API 是 `CronExpressionParser.parse`，与 v4 的 `parseExpression` 不兼容），显式 `tz: 'Asia/Shanghai'`（与容器 TZ 一致，不靠隐式时区）。最小间隔 1h 在创建时校验。
 - **tick 两阶段**：A 收尾上一轮 `running`（runLoop 无结束回调，轮询推断：会话转非 active 即标 ok）；B 取到期任务投递——`next_run_at <= now` 且非 running；**防堆积以会话状态为准**：active 直接标 `skipped` 不投递（比 DB 标记时序可靠）。
-- **投递 = 存档 + 强制 executing + postUserMessage**（顺序不可换）：先把会话全部消息标 `type='archived'`（`buildMessages` 跳过 → AI 只看到本次 prompt，等价全新会话，上下文不随触发次数增长；UI 照常展示全量），再把 `phase` 强制置 `executing`（无人值守的半夜 prompt 不能被顾问 profile 当白天聊天「引导澄清等人回答」），最后 `engine.postUserMessage`——新调度下恒立即开跑（key 不独占不排队，任何状态都拿模型直接跑；绑定失效自动改选）；仅模型池整体为空会投递失败标 `error`，下个周期重试。
+- **投递 = 存档 + postUserMessage**（顺序不可换）：先把会话全部消息标 `type='archived'`（`buildMessages` 跳过 → AI 只看到本次 prompt，等价全新会话，上下文不随触发次数增长；UI 照常展示全量），然后 `engine.postUserMessage`——新调度下恒立即开跑（key 不独占不排队，任何状态都拿模型直接跑；绑定失效自动改选）；仅模型池整体为空会投递失败标 `error`，下个周期重试。
 - **补跑语义**：`computeNext` 一律以 `now` 为基准，停机跨过多个触发点后重启只算未来一次，天然不补跑；重启后任务从库自动恢复。
 - **安全**：本功能等价给 AI 开持久化后门（prompt injection 可诱使建任务定时执行任意指令）。缓解三件：工具描述限定「仅用户明确要求时调用」+ 会话页常驻状态条（点击弹详情窗，可见 cron/上次下次时间/提示词，能就地改提示词或删除）+ 创建/触发/跳过/删除全打 `scheduler` info 日志。无权限分级/审批/配额。
 - **边界**：两次触发之间的用户对话也会被下次触发一并存档（UI 可见、AI 下次看不到，符合设计意图）；多用户：调度器全局遍历不按 user 过滤（投递目标是会话本身，隔离在建任务时的 ctx.sessionId 已有）；`last_status='running'` 的收尾不精确（异常结束的回合也会被标 ok）。
@@ -432,7 +410,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 
 - **模型**：一条 `wechat_bindings` = 一个 core 用户 = 一个 bot 实例（一人一绑，换号先解绑）。binding id 三用：实例控制/投递的寻址键、wxbot 凭证目录名、channel 键（`channel='wx:'+id`，因此命令层、会话自动新建、投递游标查询全部白借 §5.4 的 channel 机制，零新逻辑）。iLink 协议保证扫码登录后仅本人可与 bot 单线对话，无陌生人入口，故无联系人授权面。
 - **方向三条线**：① Web（设置页→账户→微信内联卡）→ `/api/wechat` → wxbot `/api/instances*`（实例控制；QR SVG 代理内联渲染，只在 has_qr 就绪后取码，服务 token 不出内网）；② wxbot 收信 → `POST core:/wxhook/inbox` → 直调 `channel.handleSend()`（文本；image/video/file 媒体先落会话任务目录：带说明文字的拼「用户上传了文件」告知行+正文并进一回合，单发媒体只补一行 `wx_media` 留痕不触发回合（下次真实对话模型自然看到，「刚才那张图」指代不断），同 web 附件链路；voice 走 iLink 服务端自动转写（msg.text 即识别文字），按文本类转发——命令回执同步回文本；普通消息不回执，等异步投递）；③ core 总线监听 assistant_message/done → 按回合回复预算分配投递（见下两条），分段（~1800 字/段，行优先聚合）→ `POST wxbot:/api/deliver` → `bot.send`；wxbot 出口 markdown 默认透传（微信已支持渲染；env `WXBOT_STRIP_MARKDOWN=1` 恢复 stripMarkdown 纯文化降级）；tool_call/tool_result 与 reasoning_delta（思考流，只进心跳不进台账）事件另发 `/api/typing` sendTyping 心跳（每绑定 2s 冷却、失败静默），长工具/思考回合里微信持续显示「正在输入」，文本投递后自动取消；同一对事件还记账工具台账（见下段）。
-- **渠道上下文**（ensureChannelContext，普通/媒体/带尾随文本的 /new 收信时幂等确保，先于首条消息入库）：微信会话直接落 executing（跳过顾问 handoff，与定时任务同理由）+ 注入一条 `channel_note` user 行（微信环境说明：单线纯文本、给链接即交付卡片、入站文件已存工作目录等，AI 第一回合即知）；/clear 删光历史后下条消息自动重注入。
+- **渠道上下文**（ensureChannelContext，普通/媒体/带尾随文本的 /new 收信时幂等确保，先于首条消息入库）：注入一条 `channel_note` user 行（微信环境说明：单线纯文本、给链接即交付卡片、入站文件已存工作目录等，AI 第一回合即知）；/clear 删光历史后下条消息自动重注入。
 - **出站文件（链接→卡片）**：sendAttachments 扫正文 `/p/<22位id>` 链 → 同进程 `publicFiles.resolve` + 归属硬校验（只转本会话签发的链接，防外流）→ 本地读字节（单文件≤20MB、每条回复最多 5 个）→ `POST wxbot:/api/deliver_media` → SDK 按扩展名自动路由 image/video/file 卡片；尽力而为：失败只 warn，链接文字留在正文作兜底（AI 无需感知卡片机制，channel_note 已告知「给链接即交付」）。
 - **投递游标** `last_msg_id` 落库 + 每绑定串行队列：重启不重发旧回复，wxbot 短暂不可达不丢（下一条连带补齐）；errAck/纯工具轮（空文本）不进微信，`__blocks__` 图消息降级为占位文案。markdown 的出口处理在 wxbot：默认透传（微信已支持渲染），`WXBOT_STRIP_MARKDOWN=1` 时 stripMarkdown 纯文化。
 - **回合回复预算**（配额在 iLink 上游、不可查，core 记账分配）：回复额度挂在入站消息的 context token 上，每轮约 10 条（分段与附件卡片各占 1），AI 多迭代中间回复 + 长结论天然撞上限，故不能按位置丢消息。策略：handleInbox 每条入站重置预算（命令回执占 1）；带 `tool_calls` 的 assistant_message 必然是过程消息，直发至多 `PROC_HEAD_LIMIT=1` 条且投完仍给结论留 `CONCLUSION_RESERVE=4` 条，超出的并入结论开头「已省略 N 条过程」注记（长任务进展靠 typing 心跳）；不带 `tool_calls` 的挂起到 `done` 事件确认是收尾结论再保底投递——预算够全文+卡片；不够但 ≥2 降级为「截断头 + 全文落会话 `微信回复全文-<id>.md` 转文件卡片」（内容零丢失）；<2 放弃并 warn（网页端完整可见）。状态全内存按 binding 记，调度器触发的回合无入站不重置（记账继续累积，与上游 token 真实剩余一致）。
@@ -490,7 +468,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 | 路径前缀 | 文件 | 主要端点 |
 |---|---|---|
 | `/api/sessions` | `routes/sessions.js` | `POST /` 创建、`GET /` 列表（分页 + 搜索 + user 隔离）、`GET /:id` 详情（含 `schedule` 字段，列表接口不带以免 N+1）、`PATCH /:id` 改名、`DELETE /:id?delete_dir=...`、`POST /:id/bind`（`model_id`=手动换绑：任意模型即点即换、仅正在输出拒绝；原 profile 会话模式绑定已废弃）、`DELETE /:id/schedule`（删定时任务，只落 `scheduler_note` 通知消息不触发 AI）、`PATCH /:id/schedule`（改提示词/频次，cron 经 validateCron 重校验并重算 next_run_at） |
-| `/api/sessions/:id/messages` | `routes/messages.js` | `POST /` 发消息（body 可选 `deepThink`；响应 `delivered` 恒 `'live'`（排队已废弃）；原 `profile` 参数已废弃）、`POST /stop`、`POST /release`（held→completed，纯状态动作、无资源可释放）、`DELETE /messages`（清空 + 回 advising）、`POST /summarize`（压缩，phase 中性）、`DELETE /messages/:mid`、`GET /stream` SSE 事件流 |
+| `/api/sessions/:id/messages` | `routes/messages.js` | `POST /` 发消息（body 可选 `deepThink`；响应 `delivered` 恒 `'live'`（排队已废弃）；原 `profile` 参数已废弃）、`POST /stop`、`POST /release`（held→completed，纯状态动作、无资源可释放）、`DELETE /messages`（清空）、`POST /summarize`（压缩）、`DELETE /messages/:mid`、`GET /stream` SSE 事件流 |
 | `/api/sessions/:id/files` | `routes/files.js` | `POST /` 上传（multer，50MB/文件，文件名清洗 sanitizeName）、`GET /` 列表（递归）、`GET /download[-name/...]` 签名下载（5 分钟 TTL）、`GET /zip-token` + `GET /zip[-name/...]` 选中项（含文件夹）打包 zip 流式下载（纯 Node STORE，两遍读：先 CRC 后磁盘流发送）、`DELETE /` 删文件（目录递归删） |
 | `/api/skills` | `routes/skills.js` | 技能列表/创建/重命名/删除 + 技能内文件 CRUD + 上传（`?overwrite=true` 覆盖） |
 | `/api/config` | `routes/config.js` | `GET /` 原文+生效（脱敏）、`POST /validate`、`PUT /` 整文件保存、`PATCH /` 单项修改（path/value/op[delete\|append]） |
@@ -511,13 +489,12 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 
 | event | data | 触发时机 |
 |---|---|---|
-| `status` | `{session_id, status, phase, model_id}` | 状态变化时；SSE 连接建立时立即发一次 |
+| `status` | `{session_id, status, model_id}` | 状态变化时；SSE 连接建立时立即发一次 |
 | `assistant_delta` | `{text}` | 模型流式文本 |
 | `reasoning_delta` | `{text}` | 模型流式思考（`reasoning`/`reasoning_content`） |
 | `assistant_message` | `{id, content, reasoning, tool_calls, type, is_summary, mode}` | 整轮 assistant 落库后（含 `type='errAck'` 标识） |
 | `tool_call` | `{id, name, arguments}` | 即将执行工具前 |
 | `tool_result` | `{tool_call_id, name, content, is_error, image_url, msg_id}` | 工具回执落库后 |
-| `phase` | `{phase}` | 阶段切换（advising↔executing；`status` 事件也携带 phase） |
 | `done` | `{status: 'held'\|'cancelled'\|'completed'}` | 回合收尾 |
 | `title` | `{title}` | 首次交互结束后自动生成的标题落库时（生成流程见 §9） |
 | `error` | `{message}` | 异常 |
@@ -528,7 +505,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 
 `app/server/public/` 是 H5 SPA（无构建步骤，本地 `vendor/marked.min.js` 渲染 Markdown，不引外部 CDN）。`index.html` 只包含 HTML/CSS 与按序加载的 6 个经典脚本（`<script src>`，无 import/打包）：顶层 `function` 声明仍挂 window 供内联 `onclick` 调用，顶层 `const/let` 进全局词法环境跨脚本可见；每文件各自 `'use strict'`。拆自旧版单一内联脚本，**纯搬运零改动，切分均在顶层语句边界**：
 
-- `js/core.js` —— 架构注释头、通用工具（`$`/`esc`/`req`/`toast`/`copyText`/`fmtTime`/markdown 渲染）、MODES、全局 `state`、视图/模式切换、头部阶段徽标（仅 advising 显灯泡小图标，SSE `phase`/`status` 驱动）。
+- `js/core.js` —— 架构注释头、通用工具（`$`/`esc`/`req`/`toast`/`copyText`/`fmtTime`/markdown 渲染）、MODES、全局 `state`、视图/模式切换、头部标题渲染（点击重命名）。
 - `js/chat.js` —— 消息渲染（气泡/思考面板/工具卡）、历史懒加载分页、滚动跟随与回底、typing。
 - `js/sessions.js` —— 会话列表（抽屉）、打开/新建/重命名/删除、SSE 静默看门狗与后台挂起、phase-bar、定时任务、上下文压缩。
 - `js/stream.js` —— 发送、SSE 流式渲染（delta 合帧/工具早卡）、消息复制、全屏查看器。
@@ -546,7 +523,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 详见 `app/config.example.yml`（core 专属；字段与 `server/config.js` 的 `DEFAULTS` 一一对应；顶层 `config.yml` 由 `scripts/init.sh` 生成或手建，**已 gitignore**）。要点：
 
 - `platforms[].keys[].models[]` —— 三层层级。内部唯一键 = `平台名/模型id`（用于历史会话回绑、用量统计），**改名等于重建其下所有模型**。
-- `model_profiles`（顶层）—— 多套可复用的 prompt+tools 组合（`{tools_allow?, tools_deny?, system_prompt_file?}`）；模型层用 `profile: <名>` 引用，不配 = 默认全量（仍受顶层 `tools_deny` 屏蔽）。内置 `advising`/`lab`/`zero` 三套默认组合，可用同名覆盖；`advising` 不经模型引用——会话处于顾问阶段时强制命中（见 §4.1 phase 状态机）。元工具自测/纯文本场景用，详见 §5.8；运行期手动切换已全部移除（消息级参数与会话绑定均废弃）。
+- `model_profiles`（顶层）—— 多套可复用的 prompt+tools 组合（`{tools_allow?, tools_deny?, system_prompt_file?}`）；模型层用 `profile: <名>` 引用，不配 = 默认全量（仍受顶层 `tools_deny` 屏蔽）。内置 `lab`/`zero` 两套默认组合，可用同名覆盖。元工具自测/纯文本场景用，详见 §5.8；运行期手动切换已全部移除（消息级参数与会话绑定均废弃）。
 - `agent.max_tool_iterations`（默认 100）—— 单轮迭代上限（含工具调用），到顶自动停止并提示用户继续输入。
 - `terminal.max_output_chars`（默认 10000）—— AI 看到的命令输出上限；executor 侧另有 `EXECUTOR_MAX_OUTPUT_CHARS=200000` 兕底。
 - `fetch.timeout_ms`（默认 30000）/ `fetch.max_bytes`（默认 1MB）—— 网页抓取的全生命周期超时与流式抓取**字节**上限（超限即断开；下载不占上下文，保持宽松）。
@@ -555,7 +532,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 - `skills.skills_root` —— 缺省取 `workspace_root` 的同级 `skills/`。
 - ~~`model_hold`~~ —— 已废弃（旧版保持租约：held 到期自动释放）；新调度下 key 不独占、不排队，held 不再到期，字段仅为旧配置解析兼容保留。
 - 上下文压缩 —— 无配置项：压缩回合沿用当前 profile 的 system prompt（无 profile = 默认模板）+ 正常历史，末尾追加一条 user（固定模板 `server/templates/prompt-compress.txt` 原文），该回合不传 tools；调整压缩策略直接改该文件。
-- 会话标题自动生成 —— 无配置项：每回合结束（`finalize` 成功分支）过门槛才触发，防「你好」开局把题定了：①本轮真实执行过工具（`run.toolWorked`，errAck 批不算）即立题；②零工具纯聊由历史现推（无计数器，重启/压缩免疫）：非注入 user 正文行（type IS NULL，[CTX] 各段与 task_brief 天然排除）≥3 条且总字数 ≥30。触发后用会话当前 model_id 发一次**不带 system、不传 tools** 的标题请求（历史 user/assistant 原文，注入行不进——`llm.titleMessages` 白名单只留 null/summary/task_brief；末尾追加模板 `server/templates/prompt-title.txt` 作 user，`{{language}}` 填 `agent.language`）；结果清洗后写入 `sessions.title` 并 SSE 推 `title` 事件。失败静默（title 仍空，下个回合结束自动重试）；已有标题（建会话时填写、handoff 顾问自写或手动重命名 title_locked）不覆盖——阶段切换的「过程题→任务书题」升级由 toolHandoff 的 title 参数直写完成，非自动重生成。
+- 会话标题自动生成 —— 无配置项：每回合结束（`finalize` 成功分支）过门槛才触发，防「你好」开局把题定了：①本轮真实执行过工具（`run.toolWorked`，errAck 批不算）即立题；②零工具纯聊由历史现推（无计数器，重启/压缩免疫）：非注入 user 正文行（type IS NULL，[CTX] 各段与 task_brief 天然排除）≥3 条且总字数 ≥30。触发后用会话当前 model_id 发一次**不带 system、不传 tools** 的标题请求（历史 user/assistant 原文，注入行不进——`llm.titleMessages` 白名单只留 null/summary/task_brief；末尾追加模板 `server/templates/prompt-title.txt` 作 user，`{{language}}` 填 `agent.language`）；结果清洗后写入 `sessions.title` 并 SSE 推 `title` 事件。失败静默（title 仍空，下个回合结束自动重试）；已有标题（建会话时填写或手动重命名 title_locked）不覆盖。
 - `auth.users` —— 明文密码配在配置里（自用场景）；`secret` 留空则随机生成（重启掉登录态，建议固定随机串）。
 - `mcp_servers[].enable: false` —— 启动不加载该服务（配置保留），其余工具不受影响。
 - `mcp_servers[].timeout_ms` —— 该服务单次 `tools/call` 的最大等待，默认 60000（夹在 1s~10min）；工具发现/握手用固定 15s，不受本项影响。

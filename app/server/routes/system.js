@@ -107,7 +107,7 @@ router.get('/status', wrap((req, res) => {
     auth_enabled: !!(cfg.auth && cfg.auth.users && cfg.auth.users.length),
     running_sessions: engine.activeRuns(),
     // 曾有的 model_profiles 可用名单字段已删：前端手动切换模式入口全部移除，名单再无消费方
-    //（组合只经模型配置 profile: <名> 引用，或 advising 阶段强制命中，见 engine.resolveProfileName）。
+    //（组合只经模型配置 profile: <名> 引用，见 engine.resolveProfileName）。
     // 前端上传预处理参数（大图压缩阈值/尺寸/质量、大文件确认阈值），避免前端写死
     upload: cfg.upload || {},
   });

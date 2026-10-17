@@ -192,7 +192,6 @@ const HELP_TEXT = [
 ].join('\n');
 
 const STATUS_TEXT = { active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
-const PHASE_TEXT = { advising: '顾问', executing: '执行' };
 
 function fmtTime(ts) {
   if (!ts) return '--';

@@ -143,40 +143,6 @@
   {
     "type": "function",
     "function": {
-      "name": "handoff",
-      "description": "Hand off from the advising phase to the execution phase. Call this when the task brief is ready. The system stores your `brief` as the task brief and switches to execution. There are three cases:\n\n- ready: The requirement is clear enough to execute.\n- user_skip: The user explicitly asks to stop planning with you (\"just move on\", or similar) — this skips only the advising conversation, it never waives the user's later confirmations. Do not call this on tone or mood alone — only on explicit signals.\n- user_stuck: You have asked 2-3 rounds and the user is still not providing key information, and they seem to want to move on.\n\nWhen reason is not \"ready\", the `brief` must carry the user's own words plus every open question under a Missing section — the executor is required to ask the user these before acting. Do not invent a methodology or generic plan.",
-      "parameters": {
-        "type": "object",
-        "required": [
-          "reason",
-          "brief",
-          "title"
-        ],
-        "properties": {
-          "reason": {
-            "type": "string",
-            "enum": [
-              "ready",
-              "user_skip",
-              "user_stuck"
-            ],
-            "description": "Why the handoff is happening."
-          },
-          "brief": {
-            "type": "string",
-            "description": "The task brief content, in Markdown. Follow the structure described in your system prompt."
-          },
-          "title": {
-            "type": "string",
-            "description": "A concise title for this conversation, in the user's language (3-7 words, or 6-14 Chinese characters). Straight to the title: no quotes, no prefix like \"Title:\"."
-          }
-        }
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
       "name": "lab",
       "description": "Unified entry point for calling any available tool by name.\n\nCall a tool:\n  lab(tool: \"<name>\", args: {<arguments>})\n\nThe target tool's arguments go inside `args` as a JSON object. Omit `args` for tools that take no arguments.\n\nDiscovering tools:\n  lab(tool: \"help\")                          → list all tools with a one-line description each\n  lab(tool: \"help\", args: {tool: \"<name>\"})  → full description and parameter schema of <name>\n\nAn unknown tool name also returns the list of available tools.\nNested lab calls are rejected; inner tool errors surface unchanged.\n\nCalling a tool directly and calling it through lab are equivalent. When the tool you need is already in your tool list, call it directly. Use lab to discover or reach tools that are not in the current list.",
       "parameters": {

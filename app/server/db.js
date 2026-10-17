@@ -14,7 +14,6 @@ function initDb(dbPath) {
       id TEXT PRIMARY KEY,
       title TEXT DEFAULT '',
       status TEXT NOT NULL,
-      phase TEXT NOT NULL DEFAULT 'advising',
       model_id TEXT,
       last_model_id TEXT,
       assistant_type TEXT DEFAULT 'secretary',
@@ -218,17 +217,17 @@ function initDb(dbPath) {
   if (!cols.some(c => c.name === 'user')) {
     db.exec("ALTER TABLE sessions ADD COLUMN user TEXT DEFAULT ''");
   }
-  // 迁移：profile 曾记会话绑定的 prompt+tools 组合名（bind 弹窗「模式」区）。已废弃：
-  // 前端手动切换模式全部移除，profile 选取收敛为「phase 强制 + 模型配置默认」两档（见 engine.resolveProfileName）；
+  // 升级老库：profile 曾记会话绑定的 prompt+tools 组合名（bind 弹窗「模式」区）。已废弃：
+  // 前端手动切换模式全部移除，profile 选取只剩模型配置默认一档（见 engine.resolveProfileName）；
   // 列保留（SQLite 删列不值得），代码不再读写。
   if (!cols.some(c => c.name === 'profile')) {
     db.exec("ALTER TABLE sessions ADD COLUMN profile TEXT DEFAULT ''");
   }
   // 迁移：profile_snapshot 存会话创建/清空时冻结的用户画像注入文本（buildMessages 每轮首条 user 注入，
-  // 字节恒定不破坏前缀缓存；不入 messages 表，阶段切换/压缩动不到它，见 user-profile.js）。
+  // 字节恒定不破坏前缀缓存；不入 messages 表，压缩动不到它，见 user-profile.js）。
   if (!cols.some(c => c.name === 'profile_snapshot')) db.exec("ALTER TABLE sessions ADD COLUMN profile_snapshot TEXT DEFAULT ''");
-  // 迁移：title_locked 用户手动重命名过标题（renameSession 置 1）：handoff 的自动标题见锁即跳过，
-  // 不得静默冲掉用户给会话起的名字；清空会话时随标题一并复位（旧名字已文不对题）。
+  // 迁移：title_locked 用户手动重命名过标题（renameSession 置 1）：显式留痕「名字是用户起的」，
+  // 不得静默冲掉；清空会话时随标题一并复位（旧名字已文不对题）。
   if (!cols.some(c => c.name === 'title_locked')) db.exec("ALTER TABLE sessions ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0");
   // 迁移：wechat_bindings 补 deep_think 列——微信端全局深度思考开关（routes/channel.js /think 读写，
   // 投递时作为既有 deepThink 参数的取值来源）；默认 0=关（与 H5 按钮初始态一致，/think on 手动开）。
@@ -259,10 +258,9 @@ function initDb(dbPath) {
       `);
     })();
   }
-  // 迁移：phase 语义重定义为 advising（顾问：澄清需求/规划）/ executing（执行）。
-  // 存量会话（旧值 planning/NULL）统一回填 executing——它们都有历史，行为与改造前一致、零打扰；
-  // 只有新建会话进 advising（createSession 显式写入）。幂等，每次启动一条廉价 UPDATE。
-  db.exec("UPDATE sessions SET phase='executing' WHERE phase IS NULL OR phase NOT IN ('advising','executing')");
+  // 迁移：advising（顾问阶段）概念已全部移除，会话不再有 phase 语义；旧列直接删。
+  // 旧 SQLite 不支持 DROP COLUMN（<3.35）时静默跳过：残留死列无妨，代码已不再读写它。
+  try { db.exec('ALTER TABLE sessions DROP COLUMN phase'); } catch (_) { /* 旧版本 SQLite，保留死列 */ }
   // 迁移（C 重构）：memory_entries「一天一行拼 blob」→ memory_fragments「一片一行」。幂等：旧表存在才搬，
   // 搬完即 drop；解析不出【sid】头的块（DAY_MAX 时代削出的孤儿残句）直接丢弃；
   // 存量碎片的 day 顺手改判为来源会话最后活跃日（事件日语义修正，积压补记自然散布回真实日期）。

@@ -555,7 +555,6 @@ CREATE TABLE sessions (
   id TEXT PRIMARY KEY,              -- 任务 ID，如 "task-20260830-001"
   title TEXT DEFAULT '',            -- 会话标题（可由 AI 生成或用户填写）
   status TEXT NOT NULL,             -- queued | active | held | completed | cancelled
-  phase TEXT NOT NULL DEFAULT 'planning',  -- planning | execution
   model_id TEXT,                    -- 当前绑定的模型 ID（ds1/ds2/ds3），释放/排队时为空
   last_model_id TEXT,               -- 最近用过的模型；释放后新消息优先回绑，被占才另选空闲
   created_at INTEGER NOT NULL,

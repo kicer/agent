@@ -78,7 +78,6 @@
         state.sessionId = null;
         state.sessionTitle = '';
         state.sessionType = 'secretary';
-        state.phase = '';
         state.pendingModel = '';
         state.streamEl = null;
         state.streamText = '';
@@ -161,7 +160,6 @@
       // 先从抽屉列表缓存取会话类型，让顶部 icon 立即正确；详情回来后由 renderDetail 纠正
       const cached = (state.sessions || []).find(x => x.id === id);
       state.sessionType = (cached && cached.assistant_type) || 'secretary';
-      state.phase = (cached && cached.phase) || ''; // 先从列表缓存取阶段徽标，renderDetail 回来后纠正
       state.streamEl = null;
       state.streamText = '';
       state.streamWrap = null;
@@ -214,7 +212,6 @@
     state.sessionType = 'secretary';
     state.status = '';
     state.schedule = null;
-    state.phase = '';
     state.pendingModel = '';
     state.attachments = [];
     state.streamEl = null;

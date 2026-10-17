@@ -97,7 +97,6 @@ router.get('/:id/stream', (req, res) => {
   bus.emit(session.id, 'status', {
     session_id: session.id,
     status: session.status,
-    phase: session.phase,
     model_id: session.model_id,
   });
 });

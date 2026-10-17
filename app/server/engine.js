@@ -140,7 +140,6 @@ function emitStatus(sessionId) {
   bus.emit(sessionId, 'status', {
     session_id: sessionId,
     status: s.status,
-    phase: s.phase,
     model_id: s.model_id,
   });
 }
@@ -314,12 +313,10 @@ function registerProfilePrompts() {
   setProfilePrompts(map);
 }
 
-// 本轮生效的 profile 名（两档）：advising 阶段强制命中内置 'advising' 组合（顾问只该看到顾问的工具）；
-// 否则 = 模型配置默认（cfg.models[].profile）> ''（默认全量）。
-// 运行期手动切换已全部移除（消息级 profile 参数、sessions.profile 会话绑定均已废弃），
-// 顾问/执行的节奏由 sessions.phase 单一状态机控制，见 enterExecuting / archiveTaskBrief。
+// 本轮生效的 profile 名：模型配置默认（cfg.models[].profile）> ''（默认全量，profile-default.txt）。
+// 运行期手动切换已全部移除（消息级 profile 参数、sessions.profile 会话绑定均已废弃）；
+// 原 advising 阶段强制组合已随顾问模式一并移除。
 function resolveProfileName(session) {
-  if (session && session.phase === 'advising') return 'advising';
   const m = session && session.model_id && (cfg.models || []).find(x => x.id === session.model_id);
   return m && m.profile ? String(m.profile) : '';
 }
@@ -343,71 +340,6 @@ function effectiveTools(profileName) {
     out = out.filter(t => !t || !t.function || !dset.has(t.function.name));
   }
   return out;
-}
-
-// ---------- 阶段（sessions.phase：advising 顾问 / executing 执行） ----------
-// advising：新建会话与「清空」的落点。profile 被 resolveProfileName 强制为 'advising'，
-// 只聊和读不写（write_file/edit_file/copy_path 不在其 schema，批内幻觉调用也在 runLoopInner 挡下；
-// list_directory 在白名单里——顾问翻阅历史目录正当其用）；
-// 唯一出口 = handoff 工具成功返回（brief 由 handler 落盘任务目录根 task.md，见 tools/executor.js）。
-// executing：一路走到底，只有清空才回 advising；压缩不碰 phase（压完仍回原模式）。
-
-// advising → executing：任务书落地，当场重建上下文——
-// 全部历史标 archived（UI 照常展示、不再发模型，与压缩/定时投递同机制），
-// 插一条 type='task_brief' 的 user 行（内容 = 此刻 task.md 磁盘快照，非引用：后续文件怎么改都不动锚点）
-// 作为执行阶段唯一上下文起点；runLoopInner 下一迭代重读历史 + 重解 profile，天然已在执行态，AI 同回合开工。
-// 幂等：phase 已是 executing 直接返回（执行中再改 task.md 只是普通文件编辑，不重存档、不重插快照）。
-function enterExecuting(sessionId) {
-  const session = getSession(sessionId);
-  if (!session || session.phase !== 'advising') return;
-  const briefPath = path.join(taskDirOf(sessionId), 'task.md');
-  let snapshot;
-  try {
-    snapshot = fs.readFileSync(briefPath, 'utf8');
-  } catch (e) {
-    log.warn('engine', sessionId + ' 阶段切换放弃：读不回 task.md — ' + (e && e.message || e));
-    return;
-  }
-  if (!snapshot.trim()) return; // 空任务书不构成承诺，继续留在顾问模式
-  const n = db.prepare(
-    "UPDATE messages SET type = 'archived' WHERE session_id = ? AND (type IS NULL OR type != 'archived')"
-  ).run(sessionId).changes;
-  saveMessage(sessionId, {
-    role: 'user', type: 'task_brief',
-    // 只报「进入执行模式 + 行为约束 + 任务书本体」：task.md/.task-history 是系统内部传递机制，
-    // 不进模型视野（知道文件名只会引出无谓的读写尝试）；Missing 逐项确认段是 user_skip
-    // 事故（执行者把跳过顾问泛化成跳过确认）的行为约束，不可减。
-    content: '【任务书】顾问阶段结束，会话已进入执行模式，以下任务书是唯一目标依据；'
-      + '之前的顾问对话已存档、不再发送。若任务书列有 Missing/待确认事项：开工前逐项向用户提问并等待答复——'
-      + '用户跳过的只是顾问阶段，不是确认环节，不得据此自行拍板；只有用户明确说过「别问，直接做」才可用默认值，且须把每个默认决定列出供用户检查；禁止把待确认项改写成「按默认执行」。\n\n' + snapshot,
-  });
-  db.prepare("UPDATE sessions SET phase='executing', updated_at=? WHERE id=?").run(now(), sessionId);
-  bus.emit(sessionId, 'phase', { phase: 'executing' });
-  emitStatus(sessionId);
-  log.info('engine', sessionId + ' advising → executing：task.md 落地，存档 ' + n + ' 条消息，上下文重建为任务书快照');
-}
-
-// 清空即回 advising：上一轮任务书 mv 进 .task-history/（带时间戳名，撞名再加 -N，同上传风格），
-// 防旧约定污染新一轮规划。点前缀目录在文件列表默认隐藏（同 .imgcache 约定），AI/用户显式请求可查；
-// 同步清掉 files 元数据表的 task.md 行（列表读磁盘不读表，清行只为不留孤儿记录）。
-function archiveTaskBrief(sessionId) {
-  try {
-    const dir = taskDirOf(sessionId);
-    const src = path.join(dir, 'task.md');
-    if (!fs.existsSync(src)) return;
-    const hist = path.join(dir, '.task-history');
-    fs.mkdirSync(hist, { recursive: true });
-    const d = new Date();
-    const pad = x => String(x).padStart(2, '0');
-    const stamp = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
-    let dest = path.join(hist, 'task-' + stamp + '.md');
-    for (let i = 1; fs.existsSync(dest); i++) dest = path.join(hist, 'task-' + stamp + '-' + i + '.md');
-    fs.renameSync(src, dest);
-    db.prepare("DELETE FROM files WHERE session_id = ? AND filename = 'task.md'").run(sessionId);
-    log.info('task', sessionId + ' 旧任务书归档 → ' + path.relative(dir, dest));
-  } catch (e) {
-    log.warn('task', sessionId + ' 旧任务书归档失败：' + (e && e.message || e));
-  }
 }
 
 // ---------- 绑定 ----------
@@ -567,7 +499,7 @@ function finalize(sessionId, run) {
 //    连环「嗯」不算有效对话；不满足等下个 finalize 再判。
 // 不带 system prompt：历史 user/assistant 原文（注入行不进，白名单见 llm.titleMessages）+
 // 末尾一条标题指令 user，用会话当前 model_id 发一次不传 tools 的调用。
-// 失败静默（title 仍空，下个回合结束自动重试）；handoff 时顾问自写的标题占位后不再覆盖。
+// 失败静默（title 仍空，下个回合结束自动重试）；已有标题（建会话时填写或手动重命名）不再覆盖。
 // force=true（仅收口兑底 wrapTitleFallback 传）：跳过 n/chars 现推门槛无条件立题——
 // 收口是最后一站，没有下个回合了，差一点的标题也比永远无名强；其余守卫（非空即跳/防重入/
 // 清空校验）不受 force 影响，finalize 路径不传维持原门槛。
@@ -804,7 +736,6 @@ async function runLoopInner(sessionId, run) {
 
     // 执行工具
     const vision = modelVision(session);
-    let handoffDone = false; // 本批工具里是否有 handoff 成功返回（批量跑完统一切换，见循环尾注释）
     // 标题门槛信号：本批参数预检通过并真实执行 = 会话在干实事（finalize 据此判是否立题，
     // 见 maybeGenerateTitle）；errAck 批（参数畸形、下轮整轮对模型不可见）不算。
     if (!isErrAck) run.toolWorked = true;
@@ -820,12 +751,6 @@ async function runLoopInner(sessionId, run) {
       if (chk.error) {
         // 把正确形状告诉模型，替它纠正包装习惯
         output = chk.error;
-        isError = true;
-      } else if (session.phase === 'advising'
-          && (tc.function.name === 'write_file' || tc.function.name === 'edit_file' || tc.function.name === 'copy_path')) {
-        // 顾问单入口硬约束：写类工具不在其 schema，但「名单外照跑」是全局策略（executeTool 全表），
-        // 幻觉调用会真写文件、绕过出口制造假承诺——阶段契约优先，挡下并指向 handoff。
-        output = 'Error: 顾问阶段不能写文件。任务书请通过 handoff 工具的 brief 参数提交。';
         isError = true;
       } else {
         try {
@@ -881,19 +806,6 @@ async function runLoopInner(sessionId, run) {
         image_url: imageRel ? '/api/sessions/' + encodeURIComponent(sessionId) + '/files/download?path=' + encodeURIComponent(imageRel) : undefined,
         msg_id: toolMsgId,
       });
-      // 阶段切换入口：advising 回合里 handoff 成功返回（brief 已由 handler 落盘 task.md）→ 标记待切换。
-      // 不在这里就地切：同批可能还有其它 tool_calls，其父 assistant 行若先被存档、
-      // 后落库的回执就成了无主孤儿行（上游拒收）——整批跑完再统一重建上下文。
-      if (!isError && tc.function.name === 'handoff') {
-        handoffDone = true;
-      }
-    }
-    if (handoffDone) {
-      // 顾问标题已由 toolHandoff 直写 sessions.title：广播同 maybeGenerateTitle 的 title 事件，
-      // 已开窗口刷详情页标题 + 重拉会话列表（finalize 的自动标题见非空即跳过，不会覆盖）。
-      const ht = db.prepare('SELECT title FROM sessions WHERE id = ?').get(sessionId);
-      if (ht && ht.title) bus.emit(sessionId, 'title', { title: ht.title });
-      enterExecuting(sessionId);
     }
     iter++;
   }
@@ -1099,11 +1011,11 @@ function createSession(title, preferModelId, assistantType, user) {
   const dir = taskDirOf(id);
   fs.mkdirSync(dir, { recursive: true });
   db.prepare(
-    "INSERT INTO sessions (id, title, status, phase, model_id, model_slot, last_model_id, held_at, assistant_type, user, created_at, updated_at) VALUES (?,?,'held','advising',?,?,?,?,?,?,?,?)"
+    "INSERT INTO sessions (id, title, status, model_id, model_slot, last_model_id, held_at, assistant_type, user, created_at, updated_at) VALUES (?,?,'held',?,?,?,?,?,?,?,?)"
   ).run(id, title || '', modelId, key.id, modelId, now(), assistantType || 'secretary', user || '', now(), now());
   db.prepare('UPDATE model_pool SET last_used_at = ? WHERE id = ?').run(now(), key.id);
   profile.freezeSnapshot(db, id); // 冻结画像快照：仅创建/清空时点注入，会话内恒定（见 user-profile.js）
-  // 新会话一律落 advising（顾问模式）：先聊天判意图，任务书 task.md 落地才转 executing（见 enterExecuting）
+  // 新建会话默认走模型配置的 profile（未配 = 全量默认组合 + profile-default.txt），不再有顾问阶段
   emitStatus(id);
   const session = getSession(id);
   return session;
@@ -1166,8 +1078,8 @@ function renameSession(sessionId, title) {
   const t = String(title || '').trim();
   if (!t) throw Object.assign(new Error('名称不能为空'), { status_code: 400 });
   if (t.length > 100) throw Object.assign(new Error('名称不能超过 100 字'), { status_code: 400 });
-  // 手动改名即上锁：后续 handoff 的自动标题见 title_locked 即跳过，不许冲掉用户起的名字
-  //（maybeGenerateTitle 本就见非空即跳，无需看锁）。
+  // 手动改名即上锁：显式留痕「标题为用户所起」。自动标题（maybeGenerateTitle）本就见非空即跳，
+  // 锁不改现有行为，仅为后续可能覆写标题的逻辑留一道防线。
   touch(sessionId, { title: t, title_locked: 1 });
   log.info('task', sessionId + ' 重命名为「' + t + '」');
   return { ok: true, title: t };
@@ -1439,8 +1351,6 @@ function wipeSessionTmp(sessionId) {
 // 会话级 /tmp（宿主机即 <任务目录>/.tmp，执行容器 bind 成容器内 /tmp）一并清空：清空的语义是“从零开始”，
 // 上一轮留下的临时产物不该带进新一轮；执行容器遇到不存在的 .tmp 会懒重建，无副作用。
 // 状态收尾为 completed；此后再次发言从零开始，不再携带旧历史。执行中的会话不允许清空，需先「终止」。
-// 阶段语义：清空是 executing 唯一回头路——回到 advising 重新规划（单会话只解决一个问题），
-// 旧任务书 mv 进 .task-history/ 防污染（archiveTaskBrief）；压缩不碰 phase，不在此列。
 function clearSessionMessages(sessionId) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -1455,7 +1365,6 @@ function clearSessionMessages(sessionId) {
   }
   runs.delete(sessionId);
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
-  archiveTaskBrief(sessionId); // 旧任务书先归档（mv），新一轮 advising 不会被上一问题的约定污染
   wipeSessionTmp(sessionId);   // 会话级 /tmp 随清空一并抹掉（尽力而为，失败只记日志不阻断）
   autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
   // 标题随历史一并清零：旧标题描述的是已删除的对话，留着会让新对话文不对题；
@@ -1471,13 +1380,12 @@ function clearSessionMessages(sessionId) {
     if (frags) log.info('task', sessionId + ' 清空连带删除日记碎片 ' + frags + ' 条');
   }
   const reset = { status: 'completed', completed_at: now(), cancelled_at: null, held_at: null,
-    title: null, title_locked: 0, phase: 'advising', journaled_at: null };
+    title: null, title_locked: 0, journaled_at: null };
   if (isTaskHome) delete reset.journaled_at; // touch 会把 undefined 写成 NULL，这里直接不送这个键
   touch(sessionId, reset);
-  profile.freezeSnapshot(db, sessionId); // 回 advising 重新规划：画像快照随新一轮重新冻结
+  profile.freezeSnapshot(db, sessionId); // 新一轮开始：画像快照随新一轮重新冻结
   bus.emit(sessionId, 'done', { status: 'completed' });
   bus.emit(sessionId, 'title', { title: null }); // 供其他打开同一会话的窗口同步清掉旧标题
-  bus.emit(sessionId, 'phase', { phase: 'advising' });
   emitStatus(sessionId);
   return { ok: true };
 }

@@ -8,16 +8,11 @@
 platforms: []
 
 # 全局工具黑名单：profile 未配 tools_deny 时继承它；allow 先、deny 后叠加（deny 赢，与 mcp_servers 同构）。
-# 写数组即整体覆盖默认值，写 [] 即清空。默认屏蔽元工具 lab 与阶段出口 handoff（后者仅 advising 显式清空后可见）。
-tools_deny: [lab, handoff]
+# 写数组即整体覆盖默认值，写 [] 即清空。默认屏蔽元工具 lab。
+tools_deny: [lab]
 
-# 模型 profile：prompt + tools 名单组合，模型用 profile: <名> 引用（不配 = 全量）。
-# 内置 advising 不靠引用：会话处于 advising 阶段（顾问澄清需求/规划）时强制命中，见 server/engine.js resolveProfileName。
+# 模型 profile：prompt + tools 名单组合，模型用 profile: <名> 引用（不配 = 默认全量，profile-default.txt）。
 model_profiles:
-  advising:                                        # 顾问阶段：只聊和读不写（profile 画像元信息除外），唯一出口 handoff，配专属提示词
-    tools_allow: [read_file, fetch, handoff, profile]
-    tools_deny: []                                 # 必须显式清空全局黑名单，否则 handoff 自己也被 deny（同 lab 的教训）
-    system_prompt_file: profile-advising.txt
   lab:                                             # 统一入口自测：tools 只有 lab，其余能力经 lab(help) 现场发现
     tools_allow: [lab]
     tools_deny: []                                 # 必须显式清空全局黑名单，否则 lab 自己也被 deny → 零工具

@@ -241,8 +241,7 @@ function handleHook(body) {
 // wxbot 会把 error 文案直接回给用户（IM 里「出错要出声」）。
 // 媒体消息（inbox 带 media:{b64,kind,filename?}，wxbot 已从 CDN 下好）：统一落会话任务目录
 // + 记 files 元数据表 → 按 web 上传同款拼「用户上传了文件：<名>」作正文走 handleSend。
-// 渠道上下文（普通/媒体/带尾随文本的 /new 在消息入库前先幂等确保）：微信会话直接落 executing
-// 跳过顾问 handoff（与定时任务投递同理由：异步接入不能被顾问话术卡住），channel_note 把微信
+// 渠道上下文（普通/媒体/带尾随文本的 /new 在消息入库前先幂等确保）：channel_note 把微信
 // 环境说明注入历史（UI 可见的 user 行，模型当普通消息看）——先于首条消息，AI 第一回合就看得到。
 const MEDIA_MAX_BYTES = 20 * 1024 * 1024;
 const MEDIA_KINDS = new Set(['image', 'video', 'file']);
@@ -266,13 +265,9 @@ const MEMORY_NOTE_HEAD = '# [CTX] memory\n\n'
 
 function ensureChannelContext(s) {
   if (!s) return;
-  if (s.phase !== 'executing') {
-    db.prepare("UPDATE sessions SET phase='executing', updated_at=? WHERE id=?").run(now(), s.id);
-    s.phase = 'executing';
-  }
   if (!db.prepare("SELECT 1 FROM messages WHERE session_id = ? AND type = 'channel_note' LIMIT 1").get(s.id)) {
     engine.saveMessage(s.id, { role: 'user', type: 'channel_note', content: CHANNEL_NOTE });
-    log.info('wechat', s.id + ' 渠道上下文注入（executing + channel_note）');
+    log.info('wechat', s.id + ' 渠道上下文注入（channel_note）');
   }
   // 开场日记：近几天长期记忆一次性写入，会话中途不补——与画像快照同「新会话冻结」语义，
   // 轮换后新会话再带最新全文；无记忆/功能关闭时不写，省一条消息行也稳前缀缓存。

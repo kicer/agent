@@ -1557,39 +1557,6 @@ function runLabHelp(args) {
   return JSON.stringify(def.function, null, 2);
 }
 
-// handoff：顾问阶段唯一出口（advising 组合见 config.js）。brief 原样落盘任务目录根 task.md；
-// title 直写 sessions.title（交接此刻顾问最懂这单任务，标题以此为准，finalize 的
-// maybeGenerateTitle 见非空即跳过）；批尾由 engine 广播 title 事件同步已开窗口。
-// 切换不在此发生——executeTool 只落盘与回执，runLoopInner 在工具批尾接成功回执触发 enterExecuting
-//（其读盘取快照作锚点，幂等防重切）。phase 守卫不可省：「名单外工具照跑」是全局策略，
-// 执行期幻觉调用不得覆写修订中的 task.md；reason 枚举与 brief 非空也在此兑底（checkToolArgs 只查必填键）。
-async function toolHandoff(ctx, args) {
-  const sess = ctx.db.prepare('SELECT phase, title_locked FROM sessions WHERE id = ?').get(ctx.sessionId);
-  if (!sess || sess.phase !== 'advising') return 'Error: 当前不在顾问阶段，handoff 仅在 advising 可用';
-  const reason = String((args && args.reason) || '');
-  if (['ready', 'user_skip', 'user_stuck'].indexOf(reason) < 0) {
-    return 'Error: reason 需为 ready / user_skip / user_stuck 之一';
-  }
-  const brief = typeof args.brief === 'string' ? args.brief : '';
-  if (!brief.trim()) return 'Error: brief 不能为空，任务书需完整带上（user_skip/user_stuck 至少含用户原话与 Missing 清单）';
-  // 标题清洗对齐 cleanTitle（engine 内函数，executor 反向引用会成环，此处同款口径）：
-  // 压空白 + 截 60；引号剥除交给模型自觉（description 已明说），不做二次加工。
-  const title = String(args.title || '').replace(/\s+/g, ' ').trim().slice(0, 60);
-  if (!title) return 'Error: title 不能为空，给出一个概括任务的简洁标题';
-  const abs = path.join(ctx.taskDir, 'task.md');
-  await fsp.writeFile(abs, brief, 'utf8');
-  recordFile(ctx, abs); // 同步 files 元数据表（与 write_file 同轨，任务目录列表/清理逻辑一致）
-  // task.md 落盘成功后才改标题：切换半途失败不留「有名无书」的残局；
-  // 用户手动重命名过（title_locked，见 engine.renameSession）则尊重用户的名字，静默跳过。
-  if (!sess.title_locked) {
-    ctx.db.prepare('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?').run(title, Date.now(), ctx.sessionId);
-  }
-  // 同批多次 handoff：后写覆盖（last-wins），批尾的切换只发生一次（enterExecuting 幂等）。
-  // 回执只写事实：成功路径下本回执连同父行一起被存档、不会回到任何模型；
-  // 读者只有 enterExecuting 放弃/报错后继续 advising 的模型本身（据此自纠），无行为指令可带。
-  return '已接收交接（reason: ' + reason + '），本批工具跑完后系统将切换到执行阶段。';
-}
-
 // recall：长期记忆（工作日记）的回忆入口——纯记忆三 op。
 // 日记按会话收口持久存储（memory.js），开场只注入最近 N 条；更早的条目由本工具按需取。
 // 历史成果文件不再归日记管：浏览/导入走 list_directory / copy_path 的 @<会话id>/<路径> 记号
@@ -1627,7 +1594,6 @@ const HANDLERS = {
   read_file: toolReadFile,
   list_directory: toolListDirectory,
   copy_path: toolCopyPath,
-  handoff: toolHandoff,
   write_file: toolWriteFile,
   edit_file: toolEditFile,
   mint_public_link: toolMintPublicLink,
