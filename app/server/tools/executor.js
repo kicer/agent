@@ -1613,7 +1613,7 @@ const HANDLERS = {
 async function executeTool(baseCtx, name, args) {
   const handler = HANDLERS[name];
   if (handler) return handler(baseCtx, args || {});
-  if (mcp.hasTool(name)) return mcp.callTool(name, args || {});
+  if (mcp.hasTool(name)) return mcp.callTool(name, args || {}, baseCtx); // baseCtx.taskDir → X-Session-Dir 头下发给 MCP 服务
   return 'Error: 未知工具 ' + name;
 }
 

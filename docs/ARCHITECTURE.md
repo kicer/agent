@@ -58,6 +58,7 @@ agent/
 │   │   │   ├── platforms.js       /api/platforms/balance 余额查询
 │   │   │   ├── skills.js          /api/skills 技能文件管理
 │   │   │   ├── public-files.js    GET /p/<id> 公网临时文件取用（匿名）
+│   │   │   ├── preview-proxy.js   通用预览反代（注册表驱动：/preview/** → 服务单入口，Referer 兜底；挂 server.js 最末）
 │   │   │   └── system.js          /api/system/status + /restart 优雅重启
 │   │   ├── templates/
 │   │   │   ├── profile-default.txt  system prompt 静态模板（每次请求复用，利于上游前缀缓存）
@@ -154,7 +155,7 @@ graph LR
 5. `engine.setModelPool(cfg, db, bus); engine.init()`：按 cfg.models 重建 `model_pool` 槽位表；会话状态归位（active/遗留 queued → held，绑定不清）；指向已删/禁用模型的绑定在下次发言时由 `ensureBinding` 自动改选。
 6. `scheduler.start(engine)`：启动定时任务轮询（30s 一次，`unref`）。**必须在 engine.init() 之后**——先让会话状态归位，首轮 tick 才看不到脏状态（见 §5.12）。随后 `wechat.init(cfg, db, bus)` 挂上总线内部订阅（微信接入，§5.13；env WXBOT_URL/WXBOT_TOKEN 未就位时全程静默）。
 7. `createAuth(cfg)` 装配登录中间件；未配 `auth.users` 则认证关闭（可交给前置 nginx-proxy basic auth）。
-8. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`、`/api/channel`、`/api/wechat`）；`auth.middleware` 之前另挂两个内网/匿名入口：`/p`（公网临时文件）与 `/wxhook`（wxbot 回调，共享服务 token 把门）。
+8. `express.static(public)` + 路由挂载（`/api/sessions`、`/api/skills`、`/api/config`、`/api/platforms`、`/api/system`、`/api/channel`、`/api/wechat`）；全部业务路由之后由 `routes/preview-proxy.js` 的 mount(app) 追加通用预览反代（含根绝对路径 Referer 兜底）；`auth.middleware` 之前另挂两个内网/匿名入口：`/p`（公网临时文件）与 `/wxhook`（wxbot 回调，共享服务 token 把门）。
 9. `mcp.init(cfg).then(...)`：对每个 MCP 服务 initialize → tools/list，发现的工具存在 `mcp` 模块内。
 10. `skills.listSkills(...)` → `llm.setSkillListText(...)` 快照注入 system prompt（`llm.js`）。
 11. `server.listen(PORT)`，打 startup 行：workspace_root / data_root / models / mcp_servers / auth / log_level。
@@ -484,6 +485,7 @@ AI 通过 `schedule` 工具为所在会话建周期性任务（`scheduled_tasks`
 | `/login` `/logout` | `auth.js` | 登录/登出页 |
 | `/files/download[-name/...]?t=` `/files/zip[-name/...]?t=` | `auth.js` 白名单 | 带签名 token 的下载/打包下载（认证中免 cookie） |
 | `/p/<id>` | `routes/public-files.js` | 公网临时文件取用（匿名，挂认证中间件之前；随机 ID + 过期） |
+| `/preview/**` | `routes/preview-proxy.js` | 通用任务预览反代（挂认证之后、server.js 最末，信任模型同 data-page 登录≈运维）：注册表（env PREVIEW_PROXIES，默认 officecli → mcp_officecli:3100）把 `<prefix>/**` 原样转发到服务单一预览入口，槽位/路径解析托管给服务端；另兜 vendor 预览页硬编码的根绝对 API（Referer 指向注册预览页 → 原路径转给对应服务，其余请求 404 照旧）；头白名单（凭据/公网身份不出容器），JSON 体因全局 express.json 已消耗需重序列化重放；SSE 响应加 no-cache/no-buffering；watch url 的公网前缀由 `mcp.js` 随请求以 `X-Public-Base` 头注入，会话目录经 `X-Session-Dir` 注入（officecli 桥自动把裸文件名补全会话目录）；链路见 mcp 仓库 `officecli/README.md` |
 
 **SSE 事件**（`/api/sessions/:id/stream`，由 `bus.emit` 触发，前端订阅）：
 

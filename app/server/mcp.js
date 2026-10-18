@@ -16,12 +16,13 @@ const CALL_TIMEOUT_MS = 60000;
 let toolDefs = [];                    // OpenAI function 格式（所有 MCP 工具）
 const toolIndex = new Map();          // 发送名 -> { server, tool }（服务配置 + 原始工具名）
 let builtinNames = new Set();
+let PUBLIC_BASE = ''; // core 自身公网前缀（loadConfig 已归一：VIRTUAL_HOST 优先 config.yml）；随每次请求 X-Public-Base 头下发
 
 // 发一次 JSON-RPC 请求，返回 { result, headers }（HTTP 非 2xx / error / 无法解析时抛异常）。
 // 某些 MCP 服务遵循 Streamable HTTP 规范会在 initialize 响应里返回 Mcp-Session-Id，
 // 之后所有非 initialize 请求都必须带上该 header，否则返回 400。我们把会话 id 缓存在 server.sessionId 里。
 // session 过期补偿：非 initialize 请求若 400 且错误信息含 session，清掉旧 id 并重新 initialize 后重试一次。
-async function rpc(server, method, params, timeoutMs) {
+async function rpc(server, method, params, timeoutMs, extraHeaders) {
   const callId = Date.now();
   const ms = timeoutMs || 30000;
   const ctrl = new AbortController();
@@ -34,6 +35,15 @@ async function rpc(server, method, params, timeoutMs) {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream',
     }, server.headers || {});
+    // 会话上下文随请求下发（如 officecli 预览需要知道会话工作目录拼链接）；HTTP 头必须 ASCII，含非标字符则丢弃
+    if (extraHeaders) {
+      for (const [k, v] of Object.entries(extraHeaders)) {
+        if (typeof v === 'string' && /^[\x20-\x7e]+$/.test(v)) headers[k] = v;
+      }
+    }
+    // 公网前缀单一真相随请求下发：给“要返回给人点的链接”的服务拼绝对 url（如 officecli 预览槽位），
+    // 免得每个 MCP 服务各自配 env 记一遍 core 地址。
+    if (PUBLIC_BASE) headers['X-Public-Base'] = PUBLIC_BASE;
     // initialize 请求自身不需要带 session id；其他请求如果该服务提供了 session id 则必须带
     if (method !== 'initialize' && server.sessionId) headers['Mcp-Session-Id'] = server.sessionId;
     const res = await fetch(server.url, {
@@ -67,7 +77,7 @@ async function rpc(server, method, params, timeoutMs) {
           if (!/Method not found/i.test(String(e && e.message || e))) throw e;
         }
         // 重试原请求（新一次 fetch + 新 AbortController）
-        return await rpc(server, method, params, ms);
+        return await rpc(server, method, params, ms, extraHeaders);
       }
       throw new Error('HTTP ' + res.status + ': ' + raw.slice(0, 300));
     }
@@ -103,6 +113,7 @@ async function rpc(server, method, params, timeoutMs) {
 async function init(cfg) {
   toolDefs = [];
   toolIndex.clear();
+  PUBLIC_BASE = (cfg && cfg.public_link && cfg.public_link.base_url) || '';
   try {
     for (const d of require('./tools/definitions.json')) {
       if (d.function && d.function.name) builtinNames.add(d.function.name);
@@ -178,13 +189,15 @@ function hasTool(name) { return toolIndex.has(name); }
 // 把工具调用转发给对应 MCP 服务，返回给模型的文本结果。
 // 超时取该服务的 timeout_ms（config.js 里归一化 + 夹过区间）；这里再兜一次底，
 // 兼容没走配置加载的调用方（如测试里手搓的 cfg）。
-async function callTool(name, args) {
+async function callTool(name, args, ctx) {
   const entry = toolIndex.get(name);
   if (!entry) return 'Error: 未知 MCP 工具 ' + name;
   let result;
   try {
     result = await rpc(entry.server, 'tools/call', { name: entry.tool, arguments: args || {} },
-      Number(entry.server.timeout_ms) || CALL_TIMEOUT_MS);
+      Number(entry.server.timeout_ms) || CALL_TIMEOUT_MS,
+      // 会话工作目录随请求下发（officecli 预览把裸文件名/相对路径补全会话目录；其它服务忽略此头）
+      ctx && ctx.taskDir ? { 'X-Session-Dir': String(ctx.taskDir) } : null);
   } catch (err) {
     return 'MCP ' + entry.server.name + '/' + entry.tool + ' 调用失败: ' + (err && err.message || err);
   }
@@ -196,4 +209,18 @@ async function callTool(name, args) {
   return JSON.stringify(result).slice(0, 20000);
 }
 
-module.exports = { init, toolDefinitions, hasTool, callTool };
+// 会话生命周期等后台场景的尽力通知：向声明了该工具的 MCP 服务发一次 tools/call。
+// 工具没注册/服务异常都只留日志，绝不把异常或延迟带给调用方。
+async function notifyTool(name, args, timeoutMs, extraHeaders) {
+  const entry = toolIndex.get(name);
+  if (!entry) return false;
+  try {
+    await rpc(entry.server, 'tools/call', { name: entry.tool, arguments: args || {} }, Number(timeoutMs) || 5000, extraHeaders);
+    return true;
+  } catch (e) {
+    log.info('mcp', 'notifyTool ' + name + ' 失败(尽力而为): ' + (e && e.message || e));
+    return false;
+  }
+}
+
+module.exports = { init, toolDefinitions, hasTool, callTool, notifyTool };

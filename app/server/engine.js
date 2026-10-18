@@ -1089,6 +1089,8 @@ function deleteSession(sessionId, deleteDir) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   stop(sessionId);
+  // 尽力清理该会话在 officecli 桥里的预览槽位（没配 officecli 则静默；失败只记日志，不阻断删除）
+  mcp.notifyTool('officecli', { command: 'unwatch --session ' + String(sessionId).replace(/[^0-9A-Za-z_-]/g, '') }, 5000, { 'X-Session-Dir': taskDirOf(sessionId) });
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);

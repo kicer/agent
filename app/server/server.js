@@ -78,6 +78,8 @@ app.use('/api/channel', require('./routes/channel'));
 // data-page 技能配套：任务 app/ 子树页面向导 /app/{task_id}/ + 数据 API /api/db/{task_id}/query。
 // 随其余业务路由一样挂在 auth.middleware 之后（登录态才能访问）。
 app.use(require('./routes/data-page'));
+// 通用预览反代（注册表驱动，路由+Referer 兜底一体；挂最末尾，兜底不吃任何现有路径）
+require('./routes/preview-proxy').mount(app);
 
 // 模型池状态（前端展示在用会话数/在用会话列表，key 非独占）+ 每模型 token 用量（今日/累计，输入/输出分开）。
 // 从生效配置补齐平台维度字段(platform/mid/vision/type + 平台 key 数 key_count):
