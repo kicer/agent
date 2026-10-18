@@ -42,16 +42,26 @@ tmp="$(mktemp "${BIN_DIR}/.dl.XXXXXX")"          # 与目标同目录：最后 m
 trap 'rm -f "${tmp}"' EXIT
 
 for url in "${urls[@]}"; do
-  log "trying ${url}"
-  if curl -fsSL --connect-timeout 10 --retry 1 --max-time 600 -o "${tmp}" "${url}"; then
+  log "trying ${url} (connect<=10s, speed>=10KB/s, max 300s)"
+  t0=$(date +%s)
+  if curl -fL \
+       --connect-timeout 10 \
+       --max-time 300 \
+       --speed-limit 102400 \
+       --speed-time 20 \
+       --retry 1 \
+       --progress-bar \
+       -o "${tmp}" "${url}"; then
     got="$(sha256sum "${tmp}" | awk '{print $1}')"
     if [ "${got}" = "${SHA256}" ]; then
       chmod +x "${tmp}"
       mv -f "${tmp}" "${BIN}"
-      log "officecli ${VERSION} installed -> ${BIN}"
+      log "officecli ${VERSION} installed -> ${BIN} ($(( $(date +%s) - t0 ))s)"
       exec "$@"
     fi
     log "sha256 mismatch (got ${got}), trying next source"
+  else
+    log "failed after $(( $(date +%s) - t0 ))s: ${url}"
   fi
   rm -f "${tmp}"
 done
