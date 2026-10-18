@@ -43,7 +43,7 @@ function pvToolbar(o) {
 function pvHeader(name, sizeText) {
   pvState.name = name;
   const t = document.getElementById('pv-title');
-  t.textContent = String(name || '');
+  t.value = String(name || '');
   t.title = sizeText ? name + ' · ' + sizeText : String(name || '');
   document.getElementById('pv-download').classList.toggle('hidden', !name);
 }
@@ -88,6 +88,7 @@ function pvOpenPane() {
 function pvCloseDoc() {
   if (!document.body.classList.contains('pv-open')) return;
   document.body.classList.remove('pv-open', 'pv-max');
+  if (typeof pvSetMaxUI === 'function') pvSetMaxUI(false); // 收起时复位放大钮图标(函数声明提升，定义在后亦可)
   pvClearBody();
   pvState.name = null; pvState.url = null;
   if (pvState.drawerWasOpen) {
@@ -304,12 +305,17 @@ document.getElementById('pv-close').addEventListener('click', pvCloseDoc);
 document.getElementById('pv-download').addEventListener('click', () => {
   if (pvState.name && typeof downloadFile === 'function') downloadFile(pvState.name);
 });
-document.getElementById('pv-max').addEventListener('click', () => {
-  const max = document.body.classList.toggle('pv-max');
+// 放大/还原钮双图标与 title 同步：退出全屏(pvCloseDoc)时也要复位
+function pvSetMaxUI(max) {
   const btn = document.getElementById('pv-max');
   const lbl = max ? '还原' : '放大';
   btn.title = lbl;
   btn.setAttribute('aria-label', lbl);
+  btn.querySelectorAll('svg').forEach((s) => s.classList.toggle('hidden')); // 双图标互切
+}
+document.getElementById('pv-max').addEventListener('click', () => {
+  const max = document.body.classList.toggle('pv-max');
+  pvSetMaxUI(max);
 });
 document.getElementById('pv-refresh').addEventListener('click', () => {
   const f = document.getElementById('pv-body').querySelector('iframe');
@@ -319,6 +325,8 @@ document.getElementById('pv-refresh').addEventListener('click', () => {
 document.getElementById('pv-popup').addEventListener('click', () => {
   if (pvState.url) window.open(pvState.url, '_blank', 'noopener');
 });
+// 地址条：点击/聚焦全选——长路径被截断时可选中看全文、直接 Ctrl+C 复制
+document.getElementById('pv-title').addEventListener('focus', (e) => e.target.select());
 // md 代码块复制钮与 fs-viewer 同一委托逻辑
 document.getElementById('pv-pane').addEventListener('click', (e) => {
   const b = e.target.closest('.act-copy');
@@ -333,6 +341,7 @@ window.addEventListener('popstate', () => {
 // Esc 关闭右栏(未开全屏查看器时)
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (document.activeElement && document.activeElement.id === 'pv-title') { document.activeElement.blur(); return; } // 地址条聚焦时:先退框不关栏
   if (!document.getElementById('fs-viewer').classList.contains('hidden')) return;
   pvCloseDoc();
 });

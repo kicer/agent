@@ -63,6 +63,19 @@ function serviceByReferer(req) {
   return null;
 }
 
+// 前置守卫(server.js 需注册在 express.static 之前):vendor 预览页把「取自身新版 HTML」
+// 硬编码成根绝对 '/',打到 core 根上会被 SPA 首页吞掉 → 局部 diff 拿到外来页 → 触发
+// location.reload() 兜底(白屏一下)。这里只拦 '/':Referer 命中预览前缀时原样转发回
+// 对应服务(与兜底路由同一信任模型),其余路径仍由 mount() 末尾兜底。
+function earlyGuard(app) {
+  app.use((req, res, next) => {
+    if ((req.method !== 'GET' && req.method !== 'HEAD') || req.path !== '/') return next();
+    const svc = serviceByReferer(req);
+    if (!svc) return next();
+    forward(svc, req, res, '/');
+  });
+}
+
 function mount(app) {
   for (const svc of services) {
     if (svc.ownership) log.warn('preview', svc.name + ': ownership \u5b57\u6bb5\u672a\u63a5\u7ebf\uff08\u5f53\u524d\u4fe1\u4efb\u6a21\u578b = \u767b\u5f55\u2248\u8fd0\u7ef4\uff0c\u4e0e data-page \u4e00\u81f4\uff09');
@@ -81,4 +94,4 @@ function mount(app) {
   app.use(fb);
 }
 
-module.exports = { mount };
+module.exports = { mount, earlyGuard };

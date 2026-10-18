@@ -58,6 +58,10 @@ app.use('/p', require('./routes/public-files'));
 
 app.use(auth.middleware);  // 其余请求需登录态（cookie 或 Basic 头）
 
+// preview-proxy 前置守卫(见其注释):vendor 预览页用根绝对 '/' 取自身新版 HTML,
+// 必须在静态首页拦截之前转发回去;mount() 仍在文件末尾兜底其余路径。
+require('./routes/preview-proxy').earlyGuard(app);
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/api/sessions', require('./routes/sessions'));
