@@ -201,6 +201,8 @@ auth:
 mcp_servers:
   - name: web_search
     url: "http://mcp_web_search:3000/"
+  - name: officecli
+    url: "http://mcp_officecli:3000/"    # Office 文档创建/修改（无需 key）；预览走 core 的 /preview 反代
 EOF
 
     if [ -n "$ZHIPU_KEY" ]; then
@@ -245,6 +247,7 @@ echo " 账号     : $AUTH_USER"
 echo " 密码     : $AUTH_PASSWORD"
 echo " 平台     : ${enabled_plats[*]:-（无）}"
 echo " 智谱 MCP : $([ -n "$ZHIPU_KEY" ] && echo "image_task / video_task 已启用" || echo "未配置（enable: false）")"
+echo " Office   : officecli 已接入（mcp_officecli:3000；预览走 /preview 反代）"
 echo " 微信接入 : WXBOT_TOKEN 已就位（compose 注入 core 与 wxbot 两侧；wxbot 无需配置文件）"
 echo "---------------------------------------------"
 log "完成 ✅"
