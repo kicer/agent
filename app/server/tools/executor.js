@@ -24,6 +24,11 @@ function resolveInTask(taskDir, p) {
   let abs;
   if (path.isAbsolute(p)) {
     abs = path.normalize(p);
+    // /tmp → <taskDir>/.tmp：与 executor 容器的 bind 对齐（容器内 /tmp 即会话 .tmp，
+    // terminal 写 /tmp/x，core 侧实体在 <taskDir>/.tmp/x）。先 normalize 再重写，
+    // 重写后仍走下方越界校验，无穿越风险。
+    if (abs === '/tmp') abs = path.join(path.resolve(taskDir), '.tmp');
+    else if (abs.startsWith('/tmp/')) abs = path.join(path.resolve(taskDir), '.tmp', abs.slice(5));
   } else {
     abs = path.resolve(taskDir, p);
   }
