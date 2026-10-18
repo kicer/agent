@@ -1,12 +1,16 @@
 # MCP 服务集合
 
-三个独立 MCP（Model Context Protocol）服务，各占一个目录，共用仓库根目录的 `docker-compose.yml`：
+四个独立 MCP（Model Context Protocol）服务，各占一个目录，共用仓库根目录的 `docker-compose.yml`：
 
 | 目录 | 容器名 | 作用 | 容器内端口 | MCP 端点 |
 |---|---|---|---|---|
 | `web_search/` | `mcp_web_search` | 免费网页搜索（Parallel / Exa，无需 key） | `3000` | `POST /` |
 | `image_task/` | `mcp_image_task` | 智谱 CogView 图片生成（单工具 op=create） | `3000` | `POST /mcp` |
 | `video_task/` | `mcp_video_task` | 智谱 CogVideo 视频生成（异步，单工具 op=create/get） | `3000` | `POST /mcp` |
+| `officecli/` | `mcp_officecli` | Office 文档（docx/xlsx/pptx）创建修改 + 浏览器实时预览 | `3000`/`3100` | `POST /` |
+
+officecli 的预览页面同样不占宿主机端口：浏览器走 agent-core 的通用预览反代
+`/preview/<会话id>/<文档>/…`（登录 cookie 门禁），链路与槽位细节见 `officecli/README.md`。
 
 **这些服务一个宿主机端口都不占**——它们只挂在 `agent-mcp-net` 上，由 `agent-core` / `agent-executor`
 按容器名访问。所以整台服务器对外只需要开 agent-core 那一个端口（`AGENT_PORT`，默认 8090）。
@@ -29,6 +33,9 @@ cd /root/workspace/tools/mcp && docker compose up -d --build
 
 `image_task` / `video_task` 需要智谱 token，但 token **不由服务端保存**——每个请求从 header 读取
 （agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。所以这里不用配任何密钥。
+
+`officecli` 与 agent **不共盘**：工作区是独立 scratch 卷（容器内布局同构 `/workspace/tasks/<会话id>/...`，
+容器对会话数据盲视），数据交换只走桥的 push（mint 外链拉入）/ save 交付链（AI 在自己会话目录 curl 回写）；且要先起 agent（external 网络 `agent-mcp-net` 由 agent 的 compose 创建）。
 
 ### 环境变量
 
@@ -66,6 +73,7 @@ AI 把拿到的 URL 当 image_url 交给 video_task:3000/mcp
 | `mcp_web_search` | 无 | 服务端无鉴权，**永远不要映射出去**（会被白嫖搜索额度）；agent 走内网访问 |
 | `mcp_image_task` | 无 | token 由调用方自带，暴露后可被拿去消耗你的智谱额度 |
 | `mcp_video_task` | 无 | 它需要的公开临时 URL 由 agent 侧集成的工具提供，自己不占端口 |
+| `mcp_officecli` | 无 | MCP 口与预览网关口都只在内网；预览页由 agent-core 通用预览反代加登录 cookie 门禁 |
 
 ## 单独调试
 

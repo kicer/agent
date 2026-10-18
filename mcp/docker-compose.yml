@@ -32,8 +32,35 @@ services:
     networks:
       - agent-mcp-net
 
+  mcp_officecli:
+    build: ./officecli
+    container_name: mcp_officecli
+    restart: unless-stopped
+    environment:
+      # 关自动 resident：实测对时延零增益（瓶颈是 .NET 进程启动），换来无 file_locked 冲突、无常驻进程堆积
+      - OFFICECLI_NO_AUTO_RESIDENT=1
+      # 每次改动命令返回前落盘（含 open 起的 resident）：编辑即自动保存，save/close 只为签发取件链接
+      - OFFICECLI_RESIDENT_FLUSH=each
+      # scratch 卫生：闲置 7 天整目录回收；容量水位 2G（超限按目录 mtime 从旧到新删，删到 80% 为止）
+      - OFFICE_SCRATCH_TTL_MS=604800000
+      - OFFICE_SCRATCH_MAX_BYTES=2147483648
+    volumes:
+      # officecli 二进制缓存：entrypoint 首启拉取（镜像内 pin 版本+sha256，每次启动都校验），容器重建不重拉；down -v 后下次启动自动重拉；纯离线机改 bind 挂载手工放置（见 officecli/README）
+      - officecli-bin:/opt/officecli
+      # 刻意不挂 ../agent/tasks：容器对会话数据盲视，只有自己的 scratch 工作区（布局同构 /workspace/tasks/<会话id>/...）。
+      # 与交付区的数据交换全部经 push（拉 mint 外链进来）/ pull（AI 在 executor 里执行 curl 写回自己目录）。
+      - office-scratch:/workspace/tasks
+    networks:
+      - agent-mcp-net
+
 networks:
   # 与 agent 仓库共用：网络由 agent 的 compose 创建并命名（所以要先起 agent），
   # 这里声明为 external 直接加入。agent-core / agent-executor 按容器名访问这些服务。
   agent-mcp-net:
     external: true
+
+volumes:
+  # officecli 工作区：丢了不要紧（push/pull 流程会重建），down -v 即清空
+  office-scratch:
+  # officecli 二进制缓存：丢了也不要紧，下次启动 entrypoint 自动重新拉取
+  officecli-bin:

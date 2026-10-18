@@ -1,3 +1,5 @@
 node_modules/
 # 编排变量（调试端口等），含部署相关的地址，不进库
 .env
+# officecli 二进制：部署前由 ./officecli/get-officecli.sh 生成，不进库
+officecli/bin/
