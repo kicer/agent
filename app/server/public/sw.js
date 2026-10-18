@@ -50,8 +50,8 @@ self.addEventListener('fetch', (event) => {
   // 只处理同源
   if (url.origin !== self.location.origin) return;
 
-  // 跳过 API/SSE，避免缓存动态数据
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/sse')) return;
+  // 跳过 API/SSE/预览/交付取件，避免缓存动态数据(预览页需实时；/f/ 同链内容会随重新 save 变化)
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/sse') || url.pathname.startsWith('/preview') || url.pathname.startsWith('/f/')) return;
 
   // HTML/登录页：网络优先
   if (request.mode === 'navigate' || request.destination === 'document') {

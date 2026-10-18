@@ -154,6 +154,7 @@
       closeStream();
       removeTyping();
       setFilesPanel(false); // 会话切换,收起文件面板防旧列表残留
+      if (typeof pvCloseDoc === 'function') pvCloseDoc(); // 同上:收起文档预览右栏,防旧会话内容残留
       state.sessionId = id;
       state.status = '';
       state.schedule = null; // 防详情返回前残留上一会话的任务状态条

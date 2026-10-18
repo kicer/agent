@@ -311,16 +311,16 @@
   }
 
   function fileRowHtml(f) {
-    // 预览策略：md/txt/html/pdf + 图片在 fs-viewer 预览（pdf 按 pdfViewerEnabled 页内/下载分流）
+    // 预览策略：所有文件点击一律进预览窗(preview.js openFilePreview)；此处仅决定图标(可预览=眼睛,其余=文档)
     const low = f.filename.toLowerCase();
-    const fsPv = /\.(md|txt|html?|pdf|png|jpe?g|gif|webp|svg)$/.test(low);
+    const fsPv = /\.(md|txt|html?|pdf|png|jpe?g|gif|webp|svg|docx|xlsx|pptx|csv|tsv|json|jsonl|xml|yml|yaml|toml|ini|conf|cfg|properties|env|log|py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|c|h|cpp|hpp|cc|cs|go|rs|rb|php|swift|sh|bash|zsh|bat|ps1|sql|lua|r|dart|vue|css|less|scss|srt|vtt)$/.test(low);
     const ico = fsPv
       ? '<svg class="file-ico eye" viewBox="0 0 24 24" aria-label="可预览"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
       : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
     const name = esc(String(f.filename).split('/').pop() || f.filename);
     const ftime = fmtTime(f.mtime || f.ctime);
     const sel = isFileEffectivelySelected(f.filename);
-    return '<div class="file-row' + (fsPv ? ' clickable' : '') + (sel ? ' selected' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '">' +
+    return '<div class="file-row clickable' + (sel ? ' selected' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '" data-size="' + esc(fmtSize(f.size)) + '">' +
       '<span class="file-check" role="checkbox" aria-checked="' + (sel ? 'true' : 'false') + '" aria-label="选择"></span>' +
       '<div class="file-main">' +
         '<div class="file-name">' + name + '</div>' +
@@ -501,76 +501,7 @@
     });
     return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
   }
-  // 单击可预览文件 → 全屏预览(#fs-viewer)：md 按 markdown 渲染、txt 原文排版、html 用沙箱 iframe、pdf 按 pdfViewerEnabled 页内/下载分流、图片用 <img>
-  async function previewInFs(name) {
-    try {
-      const r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
-      if (r.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search); return; }
-      if (!r.ok) { let msg = 'HTTP ' + r.status; try { msg = (await r.json()).error || msg; } catch (_) {} throw new Error(msg); }
-      if (/\.html?$/i.test(name)) {
-        const html = await r.text();
-        const body = $('fs-body');
-        body.innerHTML = '';
-        const iframe = document.createElement('iframe');
-        iframe.className = 'fs-html-frame';
-        iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
-        iframe.srcdoc = rewriteHtmlDocSrcs(html, name); // 相对资源改写，否则 about:srcdoc 基准下全 404
-        body.appendChild(iframe);
-        setFsSource(html); // 源码钮可看页面原码
-        $('fs-viewer').classList.remove('hidden');
-      } else if (/\.pdf$/i.test(name)) {
-        // H5 方案 A:navigator.pdfViewerEnabled 是专为「能否内嵌渲染 PDF」设计的检测位
-        // (桌面各浏览器/iOS Safari = true;Android Chrome/微信 webview = false)
-        if (navigator.pdfViewerEnabled) {
-          const blob = await r.blob(); // 响应 Content-Type 即 application/pdf
-          const url = URL.createObjectURL(blob);
-          if (state.lastPdfBlobUrl) { try { URL.revokeObjectURL(state.lastPdfBlobUrl); } catch (_) {} }
-          state.lastPdfBlobUrl = url;
-          const body = $('fs-body');
-          body.innerHTML = '';
-          body.style.zoom = '';
-          const frame = document.createElement('iframe');
-          frame.className = 'fs-html-frame';
-          frame.title = name; // 不加 sandbox:内建查看器插件需要 unrestricted 帧
-          frame.src = url;
-          body.appendChild(frame);
-          setFsSource(null); // 二进制无源码可看,隐藏 eye 钮
-          $('fs-viewer').classList.remove('hidden');
-        } else {
-          // 不支持页内嵌的浏览器:交给既有签名直链下载链路(Android 通知栏用系统查看器打开)
-          toast('当前浏览器不支持页内预览 PDF,已开始下载');
-          downloadFile(name);
-        }
-      } else if (/\.(png|jpe?g|gif|webp|svg)$/i.test(name)) {
-        // 图片：复用会话里单击图片的全屏查看器（双指缩放+拖动+双击放大），大图也能看完
-        const blob = await r.blob();
-        const url = URL.createObjectURL(blob);
-        // 上一次的 blob URL 顺手释放；避免反复预览图片泄漏
-        if (state.lastImgBlobUrl) { try { URL.revokeObjectURL(state.lastImgBlobUrl); } catch (_) {} }
-        state.lastImgBlobUrl = url;
-        openImageViewer(url, name);
-      } else {
-        // md/txt：复用双击气泡的全屏查看器
-        const text = await r.text();
-        let cls = 'bubble-ai', html;
-        if (/\.(md|markdown)$/i.test(name)) {
-          const r2 = mdHtml(text);
-          html = r2.html;
-          if (r2.fmt) {
-            cls += ' md';
-            html = rewriteMdImageSrcs(html, name);
-          }
-        } else {
-          html = esc(text);
-        }
-        const wrap = document.createElement('div');
-        wrap.className = 'msg other';
-        wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';
-        decorateCodePre(wrap); // 先装饰再克隆:按钮随 openFullscreen 的深拷贝进查看器,fs-viewer 已有 .act-copy 委托
-        openFullscreen(wrap.firstChild, text); // 文件原文供 eye 钮看源码
-      }
-    } catch (e) { toast('预览失败:' + e.message); }
-  }
+  // 预览路由已迁至 js/preview.js(openFilePreview)：office 走 /preview 预览服务；其余类型桌面进 #pv-pane、移动端进 #fs-viewer。
   async function downloadFile(name) {
     if (!state.sessionId) return;
     try {
@@ -618,9 +549,8 @@
         updateFilesFooter();
         return;
       }
-    // 默认模式：依据是否可预览选择预览/下载
-      if (row.dataset.preview === '1') previewInFs(path);
-      else downloadFile(path);
+    // 默认模式：所有文件一律进预览窗(不支持类型窗内展示占位与下载入口)，不再直接下载
+      openFilePreview(path, row.dataset.size || '');
     });
 
   // 整体选中/取消一个文件夹：目录作为单条选中项（d: 前缀），行视觉态由 refreshFileSelStates 重算。
