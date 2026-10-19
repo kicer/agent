@@ -3,6 +3,7 @@
 // 与本地 spawn 的行为对齐：stdout+stderr 按到达顺序合并成一个 out 字符串；超时/取消杀远端进程组；
 // 通过 run.procs 注册句柄（remoteKill），使 engine 的停止/终止会话能连带取消远端任务。
 'use strict';
+const http = require('node:http');
 
 // 单引号安全包裹（内部单引号按 '\'' 规则转义），供拼 sh -c 命令串用。
 function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
@@ -97,4 +98,25 @@ async function run(cfg, opts) {
   return { code: exit.code, killed_by: exit.killed_by || localKill, out, truncated: !!exit.truncated };
 }
 
-module.exports = { isRemote, run, shq, shellLine };
+// 预览槽清理：core 删会话后尽力 kill executor 侧该会话的预览槽（executor/preview.js 的 /__session-kill）。
+// 与 /exec 同容器异端口：主机名取 cfg.executor.url，端口 env EXECUTOR_PREVIEW_PORT（默认 3100，与 preview.js 对齐）。
+// fire-and-forget：槽是缓存不是承诺，漏网槽闲置回收自然到期，失败只静默不阻断会话删除。
+function killPreviewSession(cfg, sessionId, timeoutMs) {
+  if (!isRemote(cfg) || !sessionId) return;
+  let host;
+  try { host = new URL(cfg.executor.url).hostname; } catch (_) { return; }
+  const port = Number(process.env.EXECUTOR_PREVIEW_PORT || 3100);
+  const body = JSON.stringify({ session: String(sessionId) });
+  const headers = { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) };
+  if (cfg.executor.token) headers.authorization = 'Bearer ' + cfg.executor.token;
+  let req;
+  try {
+    req = http.request({ host, port, path: '/__session-kill', method: 'POST', timeout: Number(timeoutMs) || 5000, headers },
+      (res) => { res.resume(); });
+  } catch (_) { return; }
+  req.on('error', () => {});
+  req.on('timeout', () => { req.destroy(); });
+  req.end(body);
+}
+
+module.exports = { isRemote, run, shq, shellLine, killPreviewSession };

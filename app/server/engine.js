@@ -6,6 +6,7 @@ const { buildMessages, callModel, encodeBlocks, decodeBlocks, compressMessages, 
 const { executeTool, resolveInTask } = require('./tools/executor');
 const publicFiles = require('./public-files');
 const mcp = require('./mcp');
+const rexec = require('./remote-exec');
 const log = require('./log');
 const profile = require('./user-profile');
 const memory = require('./memory');
@@ -1089,8 +1090,8 @@ function deleteSession(sessionId, deleteDir) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   stop(sessionId);
-  // 尽力清理该会话在 officecli 桥里的预览槽位与工作区目录副本（--purge；没配 officecli 则静默，失败只记日志，不阻断删除）
-  mcp.notifyTool('officecli', { command: 'unwatch --session ' + String(sessionId).replace(/[^0-9A-Za-z_-]/g, '') + ' --purge' }, 5000, { 'X-Session-Dir': taskDirOf(sessionId) });
+  // 尽力清理该会话在 executor 侧的预览槽（officecli 预览已迁 executor/preview.js；未配 executor 静默，失败只记日志不阻断删除）
+  try { rexec.killPreviewSession(cfg, sessionId); } catch (_) {}
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);

@@ -24,8 +24,12 @@ services:
       # 微信接入
       - WXBOT_URL=http://wxbot:8093
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
+      - VIRTUAL_HOST=agent.ai.foresh.com
+      - VIRTUAL_PORT=8090
+      - CERT_NAME=default
     networks:
       - agent-mcp-net
+      - my-app-network
 
   # 技能准备（一次性，跑完退出）：把各技能的“运行期可变”依赖落到宿主 ./skills——
   # requirements.txt → 先离线探测，只把镜像缺的包装进共享 deps 目录（镜像已带的不重复装）；
@@ -69,6 +73,9 @@ services:
         condition: service_completed_successfully
     expose:
       - "9000"
+      # officecli 预览槽位+网关（preview.js，容器内 3100）：只走 agent-mcp-net 内网，
+      # 公网访问唯一路径是 core 的 /preview 反代（登录 cookie 门禁）；绝不映射到宿主端口。
+      - "3100"
     volumes:
       # 核心变更：将宿主机 tasks 挂载到非标准路径 /mnt/host-tasks
       # 目的：wrapper 启动时先 unmount 此路径，确保未经 wrapper 的进程无法访问其他 session 数据
@@ -154,3 +161,5 @@ networks:
   agent-mcp-net:
     name: agent-mcp-net
     driver: bridge
+  my-app-network:
+    external: true

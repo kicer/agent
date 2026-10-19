@@ -1,0 +1,117 @@
+#!/usr/bin/env node
+// office: officecli 的封装层（技能唯一入口）。
+// - 二进制不进 PATH、SKILL.md 不提及：可见面 = 可调用面，模型只认识本脚本；路径可用 OFFICECLI_BIN 覆盖。
+// - 命令治理移植自原 MCP 桥：隐去命令报原生风格 unrecognized；view 渲染族拦截给替代路径；
+//   watch 族不透传（预览由平台托管）。
+// - create/open 成功在 stdout 尾行发 ui_card marker（::ui_card {json}::）：core 剥离后转聊天流卡片，
+//   模型面不感知 marker；arg 为相对 cwd（会话目录）的文件路径。
+'use strict';
+const { spawnSync } = require('node:child_process');
+const path = require('node:path');
+
+const BIN = process.env.OFFICECLI_BIN || path.resolve(__dirname, '..', 'bin', 'officecli');
+
+// 本部署不合适的命令（自锁死 / 装配环境族）：原生风格报错，help 清单同步删行（见 help 段）。
+const unrecognized = (v) => "Unrecognized command or argument '" + v + "'.";
+const HIDDEN_TOP = /^(mcp|skills|install|plugins)(?:\s|$)/;
+const HIDDEN_LINE = /^ {2}(?:mcp|skills|install|plugins)\b/; // '\b' 绝不能用字符串拼 RegExp（会变退格符）
+const HELP_STRIP = /^ {2}(?:watch|unwatch)\b/;
+const HIDDEN_SUBS = new Set(['mark', 'unmark', 'marks', 'goto']); // 标注/滚动族：预览交互由 get-pos 单点覆盖
+const VIEW_BLOCKED = new Set(['html', 'screenshot', 'svg', 'pdf', 'forms']); // 需无头浏览器/导出插件，本环境没有
+const OFFICE_EXT_RE = /\.(?:docx|xlsx|pptx)$/i;
+const CARD_NOTE = { create: '已创建', open: '已打开' };
+
+const err = (msg) => { process.stderr.write(msg + '\n'); process.exit(1); };
+
+// vendor 异常包装拆掉只留内层真错（与原桥 scrubErr 同源）
+function scrub(text) {
+  return String(text).replace(/Resident process exited\.\s*Unhandled exception:\s*[\w.]*Exception:\s*/g, '');
+}
+
+function runVendor(argv) {
+  // 关自动 resident（实测时延零增益，还会堆常驻进程/撞 file_locked）；每次改动命令返回前落盘。
+  const env = Object.assign({}, process.env, {
+    OFFICECLI_NO_AUTO_RESIDENT: '1',
+    OFFICECLI_RESIDENT_FLUSH: 'each',
+    // slim 镜像无 ICU；executor 的 env 白名单不透传，必须在这里自己声明 .NET 不变式模式
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1',
+  });
+  return spawnSync(BIN, argv, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024 });
+}
+
+const argv = process.argv.slice(2);
+if (!argv.length) {
+  process.stdout.write('Usage: office <command> [args...]\nRun `office help` for the full command list.\n');
+  process.exit(0);
+}
+const cmd = argv.join(' ');
+const first = String(argv[0] || '');
+
+// ---------- 命令面闸门 ----------
+let m = HIDDEN_TOP.exec(cmd);
+if (m || (first === 'help' && HIDDEN_TOP.test(argv.slice(1).join(' ')))) err(unrecognized(m ? m[1] : argv[1]));
+if (HIDDEN_SUBS.has(first)) err(unrecognized(first));
+if (first === 'watch' || first === 'unwatch') {
+  err('Preview slots are managed by the platform: create/open a document, then click the preview card in the chat.');
+}
+
+const helpCmd = first === 'help' || /(?:^|\s)(?:--help|-h)(?:\s|$)/.test(cmd);
+
+// view 放开结构/语义模式（outline/stats/issues/text/annotated），只拦渲染族，并给替代路径。
+if (!helpCmd && first === 'view') {
+  const vpos = argv.slice(1).filter((t) => !String(t).startsWith('-')); // [file, mode, ...]
+  const vmode = String(vpos[1] || '').toLowerCase();
+  if (VIEW_BLOCKED.has(vmode)) {
+    err("view " + vmode + " is disabled by environment policy. Use 'view <file> outline' or 'view <file> issues' for structural/semantic checks.");
+  }
+}
+
+// get-pos：语义糖，改写为原生选中回读（用户没在预览里选过时 vendor 返回空结果，不是错误）。
+if (first === 'get-pos') {
+  const file = argv[1];
+  if (!file) err('Usage: get-pos <file> (works once the user opens the preview and selects something)');
+  argv = ['get', file, 'selected', '--json'];
+}
+
+// ---------- 透传 ----------
+let r;
+try {
+  r = runVendor(argv);
+} catch (e) {
+  err(String(e && e.message || e));
+}
+if (r.error) {
+  if (r.error.code === 'ENOENT') {
+    err('officecli binary missing: ' + BIN + ' (skill asset not fetched: docker compose up -d agent-executor-init to retry, or place it per skills/office/install.sh)');
+  }
+  err(String(r.error.message || r.error));
+}
+
+let outRaw = scrub(r.stdout || '');
+// help 文本对齐可调用面：隐去的命令删行（原生 cwd 已是会话目录，无扩展命令需补录）
+if (helpCmd && outRaw.includes('Commands:')) {
+  outRaw = outRaw.split('\n').filter((ln) => !HIDDEN_LINE.test(ln) && !HELP_STRIP.test(ln)).join('\n');
+}
+if (outRaw) process.stdout.write(outRaw);
+if (r.stderr) process.stderr.write(scrub(r.stderr || ''));
+
+// create/open 成功尾行发预览卡片 marker（core 解析后剥离；模型面无感）
+if (r.status === 0 && /^(create|open)$/.test(first)) {
+  let file = null;
+  for (const t of argv) {
+    const s = String(t);
+    if (s.startsWith('-') || s.includes('=')) continue;
+    if (OFFICE_EXT_RE.test(s)) {
+      const rel = path.relative(process.cwd(), path.resolve(s));
+      if (rel && rel !== '.' && !rel.startsWith('..')) file = rel;
+      break;
+    }
+  }
+  if (file) {
+    process.stdout.write('\n::ui_card ' + JSON.stringify({
+      action: 'open_preview', arg: file, title: file, note: CARD_NOTE[first] || '',
+    }) + '::\n');
+  }
+}
+
+process.exit(r.status === null ? 1 : r.status);

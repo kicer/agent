@@ -61,6 +61,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 # ---- executor 服务（零依赖单文件，仅 Node 内置 http）----
 WORKDIR /app
 COPY executor/server.js ./
+COPY executor/preview.js ./
 # 技能依赖准备脚本：由 agent-executor-init 服务在启动前执行（pip/资产，无特权）
 COPY executor/init-skills.js ./
 
@@ -105,3 +106,4 @@ RUN for d in /tmp/skills/*/; do \
       fi; \
     done; \
     rm -rf /tmp/skills
+

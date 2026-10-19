@@ -659,6 +659,25 @@ function selectOutput(text, head, tail) {
 }
 
 // terminal：spawn + 进程组 kill + 超时 + 输出截断
+// 通用终端输出 UI 卡片通道：命令行尾部的 ::ui_card {json}:: 标记行 → 从模型面剥离，整块交 ctx.onCard
+// （与 MCP 回包 ui_card 块同一协议，见 mcp.js：任何命令行都可产卡，不限 officecli 封装层）。
+// JSON 解析失败/无 action/ctx 不带 onCard 时标记行原样保留（宁可见不丢数据）。
+function drainUiCards(text, ctx) {
+  if (!text || text.indexOf('::ui_card ') < 0) return text;
+  const keep = [];
+  for (const line of String(text).split('\n')) {
+    const m = /^::ui_card (\{.*\})::$/.exec(line.trim());
+    let card = null;
+    if (m) { try { card = JSON.parse(m[1]); } catch (_) { card = null; } }
+    if (card && typeof card === 'object' && card.action && ctx && typeof ctx.onCard === 'function') {
+      try { ctx.onCard(Object.assign({}, card, { from: 'terminal' })); } catch (_) { /* 卡片是增强，不影响工具结果 */ }
+      continue;
+    }
+    keep.push(line);
+  }
+  return keep.join('\n');
+}
+
 async function toolTerminal(ctx, args) {
   const cfg = ctx.cfg;
   const timeout = args.timeout_ms || cfg.terminal.default_timeout_ms;
@@ -670,6 +689,7 @@ async function toolTerminal(ctx, args) {
   // 配了 executor.url（或 env EXECUTOR_URL）：命令交给远端 agent-executor 执行，文本拼回与本地完全一致。
   if (rexec.isRemote(cfg)) {
     const r = await rexec.run(cfg, { command: args.command, cwd, timeout_ms: timeout, run: ctx.run });
+    r.out = drainUiCards(r.out, ctx);
     let text = selectOutput(r.out.replace(/\n+$/, ''), args.head_lines, args.tail_lines);
     if (r.killed_by === 'timeout') {
       text += (text ? '\n' : '') + '（命令超时 ' + timeout + 'ms，已终止；这是超时不是命令本身失败）';
@@ -705,7 +725,7 @@ async function toolTerminal(ctx, args) {
       clearInterval(cancelCheck);
       ctx.run.procs.delete(child);
       // head_lines/tail_lines：对齐 Zed，在原始输出上选段（之前被完全忽略）。
-      let text = selectOutput(out.replace(/\n+$/, ''), args.head_lines, args.tail_lines);
+      let text = selectOutput(drainUiCards(out, ctx).replace(/\n+$/, ''), args.head_lines, args.tail_lines);
       if (killedBy === 'timeout') {
         // 超时/终止不是“执行失败”，不报 exit code（避免 -1 误导模型）。
         text += (text ? '\n' : '') + '（命令超时 ' + timeout + 'ms，已终止；这是超时不是命令本身失败）';

@@ -13,19 +13,16 @@ const { Router } = require('express');
 const log = require('../log');
 
 let services;
+const PREVIEW_DEFAULT = [{
+  name: 'office', prefix: '/preview',
+  host: process.env.EXECUTOR_PREVIEW_HOST || 'agent-executor',
+  port: Number(process.env.EXECUTOR_PREVIEW_PORT || 3100),
+}];
 try {
-  services = process.env.PREVIEW_PROXIES ? JSON.parse(process.env.PREVIEW_PROXIES) : [{
-    name: 'officecli', prefix: '/preview',
-    host: process.env.OFFICE_MCP_HOST || 'mcp_officecli',
-    port: Number(process.env.OFFICE_PREVIEW_PORT || 3100),
-  }];
+  services = process.env.PREVIEW_PROXIES ? JSON.parse(process.env.PREVIEW_PROXIES) : PREVIEW_DEFAULT;
 } catch (e) {
   log.error('preview', 'PREVIEW_PROXIES \u89e3\u6790\u5931\u8d25\uff0c\u56de\u9000\u9ed8\u8ba4\u6ce8\u518c\u8868: ' + (e && e.message));
-  services = [{
-    name: 'officecli', prefix: '/preview',
-    host: process.env.OFFICE_MCP_HOST || 'mcp_officecli',
-    port: Number(process.env.OFFICE_PREVIEW_PORT || 3100),
-  }];
+  services = PREVIEW_DEFAULT;
 }
 
 // \u5934\u767d\u540d\u5355\uff1a\u51ed\u636e\u4e0e\u516c\u7f51\u8eab\u4efd\uff08cookie/authorization/sec-fetch-*/connection\uff09\u4e00\u5f8b\u4e0d\u51fa\u5bb9\u5668\uff1b

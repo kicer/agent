@@ -8,6 +8,8 @@ data/
 tasks/
 skills/deps/
 skills/*/.deps_installed
+# officecli 二进制资产：skills/office/install.sh 运行期拉取，不进 git
+skills/office/bin/
 skills/**/__pycache__/
 *.log
 .DS_Store

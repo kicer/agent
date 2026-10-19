@@ -417,18 +417,20 @@ function saveTaskMedia(s, buf, kind, rawName) {
 //   3. 结论（不带 tool_calls 的 assistant_message，回合收尾）挂起到 done 再投：
 //      预算够 → 全文 + 附件卡片；放不下但 ≥2 → 降级「截断头部 + 全文写会话
 //      .md 转文件卡片」（内容零丢失）；<2 → 放弃并告警（网页端完整可见）。
-//   4. 工具台账：tool_call/tool_result 只往 st.tools 记账（✓/✗ 状态前缀 + 工具名 + 参数原文
-//      不解析；同类计数折叠、失败行尾 (failed)）。攒满一屏（8 行）→ 独立「### 工具调用 +
-//      代码块」消息走串行队列即发（占 1 条配额）；done 时零头补发（纯工具轮兜底也在此，
-//      不依赖任何文本消息）；预算保不住结论储备、或直投失败 → 降级搭结论「--- 尾段」便车；
-//      失败不插队（用户确认：微信端重结果轻过程）。过程正文不再携带工具信息（单一出口防重复）。
+//   4. 工具台账（重结果轻过程；微信端不再有独立台账消息）：tool_call/tool_result 只在 st.tools
+//      记账；失败即时单发一行「工具调用失败: 名称 + 参数」（预算保不住结论储备则留给尾段汇总）；
+//      done 时汇总为一句「本轮工具调用 N 次（name x c, ...），其中 M 次失败」搭结论尾段，
+//      纯工具轮（无结论文本）则汇总与文件卡片合成一条兜底消息（网页端始终全量可见）。
+//   5. 通用 ui_card（MCP 工具回包的预览卡片块）：按 URL 去重攒进 st.cards，不独立占配额，
+//      done 时作「文件」小节搭结论尾段；每条 markdown 链接 + 原始 URL 各一行（防纯文化退化
+//      后点不开）；未知 action 或未配公网前缀在微信端静默忽略。
 // 挂起用「证据」判定而非猜测：下一条 assistant_message 或 done 都会把旧的挂起结算掉。
 function attachBus() {
   if (busAttached || !bus) return;
   busAttached = true;
   bus.onInternal((sessionId, event, data) => {
     if (event === 'assistant_message') { if (!data) return; }
-    else if (event !== 'done' && event !== 'tool_call' && event !== 'tool_result' && event !== 'reasoning_delta') return;
+    else if (event !== 'done' && event !== 'tool_call' && event !== 'tool_result' && event !== 'reasoning_delta' && event !== 'ui_card') return;
     try {
       const cs = db.prepare('SELECT user, channel FROM channel_sessions WHERE session_id = ?').get(sessionId);
       if (!cs || !String(cs.channel || '').startsWith('wx:')) return;
@@ -436,12 +438,14 @@ function attachBus() {
       if (event === 'assistant_message') enqueueDelivery(bid, () => onAssistantEvent(bid, data, sessionId));
       else if (event === 'done') enqueueDelivery(bid, () => flushHeld(bid));
       else {
-        // 工具调用/回执：心跳 + 台账记账；攒满一屏即经串行队列独立发台账（见策略注释第 4 条）。
+        // 工具调用/回执：心跳 + 台账记账（台账不再独立成消息，见策略注释第 4 条）；
+        // 失败经串行队列即时单发一行；ui_card 攒进本回合卡片列表（done 时随尾段投）。
         // reasoning_delta（思考流）不进台账，只走下面的心跳——微信用户能看到「正在输入」在思考。
-        if (event === 'tool_call') {
-          toolDigestPush(bid, data);
-          if (getTurn(bid).tools.length >= DIGEST_MAX_LINES) enqueueDelivery(bid, () => flushLedger(bid, DIGEST_MAX_LINES));
-        } else if (event === 'tool_result') toolDigestMark(bid, data);
+        if (event === 'tool_call') toolDigestPush(bid, data);
+        else if (event === 'tool_result') {
+          toolDigestMark(bid, data);
+          if (data && data.is_error) enqueueDelivery(bid, () => flushFailedLine(bid));
+        } else if (event === 'ui_card') cardCollect(bid, data, sessionId);
         maybeTypingPing(bid); // 「正在输入」心跳：长工具/思考回合里微信持续看到 AI 还在干活
       }
     } catch (e) {
@@ -479,7 +483,7 @@ const REPLY_QUOTA = 10;        // iLink 单个 context token 的回复条数（�
 const PROC_HEAD_LIMIT = 1;     // 直发的开头过程消息条数（用户确认：1 条「我打算怎么做」足够，工具信息归台账）
 const CONCLUSION_RESERVE = 4;  // 过程发送的下限防线：始终给结论留这么多条
 const turnState = new Map();   // bid -> { sent, proc, omitted, held, tools }；内存态，重启即新回合，可接受
-function resetTurn(bid) { turnState.set(bid, { sent: 0, proc: 0, omitted: 0, held: null, tools: [] }); return turnState.get(bid); }
+function resetTurn(bid) { turnState.set(bid, { sent: 0, proc: 0, omitted: 0, held: null, tools: [], cards: [] }); return turnState.get(bid); }
 function getTurn(bid) { return turnState.get(bid) || resetTurn(bid); }
 
 // 投递前的内容归一（语义同旧 deliverNow）：errAck / 空文本 → 不可投；富文本 blocks → 占位文案。
@@ -531,13 +535,11 @@ async function onAssistantEvent(bid, m, sessionId) {
 async function flushHeld(bid) {
   const st = turnState.get(bid);
   if (!st) return;
-  await flushLedger(bid);
-  if (!st.held) return;
+  if (!st.held) { await flushTail(bid); return; } // 纯工具轮兜底（汇总 + 文件卡片）
   const held = st.held;
   st.held = null;
   await deliverConclusion(bid, held.m, held.sessionId);
 }
-
 function bindReady(bid) {
   const b = getBinding(bid);
   return b && b.status === 'online' && b.wx_to_user ? b : null;
@@ -556,7 +558,6 @@ function markSeen(b, m) {
 // ---------- 工具台账（ledger） ----------
 // 参数原文按固定长度截取，不做 JSON 解析、不按工具选字段；压平换行只为防撑破一行。
 // write_file 等正文类参数最多露出前 DIGEST_ARG_LEN 字。
-const DIGEST_MAX_LINES = 8;
 const DIGEST_ARG_LEN = 120;    // 代码块在微信端横向滚动不折行，参数尽量露全，仅防超长撑爆消息体
 function argHint(args) {
   try {
@@ -584,18 +585,21 @@ function toolDigestMark(bid, data) {
     if (t) t.err = true;
   } catch (_) { /* 同上 */ }
 }
-// 台账行：✓/✗ 状态前缀（失败在行首才醒目）+ 工具名 + 参数原文 + 计数折叠（独立直发与结论尾段两处共用）。
-const ledgerLine = t => '- ' + (t.err ? '✗' : '✓') + ' ' + t.name + (t.hint ? ' ' + t.hint : '') + (t.count > 1 ? ' x' + t.count : '');
 // 降级路径的渲染（peek 不清空）：台账单发预算不足/失败时搭结论尾段，结论投递成功后调用方清空。
 // 若 wxbot 开 WXBOT_STRIP_MARKDOWN 回退纯文化，stripMarkdown 会把围栏/标题降为普通行，信息不丢。
+// done 尾段的工具汇总（peek 不清空）：一句计数 + 未即时送达的失败行；结论投递成功后由调用方清空。
 function peekToolDigest(st) {
   const ts = st && st.tools;
   if (!ts || !ts.length) return '';
-  const lines = ts.slice(0, DIGEST_MAX_LINES).map(ledgerLine);
-  if (ts.length > lines.length) lines.push('- ...等 ' + (ts.length - lines.length) + ' 类');
-  return '---\n\n### 工具调用\n\n```\n' + lines.join('\n') + '\n```';
-}
-// 正文与 digest 一起分段：正文照旧 splitText，digest 原子追尾——markdown 代码围栏不能被
+  const total = ts.reduce((n, t) => n + (t.count || 1), 0);
+  const breakdown = ts.map(t => t.name + (t.count > 1 ? ' x' + t.count : '')).join(', ');
+  const errN = ts.filter(t => t.err).length;
+  let s = '---\n\n### 工具\n\n本轮工具调用 ' + total + ' 次（' + breakdown + '）';
+  if (errN) s += '，其中 ' + errN + ' 次失败';
+  const unnotified = ts.filter(t => t.err && !t.warned);
+  if (unnotified.length) s += '\n' + unnotified.map(t => '- 失败: ' + t.name + (t.hint ? ' ' + t.hint : '')).join('\n');
+  return s;
+}// 正文与 digest 一起分段：正文照旧 splitText，digest 原子追尾——markdown 代码围栏不能被
 // 1800 字分段拦腰斩断；尾段能与正文同段就同段（不多占配额），放不下才单独成段。
 function digestSegs(body, digest) {
   const segs = body ? splitText(body) : [];
@@ -607,30 +611,67 @@ function digestSegs(body, digest) {
   return segs;
 }
 // 独立台账消息：一批 ≤8 行整屏渲染，无折叠（零头等下一班车，done 时补发）。
-function renderLedger(batch) {
-  return '### 工具调用\n\n```\n' + batch.map(ledgerLine).join('\n') + '\n```';
-}
-// 台账直发：mid 门槛控制节奏（中途=攒满一屏才发，done=零头都发）；预算保不住结论储备就
-// 留给结论尾段搭便车；直投失败归还队首（串行队列调度，与正文消息天然排队，无并发互踩）。
-async function flushLedger(bid, min) {
+// 失败即时单发：一次 tool_result 失败事件触发一次；预算保不住结论储备就留给尾段汇总兜底。
+async function flushFailedLine(bid) {
   const st = getTurn(bid);
-  if (!st.tools.length || st.tools.length < (min || 0)) return;
+  const t = st.tools.find(x => x.err && !x.warned);
+  if (!t) return;
   const b = bindReady(bid);
   if (!b) return;
-  if (st.sent + 1 > REPLY_QUOTA - CONCLUSION_RESERVE) return; // 台账是锦上添花，结论才是刚需
-  const batch = st.tools.splice(0, DIGEST_MAX_LINES);
+  if (st.sent + 1 > REPLY_QUOTA - CONCLUSION_RESERVE) return;
   try {
-    await wxbotApi('POST', '/api/deliver', { id: b.id, to: b.wx_to_user, text: renderLedger(batch) }, 15000);
+    await wxbotApi('POST', '/api/deliver', { id: b.id, to: b.wx_to_user, text: '工具调用失败: ' + t.name + (t.hint ? '\n' + t.hint : '') }, 15000);
     st.sent++;
-    log.debug('wechat', bid + ' 台账直投 ' + batch.length + ' 类调用（余 ' + st.tools.length + '）');
-  } catch (e) {
-    st.tools = batch.concat(st.tools);
-    log.debug('wechat', bid + ' 台账直投失败，归还待搭结论尾段：' + msg(e));
-  }
+    t.warned = true;
+  } catch (_) { /* 投失败不紧：done 时尾段汇总仍会列出 */ }
 }
 
+// ---------- 通用 UI 卡片（bus ui_card 事件，见 wechat 策略注释第 5 条）----------
+// open_preview → 绝对预览 URL：与前端 pvOfficeUrl/网关寻址同款，前缀真相在 core（public_link.base_url）。
+function uiCardUrl(data, sessionId) {
+  if (!data || data.action !== 'open_preview' || !data.arg) return '';
+  const base = (cfg.public_link && cfg.public_link.base_url) || '';
+  if (!base) return '';
+  const seg = String(data.arg).split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  return seg && base.replace(/\/+$/, '') + '/preview/' + encodeURIComponent(sessionId) + '/' + seg + '/';
+}
+function cardCollect(bid, data, sessionId) {
+  try {
+    const url = uiCardUrl(data, sessionId);
+    if (!url) return; // 未知 action / 未配公网前缀：微信端忽略（与前端动作注册表同款向前兼容）
+    const plain = v => String(v || '').replace(/[\[\]\n]/g, ' ').trim();
+    const st = getTurn(bid);
+    const item = { title: plain(data.title || data.arg) || '(未命名文件)', note: plain(data.note), url };
+    const ex = st.cards.find(c => c.url === url);
+    if (ex) Object.assign(ex, item); else st.cards.push(item); // 同文件重复出卡只留最新
+  } catch (_) { /* 卡片是增强，绝不动摇投递 */ }
+}
+function peekCardSection(st) {
+  const cs = st && st.cards;
+  if (!cs || !cs.length) return '';
+  // markdown 链接 + 原始 URL 各一行：WXBOT_STRIP_MARKDOWN 或微信渲染退化时链接仍可直接点
+  const lines = cs.map(c => '- [' + c.title + (c.note ? '（' + c.note + '）' : '') + '](' + c.url + ')\n  ' + c.url);
+  return '### 文件\n\n' + lines.join('\n');
+}
+
+// 纯工具轮兜底：done 时没有挂起的结论，但攒了汇总/卡片 → 合成一条独立消息（预算允许才发）。
+async function flushTail(bid) {
+  const st = getTurn(bid);
+  const digest = [peekToolDigest(st), peekCardSection(st)].filter(Boolean).join('\n\n');
+  if (!digest) return;
+  const b = bindReady(bid);
+  if (!b || st.sent + 1 > REPLY_QUOTA - CONCLUSION_RESERVE) return;
+  try {
+    await wxbotApi('POST', '/api/deliver', { id: b.id, to: b.wx_to_user, text: digest }, 15000);
+    st.sent++;
+    st.tools = [];
+    st.cards = [];
+  } catch (_) { /* 静默：网页端全量可见 */ }
+}// 台账直发：mid 门槛控制节奏（中途=攒满一屏才发，done=零头都发）；预算保不住结论储备就
+// 留给结论尾段搭便车；直投失败归还队首（串行队列调度，与正文消息天然排队，无并发互踩）。
+
 // 过程消息：直发窗口内且投完后仍给结论留足储备才投；否则计入 omitted，并进结论的注记行。
-// 正文不携带工具信息——台账自有出口（flushLedger 独立直发，预算不足时降级搭结论尾段），不重复。
+// 正文不携带工具信息——工具信息自有出口（失败即时行/done 尾段汇总），不重复。
 async function deliverProcess(bid, m, sessionId) {
   const b = bindReady(bid);
   if (!b || stale(b, m)) return;
@@ -658,7 +699,7 @@ async function deliverConclusion(bid, m, sessionId) {
   const st = getTurn(bid);
   let content = normalizeContent(m);
   if (st.omitted) content = '`以上已省略 ' + st.omitted + ' 条过程消息`\n---\n' + (content || '');
-  const digest = peekToolDigest(st);
+  const digest = [peekToolDigest(st), peekCardSection(st)].filter(Boolean).join('\n\n');
   if (!content && !digest) { st.omitted = 0; return; } // 只剩注记：不为「省略了什么」单独刷屏
   const full = content ? (digest ? content + '\n\n' + digest : content) : digest; // 兑底文件/卡片用含 digest 的全文
   const segs = digestSegs(content, digest);
@@ -668,6 +709,7 @@ async function deliverConclusion(bid, m, sessionId) {
     if (!await sendSegs(b, segs)) return;
     st.sent += segs.length + await sendAttachments(b, attach);
     st.tools = [];
+    st.cards = [];
   } else if (remaining >= 2) {
     try {
       const dir = engine.taskDirOf(sessionId);
@@ -678,6 +720,7 @@ async function deliverConclusion(bid, m, sessionId) {
       st.sent++;
       st.sent += await sendAttachments(b, [{ filename: name, b64: Buffer.from(full).toString('base64') }]);
       st.tools = [];
+      st.cards = [];
       if (attach.length) log.warn('wechat', b.id + ' 结论走文件兜底，正文内 ' + attach.length + ' 个附件卡片未投（链接仍在文件里）');
     } catch (e) {
       log.warn('wechat', b.id + ' 结论溢出降级投递失败：' + msg(e));

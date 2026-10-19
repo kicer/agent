@@ -704,6 +704,10 @@ server.listen(PORT, () => {
   selfCheck();
 });
 
+// officecli 预览槽位+网关（preview.js）：同容器第二内网端口（默认 3100，不对外映射），
+// core 的通用预览反代（登录 cookie 门禁）是唯一入口；模块自带闲置回收与自愈复活。
+try { require('./preview').start(); } catch (e) { log.error('preview 启动失败：', e && e.message); }
+
 function shutdown(sig) {
   log.info('收到 ' + sig + '，停止服务');
   for (const entry of runs.values()) { entry.killedBy = 'shutdown'; killGroup(entry); }
