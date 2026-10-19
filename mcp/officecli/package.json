@@ -1,8 +1,0 @@
-{
-  "name": "officecli-mcp",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Streamable-HTTP MCP shim bridging officecli mcp (stdio) + live preview slots",
-  "main": "server.js",
-  "scripts": { "start": "node server.js" }
-}
