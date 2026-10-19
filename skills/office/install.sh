@@ -34,12 +34,26 @@ fi
 mkdir -p "$HERE/bin"
 for u in "https://github.com/iOfficeAI/OfficeCLI/releases/download/$VER/officecli-linux-x64" \
          "https://gh-proxy.com/https://github.com/iOfficeAI/OfficeCLI/releases/download/$VER/officecli-linux-x64"; do
-  echo "[office] 拉取 $u"
-  if curl -fsSL --retry 2 -o "$ASSET.tmp" "$u" \
-     && echo "$SHA  $ASSET.tmp" | sha256sum -c - >/dev/null 2>&1; then
-    mv -f "$ASSET.tmp" "$ASSET"
-    chmod 755 "$ASSET"
-    break
+  echo "[office] 拉取 $u (connect<=10s, speed>=100KB/s, max 300s)"
+  t0=$(date +%s)
+  if curl -fL \
+       --connect-timeout 10 \
+       --max-time 300 \
+       --speed-limit 102400 \
+       --speed-time 20 \
+       --retry 1 \
+       --progress-bar \
+       -o "$ASSET.tmp" "$u"; then
+    got="$(sha256sum "$ASSET.tmp" | cut -d' ' -f1)"
+    if [ "$got" = "$SHA" ]; then
+      mv -f "$ASSET.tmp" "$ASSET"
+      chmod 755 "$ASSET"
+      echo "[office] officecli $VER installed -> $ASSET ($(( $(date +%s) - t0 ))s)"
+      break
+    fi
+    echo "[office] sha256 mismatch (got $got), trying next source"
+  else
+    echo "[office] $(( $(date +%s) - t0 ))s 后失败: $u"
   fi
   rm -f "$ASSET.tmp"
 done

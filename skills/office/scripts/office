@@ -8,6 +8,7 @@
 'use strict';
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const http = require('node:http');
 
 const BIN = process.env.OFFICECLI_BIN || path.resolve(__dirname, '..', 'bin', 'officecli');
 
@@ -19,7 +20,8 @@ const HELP_STRIP = /^ {2}(?:watch|unwatch)\b/;
 const HIDDEN_SUBS = new Set(['mark', 'unmark', 'marks', 'goto']); // 标注/滚动族：预览交互由 get-pos 单点覆盖
 const VIEW_BLOCKED = new Set(['html', 'screenshot', 'svg', 'pdf', 'forms']); // 需无头浏览器/导出插件，本环境没有
 const OFFICE_EXT_RE = /\.(?:docx|xlsx|pptx)$/i;
-const CARD_NOTE = { create: '已创建', open: '已打开' };
+const EDIT_RE = /^(set|add|remove|move|swap|raw-set|add-part|batch|import|merge|refresh)$/;
+const CARD_NOTE = { create: '新加', open: '打开' };
 
 const err = (msg) => { process.stderr.write(msg + '\n'); process.exit(1); };
 
@@ -29,17 +31,25 @@ function scrub(text) {
 }
 
 function runVendor(argv) {
+  const opts = { encoding: 'utf8', env: vendorEnv(), maxBuffer: 64 * 1024 * 1024 };
+  // 命令要么整体已在会话 watch 牢笼里（server.js 把沙箱 nest 进牢笼，OFFICE_JAIL=1），要么完全独立；
+  // 两种情形都直接执行——通知链路要么原生生效（牢笼内），要么事后由 touch/switch 降级刷新（牢笼外）。
+  return spawnSync(BIN, argv, opts);
+}
+
+function vendorEnv() {
   // 关自动 resident（实测时延零增益，还会堆常驻进程/撞 file_locked）；每次改动命令返回前落盘。
-  const env = Object.assign({}, process.env, {
+  return Object.assign({}, process.env, {
     OFFICECLI_NO_AUTO_RESIDENT: '1',
     OFFICECLI_RESIDENT_FLUSH: 'each',
     // slim 镜像无 ICU；executor 的 env 白名单不透传，必须在这里自己声明 .NET 不变式模式
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1',
   });
-  return spawnSync(BIN, argv, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024 });
 }
 
-const argv = process.argv.slice(2);
+// watch 自报的 pid ns 句柄文件：key = 相对会话目录路径的短 hash（与 preview.js 同一算法）。
+
+let argv = process.argv.slice(2);
 if (!argv.length) {
   process.stdout.write('Usage: office <command> [args...]\nRun `office help` for the full command list.\n');
   process.exit(0);
@@ -82,7 +92,7 @@ try {
 }
 if (r.error) {
   if (r.error.code === 'ENOENT') {
-    err('officecli binary missing: ' + BIN + ' (skill asset not fetched: docker compose up -d agent-executor-init to retry, or place it per skills/office/install.sh)');
+    err('office.core binary missing: ' + BIN + ' (skill asset not fetched: docker compose up -d agent-executor-init to retry, or place it per skills/office/install.sh)');
   }
   err(String(r.error.message || r.error));
 }
@@ -114,4 +124,23 @@ if (r.status === 0 && /^(create|open)$/.test(first)) {
   }
 }
 
-process.exit(r.status === null ? 1 : r.status);
+// 编辑成功后给预览网关事件事后一脚：编辑命令与 watch 的命名管道通知被沙箱的 --pid 隔绝
+//（SO_PEERCRED 跨 pid ns 拿不到对端 pid，vendor 静默退化独立模式），TCP touch 链路则跨得过去：
+// 网关命中活槽位后 POST watch /api/switch 就地重读，页面靠 vendor 自带的 doc-switched 监听自刷。
+// fire-and-forget：800ms 封顶，一切失败静默——预览永远不是命令成功的前提。
+const CODE = r.status === null ? 1 : r.status;
+if (CODE === 0 && !process.env.OFFICE_JAIL && EDIT_RE.test(first) && argv[1]) {
+  let done = false;
+  const finish = () => { if (done) return; done = true; process.exit(CODE); };
+  try {
+    const q = http.request({ host: '127.0.0.1', port: Number(process.env.OFFICE_GATEWAY_PORT || 3100),
+      path: '/__pv-touch', method: 'POST', timeout: 400, headers: { 'content-type': 'application/json' } },
+      (res) => { res.resume(); res.on('end', finish); });
+    q.on('error', finish);
+    q.on('timeout', () => { q.destroy(); finish(); });
+    q.end(JSON.stringify({ file: path.resolve(String(argv[1])) }));
+    setTimeout(finish, 800);
+  } catch (_) { finish(); }
+} else {
+  process.exit(CODE);
+}

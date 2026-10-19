@@ -1,15 +1,15 @@
 ---
 name: office
-description: Office 文档(docx/xlsx/pptx)创建、精确编辑、结构检视与聊天实时预览
+description: Office 文档(docx/xlsx/pptx)创建、精确编辑、结构检视
 ---
 
 ## 功能
 
-Word / Excel / PPT(.docx/.xlsx/.pptx)的创建、读取、精确修改与结构检视。文档直接读写当前任务目录的文件，无需任何同步动作。
+Word / Excel / PPT(.docx/.xlsx/.pptx)的创建、读取、精确修改与结构检视。
 
 ## 调用方式
 
-所有操作通过 terminal 工具执行同一个入口脚本（cwd 已是任务目录，直接用相对文件名）：
+所有操作通过 terminal 工具执行同一个入口脚本（cwd 已是任务目录，直接用相对文件名；不要自行调用底层文件执行操作）：
 
 ```
 office <command> [args...]
@@ -19,19 +19,18 @@ office <command> [args...]
 
 常用动线：
 
-- `office create <file>` 新建文档（成功后聊天流出现预览卡片，用户点击即可实时预览）
-- `office open <file>` 打开已有文档（同样出预览卡片）
+- `office create <file>` 新建文档
+- `office open <file>` 打开已有文档
 - `office set / get / query <file> ...` 按 schema 精确改动与读取；每次改动自动落盘
-- `office view <file> outline|stats|issues|text` 结构/语义自检（交付前建议跑一遍 issues）
+- `office view <file> outline|stats|issues|text` 结构/语义自检
 - `office save / close <file>` 收尾（改动已自动落盘，save 只是显式冲刷）
-- `office get-pos <file>` 回读用户在预览里选中的内容（返回 JSON，path 里的 @id 可稳定用于后续 set/get 定位）
+- `office get-pos <file>` 回读用户在预览里选中的文件内容（返回 JSON，path 里的 @id 可稳定用于后续 set/get 定位）
 
 ## 预览协作
 
-create/open 成功后无需拼链接、无需等待：聊天流自动出可点击的预览卡片，用户点开即是该文档的实时预览（预览页上的选区、标注类交互之后都能被 get-pos 读到）。用户反馈"看第几段/选中了哪里"时，用 get-pos 读回再针对性改。
+create/open 成功后，用户可自行查看该文档的实时预览（预览页上的选区、标注类交互之后都能被 get-pos 读到）。用户反馈"看第几段/选中了哪里/修改哪里"时，优先用 get-pos 读回选区再针对性改。
 
 ## 注意
 
-- 文档就在任务目录里：文件面板、预览、下载指向同一份文件；不要用 curl 或中转链搬运待编辑的文档。
+- 所有操作文档在任务目录里。
 - `view` 的渲染族（html/screenshot/pdf 等）本环境不可用；要 PDF 用 x2pdf 技能。
-- 命令报"文件不存在"时先确认文件是否已在任务目录（`ls`），不要猜路径。

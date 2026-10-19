@@ -593,8 +593,21 @@ async function handleExec(req, res) {
     // spawn 的 cwd 用父 ns 下确实存在的 ROOTS[0]；真正的目标目录由 wrapper 内部 cd 完成
     //（session 的虚拟视图只存在于子 ns）。--propagation private 防止 bind 反向传播回宿主 ns。
     // --ipc 隔离 System V 共享内存/信号量/消息队列（与 /dev/shm 的 tmpfs 遮盖是不同层面，两者都要）。
-    child = spawn('unshare', ['--mount', '--pid', '--ipc', '--fork', '--propagation', 'private', '/bin/sh', '-c', script],
-      { cwd: ROOTS[0], env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    // 会话有 watch 牢笼（preview 建的会话 pid ns）：先 nsenter 向下进牢笼再建 mount/ipc ns 执行——
+    // 整个沙箱落在牢笼内，与 watch 同 pid ns，vendor 通知管道的 peer pid 校验才能过
+    //（内核规则：setns pid 只允许进自身/后代 ns）。无牢笼 = 原行为（--pid 独立 ns）。
+    // OFFICE_JAIL=1 告知 wrapper：原生通知链路已生效，编辑成功后无需再 touch 网关。
+    const jailNs = rc.plan.mode === 'session' && rc.plan.realSession ? path.join(rc.plan.realSession, '.tmp', 'watchns') : '';
+    let inJail = false;
+    if (jailNs && fs.existsSync(jailNs)) {
+      try { execFileSync('nsenter', ['--pid=' + jailNs, '/bin/true'], { timeout: 5000 }); inJail = true; } catch (e) {}
+    }
+    if (inJail) env.OFFICE_JAIL = '1';
+    child = inJail
+      ? spawn('nsenter', ['--pid=' + jailNs, 'unshare', '--mount', '--ipc', '--fork', '--propagation', 'private', '/bin/sh', '-c', script],
+          { cwd: ROOTS[0], env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      : spawn('unshare', ['--mount', '--pid', '--ipc', '--fork', '--propagation', 'private', '/bin/sh', '-c', script],
+          { cwd: ROOTS[0], env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     log.error('spawn 失败', e.message);
     return send(res, 500, { error: '执行环境启动失败' });
