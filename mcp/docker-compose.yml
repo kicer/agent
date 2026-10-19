@@ -37,5 +37,3 @@ networks:
   # 这里声明为 external 直接加入。agent-core / agent-executor 按容器名访问这些服务。
   agent-mcp-net:
     external: true
-
-volumes:
