@@ -176,14 +176,18 @@ async function spawnWatch(abs) {
   try { fs.mkdirSync(path.join(realSession, '.tmp'), { recursive: true }); } catch (_) {}
   const jail = await ensureJail(realSession); // null = 牢笼建不起来，watch 直跑容器 ns
   const pidFile = path.join(realSession, '.tmp', 'watchpid-' + wp);
-  // 命令↔watch 协同的两个世界条件（实测：发现 = <TMPDIR>/officecli-watch-<路径hash>.port + TCP 回环）：
-  // /tmp 指向会话 .tmp、路径以 VIRT_ROOT 开头。用最小私有 mount ns 摆出这两层后 exec；
-  // 不加 --pid：.port 里的 pid 保持容器 ns 可见，stop/retire 的直接 kill 语义不变。
+  // 命令↔watch 协同的三个世界条件（实测：发现 = <TMPDIR>/officecli-watch-<路径hash>.port + TCP 回环）：
+  // /tmp 指向会话 .tmp、路径以 VIRT_ROOT 开头、pid 视图自洽。用最小私有 mount ns 摆出后 exec；
+  // 必须在 readlink 自报之后补挂 proc：watch 已被 nsenter 进 holder pid-ns，沿用外层 /proc 会拿错位的
+  // pid 编号做自校验，vendor 注册/discovery 静默降级——实测：不写 .port、页内 /api/send 找不到 resident，
+  // 退化成只写盘（内存不升版、SSE 零广播、页面永不刷新）；补挂后 send 回正（升版+cascade full）。
+  // note readlink 在挂 proc 之前：pidFile 保持容器 ns 编号，网关 killWatch/判死语义不变。
   const runner = 'mount -t tmpfs -o nosuid,nodev tmpfs ' + shq(VIRT_ROOT) +
     ' && mkdir -p ' + shq(path.join(VIRT_ROOT, page.task)) +
     ' && mount --bind ' + shq(realSession) + ' ' + shq(path.join(VIRT_ROOT, page.task)) +
     ' && mount --bind ' + shq(path.join(realSession, '.tmp')) + ' /tmp' +
     ' && readlink /proc/self > ' + shq(pidFile) +
+    ' && mount -t proc proc /proc' +
     ' && exec ' + shq(BIN) + ' watch ' + shq(virt) + ' --port ' + wp;
   // 命令↔watch 同牢笼（会话 pid ns）：vendor 管道通知的 peer pid 校验可过，原生平滑刷新恢复。
   // mount ns 仍私有（virt 视图 + /tmp 指向会话 .tmp）；pid 自报到 watchpid-<端口> 供网关 kill。
@@ -345,7 +349,6 @@ function tryForward(entry, req, res, innerPath, respondTimeoutMs) {
     // 槽位续命：建连即续，此后每帧回传再续；conns>0 = 有人正开着预览页，闲置回收/挤占都绕着走。
     entry.lastUsed = Date.now();
     entry.conns = (entry.conns || 0) + 1;
-    if (!/^(GET|HEAD)$/.test(req.method)) entry.lastApiWrite = Date.now();
     let released = false;
     const release = () => { if (!released) { released = true; entry.conns = Math.max(0, entry.conns - 1); } };
     res.once('close', release);
@@ -357,13 +360,17 @@ function tryForward(entry, req, res, innerPath, respondTimeoutMs) {
         started = true;
         clearTimeout(watchdog);
         const h = Object.assign({}, up.headers);
-        if (String(h['content-type'] || '').includes('text/event-stream')) { h['cache-control'] = 'no-cache'; h['x-accel-buffering'] = 'no'; }
+        const isSSE = String(h['content-type'] || '').includes('text/event-stream');
+        if (isSSE) { h['cache-control'] = 'no-cache'; h['x-accel-buffering'] = 'no'; }
         res.writeHead(up.statusCode, h);
         up.on('data', (d) => {
           entry.lastUsed = Date.now();
-          // 监听到原生 update 推送（牢笼内 CLI 编辑/页内编辑都会推）：watch 内存已平滑更新，
-          // 给轮询器 10s 吸收窗口，不再追加 switch 重载（那会闪）。
-          if (String(d).indexOf('event: update') >= 0) entry.lastNative = Date.now();
+          // 监听到真正改文档的原生推送（牢笼内 CLI 编辑会推 excel-patch/full 等）：watch 内存
+          // 已平滑更新，给轮询器 10s 吸收窗口，不再追加 switch 重载（那会闪）。只认改文档的
+          // action——selection-update/mark-update 是 UI 态：点了格子再打字几秒后回车，若把它们
+          // 也盖上时间戳，会把页内编辑（send）唯一的救场 switch 也「吸收」掉，页面永不刷新。
+          // 页内编辑 (POST /api/send) 实测在当前 vendor 上不推任何事件，见 start() 轮询器注释。
+          if (isSSE && /"action":"(?:full|excel-patch|word-patch|replace|add|remove)"/.test(String(d))) entry.lastNative = Date.now();
         });
         up.pipe(res);
         resolve();
@@ -577,9 +584,11 @@ function start() {
     for (const [slot, s] of [...slots]) if (!s.conns && now - s.lastUsed > IDLE_MS) { log(`slot${slot} 闲置回收`); stop(slot); }
     for (const [k, v] of backoff) if (v <= now) backoff.delete(k);
   }, 60000).unref();
-  // 带外写兜底（officecli 系编辑由 wrapper 的 /__pv-touch 事件驱动，不走这里）：
-  // 开着页面的槽位比对 mtime，变了就就地 switch 重读。页面自编辑的落盘由 lastApiWrite
-  // 新鲜度识别并静默吸收（watch 内存本来就是新的，switch 一下反而多刷一次页面）。
+  // 带外写兜底（officecli 系编辑由 wrapper 的 /__pv-touch 事件驱动，不走这里）+ 页内编辑
+  // (POST /api/send) 唯一刷新通道：实测当前 vendor 的 send 处理只落盘、不推任何 SSE 事件，
+  // 页面刷新全指望这里比对 mtime → switch 重读。只有该槽 SSE 流上抓到改文档的原生推送
+  //（tryForward 盖的 lastNative）才在 10s 窗口内吸收一次免双刷；绝不可按「API 写入新鲜度」
+  // 吸收——那正是此前 send 后页面永不刷新的根因（send 走本网关，新鲜度永远命中）。
   setInterval(() => {
     const now = Date.now();
     for (const [, s] of [...slots]) {
@@ -587,7 +596,7 @@ function start() {
       let st = null;
       try { st = fs.statSync(s.file); } catch (_) {}
       if (!st || st.mtimeMs === s.mtimeMs) continue;
-      if (now - (s.lastApiWrite || 0) < 10000 || now - (s.lastNative || 0) < 10000) { s.mtimeMs = st.mtimeMs; s.size = st.size; continue; }
+      if (now - (s.lastNative || 0) < 10000) { s.mtimeMs = st.mtimeMs; s.size = st.size; continue; }
       s.mtimeMs = st.mtimeMs;
       s.size = st.size;
       notifySwitch(s);
