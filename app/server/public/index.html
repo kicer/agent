@@ -406,7 +406,7 @@
     <header class="pv-head">
       <!-- 地址条胶囊：路径 input(点击全选可复制) + 内嵌 刷新/新窗口，模拟浏览器地址栏 -->
       <span class="pv-addr">
-        <input class="pv-title" id="pv-title" readonly aria-label="文件路径">
+        <input class="pv-title" id="pv-title" aria-label="文件路径或网址">
         <button class="icon-btn hidden" id="pv-refresh" title="重新载入" aria-label="重新载入">
           <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
         </button>
@@ -424,6 +424,7 @@
         </button>
         <button class="icon-btn" id="pv-close" title="关闭预览" aria-label="关闭预览">✕</button>
       </span>
+      <div class="pv-suggest hidden" id="pv-suggest"></div>
     </header>
     <div class="pv-body" id="pv-body"></div>
   </aside>

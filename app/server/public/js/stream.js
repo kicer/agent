@@ -298,6 +298,10 @@
       fillToolResult(d.tool_call_id, d.content, d.is_error, d.image_url, d.msg_id);
       maybeAutoScroll();
     });
+    // 通用 UI 卡片：工具回包附 ui_card 块（MCP 层剥离转发），渲染器与动作注册表见 preview.js appendUiCard
+    es.addEventListener('ui_card', ev => {
+      appendUiCard(JSON.parse(ev.data));
+    });
     // 后端回合结束+宽限期后的自动压缩提议：不再自动执行，弹 modal 请用户手动确认（见 proposeAutoCompress）
     es.addEventListener('auto_compress', ev => {
       proposeAutoCompress(JSON.parse(ev.data));

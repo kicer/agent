@@ -327,6 +327,90 @@ document.getElementById('pv-popup').addEventListener('click', () => {
 });
 // 地址条：点击/聚焦全选——长路径被截断时可选中看全文、直接 Ctrl+C 复制
 document.getElementById('pv-title').addEventListener('focus', (e) => e.target.select());
+// 地址条回车跳转：http(s) 网址新标签打开，其余按任务目录相对路径进预览
+function pvClean(s) { return String(s || '').trim().replace(/^["']+|["']+$/g, ''); }
+function pvAddrGo(v) {
+  if (/^https?:\/\//i.test(v)) { window.open(v, '_blank', 'noopener'); return; }
+  document.getElementById('pv-title').blur();
+  openFilePreview(v);
+}
+// ---------- 地址条文件名补全：候选取自 files.js 缓存的目录树(filesNodeAt)，零请求 ----------
+const pvSugBox = document.getElementById('pv-suggest');
+const pvSug = { items: [], idx: -1 }; // items: [{ name, full, dir }]
+function pvSugHide() { pvSugBox.classList.add('hidden'); pvSugBox.innerHTML = ''; pvSug.items = []; pvSug.idx = -1; }
+function pvSugMark() {
+  const kids = pvSugBox.children;
+  for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('sel', i === pvSug.idx);
+}
+function pvSugFill(i) {
+  const it = pvSug.items[i];
+  const t = document.getElementById('pv-title');
+  if (!it) return;
+  t.value = it.full;
+  t.focus();
+  if (it.dir) { pvSugUpdate(t); return; } // 目录：回填后继续列它的内容
+  const cut = it.full.lastIndexOf('/') + 1;
+  t.setSelectionRange(cut, it.full.length); // 选中末段，接着打字继续筛
+  pvSugHide();
+}
+function pvSugUpdate(t) {
+  const v = t.value;
+  pvSug.items = [];
+  pvSug.idx = -1;
+  if (!/^https?:\/\//i.test(v.trim())) {
+    const slash = v.lastIndexOf('/');
+    const dir = v.slice(0, slash + 1); // 末斜杠前当目录；无斜杠则 dir='' 列根目录
+    const frag = v.slice(slash + 1).toLowerCase();
+    const node = typeof filesNodeAt === 'function' ? filesNodeAt(dir.replace(/\/$/, '')) : null;
+    if (node) {
+      const out = [];
+      for (const d of node.dirs.values()) out.push({ name: d.name + '/', full: dir + d.name + '/', dir: true });
+      for (const f of node.files) {
+        const nm = String(f.filename).split('/').pop();
+        if (nm) out.push({ name: nm, full: dir + nm, dir: false });
+      }
+      // 前缀匹配；已输入与候选全等时不再提示该条
+      pvSug.items = out.filter((it) => it.name.toLowerCase().startsWith(frag) && it.name.toLowerCase() !== frag).slice(0, 8);
+    }
+  }
+  pvSugBox.innerHTML = '';
+  if (!pvSug.items.length) { pvSugBox.classList.add('hidden'); return; }
+  pvSug.items.forEach((it, i) => {
+    const d = document.createElement('div');
+    d.className = 'it';
+    d.textContent = it.name;
+    d.addEventListener('mousedown', (e) => e.preventDefault()); // 保持输入框焦点
+    d.addEventListener('click', () => pvSugFill(i));
+    pvSugBox.appendChild(d);
+  });
+  pvSugBox.classList.remove('hidden');
+}
+// 地址条按键：↑↓选、Tab 补全、Enter 打开(高亮文件直接开，目录仅补全)、Esc 先收下拉；组字回车不触发
+document.getElementById('pv-title').addEventListener('input', (e) => pvSugUpdate(e.target));
+document.getElementById('pv-title').addEventListener('blur', pvSugHide);
+document.getElementById('pv-title').addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  if (e.key === 'Escape' && !pvSugBox.classList.contains('hidden')) { pvSugHide(); e.stopPropagation(); return; }
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && pvSug.items.length) {
+    e.preventDefault();
+    const n = pvSug.items.length;
+    if (e.key === 'ArrowDown') pvSug.idx = (pvSug.idx + 1) % n;
+    else pvSug.idx = pvSug.idx <= 0 ? n - 1 : pvSug.idx - 1;
+    pvSugMark();
+    return;
+  }
+  if (e.key === 'Tab' && pvSug.items.length) { pvSugFill(pvSug.idx >= 0 ? pvSug.idx : 0); e.preventDefault(); return; }
+  if (e.key !== 'Enter') return;
+  if (pvSug.idx >= 0) {
+    const it = pvSug.items[pvSug.idx];
+    if (it.dir) { pvSugFill(pvSug.idx); return; }
+    pvSugHide();
+    pvAddrGo(it.full);
+    return;
+  }
+  const v = pvClean(e.target.value);
+  if (v) pvAddrGo(v);
+});
 // md 代码块复制钮与 fs-viewer 同一委托逻辑
 document.getElementById('pv-pane').addEventListener('click', (e) => {
   const b = e.target.closest('.act-copy');
@@ -381,3 +465,28 @@ window.matchMedia('(min-width: 960px)').addEventListener('change', () => { if (!
     localStorage.removeItem('pv-w');
   });
 })();
+
+// —— 通用 UI 卡片（stream.js 转发 SSE ui_card；任何 MCP 服务/工具回包附 type:"ui_card" 块即可产出）——
+// 产生方契约 {action, arg, title?, note?}；新交互在动作注册表加一条即可，未知 action 忽略（向前兼容）。
+// 图标由前端统一持有（与 pv-none 同一枚文档 SVG），产生方不提供图形，只给数据。
+const UI_CARD_ICON_DOC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+const UI_CARD_ACTIONS = {
+  // arg = 相对会话目录的文件路径，点击 = openFilePreview（office 走预览网关，其余类型走文本/图片渲染）
+  open_preview: { go: '预览 ›', hint: '点击打开预览', icon: UI_CARD_ICON_DOC, run: (d) => openFilePreview(d.arg) },
+};
+function appendUiCard(d) {
+  const act = d && UI_CARD_ACTIONS[d.action];
+  if (!act || !d.arg) { if (d && d.action) console.warn('[ui_card] unknown action:', d.action); return; }
+  const cv = document.getElementById('chat-view');
+  if (!cv) return;
+  const el = document.createElement('div');
+  el.className = 'ui-card';
+  el.innerHTML =
+    '<span class="ico">' + act.icon + '</span>' +
+    '<span class="main"><span class="name">' + esc(d.title || d.arg) + '</span>' +
+    '<span class="sub">' + (d.note ? esc(d.note) + ' · ' : '') + act.hint + '</span></span>' +
+    '<span class="go">' + act.go + '</span>';
+  el.addEventListener('click', () => { act.run(d); });
+  cv.appendChild(el);
+  maybeAutoScroll();
+}

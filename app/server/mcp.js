@@ -203,6 +203,12 @@ async function callTool(name, args, ctx) {
   }
   const content = result && result.content;
   if (Array.isArray(content)) {
+    // 通用 UI 卡片块（type==="ui_card"）：剥离后不进模型面（下一行只拼 text），整块交 ctx.onCard（任意服务/工具可产出，engine 注入 → bus SSE 给前端）
+    if (ctx && typeof ctx.onCard === "function") {
+      for (const c of content) if (c && c.type === "ui_card") {
+        try { ctx.onCard(Object.assign({}, c, { from: entry.server.name + "/" + entry.tool })); } catch (_) { /* 卡片是增强，不影响工具结果 */ }
+      }
+    }
     const text = content.filter(c => c && c.type === 'text').map(c => c.text || '').join('\n');
     if (text) return text;
   }

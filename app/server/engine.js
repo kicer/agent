@@ -755,7 +755,7 @@ async function runLoopInner(sessionId, run) {
       } else {
         try {
           output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db, vision,
-            onTaskCreated: () => { run.taskWrap = true; } }, // 定时即下班：工具只打标记，收口在 finalize（回合结束后才能解绑归档）
+            onTaskCreated: () => { run.taskWrap = true; }, onCard: (card) => bus.emit(sessionId, 'ui_card', card) }, // 通用 UI 卡片 → SSE（ctx 由 executeTool 透传给 MCP 与内置工具） // 定时即下班：工具只打标记，收口在 finalize（回合结束后才能解绑归档）
 
             tc.function.name, chk.args);
         } catch (err) {
