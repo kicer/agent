@@ -53,6 +53,7 @@ mcp_officecli:3100  gateway.js ——按路径找槽位、改写 Host/Origin 回
 
 - url 按任务组织：文档必须在会话目录下（`<WORKSPACE>/<会话id>/…`，任务根下不可预览）；重启换槽不影响链接含义。
 - 预览 url 不由本服务下发：链接按固定格式 `<公网前缀>/preview/<会话id>/<文档相对路径>/` 由前端自拼；`X-Public-Base` 仅供桥内 watch 状态/日志用，对 AI 的回包里 `url`/`path` 字段已被剥掉。
+- 回包可附通用 UI 卡片块 `{type:'ui_card', action, arg, title?, note?}`（非 text：core 的 MCP 层剥离后不进模型面，整块经 SSE `ui_card` 转前端，动作注册表驱动渲染）。当前动作 `open_preview`：arg=相对会话目录的文件路径，聊天流出可点卡片直接开预览窗（无需等文件回任务盘）；create/open/push 成功自动附带（文案由产生方给）。卡片为实时事件不落库，刷新后从任务文件列表进入。
 - 槽位数 `OFFICE_SLOTS`（默认 4）；满了优先踢「无活动连接且最久未用」；闲置超 `OFFICE_IDLE_MS`（默认 6h）回收，挂着活动连接的槽不回收；预览每一帧回传与 AI 命令都会续命。
 - 槽位是缓存不是承诺：预览链接按任务路径寻址，被回收/挤占后页面再访问由网关就地复活（一次冷启动）。
 - AI 面不公示 watch/unwatch（也没有 watch ls / --all 这类跨会话动作）：预览完全由前端拼链接、网关按需复活槽位 + LRU 管理；core 删会话时经校验的 `unwatch --session <id> --purge` 清槽并删工作区目录副本（不等 scratch TTL）。

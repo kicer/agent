@@ -161,7 +161,9 @@ function ackNote(cmd, reply, sessDir) {
   const t = (tokenizeCmd(cmd) || []).find((x) => x.startsWith(watch.WORKSPACE + '/') && OFFICE_EXT_RE.test(x));
   if (!t) return;
   const jail = sessDir && sessDir.startsWith('/') ? path.resolve(sessDir) : '';
-  first.text = verb + ': ' + (jail && t.startsWith(jail + '/') ? path.relative(jail, t) : path.basename(t));
+  const jailRel = jail && t.startsWith(jail + '/') ? path.relative(jail, t) : '';
+  first.text = verb + ': ' + (jailRel || path.basename(t));
+  if (jailRel) attachPreviewCard(res, verb === 'Created' ? 'created' : 'opened', jailRel);
 }
 
 // 失败文案整形：剥掉工作区路径前缀只留文件名（与任务目录同名不同盘，全路径只会诱发误判）；
@@ -348,6 +350,18 @@ function toolErr(msg) {
   return { content: [{ type: 'text', text: 'Error: ' + (msg && msg.message || String(msg)) }], isError: true };
 }
 
+
+// create/open/push 成功附带一个通用 ui_card 块（action=open_preview）：core 的 MCP 层剥离后不进模型面，
+// 经 SSE ui_card 转聊天流可点卡片。后续其它命令/其它服务出卡片走同一协议：
+// {type:'ui_card', action, arg, title?, note?}。arg 相对会话目录（前端 openFilePreview 拼预览链接
+// 正好用）；组不出会话目录则不附。卡片的展示文案由产生方负责（前端只做动作分发）。
+const CARD_NOTE = { created: '已创建', opened: '已打开', imported: '已导入' };
+function attachPreviewCard(res, op, rel) {
+  if (!res || !Array.isArray(res.content)) return;
+  if (!rel || rel === '.' || rel.startsWith('..')) return;
+  res.content.push({ type: 'ui_card', action: 'open_preview', arg: rel, title: rel, note: CARD_NOTE[op] || '' });
+}
+
 async function handle(msg, pubBase, sessDir) { // pubBase/sessDir：调用方每请求注入（X-Public-Base / X-Session-Dir）
   const isReq = msg.id !== undefined && msg.id !== null;
   let helpCmd = false; // 本次调用是否为 help 族：透传后要把文本对齐可调用面
@@ -434,7 +448,9 @@ async function handle(msg, pubBase, sessDir) { // pubBase/sessDir：调用方每
           if (data.length > PUSH_MAX_BYTES) throw new Error('File too large: limit is ' + Math.floor(PUSH_MAX_BYTES / 1048576) + ' MB');
           fs.mkdirSync(path.dirname(abs), { recursive: true });
           fs.writeFileSync(abs, data);
-          return { jsonrpc: '2.0', id: msg.id, result: toolText('Imported: ' + name) };
+          const pushRes = { jsonrpc: '2.0', id: msg.id, result: toolText('Imported: ' + name) };
+          if (sessDir) attachPreviewCard(pushRes.result, 'imported', path.relative(path.resolve(sessDir), abs));
+          return pushRes;
         }
         if (mr[1] === 'watch') {
           if (!file) throw new Error('Usage: watch <file>');
