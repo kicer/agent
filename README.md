@@ -38,6 +38,8 @@
 - 至少一个 OpenAI 兼容模型平台的 API Key。
 - 一个可用端口，默认 `8090`。
 
+Debian 12 裸机可以先跑 `scripts/init_host.sh`（幂等，可重复执行，也可单独拷到服务器上跑）：它会配好 Swap、Docker、国内镜像加速与基础 shell 环境；`REGION=oversea` 切海外源。跑完会打印后续的 `init.sh` 与部署步骤。
+
 ### 1. 生成配置
 
 在仓库根目录执行：
