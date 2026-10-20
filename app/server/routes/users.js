@@ -1,9 +1,11 @@
 // 用户管理（仅管理员）：增删改查 config.yml 的 auth.users（用户名 / 密码 / 角色 / 默认模型）。
 // 写盘后同步刷新内存（engine.cfg.auth.users + auth 的登录校验表），立即生效、无需重启：
 // 新增用户马上能登录，删除的用户已签发 token 立刻失效（sessionUser 查的是刷新后的表）。
-// 删除只移除登录能力：会话、画像、长期记忆、微信绑定等数据按约定保留。
+// 删除用户会连带清理其数据：微信绑定（含 wxbot 实例与凭证）、会话（消息/文件/定时任务/任务目录/日记碎片）、
+// 画像、长期记忆与通道绑定。清理尽力而为，单项失败只记日志，不回滚已完成的配置删除。
 const express = require('express');
 const engine = require('../engine');
+const wechat = require('../wechat');
 const log = require('../log');
 const { readConfigText, applyEditsToText, loadConfigFromText, writeConfigText } = require('../config');
 
@@ -48,6 +50,43 @@ function requireAuthCfg() {
     throw bad('未启用多用户认证（config.yml 的 auth.users 为空）');
   }
   return cfg;
+}
+
+// 删除用户后的数据善后（尽力而为，单项失败只记日志）：绑定 → 会话 → 跨会话残留。
+// 顺序有讲究：先解绑定——绑定行还在而 wxbot 实例已销毁时，core 启动对账会把它补建回来；
+// 再用 engine.deleteSession 删会话（停运行、收预览槽、清消息/文件行、日记碎片与任务目录，
+// scheduled_tasks 由外键 CASCADE 带走）；最后清画像、长期记忆、通道绑定与废弃表残留。
+async function purgeUserData(name) {
+  const db = engine.getDb();
+  const cleaned = { bindings: 0, sessions: 0, profiles: 0, fragments: 0, channels: 0 };
+  // 日记先计数：会话删除时会连带清掉各自碎片，事后无法再区分「本用户原有几条」。
+  // model_usage 不动：那张表有意不建外键，删会话后累计统计仍保留。
+  const fragBefore = db.prepare('SELECT COUNT(*) AS c FROM memory_fragments WHERE user = ?').get(name).c;
+
+  let bindings = [];
+  try { bindings = wechat.listBindings(name) || []; }
+  catch (e) { log.warn('auth', name + ' 读取微信绑定失败：' + e.message); }
+  for (const b of bindings) {
+    try { await wechat.deleteBinding(b.id); cleaned.bindings++; }
+    catch (e) { log.warn('auth', name + ' 解绑微信 ' + b.id + ' 失败：' + e.message); }
+  }
+
+  const sids = db.prepare('SELECT id FROM sessions WHERE user = ?').all(name).map(r => r.id);
+  for (const sid of sids) {
+    try {
+      // 废弃的 FIFO 队列表无 CASCADE，先清行避免外键拦住 sessions 删除
+      db.prepare('DELETE FROM wait_queue WHERE session_id = ?').run(sid);
+      engine.deleteSession(sid, true);
+      cleaned.sessions++;
+    } catch (e) { log.warn('auth', name + ' 删除会话 ' + sid + ' 失败：' + e.message); }
+  }
+
+  cleaned.channels = db.prepare('DELETE FROM channel_sessions WHERE user = ?').run(name).changes;
+  // 按 user 全量删，命中数即用户原有碎片数（含没有会话对应的孤儿碎片）
+  db.prepare('DELETE FROM memory_fragments WHERE user = ?').run(name);
+  cleaned.fragments = fragBefore;
+  cleaned.profiles = db.prepare('DELETE FROM user_profiles WHERE user = ?').run(name).changes;
+  return cleaned;
 }
 
 function normName(v) {
@@ -156,7 +195,8 @@ module.exports = function createUsersRouter(auth) {
   }));
 
   // 删除（不允许删自己；至少保留一个管理员）
-  router.delete('/:name', wrap((req, res) => {
+  // 配置先落盘（失败则什么都不动），再尽力清理该用户的数据。
+  router.delete('/:name', wrap(async (req, res) => {
     const cfg = requireAuthCfg();
     const name = String(req.params.name || '');
     if (name === String(req.user || '')) throw bad('不能删除当前登录用户');
@@ -167,8 +207,11 @@ module.exports = function createUsersRouter(auth) {
     if (text === null) throw bad('配置文件不存在，无法保存用户', 409);
     const nextText = applyEditsToText(text, [{ path: ['auth', 'users', idx], delete: true }]);
     const users = saveUsers(cfg, nextText, auth);
-    log.info('auth', (req.user || '-') + ' 删除用户 ' + name + '（会话与画像数据保留）');
-    res.json({ ok: true, users: publicUsers(users) });
+    const cleaned = await purgeUserData(name);
+    log.info('auth', (req.user || '-') + ' 删除用户 ' + name +
+      '（绑定 ' + cleaned.bindings + ' / 会话 ' + cleaned.sessions +
+      ' / 画像 ' + cleaned.profiles + ' / 日记 ' + cleaned.fragments + '）');
+    res.json({ ok: true, users: publicUsers(users), cleaned });
   }));
 
   return router;

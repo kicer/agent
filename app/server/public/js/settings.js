@@ -485,11 +485,15 @@
   async function userDelFromModal() {
     const u = SET.users[userEditIdx];
     if (!u) return;
-    if (!await confirmModal('删除用户', '删除「' + u.user + '」后该账号立即失效；其会话与画像数据保留。', '删除', true)) return;
+    if (!await confirmModal('删除用户', '删除「' + u.user + '」后该账号立即失效，并一并删除其会话（含任务目录）、画像、长期记忆与微信绑定。此操作不可恢复。', '删除', true)) return;
     try {
-      await req('DELETE', '/api/users/' + encodeURIComponent(u.user));
+      const r = await req('DELETE', '/api/users/' + encodeURIComponent(u.user));
       closeUserModal();
-      toast('已删除');
+      const c = (r && r.cleaned) || {};
+      const bits = [];
+      if (c.sessions) bits.push('会话 ' + c.sessions);
+      if (c.bindings) bits.push('微信绑定 ' + c.bindings);
+      toast('已删除' + (bits.length ? '（' + bits.join(' / ') + '）' : ''));
       renderSetPage();
     } catch (e) { toast('删除失败:' + e.message); }
   }
