@@ -15,8 +15,11 @@
   const SET = {
     stack: [],
     snaps: {},                        // 页名 → 静态快照 HTML(setPush 时刷新;右滑返回垫底用)
+    role: 'user',                     // 当前登录用户角色（admin | user）；启动时由 /api/me 回填
+    authEnabled: true,                // 是否启用多用户认证（/api/me 404 = 未启用，单用户自用）
     pendingKeys: new Set(),           // 已写盘、尚未重启生效的顶层配置段
     effCfg: null, cfgOrig: '',
+    users: [], userModels: [],        // 用户管理页：账号/角色/默认模型 + 可选模型清单
     curSkill: null,                   // 技能详情/编辑视图对应的技能名
     editorPath: null, editorOrig: '', editorText: '', editorLabel: '',
     // 模型池(搬自 models.js)
@@ -122,7 +125,8 @@
     u.classList.remove('show'); u.innerHTML = '';
   }
   function showSettings() {
-    SET.stack = ['home']; SET.snaps = {}; setUnderHide();
+    // 普通用户没有设置主页：直接进账户页（栈里只有一页，返回即退出设置）
+    SET.stack = [SET.role === 'admin' ? 'home' : 'account']; SET.snaps = {}; setUnderHide();
     // 桌面端:打开设置时收起侧边栏让设置页占满窗口,关闭时恢复之前的展开态
     if (drawerMQ.matches) { drawerWasOpenBeforeSet = document.body.classList.contains('drawer-open'); openDrawer(false); }
     $('settings-page').classList.remove('hidden'); renderSetPage();
@@ -250,6 +254,7 @@
     const ctx = () => tok === setTok && setTop() === p; // 异步回包时页面可能已切走
     if (p === 'home') return setPageHome(ctx);
     if (p === 'account') return setPageAccount(ctx);
+    if (p === 'users') return setPageUsers(ctx);
     if (p === 'service') return setPageService(ctx);
     if (p === 'cfg-editor') return setPageCfgEditor(ctx);
     if (p === 'skills') return setPageSkills(ctx);
@@ -274,19 +279,23 @@
   const SET_CARDS = [
     { go: 'account', name: '账户', desc: '修改密码 · 用户画像 · 退出登录',
       icon: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 4-6 8-6s8 2 8 6"></path></svg>' },
-    { go: 'service', name: '服务', desc: '服务状态 · 系统配置',
+    { go: 'users', name: '用户', desc: '账号 · 角色 · 默认模型', adminOnly: true, needAuth: true,
+      icon: '<svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"></circle><path d="M2 21c0-3.6 3.1-5.5 7-5.5s7 1.9 7 5.5"></path><path d="M16 8.5a3 3 0 0 1 0 6"></path><path d="M18 21c0-2.8-1.4-4.5-4-5.2"></path></svg>' },
+    { go: 'service', name: '服务', desc: '服务状态 · 系统配置', adminOnly: true,
       icon: '<svg class="ic" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>' },
-    { go: 'skills', name: '技能', desc: '技能管理 · 技能文件编辑',
+    { go: 'skills', name: '技能', desc: '技能管理 · 技能文件编辑', adminOnly: true,
       icon: '<svg class="ic" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>' },
-    { go: 'models', name: '模型', desc: '模型池状态 · 增删改',
+    { go: 'models', name: '模型', desc: '模型池状态 · 增删改', adminOnly: true,
       icon: '<svg class="ic" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>' },
-    { go: 'mcp', name: 'MCP', desc: 'MCP 服务 · 增删改',
+    { go: 'mcp', name: 'MCP', desc: 'MCP 服务 · 增删改', adminOnly: true,
       icon: '<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><circle cx="7" cy="15" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="12" cy="15" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="17" cy="15" r="1.2" fill="currentColor" stroke="none"></circle></svg>' },
   ];
   function setPageHome(ctx) {
     setTitle('设置');
     setActions('');
-    setBody('<div class="set-scroll set-home">' + SET_CARDS.map(c =>
+    // 普通用户只保留账户页；用户管理卡另需多用户认证启用
+    const cards = SET_CARDS.filter(c => (!c.adminOnly || SET.role === 'admin') && (!c.needAuth || SET.authEnabled));
+    setBody('<div class="set-scroll set-home">' + cards.map(c =>
       '<button class="set-card" data-go="' + c.go + '">' +
         '<span class="set-ico">' + c.icon + '</span>' +
         '<span class="set-tt"><span class="set-name">' + c.name + '</span>' +
@@ -390,6 +399,99 @@
     for (const [k] of PROFILE_FIELDS) { const el = $('prof-' + k); if (el) body[k] = el.value.trim(); }
     try { await req('PUT', '/api/profile', body); toast('已保存，新会话生效'); renderSetPage(); }
     catch (e) { toast('保存失败:' + e.message); }
+  }
+
+  // ---------- 页:用户管理(仅管理员;增删改 + 角色 + 默认模型) ----------
+  // 数据面全部走 /api/users：后端写盘后热更新内存，新增/删除/改角色/锁模型都即时生效，无需重启。
+  // 普通用户看不到本页，且后端 /api/users 与 /api/config 都有 requireAdmin 门禁（不只靠藏 UI）。
+  async function setPageUsers(ctx) {
+    setTitle('用户');
+    setActions('<button class="icon-btn" title="添加用户" onclick="sUI.openUserAdd()">' +
+      '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
+    setBody('<div class="set-scroll" id="user-list"><div class="empty-tip">加载中…</div></div>');
+    try {
+      const r = await req('GET', '/api/users');
+      if (!ctx()) return;
+      SET.users = (r && r.users) || [];
+      SET.userModels = (r && r.models) || [];
+      renderUserList();
+    } catch (e) {
+      if (ctx()) setBody('<div class="set-scroll"><div class="empty-tip">加载失败:' + esc(e.message) + '</div></div>');
+    }
+  }
+  function userModelOptions(cur) {
+    return '<option value="">不锁定（按原逻辑）</option>' + SET.userModels.map(m =>
+      '<option value="' + att(m.id) + '"' + (m.id === cur ? ' selected' : '') + '>' + esc(m.name || m.id) + '</option>').join('');
+  }
+  function renderUserList() {
+    const box = $('user-list');
+    if (!box) return;
+    if (!SET.users.length) {
+      box.innerHTML = '<div class="empty-tip">还没有用户，点右上角 + 添加。</div>';
+      return;
+    }
+    // 与服务页同一套白卡 + 虚线 kv 行；整卡点击进弹窗编辑（同 MCP 页的列表交互）
+    box.innerHTML = SET.users.map((u, i) =>
+      '<div class="settings-card" style="cursor:pointer" onclick="sUI.openUserEdit(' + i + ')">' +
+        '<h4>' + esc(u.user) + (u.role === 'admin' ? ' <span class="badge active">管理员</span>' : '') + '</h4>' +
+        '<div class="cfg-kv"><label>角色</label><b>' + (u.role === 'admin' ? '管理员' : '普通用户') + '</b></div>' +
+        '<div class="cfg-kv"><label>默认模型</label><b>' + esc(u.model || '不锁定') + '</b></div>' +
+      '</div>').join('') +
+      '<div class="empty-tip">点用户卡片修改角色、默认模型或密码。</div>';
+  }
+  // 弹窗工作态：-1 = 新增；否则 SET.users 下标。用户名不可改（后端也没有改名接口）。
+  let userEditIdx = -1;
+  function openUserEditor(i) {
+    const u = i == null ? null : SET.users[i];
+    userEditIdx = u ? i : -1;
+    $('ue-title').textContent = u ? '编辑用户' : '添加用户';
+    $('ue-user').value = u ? u.user : '';
+    $('ue-user').disabled = !!u;
+    $('ue-pass').value = '';
+    $('ue-pass').placeholder = u ? '留空 = 不修改密码' : '初始密码（至少 6 位）';
+    $('ue-role').value = u ? u.role : 'user';
+    $('ue-model').innerHTML = userModelOptions(u ? u.model : '');
+    $('ue-del-btn').classList.toggle('hidden', !u);
+    $('user-edit-modal').classList.remove('hidden');
+    if (!u) $('ue-user').focus();
+  }
+  function openUserAdd() { openUserEditor(null); }
+  function closeUserModal() {
+    $('user-edit-modal').classList.add('hidden');
+    userEditIdx = -1;
+  }
+  async function saveUser() {
+    const editing = userEditIdx >= 0;
+    const user = $('ue-user').value.trim();
+    const password = $('ue-pass').value;
+    const role = $('ue-role').value;
+    const model = $('ue-model').value;
+    if (!user) return toast('用户名不能为空');
+    if (!editing && password.length < 6) return toast('密码至少 6 位');
+    if (editing && password && password.length < 6) return toast('新密码至少 6 位');
+    try {
+      if (editing) {
+        const body = { role, model };
+        if (password) body.password = password;
+        await req('PATCH', '/api/users/' + encodeURIComponent(user), body);
+      } else {
+        await req('POST', '/api/users', { user, password, role, model });
+      }
+      closeUserModal();
+      toast(editing ? '已保存' : '已添加用户 ' + user);
+      renderSetPage();
+    } catch (e) { toast('保存失败:' + e.message); }
+  }
+  async function userDelFromModal() {
+    const u = SET.users[userEditIdx];
+    if (!u) return;
+    if (!await confirmModal('删除用户', '删除「' + u.user + '」后该账号立即失效；其会话与画像数据保留。', '删除', true)) return;
+    try {
+      await req('DELETE', '/api/users/' + encodeURIComponent(u.user));
+      closeUserModal();
+      toast('已删除');
+      renderSetPage();
+    } catch (e) { toast('删除失败:' + e.message); }
   }
 
   // ---------- 微信绑定（账户页内联卡 #wx-zone；一人一绑无子页，签名比对增量更新防闪烁） ----------
@@ -593,10 +695,8 @@
   }
   async function setPageService(ctx) {
     setTitle('服务');
-    // 临时隐藏右上角"编辑配置文件"按钮(sUI.openCfg),恢复时取消下方注释即可
-    // setActions('<button class="icon-btn" title="编辑配置文件" onclick="sUI.openCfg()">' +
-    //   '<svg class="ic" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"></path></svg></button>');
-    setActions('');
+    setActions('<button class="icon-btn" title="编辑配置文件" onclick="sUI.openCfg()">' +
+      '<svg class="ic" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"></path></svg></button>');
     setBody('<div class="set-scroll" id="svc-body"><div class="empty-tip">加载中…</div></div>');
     try {
       const [st, cg] = await Promise.all([
@@ -1518,6 +1618,12 @@
     // 账户
     changePassword: changePassword,
     saveProfile: saveProfile,
+    // 用户管理（仅管理员）
+    openUserAdd: openUserAdd,
+    openUserEdit: openUserEditor,
+    closeUserModal: closeUserModal,
+    saveUser: saveUser,
+    userDelFromModal: userDelFromModal,
     // 微信绑定
     wxBind: wxBind,
     wxRefresh: wxRefresh,
@@ -1587,6 +1693,12 @@
           return;
         }
         verifiedUser = String(j.user);
+        SET.role = j.role === 'admin' ? 'admin' : 'user';
+        SET.authEnabled = true;
+      } else {
+        // /api/me 404 = 未启用多用户认证：单用户自用，全部设置可见（用户管理页因 auth 关闭而隐藏）
+        SET.role = 'admin';
+        SET.authEnabled = false;
       }
     } catch (_) { /* 网络错误放过，让后续请求正常走 */ }
     loadSessionList();

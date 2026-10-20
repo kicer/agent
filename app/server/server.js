@@ -68,9 +68,16 @@ app.use('/api/sessions', require('./routes/sessions'));
 app.use('/api/sessions', require('./routes/messages'));
 app.use('/api/sessions', require('./routes/files'));
 app.use('/api/skills', require('./routes/skills'));
-app.use('/api/config', require('./routes/config'));
+// 系统配置含全部用户（脱敏密码）与平台密钥，且可整份改写 YAML：仅管理员可访问。
+app.use('/api/config', auth.requireAdmin, require('./routes/config'));
 app.use('/api/platforms', require('./routes/platforms'));
-app.use('/api/system', require('./routes/system'));
+// 系统状态（上传参数等）所有登录用户可用；重启仅管理员。
+const systemRouter = require('./routes/system');
+app.use('/api/system', (req, res, next) => (
+  req.path === '/restart' ? auth.requireAdmin(req, res, next) : next()
+), systemRouter);
+// 用户管理（管理员）：auth.users 增删改 + 角色/默认模型；写盘后热更新，无需重启。
+app.use('/api/users', require('./routes/users')(auth));
 // 用户画像（账户设置）：读写按登录用户隔离，逻辑在 user-profile.js
 app.use('/api/profile', require('./routes/profile'));
 // 长期记忆（日记）只读调试视图：独立页 /memory.html 的供数接口，查表即答零写操作

@@ -309,14 +309,22 @@ function parseAndValidate(rawText, configPath) {
     cfg.skills.timeout_ms = (cfg.skills.timeout_ms == null) ? 120000 : cfg.skills.timeout_ms;
   }
 
-  // auth 规范化：多用户 auth.users: [{user, password}]；兼容旧的单用户 auth.{user,password}
+  // auth 规范化：多用户 auth.users: [{user, password, role?, model?}]；兼容旧的单用户 auth.{user,password}
   if (cfg.auth && !Array.isArray(cfg.auth.users)) {
-    cfg.auth.users = cfg.auth.user ? [{ user: cfg.auth.user, password: cfg.auth.password }] : [];
+    cfg.auth.users = cfg.auth.user ? [{ user: cfg.auth.user, password: cfg.auth.password, role: cfg.auth.role, model: cfg.auth.model }] : [];
   }
   if (cfg.auth && Array.isArray(cfg.auth.users)) {
     cfg.auth.users = cfg.auth.users
       .filter(u => u && u.user)
-      .map(u => ({ user: String(u.user), password: String(u.password == null ? '' : u.password) }));
+      .map(u => ({
+        user: String(u.user),
+        password: String(u.password == null ? '' : u.password),
+        // 角色：admin = 管理员（设置页全部功能 + 用户管理）；缺省 user = 普通用户（设置只开账户页）。
+        role: u.role === 'admin' ? 'admin' : 'user',
+        // 选填：该用户新建会话时锁定的模型（内部唯一键「平台名/模型id」，如 qwen-tp/qwen3.8-flash）。
+        // 未配/空串 = 按原逻辑（前端预选或全局自动选择）；配了但模型无效/被禁用时同样退回原逻辑。
+        model: u.model ? String(u.model).trim() : '',
+      }));
     if (!cfg.auth.users.length) cfg.auth = null;
   }
 

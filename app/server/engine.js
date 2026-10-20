@@ -286,6 +286,13 @@ function platformModels(platform) {
   return out;
 }
 
+// 用户在 auth.users[].model 里锁定的模型（选填）：新建会话时优先于前端预选。
+// 空串 = 未锁定（未启用认证时 user 为空串，同样不命中）。
+function lockedModelOf(user) {
+  const u = ((cfg.auth && cfg.auth.users) || []).find(x => String(x.user) === String(user || ''));
+  return (u && u.model) || '';
+}
+
 // 在 key 所属平台的模型里选一个：preferred（会话上次用过的同平台模型）优先；
 // 否则取平台内当前绑定会话数最少的（打平按配置顺序），同平台多模型也轮转摊平。
 function chooseModel(platform, preferred) {
@@ -995,7 +1002,13 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // 新建即绑模（无排队）：指定了优先模型（welcome 预选）就取其平台「最不 active」的 key；
 // 模型无效或平台无槽位退回全局优先级选。池完全为空直接报错（配置问题），不建吊儿郎当的会话。
 function createSession(title, preferModelId, assistantType, user) {
-  const want = String(preferModelId || '');
+  // 用户锁定模型（auth.users[].model）优先于前端预选；锁定值无效/被禁用时退回原逻辑（用前端预选或全局自动选择）。
+  const lock = lockedModelOf(user);
+  const lockValid = !!lock && platformModels(platformOf(lock)).includes(lock);
+  if (lock && !lockValid) {
+    log.warn('model', '用户 ' + (user || '-') + ' 锁定的模型 ' + lock + ' 无效或已禁用，按原逻辑选择');
+  }
+  const want = String((lockValid ? lock : preferModelId) || '');
   let key = null, modelId = '';
   if (want && platformModels(platformOf(want)).includes(want)) {
     key = chooseKey(platformOf(want), true);

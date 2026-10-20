@@ -17,11 +17,12 @@
    *   DELETE /api/sessions/:id/messages/:messageId              删除单条消息/工具卡(删 assistant 连带工具回执;单删工具卡同步摘除父调用)
    *   GET    /api/models                                        状态栏「选择模型」弹窗模型列表
    *
-   * 设置区(侧边栏用户区整行点击进入;页面搬自 index.html,未新增任何接口):
+   * 设置区(侧边栏用户区整行点击进入;页面搬自 index.html):
    *   GET    /api/system/status | POST /api/system/restart[?force=true]   服务·状态与重启
    *   GET/PUT/PATCH /api/config | POST /api/config/validate               系统配置 / 原文编辑 / 模型增删改
    *   GET    /api/models | GET /api/platforms/balance                     模型·模型池与余额
    *   GET/POST/PUT/DELETE /api/skills[/:name][/file|/upload|/rename]      技能·技能与文件管理
+   *   GET/POST/PATCH/DELETE /api/users[/:name]                            用户·账号/角色/默认模型(管理员,热生效)
    *   GET    /api/me | POST /api/password | GET /logout                    账户·信息/改密/退出
    *   GET/PUT /api/profile                                                  账户·用户画像(可见/可改/可关)
    *   GET/POST/DELETE /api/wechat[/:id][/qr|/refresh]                       账户·微信绑定(未配 wxbot 时入口自动隐藏)

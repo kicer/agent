@@ -94,13 +94,21 @@ function isSignedDownload(req) {
   return req.method === 'GET' && /\/files\/(download(-name\/.+)?|zip(-name\/.+)?)$/.test(req.path) && !!req.query.t;
 }
 
-// cfg.auth = { users: [{user, password}], secret?, ttl_ms? }
+// cfg.auth = { users: [{user, password, role?, model?}], secret?, ttl_ms? }
 // users 为空则整个认证关闭（cfg.auth 为 null）。
 function createAuth(cfg) {
   const router = express.Router();
-  const users = (cfg.auth && cfg.auth.users) || [];
+  let users = (cfg.auth && cfg.auth.users) || [];
   if (!users.length) {
-    return { enabled: false, middleware: (req, res, next) => next(), router };
+    // 未启用认证 = 单用户自用：管理接口按「本机主人」放行，用户 CRUD 由 routes/users.js 自己拒绝。
+    return {
+      enabled: false,
+      middleware: (req, res, next) => next(),
+      router,
+      requireAdmin: (req, res, next) => next(),
+      refreshUsers: () => {},
+      isAdmin: () => false,
+    };
   }
 
   const secret = (cfg.auth.secret && String(cfg.auth.secret)) || crypto.randomBytes(32).toString('hex');
@@ -108,7 +116,21 @@ function createAuth(cfg) {
     log.warn('auth', '未配置 auth.secret，已使用随机密钥：进程重启后所有登录态失效');
   }
   const ttlMs = Number(cfg.auth.ttl_ms) || DEFAULT_TTL_MS;
-  const validUsers = new Map(users.map(u => [String(u.user), String(u.password)]));
+  let validUsers = new Map(users.map(u => [String(u.user), String(u.password)]));
+
+  function userRow(name) {
+    const n = String(name == null ? '' : name);
+    return users.find(u => String(u.user) === n) || null;
+  }
+  function isAdmin(name) {
+    const u = userRow(name);
+    return !!u && u.role === 'admin';
+  }
+  // 用户增删改后由 routes/users.js 调用：重建登录校验表（删除的用户旧 token 随即失效）。
+  function refreshUsers(next) {
+    users = Array.isArray(next) ? next : [];
+    validUsers = new Map(users.map(u => [String(u.user), String(u.password)]));
+  }
 
   function setAuthCookie(res, username) {
     const token = signToken(username, Date.now() + ttlMs, secret);
@@ -205,7 +227,9 @@ function createAuth(cfg) {
 
   router.get('/api/me', (req, res) => {
     // 与中间件同一解析顺序（cookie 优先），保证 /api/me 显示的用户与业务路由认定的用户一致
-    res.json({ user: authUser(req) });
+    const name = authUser(req);
+    const row = name ? userRow(name) : null;
+    res.json({ user: name, role: row ? row.role : '', model: row ? (row.model || '') : '' });
   });
 
   // ----- 登录页 / 登出跳转 -----
@@ -231,7 +255,14 @@ function createAuth(cfg) {
     return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
   };
 
-  return { enabled: true, middleware, router };
+  // 管理接口门禁（挂在 auth.middleware 之后）：仅 admin 可进。
+  function requireAdmin(req, res, next) {
+    if (!req.user) return res.status(401).json({ error: '未登录' });
+    if (!isAdmin(req.user)) return res.status(403).json({ error: '需要管理员权限' });
+    next();
+  }
+
+  return { enabled: true, middleware, router, requireAdmin, refreshUsers, isAdmin };
 }
 
 module.exports = { createAuth, COOKIE_NAME };

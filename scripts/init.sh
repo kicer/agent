@@ -197,6 +197,7 @@ auth:
   users:
     - user: $AUTH_USER
       password: "$AUTH_PASSWORD"
+      role: admin    # 初始账号为管理员；其余用户的增删/角色/默认模型在前端「设置→用户」里配
 
 mcp_servers:
   - name: web_search

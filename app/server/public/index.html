@@ -286,6 +286,28 @@
       </div>
     </div>
 
+    <!-- 用户编辑弹窗（设置→用户；仅管理员）:用户名 / 密码 / 角色 / 默认模型;保存后即时生效无需重启 -->
+    <div id="user-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)sUI.closeUserModal()">
+      <div class="modal">
+        <button class="modal-close-btn" onclick="sUI.closeUserModal()">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+        <h3 id="ue-title">添加用户</h3>
+        <input type="text" id="ue-user" placeholder="用户名（字母/数字/下划线）" autocomplete="off">
+        <input type="password" id="ue-pass" placeholder="初始密码（至少 6 位）" autocomplete="new-password">
+        <select id="ue-role">
+          <option value="user">普通用户（仅账户页）</option>
+          <option value="admin">管理员（全部设置）</option>
+        </select>
+        <select id="ue-model"></select>
+        <div class="btn-row mpe-foot">
+          <button class="ghost-btn danger hidden" id="ue-del-btn" onclick="sUI.userDelFromModal()">删除用户</button>
+          <button class="primary-btn" onclick="sUI.saveUser()">保存</button>
+        </div>
+        <div class="cfg-note">默认模型 = 该用户新建会话时自动选择的模型；选「不锁定」则按原逻辑。</div>
+      </div>
+    </div>
+
     <!-- MCP 服务编辑/新增弹窗:配置 name / url / 多条 headers / 单次调用超时 / 启用开关;保存后写入 config.yml,重启生效 -->
     <div id="mcp-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)mcpUI.close()">
       <div class="modal modal-wide">

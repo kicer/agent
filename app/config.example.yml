@@ -76,6 +76,8 @@ auth:                                              # users 留空 = 不启用登
   users:
     - user: admin                                  # 默认账号
       password: "admin"                            # 默认密码，请务必修改
+      role: admin                                  # admin=管理员（全部设置 + 用户管理）；user 或缺省=普通用户（仅账户页）
+      # model: qwen-tp/qwen3.8-flash               # 选填：该用户新建会话时锁定的模型（内部键「平台名/模型id」）
 
 # 外部 MCP 服务列表：每项 {name?, url, headers?, enable?(默认 true), timeout_ms?, tools_allow?, tools_deny?}。
 mcp_servers: []
