@@ -319,11 +319,15 @@
     if (m.role === 'assistant') return m.type === 'summary' ? summaryMsgHtml(m) : aiMsgHtml(m);
     return null; // tool 结果不单独展示
   }
+  // 已渲染消息的轻量签名：role/type 变化（存档、摘要）意味着 DOM 结构要重排，增量路径必须放弃
+  function msgSig(m) { return (m.role || '') + '|' + (m.type || ''); }
 
   // 把一段消息渲染进目标容器（全量渲染时传 chat-view；懒加载更早页时传离屏 div 再前插进盒子）。
   // tool 行由后端过滤不返回，工具卡内容展开时由 hookToolCardLazyLoad 按 tool_call_msg_ids 拉取。
   // 返回 closeArc：若目标是分页前插且页尾存档段还要与现有顶部合并，调用方可不调它（不补「已存档」尾注）。
   function appendMessagesDom(messages, target) {
+    // 只有真正渲染进主消息流时才记增量跟踪（离屏分页容器不参与，避免切会话时污染新会话的跟踪状态）
+    const track = target === $('chat-view');
     // 存档段（type='archived'，「仅摘要」时摘要之前的旧历史）：连成一截淡色容器，
     // 段尾插一条「已存档、不再发给 AI」说明，紧接摘要卡片，一眼能看出上下文从哪里算起。
     let arcWrap = null;
@@ -343,6 +347,11 @@
       }
       const node = msgNode(m);
       if (node) t.insertAdjacentHTML('beforeend', node);
+      // 记录已渲染消息签名：增量重渲染（trySoftAppend）据此判断能否只追加尾部
+      if (m.id && track) {
+        state.renderedSigs[m.id] = msgSig(m);
+        if (m.id > state.lastRenderedMsgId) state.lastRenderedMsgId = m.id;
+      }
       if (m.role === 'assistant' && m.tool_call_msg_ids) Object.assign(state.toolCallMsgIds, m.tool_call_msg_ids);
       if (m.role === 'assistant') appendToolCardsFromAssistant(m, t);
     }
@@ -351,21 +360,66 @@
     return { closeArc };
   }
 
-  function renderDetail(detail) {
+  // 增量重渲染：仅当“已渲染的消息仍是新窗口里的连续前缀”时才只追加尾部。
+  // 任何结构变化（存档/摘要改 type、删除、新增过多导致窗口覆盖不到已渲染末条）都返回 false 走全量重建。
+  function trySoftAppend(detail) {
+    const msgs = detail.messages || [];
+    const lastId = state.lastRenderedMsgId;
+    const box = $('chat-view');
+    if (!lastId || !box || !box.firstElementChild || !msgs.length) return false;
+    if (!msgs.some(m => m.id === lastId)) return false; // 新增过多/被删：窗口已不含已渲染末条
+    for (const m of msgs) {
+      if (m.id > lastId) continue;
+      const sig = state.renderedSigs[m.id];
+      // 只比对“确实渲染过”的行（窗口里可能带出未加载过的更早历史）
+      if (sig !== undefined && sig !== msgSig(m)) return false; // 存档/摘要等改 type，必须整树重排
+    }
+    const tail = msgs.filter(m => m.id > lastId);
+    if (tail.length && tail[0].type === 'archived') return false; // 存档段跨增量：交给全量重排
+    // 补齐工具卡懒加载映射（后台期间落库的 tool 行，已渲染的卡片展开时才能取到内容）
+    for (const m of msgs) {
+      if (m.role === 'assistant' && m.tool_call_msg_ids) Object.assign(state.toolCallMsgIds, m.tool_call_msg_ids);
+    }
+    if (tail.length || state.status !== 'active') removeTyping(); // 后台期间本轮已结束但没赶上 done：收掉打字点
+    // 后台期间本轮已收尾（库里有新的 assistant 行）：丢弃半截流式气泡，避免与新行重复
+    if (tail.some(m => m.role === 'assistant') && state.streamWrap) {
+      try { state.streamWrap.remove(); } catch (_) {}
+      state.streamWrap = null; state.streamEl = null; state.streamText = '';
+      state.streamReasoning = ''; state.streamThinkEl = null; state.streaming = false;
+    }
+    if (tail.length) {
+      const atBottom = isNearBottom();
+      appendMessagesDom(tail, box).closeArc();
+      state.chatLoadedCount += tail.length;
+      if (atBottom) { userPaused = false; scrollBottom(); }
+    }
+    updateScrollBottomBtn();
+    return true;
+  }
+
+  function renderDetail(detail, opts) {
     const s = detail.session;
     state.sessionTitle = (s && s.title) || '';
     state.sessionType = (s && s.assistant_type) || 'secretary'; // 顶部 icon 跟随会话类型
     state.status = (s && s.status) || '';
     state.modelId = (s && s.model_id) || ''; // 顶部动作区展示当前模型
     state.schedule = detail.schedule || null; // 定时任务数据（顶部动作区副标题）
+    renderHeader();
+    updateHeaderActions();
+
+    // 非破坏性重渲染（回前台补拉/看门狗）：只追加新增消息，已有节点、展开态、滚动位置一律不动
+    if (opts && opts.soft && state.sessionId === (s && s.id) && trySoftAppend(detail)) return;
+
     state.toolCards = {};
     state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
     state.toolCallMsgIds = {}; // tool_call.id → tool 消息行 id（展开时懒加载用）
-    userPaused = false;
+    state.renderedSigs = {};
+    state.lastRenderedMsgId = 0;
     removeTyping();
-    renderHeader();
-    updateHeaderActions();
     const box = $('chat-view');
+    const keepView = !!(opts && opts.keepView);
+    const prevTop = keepView ? box.scrollTop : 0;
+    const followBottom = !keepView || !box.firstElementChild || isNearBottom();
     box.innerHTML = '';
     appendMessagesDom(detail.messages || [], box).closeArc();
     if (!(detail.messages || []).length) {
@@ -375,7 +429,13 @@
     state.chatOldestId = detail.oldest_id || null;
     state.chatLoadedCount = (detail.messages || []).length;
     hookToolCardLazyLoad();
-    scrollBottom();
+    if (followBottom) {
+      userPaused = false;
+      scrollBottom();
+    } else {
+      userPaused = true; // 用户原本在翻历史：保持暂停跟随与原阅读位置
+      box.scrollTop = prevTop;
+    }
     updateScrollBottomBtn();
     // 首屏条数太少撑不满滚动区时不会产生 scroll 事件，上滑永远触发不了加载：自动补一页
     if (state.chatHasMore && box.scrollHeight <= box.clientHeight + CHAT_TOP_TRIGGER) loadOlderMessages();
@@ -456,6 +516,11 @@
       actionsHtml(Date.now(), content, msgId);
     decorateCodePre(wrap); // 用户消息里也可能有围栏代码块
     $('chat-view').appendChild(wrap);
+    // 已落库的行记入增量跟踪：避免回前台补拉时把这条再追加一遍
+    if (msgId) {
+      state.renderedSigs[msgId] = 'user|';
+      if (msgId > state.lastRenderedMsgId) state.lastRenderedMsgId = msgId;
+    }
     scrollBottom();
   }
 

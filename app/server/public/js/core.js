@@ -188,6 +188,8 @@
     chatHasMore: false,           // 当前会话是否还有更早的历史未加载（消息懒加载分页）
     chatOldestId: null,           // 已加载最早一条消息的行 id（拉更早页的 before 游标）
     chatLoadedCount: 0,           // 已加载消息条数（重拉详情时按同量分页，避免退回全量渲染）
+    lastRenderedMsgId: 0,         // 已渲染的最新一条消息行 id（增量重渲染判断“只追加尾部”）
+    renderedSigs: {},             // 行 id -> role|type 签名（检测存档/摘要等结构变化，决定是否全量重建）
   };
 
   // ---------- 视图切换 ----------

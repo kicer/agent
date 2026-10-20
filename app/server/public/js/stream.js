@@ -134,7 +134,10 @@
     const es = new EventSource('/api/sessions/' + state.sessionId + '/stream');
     state.es = es;
     state.lastSseAt = Date.now(); // 建连即重置静默计时
-    es.addEventListener('ping', () => { state.lastSseAt = Date.now(); }); // 服务端 15s 可见心跳
+    // 任何具名事件都算连接存活：静默看门狗与回前台宽限共用（error 不列，原生连接错误也走 error）
+    ['ping', 'status', 'assistant_delta', 'reasoning_delta', 'assistant_message', 'tool_call_start',
+      'tool_call_args', 'tool_call', 'tool_result', 'ui_card', 'auto_compress', 'done', 'title']
+      .forEach(function (n) { es.addEventListener(n, function () { markSseAlive(n); }); });
     es.addEventListener('status', ev => {
       const d = JSON.parse(ev.data);
       state.status = d.status;
@@ -170,6 +173,11 @@
               // 防重：同 id 的 assistant_message 只处理一次（防御 EventSource 自动重连、服务端重发等情况）
               if (d.id && state.lastAssistantMsgId === d.id) return;
               if (d.id) state.lastAssistantMsgId = d.id;
+              // 已落库的回合记入增量跟踪（否则回前台补拉会把同一条 assistant 再追加一遍）
+              if (d.id) {
+                state.renderedSigs[d.id] = 'assistant|' + (d.is_summary ? 'summary' : '');
+                if (d.id > state.lastRenderedMsgId) state.lastRenderedMsgId = d.id;
+              }
               removeTyping();
           const hasText = !!(d.content && d.content.trim());
           const r = hasText ? mdHtml(d.content) : null;

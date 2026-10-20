@@ -83,6 +83,8 @@
         state.streamText = '';
         state.toolCards = {};
         state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
+        state.lastRenderedMsgId = 0;
+        state.renderedSigs = {};
         state.streaming = false;
         setView('welcome'); // 复用 newChat 同样的视图切换路径
       }
@@ -109,8 +111,8 @@
     sseResyncing = true;
     state.lastSseAt = Date.now(); // 计时从现在开始，失败也等下个周期再试
     closeStream();
-    req('GET', '/api/sessions/' + id + '?limit=' + CHAT_INIT_PAGE_SIZE).then(detail => {
-      if (state.sessionId === id && state.view === 'chat') renderDetail(detail);
+    req('GET', '/api/sessions/' + id + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount + 20)).then(detail => {
+      if (state.sessionId === id && state.view === 'chat') renderDetail(detail, { soft: true, keepView: true });
     }).catch(() => {}).then(() => {
       sseResyncing = false;
       if (state.sessionId === id && state.view === 'chat' && !state.es) connectStream();
@@ -137,17 +139,45 @@
     sseSuspended = false;
     resyncSession();
   }
+  // 回前台宽限：后台里事件只是被暂停时，恢复后积压的 SSE 事件会立刻补达；
+  // 先给现有连接一个自证存活的窗口，收到任何事件就不再做整库补拉（避免把“后台没收到 ping”误判为断线）。
+  const SSE_RESUME_GRACE_MS = 1500;
+  let sseResumeProbeTimer = 0;
+  let sseResumeSawEvent = false;
+  function markSseAlive(evName) {
+    state.lastSseAt = Date.now();
+    // status 只会在建连/重连时到来：它证不了断点期没丢事件，不能当作宽限期存活证据
+    if (evName !== 'status') sseResumeSawEvent = true;
+  }
+  function probeSseAlive() {
+    const id = state.sessionId;
+    sseResumeSawEvent = false;
+    clearTimeout(sseResumeProbeTimer);
+    sseResumeProbeTimer = setTimeout(() => {
+      sseResumeProbeTimer = 0;
+      if (sseResumeSawEvent) return; // 宽限期内有事件：连接活着，无需补拉
+      if (state.sessionId === id && state.view === 'chat' && state.es) resyncSession();
+    }, SSE_RESUME_GRACE_MS);
+  }
   // 后台标签页里 interval 被限频；切回前台立刻补一次判定，自动覆盖“休眠/切走醒来后页面停在半截”场景
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       clearTimeout(sseSuspendTimer);
+      clearTimeout(sseResumeProbeTimer);
+      sseResumeProbeTimer = 0;
       sseSuspendTimer = setTimeout(suspendStream, SSE_SUSPEND_HIDDEN_MS);
       return;
     }
     clearTimeout(sseSuspendTimer);
-    resumeStream();
-    if (state.sessionId && state.view === 'chat' && state.es
-        && Date.now() - state.lastSseAt > 45000) resyncSession();
+    clearTimeout(sseResumeProbeTimer);
+    sseResumeProbeTimer = 0;
+    // 后台已挂起：客户端不在线期间的 SSE 事件确定丢弃，必须补拉（增量渲染，不闪）
+    if (sseSuspended) { resumeStream(); return; }
+    if (!state.sessionId || state.view !== 'chat' || !state.es) return;
+    // 连接已不是 OPEN（曾掉线/正在重连）：断点期间的事件可能已丢，直接补拉
+    if (state.es.readyState !== EventSource.OPEN) { resyncSession(); return; }
+    // 仍 OPEN 但心跳变旧：先给连接一个宽限自证，真静默才补拉
+    if (Date.now() - state.lastSseAt > 45000) probeSseAlive();
   });
 
   async function openSession(id) {
@@ -174,6 +204,8 @@
     state.chatHasMore = false; // 分页状态先复位：防详情返回前用旧会话的游标/标志拉到错会话的消息
     state.chatOldestId = null;
     state.chatLoadedCount = 0;
+    state.lastRenderedMsgId = 0;
+    state.renderedSigs = {};
     renderAttachChips();
     clearUploadCards(); // 切会话清掉旧会话的上传卡片
     renderDrawerList(); // 会话切换后立刻重画抽屉高亮,避免下次打开才看到更新
@@ -221,6 +253,8 @@
     state.streamText = '';
     state.toolCards = {};
     state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
+    state.lastRenderedMsgId = 0;
+    state.renderedSigs = {};
     state.streaming = false;
     userPaused = false;
     renderAttachChips();
