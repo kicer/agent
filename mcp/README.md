@@ -1,0 +1,90 @@
+# MCP 服务集合
+
+三个 MCP（Model Context Protocol）服务，各占一个目录，由仓库根 `docker-compose.yml` 统一编排：
+
+| 目录 | 容器名 | 作用 | 容器内端口 | MCP 端点 |
+|---|---|---|---|---|
+| `web_search/` | `mcp_web_search` | 免费网页搜索（Parallel / Exa，无需 key） | `3000` | `POST /` |
+| `image_task/` | `mcp_image_task` | 智谱 CogView 图片生成（单工具 op=create） | `3000` | `POST /mcp` |
+| `video_task/` | `mcp_video_task` | 智谱 CogVideo 视频生成（异步，单工具 op=create/get） | `3000` | `POST /mcp` |
+
+**这些服务一个宿主机端口都不占**——它们只挂在 `agent-mcp-net` 上，由 `agent-core` / `agent-executor`
+按容器名访问。所以整台服务器对外只需要开 agent-core 那一个端口（`AGENT_PORT`，默认 8090）。
+（要从宿主机 curl 调试时，把根 `docker-compose.yml` 里对应服务注释掉的 `ports` 两行打开。）
+
+## 部署
+
+它们和 `agent-core` / `agent-executor` / `wxbot` 同属一个 compose 项目，无需单独启动，也没有先后顺序：
+
+```bash
+cd /root/workspace/tools/agent
+docker compose up -d --build
+```
+
+`config.yml` 里的地址与容器名一一对应：
+
+```yaml
+mcp_servers:
+  - name: web_search
+    url: "http://mcp_web_search:3000/"
+  - name: image_task
+    url: "http://mcp_image_task:3000/mcp"
+  - name: video_task
+    url: "http://mcp_video_task:3000/mcp"
+```
+
+服务没起来时，core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。
+
+> 从旧的「agent + mcp 双仓库」部署升级：先在旧 mcp 仓库目录 `docker compose down`（只需一次，否则同名容器与网络会冲突），再 `up` 本栈。
+
+`image_task` / `video_task` 需要智谱 token，但 token **不由服务端保存**——每个请求从 header 读取
+（agent 侧配在 `config.yml` 的 `mcp_servers[].headers`，`init.sh` 会用 `BIGMODEL_KEY` 自动写入）。
+所以这里不用配任何密钥。
+
+### 调试端口
+
+写在仓库顶层 `.env` 里即可（不写就用默认值；开了端口记得调试完注释回去）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `WEB_SEARCH_PORT` | `8081` | 只在临时打开 web_search 调试端口时用 |
+| `IMAGE_TASK_PORT` | `8082` | 只在临时打开 image_task 调试端口时用 |
+| `VIDEO_TASK_PORT` | `8083` | 只在临时打开 video_task 调试端口（MCP 口，仅本机短时调试）时用 |
+
+## 图片是怎么到智谱手上的（只有 video_task 关心）
+
+智谱服务器生成视频前要**自己来拉参考图**，它不带 cookie、不带 `Authorization`。这套链路里**没有任何人上传文件**：
+
+```
+AI ──调用 agent 内置的「公开临时 URL」工具（直接传文件路径）──► 拿到一条短命公网 URL
+      │
+      ▼
+AI 把拿到的 URL 当 image_url 交给 video_task:3000/mcp
+      │
+      ▼
+智谱  ──匿名 GET──►  agent 侧提供的公开临时 URL
+                        那个文件始终躺在 agent 的任务目录里，零拷贝
+```
+
+- 签发与托管全在 agent 侧（它已集成为一个 tool，AI 直接调用即可，不需要 curl 任何内网入口）。
+- 链接短命：到期或 agent 重启后失效；智谱只在提交任务那一刻拉一次图，完全够用。
+- mcp 这三家一个端口都不露，唯一公网可达的东西只有 agent 自己。
+
+## 端口与安全
+
+| 服务 | 公网暴露 | 说明 |
+|---|---|---|
+| `mcp_web_search` | 无 | 服务端无鉴权，**永远不要映射出去**（会被白嫖搜索额度）；agent 走内网访问 |
+| `mcp_image_task` | 无 | token 由调用方自带，暴露后可被拿去消耗你的智谱额度 |
+| `mcp_video_task` | 无 | 它需要的公开临时 URL 由 agent 侧集成的工具提供，自己不占端口 |
+
+## 单独调试
+
+```bash
+cd /root/workspace/tools/agent
+docker compose up -d --build mcp_web_search
+# 不占端口的健康检查
+docker exec mcp_web_search node -e "fetch('http://localhost:3000/health').then(r=>r.text()).then(console.log)"
+```
+
+各目录下的 `README.md` 有该服务的工具说明、header 覆盖项与 curl 调试脚本。
