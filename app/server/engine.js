@@ -1198,7 +1198,7 @@ function maybeAutoCompress(sessionId, run, wasCompressTurn) {
 
 // ---------- 长期记忆碎片（日记）：会话收口（下班）时为其生成一条事件碎片 ----------
 // 与自动标题同模式：fire-and-forget + 内存防重入；绝不阻塞轮换路径（微信先回信，
-// 日记后台慢慢落）。一片一行入 memory_fragments，day=事件日（会话最后活跃日），
+// 日记后台慢慢落）。一片一行入 memory_fragments，day 由最后真实对话时刻（last_active_at）派生，
 // 去重靠 (user, session_id) 主键；渲染/检索全在 memory.js。
 // /clear 不记也不留：用户主动清零历史 = 不要这段记忆（已定调），旧碎片随清空一并撕掉（闹钟专柜除外，见 clearSessionMessages）。
 // 摘要模型走候选链兜底（用户定调：日记错过即丢，不能死于会话原绑模型这一个单点）：
@@ -1274,6 +1274,15 @@ function journalCandidateModels(s) {
   return cands;
 }
 
+// 最后真实对话时刻（毫秒）：注入/归档/摘要/工具回执都不算；没有对话时退回会话 updated_at。
+// 这是日记的「事件时刻」，不可用 created_at（收口/迁移时间）替代。
+function lastActiveAtOf(sessionId, fallback) {
+  const r = db.prepare(
+    "SELECT MAX(created_at) AS m FROM messages WHERE session_id = ? AND type IS NULL AND role IN ('user','assistant')"
+  ).get(String(sessionId));
+  return (r && r.m) || Number(fallback) || now();
+}
+
 // 生成并落库一个会话的日记碎片；返回 Promise<boolean>（是否写入）。调用方不需要等它。
 function journalFragment(sessionId) {
   return new Promise(resolve => {
@@ -1283,12 +1292,14 @@ function journalFragment(sessionId) {
       if (journaling.has(sessionId)) return done(false);
       const s = getSession(sessionId);
       if (!s || s.journaled_at) return done(false); // 已收口的会话不二次碎片（每会话唯一碎片的入口保证）
-      const day = memory.dayString(s.updated_at || now()); // 事件日=会话最后活跃日（C 定稿）：人回忆问哪天干的活，不是哪天补记
+      // 事件时刻取最后一条真实对话消息；没有对话再退回 updated_at。day 与它同源，避免日期/时刻互相打架。
+      const lastActiveAt = lastActiveAtOf(sessionId, s.updated_at);
+      const day = memory.dayString(lastActiveAt);
       // 无论成败都落一条：降级版写明真实原因（调试页可见）；来源会话 id 是表列，正文零元数据。
       const finish = (body, reason) => {
         journaling.delete(sessionId);
         const r = memory.appendFragment(db, cfg, s.user, s.id, day,
-          body || '- 本次工作未能生成摘要（' + (reason || '原因未知') + '），详情可按会话 id 回忆');
+          body || '- 本次工作未能生成摘要（' + (reason || '原因未知') + '），详情可按会话 id 回忆', lastActiveAt);
         if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now()); // dupe 也算收口，不重试
         return r === 'added' || r === 'dupe';
       };
@@ -1337,8 +1348,9 @@ function taskClockOut(sessionId) {
     const t = db.prepare('SELECT cron_expr, prompt, brief FROM scheduled_tasks WHERE session_id = ?').get(sessionId);
     if (!t) return;
     const what = String(t.brief || t.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-    const r = memory.appendFragment(db, cfg, s.user, s.id, memory.dayString(s.updated_at || now()),
-      '- 用户让我设了个闹钟：' + what + '（频率 ' + t.cron_expr + '）');
+    const lastActiveAt = lastActiveAtOf(sessionId, s.updated_at);
+    const r = memory.appendFragment(db, cfg, s.user, s.id, memory.dayString(lastActiveAt),
+      '- 用户让我设了个闹钟：' + what + '（频率 ' + t.cron_expr + '）', lastActiveAt);
     if (r === 'added' || r === 'dupe') memory.markJournaled(db, sessionId, now());
     if (s.status === 'held') { try { releaseHold(sessionId); } catch (_) { /* 并发归档 */ } }
     const un = db.prepare('DELETE FROM channel_sessions WHERE session_id = ?').run(sessionId);

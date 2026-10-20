@@ -116,7 +116,7 @@ function initDb(dbPath) {
     );
 
     -- 长期记忆（日记，memory.js）：一片碎片一行——会话收口（下班）时落库，(user, session_id) 主键即去重。
-    -- day = 事件日（会话最后活跃日，Asia/Shanghai 与 cron 同时区）：人回忆问「哪天干的活」，不是「哪天补记的」。
+    -- day = 事件日（Asia/Shanghai 与 cron 同时区）：由 last_active_at 派生；人回忆问「哪天干的活」，不是「哪天补记的」。
     -- text = 纯日记正文（- 行列表）；来源会话 id 存在 session_id 列，【id】展示样式只在渲染层拼，存储零冗余。
     -- 故意不建外键：主键是 (user, session_id)，SQLite 要求引用列命中唯一约束，单列 session_id
     -- 建不了 FK；且删会话的连带清理由 engine.deleteSession 显式 memory.dropFragment 承担
@@ -127,7 +127,8 @@ function initDb(dbPath) {
       session_id TEXT NOT NULL,
       day TEXT NOT NULL,             -- 'YYYY-MM-DD'（事件日）
       text TEXT NOT NULL,
-      created_at INTEGER NOT NULL,   -- 收口时刻（注入/检索的时序键）
+      created_at INTEGER NOT NULL,   -- 收口时刻（写入/迁移时间，不当作事件时刻）
+      last_active_at INTEGER,        -- 最后一条真实 user/assistant 消息的时刻（收口时快照；存量回填可为 NULL）
       PRIMARY KEY (user, session_id)
     );
 
@@ -287,6 +288,26 @@ function initDb(dbPath) {
     'DELETE FROM memory_fragments WHERE session_id NOT IN (SELECT id FROM sessions)'
   ).run().changes || 0;
   if (orphan) console.log('[db] 清理孤儿日记碎片 ' + orphan + ' 条（来源会话已删除）');
+  // 迁移：日记碎片补 last_active_at（最后真实对话时刻）。created_at 是收口/迁移时间，不能当事件时刻；
+  // 存量行按「最后真实消息 → updated_at → created_at」找第一个上海日期等于 day 的候选，找不到就留 NULL
+  //（渲染时只显示日期）。放在 memory_entries 迁移之后，刚搬过来的行也能一起回填。
+  try { db.exec('ALTER TABLE memory_fragments ADD COLUMN last_active_at INTEGER'); } catch (_) { /* 已存在 */ }
+  const needStamp = db.prepare('SELECT 1 FROM memory_fragments WHERE last_active_at IS NULL LIMIT 1').get();
+  if (needStamp) {
+    const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' });
+    const lastMsg = db.prepare(
+      "SELECT MAX(created_at) AS m FROM messages WHERE session_id = ? AND type IS NULL AND role IN ('user','assistant')"
+    );
+    const getUpdated = db.prepare('SELECT updated_at FROM sessions WHERE id = ?');
+    const setStamp = db.prepare('UPDATE memory_fragments SET last_active_at = ? WHERE user = ? AND session_id = ?');
+    for (const f of db.prepare('SELECT user, session_id, day, created_at FROM memory_fragments WHERE last_active_at IS NULL').all()) {
+      const m = lastMsg.get(f.session_id);
+      const s = getUpdated.get(f.session_id);
+      const cands = [m && m.m, s && s.updated_at, f.created_at].filter(Boolean).map(Number);
+      const pick = cands.find(ms => dayFmt.format(new Date(ms)) === f.day);
+      if (pick) setStamp.run(pick, f.user, f.session_id);
+    }
+  }
   return db;
 }
 

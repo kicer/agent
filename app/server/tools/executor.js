@@ -1587,6 +1587,18 @@ function runLabHelp(args) {
 // 历史成果文件不再归日记管：浏览/导入走 list_directory / copy_path 的 @<会话id>/<路径> 记号
 // （校验单点 resolvePastPath），导入后就是本会话普通文件，read_file/mint 照常处理。
 // 旧 files/link 两 op 是 ls/mint 的沙箱外克隆，已整删（克隆必漂移：link 漏抄 mint 的 realpath 防线）。
+// op=day 的 date 容错：模型可能把头部「date=YYYY-MM-DD HH:MM:SS」原样抄回。
+// 只取开头的日期部分并补零/校验；不扫描全文找日期。
+const RECALL_DAY_RE = /^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})(?!\d)/;
+function normalizeRecallDay(v) {
+  const m = RECALL_DAY_RE.exec(String(v || '').trim());
+  if (!m) return '';
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return '';
+  return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+
 function toolRecall(ctx, args) {
   const op = String(args.op || '').trim().toLowerCase();
   const db = ctx.db;
@@ -1605,8 +1617,8 @@ function toolRecall(ctx, args) {
       return '【日记索引】共 ' + list.length + ' 天（新在前）：\n' + list.join('\n');
     }
     case 'day': {
-      const date = String(args.date || '').trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('op=day 需要 date（YYYY-MM-DD，先用 op=days 查有哪些天）');
+      const date = normalizeRecallDay(args.date);
+      if (!date) throw new Error('op=day 需要 date（YYYY-MM-DD，先用 op=days 查有哪些天）');
       const txt = memory.dayEntry(db, user, date);
       return txt ? date + ' 的日记：\n' + txt : date + ' 无日记。';
     }

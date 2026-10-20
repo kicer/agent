@@ -2,11 +2,13 @@
 //（碎片摘要生成在 engine.journalFragment，与自动标题同模式：fire-and-forget + 候选模型兜底链）。
 // 与 profile（user-profile.js）分工：profile 记「用户是什么样的人」（语义记忆、稳定特质），
 // 日记记「我近来帮他做过什么」（事件记忆），两类记忆互不混。
-// 结构（C 定稿）：一片碎片一行——memory_fragments(user, session_id PK, day, text, created_at)。
-// - day = 事件日（会话最后活跃日）：人回忆问的是「哪天干的活」，不是「哪天补记的」；
+// 结构（C 定稿）：一片碎片一行——memory_fragments(user, session_id PK, day, text, created_at, last_active_at)。
+// - day = 事件日（Asia/Shanghai），由 last_active_at 派生：人回忆问的是「哪天干的活」，不是「哪天补记的」；
+// - last_active_at = 收口时快照的最后一条真实 user/assistant 消息时刻（存量数据可为 NULL）；
 // - text = 纯日记正文（"- " 行列表），【来源会话 id】展示样式只在渲染层拼，存储零冗余元数据；
+// - title 不落碎片表，渲染时 join sessions 取当前标题；
 // - (user, session_id) 主键即「每会话唯一碎片」的存储级保证（engine 侧 journaled_at 是扫描预排除）；
-// - 注入 =「嘴边的工作记忆」：开场只带最近 inject_max 片（created_at 倒序）；更早的没消失——
+// - 注入 =「嘴边的工作记忆」：开场只带最近 inject_max 片（day 优先、同日按 last_active_at 倒序）；更早的没消失——
 //   recall 工具 op=search/days/day 走全表；retain_days > 0 才按 day 硬裁（默认 0 = 不按时间删，
 //   但删会话会连带撕掉它的碎片，见 dropFragment）。
 // 时区与 cron（scheduler.js）对齐 Asia/Shanghai：上海无夏令时，按毫秒日移取 day 字符串安全。
@@ -27,7 +29,17 @@ function injectMax(cfg) {
 }
 
 const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }); // en-CA = ISO 'YYYY-MM-DD'
+const timeFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+});
 function dayString(ms) { return dayFmt.format(new Date(Number(ms) || Date.now())); }
+// 'YYYY-MM-DD HH:MM:SS'（上海时区）；脏/空值返 ''，由调用方退回只显示 day。
+function stampString(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const d = new Date(n);
+  return dayFmt.format(d) + ' ' + timeFmt.format(d);
+}
 
 // 保留窗最旧一天的日串（retain_days=0 → 空串 = 无下界）。
 function cutoffDay(cfg, refMs) {
@@ -38,12 +50,14 @@ function cutoffDay(cfg, refMs) {
 // ---------- 写：一片一行，主键即去重 ----------
 // 返回 'added' 新落 / 'dupe' 该会话已有碎片（主键冲突）/ 'invalid' 参数不全。
 // 调用方（engine 收口链路）把 added/dupe 都视为已收口落 journaled 标记，不重试不重复摘要。
-function appendFragment(db, cfg, user, sessionId, day, text) {
+function appendFragment(db, cfg, user, sessionId, day, text, lastActiveAt) {
   const body = String(text || '').replace(/\r/g, '').trim().slice(0, FRAG_MAX);
   if (!sessionId || !day || !body) return 'invalid';
+  // last_active_at 是事件时刻快照；created_at 是本碎片收口/写入时间，两者不可混用。
+  const stamp = Number(lastActiveAt) || Date.now();
   const r = db.prepare(
-    'INSERT OR IGNORE INTO memory_fragments (user, session_id, day, text, created_at) VALUES (?,?,?,?,?)'
-  ).run(String(user || ''), String(sessionId), day, body, Date.now());
+    'INSERT OR IGNORE INTO memory_fragments (user, session_id, day, text, created_at, last_active_at) VALUES (?,?,?,?,?,?)'
+  ).run(String(user || ''), String(sessionId), day, body, Date.now(), stamp);
   if (!r.changes) return 'dupe';
   prune(db, cfg); // 廉价 DELETE 顺带做；retain_days=0 时 no-op
   return 'added';
@@ -65,28 +79,35 @@ function markJournaled(db, sessionId, ms) {
 }
 
 // ---------- 读：开场注入文本（wechat/web 新会话的数据源） ----------
-// 最近 inject_max 片按事件日优先（同序供 injectedIds/journalFor 共用），逐片「## id,day」自描述：
+// 最近 inject_max 片按事件日优先（同序供 injectedIds/journalFor 共用），逐片「## id, date, title」自描述：
 // 新日在前、天内按发生顺序。
 // 选取序单点定义在此（调试 API/页面走 injectedIds 取名单，不另算一套，避免两边错位）。
-const INJECT_ORDER = ' ORDER BY day DESC, created_at DESC';
+const INJECT_ORDER = ' ORDER BY f.day DESC, COALESCE(f.last_active_at, f.created_at) DESC';
+// 读路径统一列清单：renderFrag 依赖 day/last_active_at/title，三处查询不再各写 SELECT，避免漏列。
+const FRAG_COLS = 'f.session_id, f.day, f.text, f.last_active_at, s.title';
+const FRAG_FROM = ' FROM memory_fragments f LEFT JOIN sessions s ON s.id = f.session_id';
 // 注入窗名单：与 journalFor 同选取规则的 session_id 列表（调试页打「已注入」标用）。
 function injectedIds(db, cfg, user) {
   const cap = injectMax(cfg);
   if (!cap) return [];
   return db.prepare(
-    'SELECT session_id FROM memory_fragments WHERE user = ?' + INJECT_ORDER + ' LIMIT ?'
+    'SELECT f.session_id FROM memory_fragments f WHERE f.user = ?' + INJECT_ORDER + ' LIMIT ?'
   ).all(String(user || ''), cap).map(r => r.session_id);
 }
-// 渲染逐片自描述：「## id=…, day=…」——新在前、天内按发生顺序；id/day 进标题即机器可读，
-// 分天组头退役。
-function renderFrag(r) { return '## id=' + r.session_id + ', day=' + r.day + '\n' + r.text; }
+// 渲染逐片自描述：「## id=…, date=YYYY-MM-DD HH:MM:SS, title=…」——新在前、天内按发生顺序。
+// 旧数据没有 last_active_at 时只显示 day；标题为空时整段省略，绝不拼出 undefined。
+function renderFrag(r) {
+  const when = stampString(r.last_active_at) || r.day || '未知';
+  const title = String(r.title || '').replace(/\s+/g, ' ').trim();
+  return '## id=' + r.session_id + ', date=' + when + (title ? ', title=' + title : '') + '\n' + r.text;
+}
 function journalFor(db, cfg, user) {
   const cap = injectMax(cfg);
   if (!cap) return '';
   const rows = db.prepare(
     // 选取按事件日（积压补记/迁移会令 created_at 齐平，按收口序会拿到「最晚补记」而非「最新事件」；
-    // 稳态下两者等价，事件日序更符合「最近记忆」直觉），同日并列再按收口时刻。
-    'SELECT session_id, day, text FROM memory_fragments WHERE user = ?' + INJECT_ORDER + ' LIMIT ?'
+    // 稳态下两者等价，事件日序更符合「最近记忆」直觉），同日并列再按最后对话时刻。
+    'SELECT ' + FRAG_COLS + FRAG_FROM + ' WHERE f.user = ?' + INJECT_ORDER + ' LIMIT ?'
   ).all(String(user || ''), cap);
   if (!rows.length) return '';
   const groups = [];
@@ -116,7 +137,7 @@ function searchFragments(db, user, query, count) {
   if (!toks.length) return '';
   const lim = Math.max(1, Math.min(30, Number(count) || 10));
   const rows = db.prepare(
-    'SELECT session_id, day, text FROM memory_fragments WHERE user = ? ORDER BY created_at DESC'
+    'SELECT ' + FRAG_COLS + FRAG_FROM + ' WHERE f.user = ? ORDER BY COALESCE(f.last_active_at, f.created_at) DESC'
   ).all(String(user || ''));
   const hits = [];
   rows.forEach((r, i) => {
@@ -128,7 +149,7 @@ function searchFragments(db, user, query, count) {
   if (!hits.length) return '';
   hits.sort((a, b) => b.score - a.score || a.i - b.i);
   const shown = hits.slice(0, lim);
-  // 条目自带 day（renderFrag 标题），行内只留相关度不重复日期
+  // 条目自带 date（renderFrag 标题），行内只留相关度不重复日期
   const parts = ['【日记检索】「' + String(query).trim() + '」命中 ' + hits.length + ' 条，按相关度列前 ' + shown.length + ' 条：'];
   for (const h of shown) parts.push('--- 匹配 ' + Math.round(h.score * 100) + '% ---\n' + renderFrag(h.r));
   return parts.join('\n\n');
@@ -142,7 +163,7 @@ function daysIndex(db, user) {
 }
 function dayEntry(db, user, date) {
   return db.prepare(
-    'SELECT session_id, day, text FROM memory_fragments WHERE user = ? AND day = ? ORDER BY created_at'
+    'SELECT ' + FRAG_COLS + FRAG_FROM + ' WHERE f.user = ? AND f.day = ? ORDER BY COALESCE(f.last_active_at, f.created_at)'
   ).all(String(user || ''), String(date || '').trim()).map(renderFrag).join('\n\n');
 }
 
