@@ -1,7 +1,7 @@
 // 极简 MCP 客户端（Streamable HTTP：JSON-RPC over HTTP，无状态，响应可能是 SSE 帧包裹的 JSON）。
 // MCP 服务在 config.yml 的 mcp_servers 中配置（可多个）：{name?, url, headers?, enable?, timeout_ms?, tools_allow?, tools_deny?}。
 // 启动时 init() 对每个服务调 tools/list 发现工具（enable: false 的服务跳过加载；配了 tools_allow/tools_deny
-// 时按名单过滤），转成 OpenAI function 格式，
+// 时按名单过滤），发现失败的服务按 2s / 20s / 1min 再试 3 次（容器并行启动/重启后的乱序兜底），转成 OpenAI function 格式，
 // 追加在内置工具（definitions.json）之后一起随 system prompt 发给模型；
 // 工具调用经 tools/call 转发给对应服务。
 // 与内置工具严格分离：本模块不碰内置定义；MCP 工具默认沿用原始名，
@@ -108,8 +108,98 @@ async function rpc(server, method, params, timeoutMs, extraHeaders) {
   }
 }
 
-// 发现所有 MCP 服务的工具。单个服务失败只警告，不影响其他服务与内置工具。
+// 启动发现失败后的重试阶梯（毫秒）：2s / 20s / 1min，共 3 次。
+// 动机：compose 并行拉起容器、宿主机重启后容器顺序也不保证，而工具发现只在启动时跑一次；
+// 不重试的话该服务会在这个进程的整个生命周期里缺席，只能重启 core 才能恢复。
+const DISCOVERY_RETRY_DELAYS_MS = [2000, 20000, 60000];
+
+// 发现单个服务的工具并并入工具表：成功返回 true，失败返回 false（不抛）。
 // 对要求会话的服务，先发 initialize 拿到 Mcp-Session-Id，再发 notifications/initialized + tools/list。
+async function loadServer(s) {
+  // 清理上次会话 id（重启后服务端会拒绝旧 id；不清理会一直 400）
+  s.sessionId = null;
+  try {
+    // 先 initialize：兼容要求会话的服务。strict 模式下服务端会返回 session id；
+    // 不要求的服务也会正常响应（只是响应头里没有 mcp-session-id）。
+    try {
+      await rpc(s, 'initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'agent', version: '1.0.0' },
+      }, 15000);
+      // 按 MCP 规范：initialize 成功后发 notifications/initialized 通知（不需要 id，不期待响应体）
+      try { await rpc(s, 'notifications/initialized', {}, 5000); } catch (_) { /* 通知失败不阻断 */ }
+    } catch (e) {
+      // 某些老服务（无 initialize）会报 Method not found；不阻断，走原 tools/list 路径
+      if (!/Method not found/i.test(String(e && e.message || e))) throw e;
+    }
+    const result = await rpc(s, 'tools/list', {}, 15000);
+    const all = (result && result.tools) || [];
+    // 工具名单过滤（发生在重命名之前，按服务端的【原始工具名】匹配）：
+    // allow 是白名单（配了就只保留名单内），deny 在其后叠加生效（deny 优先）。
+    // 动机：单服务动辄二三十个工具全塞进每次模型请求（如浏览器类），只放行主循环用得上的。
+    let tools = all;
+    if (Array.isArray(s.tools_allow)) tools = tools.filter(t => s.tools_allow.includes(t && t.name));
+    if (Array.isArray(s.tools_deny)) tools = tools.filter(t => !s.tools_deny.includes(t && t.name));
+    for (const t of tools) {
+      if (!t || !t.name) continue;
+      let name = t.name;
+      if (builtinNames.has(name) || toolIndex.has(name)) name = s.name + '__' + name;
+      toolIndex.set(name, { server: s, tool: t.name });
+      toolDefs.push({
+        type: 'function',
+        function: {
+          name,
+          description: t.description || t.title || '',
+          parameters: t.inputSchema || t.input_schema || { type: 'object', properties: {} },
+        },
+      });
+    }
+    let msg = s.name + ': 发现 ' + tools.length + ' 个工具' + (s.sessionId ? ' (session)' : '');
+    if (tools.length !== all.length) msg += '（服务端共 ' + all.length + ' 个，已按 tools_allow/tools_deny 过滤）';
+    log.info('mcp', msg);
+    // 配了名单却一个都没过滤中，十有八九是名单里的名字跟 tools/list 返回不一致；
+    // 不 warn 的话排查时只能对着「发现 0 个工具」干瞪眼。
+    if (all.length && !tools.length && (s.tools_allow || s.tools_deny)) {
+      log.warn('mcp', s.name + ': 名单过滤后剩 0 个工具，请核对 tools_allow/tools_deny 与 ' +
+        '服务端实际工具名（如 ' + all.slice(0, 3).map(t => t.name).join(', ') + ' …）');
+    }
+    return true;
+  } catch (err) {
+    log.warn('mcp', s.name + ' 工具发现失败（' + (err && err.message || err) + '）');
+    return false;
+  }
+}
+
+// 对启动时发现失败的服务按阶梯重试；成功后工具立即并入工具表，模型的下一轮请求即可见。
+function retryFailed(failed) {
+  let pending = failed.slice();
+  const attempt = (i) => {
+    const timer = setTimeout(async () => {
+      if (!pending.length) return;
+      log.info('mcp', '重试工具发现 第 ' + (i + 1) + '/' + DISCOVERY_RETRY_DELAYS_MS.length + ' 次: ' +
+        pending.map(s => s.name).join(', '));
+      const still = [];
+      for (const s of pending) {
+        if (!(await loadServer(s))) still.push(s);
+      }
+      pending = still;
+      if (!pending.length) {
+        log.info('mcp', '重试成功：失败服务的工具已并入');
+      } else if (i + 1 < DISCOVERY_RETRY_DELAYS_MS.length) {
+        attempt(i + 1);
+      } else {
+        log.warn('mcp', '重试结束仍不可用: ' + pending.map(s => s.name).join(', ') +
+          '（服务恢复后需重启 core 才能加载其工具）');
+      }
+    }, DISCOVERY_RETRY_DELAYS_MS[i]);
+    // 不因待重试的定时器拖住进程退出（测试、一次性脚本里尤其明显）
+    if (timer.unref) timer.unref();
+  };
+  attempt(0);
+}
+
+// 发现所有 MCP 服务的工具。单个服务失败只警告，不影响其他服务与内置工具，并进入重试阶梯。
 async function init(cfg) {
   toolDefs = [];
   toolIndex.clear();
@@ -121,64 +211,16 @@ async function init(cfg) {
   } catch (_) { /* 内置定义读不到就不做重名保护 */ }
 
   const servers = (cfg && cfg.mcp_servers) || [];
+  const failed = [];
   for (const s of servers) {
     // enable: false 时启动不加载该服务（不建工具表；配置保留，改回 true 重启后恢复）
     if (s.enable === false) {
       log.info('mcp', s.name + ': enable=false，跳过工具加载');
       continue;
     }
-    // 清理上次会话 id（重启后服务端会拒绝旧 id；不清理会一直 400）
-    s.sessionId = null;
-    try {
-      // 先 initialize：兼容要求会话的服务。strict 模式下服务端会返回 session id；
-      // 不要求的服务也会正常响应（只是响应头里没有 mcp-session-id）。
-      try {
-        await rpc(s, 'initialize', {
-          protocolVersion: '2024-11-05',
-          capabilities: {},
-          clientInfo: { name: 'agent', version: '1.0.0' },
-        }, 15000);
-        // 按 MCP 规范：initialize 成功后发 notifications/initialized 通知（不需要 id，不期待响应体）
-        try { await rpc(s, 'notifications/initialized', {}, 5000); } catch (_) { /* 通知失败不阻断 */ }
-      } catch (e) {
-        // 某些老服务（无 initialize）会报 Method not found；不阻断，走原 tools/list 路径
-        if (!/Method not found/i.test(String(e && e.message || e))) throw e;
-      }
-      const result = await rpc(s, 'tools/list', {}, 15000);
-      const all = (result && result.tools) || [];
-      // 工具名单过滤（发生在重命名之前，按服务端的【原始工具名】匹配）：
-      // allow 是白名单（配了就只保留名单内），deny 在其后叠加生效（deny 优先）。
-      // 动机：单服务动辄二三十个工具全塞进每次模型请求（如浏览器类），只放行主循环用得上的。
-      let tools = all;
-      if (Array.isArray(s.tools_allow)) tools = tools.filter(t => s.tools_allow.includes(t && t.name));
-      if (Array.isArray(s.tools_deny)) tools = tools.filter(t => !s.tools_deny.includes(t && t.name));
-      for (const t of tools) {
-        if (!t || !t.name) continue;
-        let name = t.name;
-        if (builtinNames.has(name) || toolIndex.has(name)) name = s.name + '__' + name;
-        toolIndex.set(name, { server: s, tool: t.name });
-        toolDefs.push({
-          type: 'function',
-          function: {
-            name,
-            description: t.description || t.title || '',
-            parameters: t.inputSchema || t.input_schema || { type: 'object', properties: {} },
-          },
-        });
-      }
-      let msg = s.name + ': 发现 ' + tools.length + ' 个工具' + (s.sessionId ? ' (session)' : '');
-      if (tools.length !== all.length) msg += '（服务端共 ' + all.length + ' 个，已按 tools_allow/tools_deny 过滤）';
-      log.info('mcp', msg);
-      // 配了名单却一个都没过滤中，十有八九是名单里的名字跟 tools/list 返回不一致；
-      // 不 warn 的话排查时只能对着「发现 0 个工具」干瞪眼。
-      if (all.length && !tools.length && (s.tools_allow || s.tools_deny)) {
-        log.warn('mcp', s.name + ': 名单过滤后剩 0 个工具，请核对 tools_allow/tools_deny 与 ' +
-          '服务端实际工具名（如 ' + all.slice(0, 3).map(t => t.name).join(', ') + ' …）');
-      }
-    } catch (err) {
-      log.warn('mcp', s.name + ' 工具发现失败（本轮运行该服务不可用）: ' + (err && err.message || err));
-    }
+    if (!(await loadServer(s))) failed.push(s);
   }
+  if (failed.length) retryFailed(failed);
 }
 
 // 随请求发送的 MCP 工具定义（追加在内置工具之后）。

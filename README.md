@@ -108,6 +108,8 @@ mcp_servers:
 
 接入栈外的 MCP 服务：在设置页添加 `url` / `headers`，或在 `config.yml` 的 `mcp_servers` 追加一项。服务不可达时 core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。
 
+工具发现只在启动时做一次，因此发现失败后会自动按 **2s / 20s / 1min 重试 3 次**（覆盖 compose 并行拉起与宿主机重启后的容器乱序）；成功后工具在下一轮请求即可用，三次都失败则需重启 core。三个 MCP 服务都配了 `/health` 健康检查，`docker ps` 可直接看状态。
+
 ---
 
 ## 使用
@@ -389,6 +391,7 @@ curl -s http://127.0.0.1:8090/api/health
 | 技能依赖缺失 | 重新 `docker compose up -d --build agent-executor`；或检查 `skills/deps` |
 | 微信设置页显示未连接 | wxbot 未启动，或 `WXBOT_TOKEN` 两侧不一致 |
 | 图生视频拉不到参考图 | `public_link.base_url` 未配置，或公网不可达 |
+| 启动日志出现 `xxx 工具发现失败` | 当时服务未就绪，core 会按 2s/20s/1min 重试 3 次；仍失败则重启 `agent-core` |
 
 ---
 

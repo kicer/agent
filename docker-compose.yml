@@ -152,11 +152,22 @@ services:
   # 同栈 MCP 服务（./mcp/）：三个 Model Context Protocol 适配器，由 core 按容器名调用。
   # 全部不占宿主机端口、无服务端鉴权，**永远不要**把 ports 映射出去（会被白嫖额度）。
   # 工具说明、header 覆盖项与 curl 调试见 mcp/README.md 及各子目录 README。
+  #
+  # 刻意不写 depends_on / 不等 healthy：MCP 是可选能力，core 不该因它们缺席而拒绝启动
+  # （构建失败、单个服务被删都不影响 Web 主流程）。启动瞬间的竞态由 core 侧的工具发现重试
+  # 兜底（2s / 20s / 1min × 3），healthcheck 只用于 docker ps 判态。
   # ----------------------------------------------------------------
   mcp_web_search:
     build: ./mcp/web_search
     container_name: mcp_web_search
     restart: unless-stopped
+    # 供 core 的启动顺序参考与 docker ps 判态（core 侧的发现失败重试不依赖它）
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     # 调试用（默认关）：
     # ports:
     #   - "${WEB_SEARCH_PORT:-8081}:3000"
@@ -167,6 +178,12 @@ services:
     build: ./mcp/image_task
     container_name: mcp_image_task
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     # 调试用（默认关）：
     # ports:
     #   - "${IMAGE_TASK_PORT:-8082}:3000"
@@ -177,6 +194,12 @@ services:
     build: ./mcp/video_task
     container_name: mcp_video_task
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     # 调试用（默认关；这里映的是 MCP 端口，会暴露 /mcp，仅本机短时调试用）：
     # ports:
     #   - "${VIDEO_TASK_PORT:-8083}:3000"

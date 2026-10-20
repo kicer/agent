@@ -33,7 +33,7 @@ mcp_servers:
     url: "http://mcp_video_task:3000/mcp"
 ```
 
-服务没起来时，core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。
+服务没起来时，core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。工具发现只在启动时做一次，失败后会自动按 2s / 20s / 1min 重试 3 次；三次都失败则需重启 core。三个服务都配了 `/health` 健康检查，`docker ps` 可直接看状态。
 
 > 从旧的「agent + mcp 双仓库」部署升级：先在旧 mcp 仓库目录 `docker compose down`（只需一次，否则同名容器与网络会冲突），再 `up` 本栈。
 
