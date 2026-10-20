@@ -29,7 +29,6 @@ log_level: "info"                                  # debug < info < warn < error
 
 # executor（命令执行）与 wxbot（微信接入）均**不是本文件的配置项**，接线全走根 compose 注入的 env（见 .env.example）：
 #   EXECUTOR_URL / EXECUTOR_TOKEN；WXBOT_URL（默认 http://wxbot:8093，置空=微信入口静默关闭）/ WXBOT_TOKEN（init.sh 生成，两侧同值）。
-# 详见 docs/ARCHITECTURE.md §5.13。
 
 terminal:
   default_timeout_ms: 30000                        # 命令默认超时（ms）

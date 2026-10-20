@@ -1,4 +1,4 @@
-// 消息与交互 API（docs/ARCHITECTURE.md §5.15）：发消息 / SSE 流 / 开始执行 / 终止
+// 消息与交互 API：发消息 / SSE 流 / 开始执行 / 终止
 const express = require('express');
 const engine = require('../engine');
 const log = require('../log');

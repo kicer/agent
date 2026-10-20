@@ -1,4 +1,4 @@
-// 会话管理 API（docs/ARCHITECTURE.md §5.15）
+// 会话管理 API
 const express = require('express');
 const fs = require('fs');
 const path = require('path');

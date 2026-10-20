@@ -1,4 +1,4 @@
-// 微信接入桥接（core 侧大脑）。信任与分工模型（设计讨论见 docs/ARCHITECTURE.md §5.13）：
+// 微信接入桥接（core 侧大脑）。信任与分工模型：
 //   - wxbot（独立容器，只挂 agent-mcp-net）= 纯微信「调制解调器」：iLink SDK 多实例、收信转发、外发投递；
 //     对 core 的一切认知只有共享服务 token，不持有任何用户凭据。
 //   - core = 身份与调度的唯一权威：wechat_bindings 表维护 (core 用户 ↔ binding ↔ 微信 bot 账号)；

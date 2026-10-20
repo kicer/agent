@@ -1,4 +1,4 @@
-// SQLite 数据层。表结构见 docs/ARCHITECTURE.md §4.1；本模块同时提供常用查询。
+// SQLite 数据层：建表与常用查询。
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');

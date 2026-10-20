@@ -52,30 +52,22 @@ PUBLIC_IP=1.2.3.4 \
 ./scripts/init.sh
 ```
 
-三个模型 Key 都可选，填几个启用几个。脚本会生成：
+三个模型 Key 都可选，填几个启用几个。`PUBLIC_IP` 也可选：**不配置时会自动探测公网 IP**（探测失败则 `public_link` 为空，外部服务取图功能不可用）。
+
+脚本会生成：
 
 - `.env`：`EXECUTOR_TOKEN`、`WXBOT_TOKEN`、`AGENT_PORT` 等部署变量。
 - `config.yml`：模型平台、登录账号、MCP 服务、公网前缀。
 
-`ZHIPU_KEY` 可选，用于 `image_task` / `video_task` 两个 MCP 服务；不填则它们以 `enable: false` 写入配置。
+`image_task` / `video_task` 两个 MCP 服务复用 `BIGMODEL_KEY`（智谱与 BigModel 是同一个 key）；未配置 `BIGMODEL_KEY` 时它们以 `enable: false` 写入配置。
 
-`AUTH_USER` / `AUTH_PASSWORD` 不传时默认是 `admin` / `admin`，首次部署务必改掉。`PUBLIC_IP` 不传会尝试自动探测；探测失败则 `public_link` 为空，外部服务取图功能不可用。
+`AUTH_USER` / `AUTH_PASSWORD` 不传时默认是 `admin` / `admin`，首次部署务必改掉。
 
 `.env` 里的密钥会复用，重新执行不会让登录态失效；旧的 `config.yml` 会先备份为 `config.yml.bak.<时间戳>`。
 
 注意：`config.yml` 每次都会按本次环境变量重新生成，平台 Key 不保存在 `.env` 里。已经部署过的实例请用设置页改配置，或带上原有变量重跑；只想刷新密钥时用 `./scripts/init.sh --env-only`。
 
-### 2. 创建外部网络
-
-根 `docker-compose.yml` 把 `my-app-network` 声明为 external，首次部署需要先创建：
-
-```bash
-docker network inspect my-app-network >/dev/null 2>&1 || docker network create my-app-network
-```
-
-同栈的 `agent-mcp-net` 由本仓库的 compose 创建，不需要手动建。
-
-### 3. 启动
+### 2. 启动
 
 ```bash
 docker compose up -d --build
@@ -86,7 +78,7 @@ docker compose logs -f agent-core
 
 首次启动还会运行一次性的 `agent-executor-init`，把技能依赖安装到 `./skills/deps`，随后自动退出，属正常现象。
 
-### 4. 访问
+### 3. 访问
 
 浏览器打开：
 
@@ -98,7 +90,7 @@ http://<服务器 IP>:<AGENT_PORT>
 
 对外只需要放行这一个端口。`agent-executor`、`wxbot` 和 MCP 服务都只在 Docker 内网，不映射到宿主机。
 
-### 5. 使用外部 MCP 服务（可选）
+### 4. 使用外部 MCP 服务（可选）
 
 `init.sh` 默认写入同栈 MCP 服务：
 
@@ -106,13 +98,11 @@ http://<服务器 IP>:<AGENT_PORT>
 mcp_servers:
   - name: web_search
     url: "http://mcp_web_search:3000/"
-  - name: officecli
-    url: "http://mcp_officecli:3000/"
 ```
 
 这些服务未启动时，core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会出现。需要时先启动 MCP 栈；不需要就在设置页删除或设为 `enable: false`。
 
-> 全新机器上两个网络有先后顺序：先启动本仓库（创建 `agent-mcp-net`），再启动 MCP 仓库。MCP 侧声明该网络为 external。
+> 全新机器上启动有先后顺序：先启动本仓库（创建 `agent-mcp-net`），再启动 MCP 仓库。MCP 侧声明该网络为 external。
 
 ---
 
@@ -398,14 +388,13 @@ agent/
 ├── skills/               技能目录
 ├── tasks/                会话工作目录（运行时生成）
 ├── data/                 SQLite 与调试产物（运行时生成）
-├── docs/                 架构与专题文档
+├── docs/                 专题文档
 ├── docker-compose.yml
 └── scripts/init.sh
 ```
 
 进一步阅读：
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：内部架构、数据模型、关键流程、修改约束。
 - [docs/OFFICE.md](docs/OFFICE.md)：Office 文档技能与预览链路。
 - [docs/tool-design.md](docs/tool-design.md)：工具接口设计规范。
 
@@ -416,5 +405,3 @@ cd app
 npm install
 node server/server.js
 ```
-
-测试与调试细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 第 9 节。

@@ -10,9 +10,11 @@
 #
 # 输入（都可选）：
 #   BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY  模型平台 key，填几个启用几个（0~3 个）
-#   ZHIPU_KEY                               image_task / video_task 的智谱 key（空 = 这两个服务 enable: false）
+#                                           image_task / video_task 复用 BIGMODEL_KEY（智谱即 BigModel）；
+#                                           未配 BIGMODEL_KEY 时这两个服务写为 enable: false
 #   AUTH_USER / AUTH_PASSWORD               登录账号（默认 admin / admin，请自行改掉）
-#   PUBLIC_IP / AGENT_PORT                  对外地址与端口，写进 public_link.base_url（PUBLIC_IP 空则尝试自动探测）
+#   PUBLIC_IP / AGENT_PORT                  对外地址与端口，写进 public_link.base_url；
+#                                           PUBLIC_IP 不配置则自动探测公网 IP
 #   AUTH_SECRET / EXECUTOR_TOKEN / WXBOT_TOKEN  一般不用给：不给就自动生成并复用（见下）
 #
 # 微信接入（wxbot 已合入根 compose，作为栈内服务）：本脚本只负责生成/复用根 .env 的 WXBOT_TOKEN；
@@ -39,7 +41,6 @@ ENV_FILE="$REPO_DIR/.env"
 BIGMODEL_KEY="${BIGMODEL_KEY:-}"
 DEEPSEEK_KEY="${DEEPSEEK_KEY:-}"
 QWEN_KEY="${QWEN_KEY:-}"
-ZHIPU_KEY="${ZHIPU_KEY:-}"
 AUTH_USER="${AUTH_USER:-admin}"
 AUTH_PASSWORD="${AUTH_PASSWORD:-admin}"
 PUBLIC_IP="${PUBLIC_IP:-}"
@@ -202,29 +203,27 @@ auth:
 mcp_servers:
   - name: web_search
     url: "http://mcp_web_search:3000/"
-  - name: officecli
-    url: "http://mcp_officecli:3000/"    # Office 文档创建/修改（无需 key）；预览走 core 的 /preview 反代
 EOF
 
-    if [ -n "$ZHIPU_KEY" ]; then
+    if [ -n "$BIGMODEL_KEY" ]; then
         cat <<EOF
   - name: image_task
     url: "http://mcp_image_task:3000/mcp"
     headers:
-      Authorization: "Bearer $ZHIPU_KEY"
+      Authorization: "Bearer $BIGMODEL_KEY"
   - name: video_task
     url: "http://mcp_video_task:3000/mcp"
     headers:
-      Authorization: "Bearer $ZHIPU_KEY"
+      Authorization: "Bearer $BIGMODEL_KEY"
 EOF
     else
         cat <<'EOF'
   - name: image_task
     url: "http://mcp_image_task:3000/mcp"
-    enable: false          # 未配 ZHIPU_KEY：只注册不加载，工具不发给模型
+    enable: false          # 未配 BIGMODEL_KEY：只注册不加载，工具不发给模型
   - name: video_task
     url: "http://mcp_video_task:3000/mcp"
-    enable: false          # 未配 ZHIPU_KEY：只注册不加载，工具不发给模型
+    enable: false          # 未配 BIGMODEL_KEY：只注册不加载，工具不发给模型
 EOF
     fi
 
@@ -236,7 +235,7 @@ public_link:
 EOF
 } > "$CONFIG_YML"
 
-info "平台: ${enabled_plats[*]:-无}；智谱 MCP: $([ -n "$ZHIPU_KEY" ] && echo 启用 || echo 未配置（enable: false）)"
+info "平台: ${enabled_plats[*]:-无}；图像/视频 MCP: $([ -n "$BIGMODEL_KEY" ] && echo 启用 || echo 未配置（enable: false）)"
 
 # ============================================================
 # 3. 汇总
@@ -247,7 +246,7 @@ echo " 访问地址 : http://${PUBLIC_IP:-<公网IP>}:${AGENT_PORT}"
 echo " 账号     : $AUTH_USER"
 echo " 密码     : $AUTH_PASSWORD"
 echo " 平台     : ${enabled_plats[*]:-（无）}"
-echo " 智谱 MCP : $([ -n "$ZHIPU_KEY" ] && echo "image_task / video_task 已启用" || echo "未配置（enable: false）")"
+echo " 图像/视频: $([ -n "$BIGMODEL_KEY" ] && echo "image_task / video_task 已启用" || echo "未配置（enable: false）")"
 echo " Office   : officecli 已接入（mcp_officecli:3000；预览走 /preview 反代）"
 echo " 微信接入 : WXBOT_TOKEN 已就位（compose 注入 core 与 wxbot 两侧；wxbot 无需配置文件）"
 echo "---------------------------------------------"

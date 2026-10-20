@@ -1,5 +1,4 @@
 node_modules/
-app/test/tmp/
 app/config.yml
 /config.yml
 .env
