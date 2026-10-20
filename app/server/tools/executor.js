@@ -12,9 +12,9 @@ const Database = require('better-sqlite3'); // db 工具：会话目录下的 da
 const TurndownService = require('turndown'); // fetch 工具：HTML→Markdown 用真解析器（内置 htmlparser2，容错截断/畸形文档）
 const rexec = require('../remote-exec');
 const publicFiles = require('../public-files');
-const scheduler = require('../scheduler'); // 只依赖 log/cron-parser，不成环（engine→executor→scheduler 单向）
+const scheduler = require('../scheduler'); // 只依赖 log/cron-parser/time.js，不成环（engine→executor→scheduler 单向）
 const profile = require('../user-profile'); // profile 工具的数据面（仅 llm/log 依赖，无环）
-const memory = require('../memory'); // recall 工具的数据面（日记翻阅；零依赖模块，无环）
+const memory = require('../memory'); // recall 工具的数据面（日记翻阅；仅依赖 time.js，无环）
 // lab 的 help 伪工具要读全量定义：与 engine 同路径 require → node 缓存同一对象，单一事实源。
 const BUILTIN_TOOL_DEFS = require('./definitions.json');
 

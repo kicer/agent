@@ -2,6 +2,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { dayString } = require('./time');
 
 function initDb(dbPath) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -116,7 +117,7 @@ function initDb(dbPath) {
     );
 
     -- 长期记忆（日记，memory.js）：一片碎片一行——会话收口（下班）时落库，(user, session_id) 主键即去重。
-    -- day = 事件日（Asia/Shanghai 与 cron 同时区）：由 last_active_at 派生；人回忆问「哪天干的活」，不是「哪天补记的」。
+    -- day = 事件日（上海时区，time.js 固定，与 cron 同源）：由 last_active_at 派生；人回忆问「哪天干的活」，不是「哪天补记的」。
     -- text = 纯日记正文（- 行列表）；来源会话 id 存在 session_id 列，【id】展示样式只在渲染层拼，存储零冗余。
     -- 故意不建外键：主键是 (user, session_id)，SQLite 要求引用列命中唯一约束，单列 session_id
     -- 建不了 FK；且删会话的连带清理由 engine.deleteSession 显式 memory.dropFragment 承担
@@ -266,7 +267,6 @@ function initDb(dbPath) {
   // 搬完即 drop；解析不出【sid】头的块（DAY_MAX 时代削出的孤儿残句）直接丢弃；
   // 存量碎片的 day 顺手改判为来源会话最后活跃日（事件日语义修正，积压补记自然散布回真实日期）。
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_entries'").get()) {
-    const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' });
     const mf = db.prepare('INSERT OR IGNORE INTO memory_fragments (user, session_id, day, text, created_at) VALUES (?,?,?,?,?)');
     const getUpd = db.prepare('SELECT updated_at FROM sessions WHERE id = ?');
     for (const r of db.prepare('SELECT user, day, content, updated_at FROM memory_entries').all()) {
@@ -276,7 +276,7 @@ function initDb(dbPath) {
         const sidM = /task-[0-9A-Za-z_-]+/.exec(m[1]); // 兼容三代头格式：【标题 · sid】/【sid】
         if (!sidM) continue;
         const srow = getUpd.get(sidM[0]);
-        mf.run(r.user, sidM[0], srow && srow.updated_at ? dayFmt.format(new Date(srow.updated_at)) : r.day, m[2].trim(), r.updated_at || Date.now());
+        mf.run(r.user, sidM[0], srow && srow.updated_at ? dayString(srow.updated_at) : r.day, m[2].trim(), r.updated_at || Date.now());
       }
     }
     db.exec('DROP TABLE memory_entries');
@@ -294,7 +294,6 @@ function initDb(dbPath) {
   try { db.exec('ALTER TABLE memory_fragments ADD COLUMN last_active_at INTEGER'); } catch (_) { /* 已存在 */ }
   const needStamp = db.prepare('SELECT 1 FROM memory_fragments WHERE last_active_at IS NULL LIMIT 1').get();
   if (needStamp) {
-    const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' });
     const lastMsg = db.prepare(
       "SELECT MAX(created_at) AS m FROM messages WHERE session_id = ? AND type IS NULL AND role IN ('user','assistant')"
     );
@@ -304,7 +303,7 @@ function initDb(dbPath) {
       const m = lastMsg.get(f.session_id);
       const s = getUpdated.get(f.session_id);
       const cands = [m && m.m, s && s.updated_at, f.created_at].filter(Boolean).map(Number);
-      const pick = cands.find(ms => dayFmt.format(new Date(ms)) === f.day);
+      const pick = cands.find(ms => dayString(ms) === f.day);
       if (pick) setStamp.run(pick, f.user, f.session_id);
     }
   }

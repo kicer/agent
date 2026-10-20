@@ -11,8 +11,8 @@
 // 顶层反向 require 会成环拿到半成品 exports。
 const { CronExpressionParser } = require('cron-parser'); // 锁定 v5.10.1：API 是 CronExpressionParser.parse（v4 的 parseExpression 已不存在）
 const log = require('./log');
+const { TZ, fmtTime, fmtIso } = require('./time'); // 业务时区单点；不依赖进程隐式时区
 
-const TZ = 'Asia/Shanghai';            // 与容器 TZ（docker-compose）一致；显式传入，不依赖进程隐式时区
 const TICK_MS = 30000;                 // 轮询周期：相对 1h 最小间隔足够密，无调优需求，不进 config.yml
 const MIN_INTERVAL_MS = 3600000;       // cron 最小间隔 1 小时：防 AI 排出分钟级任务反复烧模型池
 const PROMPT_MAX_LEN = 20000;          // prompt 长度上限，与 routes/sessions.js PATCH 口径一致
@@ -20,20 +20,6 @@ const PROMPT_MAX_LEN = 20000;          // prompt 长度上限，与 routes/sessi
 let eng = null;   // engine 引用（start 注入）
 let notify = null; // 完成通知投递面（server.js 注入 wechat.notifyTask；缺位则跳过通知）
 let timer = null;
-
-function fmtTime(t) {
-  return new Date(t).toLocaleString('zh-CN', { timeZone: TZ, hour12: false });
-}
-
-// ISO 带时区偏移串（schedule 工具回执用）：上海无夏令时，固定 +08:00 安全；
-// formatToParts 逐件拼接，不依赖 ICU 区域格式串形状；h23 保证零点为 00:00:00 而非 24 点。
-function fmtIso(t) {
-  if (!t) return '';
-  const p = {};
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(t));
-  for (const { type, value } of parts) p[type] = value;
-  return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute + ':' + p.second + '+08:00';
-}
 
 // 下次到期时间。一律以当前时刻为基准（而非上次 next_run_at）：
 // 服务器停机跨过若干触发点后重启，算出的自然是「未来最近一次」，天然跳过补跑。

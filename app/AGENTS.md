@@ -52,7 +52,8 @@ AGENT_CONFIG=./config.yml node server/server.js
 | `server/routes/*.js` | HTTP API，按资源分文件 |
 | `server/sse.js` | 按会话分组的 SSE 总线（`addClient`/`emit`/`onInternal`） |
 | `server/auth.js` | HMAC cookie 登录、Basic 兜底、`requireAdmin`、免认证路径 |
-| `server/memory.js` | 长期记忆（日记碎片）读写与检索，零业务依赖 |
+| `server/memory.js` | 长期记忆（日记碎片）读写与检索，仅依赖 `time.js` |
+| `server/time.js` | 业务时区单一入口：`TZ`、`dayString`、`stampString`、`fmtTime`、`fmtIso` |
 | `server/user-profile.js` | 用户画像读写、会话快照冻结 |
 | `server/public-files.js` | `mint_public_link` 的短链签发与解析（进程内 Map） |
 | `server/download-token.js` | 浏览器下载链接的 HMAC 签名（密钥进程内随机） |

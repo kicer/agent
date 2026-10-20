@@ -11,9 +11,9 @@
 // - 注入 =「嘴边的工作记忆」：开场只带最近 inject_max 片（day 优先、同日按 last_active_at 倒序）；更早的没消失——
 //   recall 工具 op=search/days/day 走全表；retain_days > 0 才按 day 硬裁（默认 0 = 不按时间删，
 //   但删会话会连带撕掉它的碎片，见 dropFragment）。
-// 时区与 cron（scheduler.js）对齐 Asia/Shanghai：上海无夏令时，按毫秒日移取 day 字符串安全。
+// 业务时区统一由 time.js 固定为 Asia/Shanghai（与 cron 同源）：上海无夏令时，按毫秒日移取 day 字符串安全。
 
-const TZ = 'Asia/Shanghai';
+const { dayString, stampString } = require('./time');
 const INJECT_CAP = 50; // inject_max 硬帽：防配置手滑把整个日记灌进上下文
 const FRAG_MAX = 600;  // 单碎片正文长度帽
 
@@ -26,19 +26,6 @@ function retainDays(cfg) {
 function injectMax(cfg) {
   const n = Math.floor(Number((cfg && cfg.memory || {}).inject_max) || 0);
   return Math.max(0, Math.min(INJECT_CAP, n));
-}
-
-const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }); // en-CA = ISO 'YYYY-MM-DD'
-const timeFmt = new Intl.DateTimeFormat('en-GB', {
-  timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
-});
-function dayString(ms) { return dayFmt.format(new Date(Number(ms) || Date.now())); }
-// 'YYYY-MM-DD HH:MM:SS'（上海时区）；脏/空值返 ''，由调用方退回只显示 day。
-function stampString(ms) {
-  const n = Number(ms);
-  if (!Number.isFinite(n) || n <= 0) return '';
-  const d = new Date(n);
-  return dayFmt.format(d) + ' ' + timeFmt.format(d);
 }
 
 // 保留窗最旧一天的日串（retain_days=0 → 空串 = 无下界）。
