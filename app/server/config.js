@@ -287,10 +287,10 @@ function parseAndValidate(rawText, configPath) {
   };
 
   // 微信接入（wechat.js）：纯 env 接线（wxbot 为栈内组件，不再是 config.yml 字段；旧文件里的 wxbot: 段直接忽略）。
-  // WXBOT_URL 缺省 http://wxbot:8093（compose 注同名 env，置空 = 微信入口整体静默关闭）；
+  // WXBOT_URL 缺省 http://agent-wxbot:8093（compose 注同名 env，置空 = 微信入口整体静默关闭）；
   // WXBOT_TOKEN 未配 = 关闭（init.sh 生成，core ↔ wxbot 两侧同值）。cfg.wxbot 仍作为运行期访问器供 wechat/routes 读取。
   cfg.wxbot = {
-    url: String(process.env.WXBOT_URL != null ? process.env.WXBOT_URL : 'http://wxbot:8093').trim().replace(/\/+$/, ''),
+    url: String(process.env.WXBOT_URL != null ? process.env.WXBOT_URL : 'http://agent-wxbot:8093').trim().replace(/\/+$/, ''),
     token: String(process.env.WXBOT_TOKEN || '').trim(),
   };
 

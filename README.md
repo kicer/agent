@@ -25,7 +25,7 @@
 | 长期记忆 | 会话收口时生成第一人称工作日记；微信新会话注入最近几条，`recall` 可检索全部 |
 | 用户画像 | 记录称谓、行业、偏好，会话创建时冻结注入，跨会话生效 |
 | 技能 | 目录式技能（`SKILL.md` + `run.py`/`run.sh`），可在设置页管理 |
-| MCP | 启动时发现外部 MCP 服务的工具，与内置工具一起提供给模型 |
+| MCP | 启动时发现 MCP 服务的工具；仓库内自带 `web_search` / `image_task` / `video_task` 三个 |
 | 多用户 | 登录账号、管理员角色、按用户隔离的会话列表与画像 |
 
 ---
@@ -90,19 +90,23 @@ http://<服务器 IP>:<AGENT_PORT>
 
 对外只需要放行这一个端口。`agent-executor`、`wxbot` 和 MCP 服务都只在 Docker 内网，不映射到宿主机。
 
-### 4. 使用外部 MCP 服务（可选）
+### 4. 同栈 MCP 服务
 
-`init.sh` 默认写入同栈 MCP 服务：
+`init.sh` 默认把仓库内 `mcp/` 的三个服务写进 `config.yml`：
 
 ```yaml
 mcp_servers:
   - name: web_search
     url: "http://mcp_web_search:3000/"
+  - name: image_task
+    url: "http://mcp_image_task:3000/mcp"
+  - name: video_task
+    url: "http://mcp_video_task:3000/mcp"
 ```
 
-这些服务未启动时，core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会出现。需要时先启动 MCP 栈；不需要就在设置页删除或设为 `enable: false`。
+`web_search` / `image_task` / `video_task` 与 core 由同一个根 `docker-compose.yml` 启动，没有先后顺序，也不占宿主机端口。工具说明、header 覆盖项与调试方式见 [mcp/README.md](mcp/README.md)。
 
-> 全新机器上启动有先后顺序：先启动本仓库（创建 `agent-mcp-net`），再启动 MCP 仓库。MCP 侧声明该网络为 external。
+接入栈外的 MCP 服务：在设置页添加 `url` / `headers`，或在 `config.yml` 的 `mcp_servers` 追加一项。服务不可达时 core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。
 
 ---
 
@@ -225,6 +229,7 @@ platforms:
 | `VIRTUAL_HOST` | 设置后 `public_link.base_url` 强制取 `https://<第一个域名>` |
 | `PREVIEW_PROXIES` | 覆盖内置预览反代注册表（JSON 数组） |
 | `EXECUTOR_LOG_LEVEL` / `WXBOT_LOG_LEVEL` | 两个附属服务的日志等级 |
+| `WEB_SEARCH_PORT` / `IMAGE_TASK_PORT` / `VIDEO_TASK_PORT` | 仅调试：临时把对应 MCP 服务映射到宿主机端口（默认注释掉） |
 
 `config.yml` 与 `.env` 都含密钥，已在 `.gitignore` 中。不要提交，也不要挂给不需要它的容器。
 
@@ -351,12 +356,21 @@ docker compose up -d --build
 
 数据库与任务目录都在 bind mount 中，升级不丢数据。进程重启时，执行中的回合会被打断；`active` 会话会归位为保持中，用户再发消息即可继续。
 
+> 从旧的「agent + mcp 双仓库」部署升级：旧 mcp 容器占着 `agent-mcp-net` 和同名 `container_name`，需先停旧栈再 `up` 本栈，否则会报 `network agent-mcp-net has active endpoints` 或 `container name ... is already in use`。旧仓库的 `down` 只需执行一次：
+>
+> ```bash
+> cd /root/workspace/tools/mcp && docker compose down
+> cd /root/workspace/tools/agent && docker compose up -d --build
+> ```
+>
+> 微信服务已改名为 `agent-wxbot`（原容器名 `wxbot`）。旧容器不受新 compose 管理，升级后需手动清理，否则两个实例会同时轮询同一个微信号：`docker rm -f wxbot`。
+
 ### 日志与健康检查
 
 ```bash
 docker compose logs -f agent-core
 docker compose logs -f agent-executor
-docker compose logs -f wxbot
+docker compose logs -f agent-wxbot
 curl -s http://127.0.0.1:8090/api/health
 ```
 
@@ -368,7 +382,7 @@ curl -s http://127.0.0.1:8090/api/health
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| 启动时报 `network agent-mcp-net has active endpoints` | 先停 MCP 栈，再停本栈；重新 `up` 会恢复 |
+| 启动时报 `network agent-mcp-net has active endpoints` | 旧的双仓库部署残留：先停旧的 mcp 仓库（`docker compose down`），再 `up` 本栈 |
 | `config.yml` 变成目录 | 启动前文件不存在，Docker 自动建了同名目录；停容器、删目录、放入配置文件 |
 | 没有可用模型 | `platforms` 为空或模型全部禁用；在设置页添加后重启 |
 | 创建会话报「无可用模型」 | 模型池为空，或指定模型所在平台没有 key |
@@ -385,6 +399,7 @@ agent/
 ├── app/                  agent-core：Express + SQLite + 前端静态资源
 ├── executor/             agent-executor：隔离命令执行与 Office 预览网关
 ├── wxbot/                微信 iLink 协议调制解调器
+├── mcp/                  同栈 MCP 服务：web_search / image_task / video_task
 ├── skills/               技能目录
 ├── tasks/                会话工作目录（运行时生成）
 ├── data/                 SQLite 与调试产物（运行时生成）
@@ -395,6 +410,7 @@ agent/
 
 进一步阅读：
 
+- [mcp/README.md](mcp/README.md)：同栈 MCP 服务（搜索 / 生图 / 生视频）。
 - [docs/OFFICE.md](docs/OFFICE.md)：Office 文档技能与预览链路。
 - [docs/tool-design.md](docs/tool-design.md)：工具接口设计规范。
 

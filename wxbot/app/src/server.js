@@ -1,4 +1,4 @@
-// wxbot：Agent 栈的微信「调制解调器」（wxbot 只服务本 agent、不对外暴露，作为根 compose 的 wxbot 服务已并入仓库）。
+// wxbot：Agent 栈的微信「调制解调器」（wxbot 只服务本 agent、不对外暴露，作为根 compose 的 agent-wxbot 服务已并入仓库）。
 //   - 基于 @wechatbot/wechatbot（官方 iLink 协议 Node SDK），同进程多实例：
 //     一个实例 = 一个 core 用户的 bot 账号（扫码登录后仅本人可与 bot 单线对话，协议保证无陌生人入口）。
 //   - 本服务不保存任何业务状态：绑定（core 用户 ↔ 实例）权威在 agent-core 的 wechat_bindings 表；

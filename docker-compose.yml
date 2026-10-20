@@ -22,7 +22,7 @@ services:
       # 未设置则 compose 直接报错，避免静默无鉴权。生成：openssl rand -hex 32
       - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - see .env.example}
       # 微信接入
-      - WXBOT_URL=http://wxbot:8093
+      - WXBOT_URL=http://agent-wxbot:8093
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
     networks:
       - agent-mcp-net
@@ -132,10 +132,10 @@ services:
   # 微信接入：iLink 协议多实例调制解调器（agent 栈的私有组件，与 core 共用 WXBOT_TOKEN 互信）。
   # 仅挂内网 agent-mcp-net、不暴露任何公网端口：扫码二维码在 agent-core 设置页呈现（core 代理其 /api/instances/:id/qr.svg）。
   # 零配置文件：接线全靠下方 env（同 executor 模式）；代码在 ./wxbot/（已并入仓库）。
-  wxbot:
+  agent-wxbot:
     build: ./wxbot/app
-    image: wxbot:latest
-    container_name: wxbot
+    image: agent-wxbot:latest
+    container_name: agent-wxbot
     restart: unless-stopped
     environment:
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
@@ -148,12 +148,47 @@ services:
     networks:
       - agent-mcp-net
 
+  # ----------------------------------------------------------------
+  # 同栈 MCP 服务（./mcp/）：三个 Model Context Protocol 适配器，由 core 按容器名调用。
+  # 全部不占宿主机端口、无服务端鉴权，**永远不要**把 ports 映射出去（会被白嫖额度）。
+  # 工具说明、header 覆盖项与 curl 调试见 mcp/README.md 及各子目录 README。
+  # ----------------------------------------------------------------
+  mcp_web_search:
+    build: ./mcp/web_search
+    container_name: mcp_web_search
+    restart: unless-stopped
+    # 调试用（默认关）：
+    # ports:
+    #   - "${WEB_SEARCH_PORT:-8081}:3000"
+    networks:
+      - agent-mcp-net
+
+  mcp_image_task:
+    build: ./mcp/image_task
+    container_name: mcp_image_task
+    restart: unless-stopped
+    # 调试用（默认关）：
+    # ports:
+    #   - "${IMAGE_TASK_PORT:-8082}:3000"
+    networks:
+      - agent-mcp-net
+
+  mcp_video_task:
+    build: ./mcp/video_task
+    container_name: mcp_video_task
+    restart: unless-stopped
+    # 调试用（默认关；这里映的是 MCP 端口，会暴露 /mcp，仅本机短时调试用）：
+    # ports:
+    #   - "${VIDEO_TASK_PORT:-8083}:3000"
+    networks:
+      - agent-mcp-net
+
 networks:
-  # 全部服务共用一个网络；由本仓库创建（固定名字，避免被加上 compose 项目名前缀），mcp 侧声明为
-  # external 直接加入 —— 所以全新机器上要【先起 agent，再起 mcp】。
+  # 全部服务共用一个网络；由本仓库创建（固定名字，避免被加上 compose 项目名前缀）。
   #   - core 与 executor 靠它按容器名访问 MCP 服务（如 http://mcp_web_search:3000/）
   #   - 外部服务取参考图走的是 core 对外的 GET /p/<id>（见 public_link）：AI 调内置工具
   #     mint_public_link 在 core 进程内现签短链，不需要 executor 反查 core 的额外端口
+  # 保留固定 name 是为了老机器上已有的容器/网络能平滑接上；新机器也可直接改回默认网络名。
   agent-mcp-net:
     name: agent-mcp-net
     driver: bridge

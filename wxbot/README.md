@@ -7,18 +7,18 @@ Agent 栈的微信「调制解调器」：基于官方 iLink 协议的 Node SDK
 
 **本服务不保存业务状态、不对外服务**：绑定关系（core 用户 ↔ bot 账号）的权威在
 agent-core 的 `wechat_bindings` 表；扫码二维码呈现在 agent-core 的 Web 设置页
-（账户 → 微信绑定）。本服务已并入根 `docker-compose.yml`（`wxbot` 服务），目录代码已入 git 库；
+（账户 → 微信绑定）。本服务已并入根 `docker-compose.yml`（`agent-wxbot` 服务），目录代码已入 git 库；
 零配置文件运行，接线全靠 compose 注入的 env（见下）。
 
 ## 架构与数据流
 
 ```
-微信用户 ⇄ [iLink] ⇄ wxbot(本服务, :8093, 仅内网 agent-mcp-net)
+微信用户 ⇄ [iLink] ⇄ agent-wxbot(本服务, :8093, 仅内网 agent-mcp-net)
                         │  收信转发  POST core:/wxhook/inbox {id, from, text}
                         │  状态回调  POST core:/wxhook/hook  {id, event, accountId?}
                         │  接收投递  POST self:/api/deliver  ← core 推最终回复
    agent-core ⇄ 浏览器 ⇄ core:/api/wechat（cookie 鉴权，绑定管理 + QR SVG 代理）
-                        │  实例控制  POST/DELETE wxbot:/api/instances*
+                        │  实例控制  POST/DELETE agent-wxbot:/api/instances*
                         └ 总线监听   assistant 消息 → 分段投递（游标落库不重发）
 ```
 
@@ -51,7 +51,7 @@ agent-core 的 `wechat_bindings` 表；扫码二维码呈现在 agent-core 的 W
 
 ```sh
 ./scripts/init.sh --env-only          # 生成/复用根 .env 的 WXBOT_TOKEN（幂等，不碰 config.yml）
-docker compose up -d --build wxbot    # 首次构建镜像（npm 源可 --build-arg NPM_REGISTRY= 换）
+docker compose up -d --build agent-wxbot    # 首次构建镜像（npm 源可 --build-arg NPM_REGISTRY= 换）
 docker compose up -d agent-core       # core 带 WXBOT_URL/WXBOT_TOKEN 重建（compose 检测到 env 变化自动 recreate）
 ```
 
