@@ -15,7 +15,7 @@ const router = express.Router();
 const STARTED_AT = Date.now();
 // 版本以本文件字面量为准：容器部署只挂载 app/server，镜像里的 package.json 可能是旧的，
 // 读它会一直显示发版时的版本号（之前 2.1.0 改完仍显 2.0.0 即此因）。发版时记得同步这里。
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 // git 提交号单独返回(提交时 post-commit 钩子自动生成),前端只显示简洁版本号
 const VERSION_COMMIT = versionInfo.commit || '';
 
