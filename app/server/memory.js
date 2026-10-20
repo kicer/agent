@@ -142,7 +142,7 @@ function daysIndex(db, user) {
 }
 function dayEntry(db, user, date) {
   return db.prepare(
-    'SELECT session_id, text FROM memory_fragments WHERE user = ? AND day = ? ORDER BY created_at'
+    'SELECT session_id, day, text FROM memory_fragments WHERE user = ? AND day = ? ORDER BY created_at'
   ).all(String(user || ''), String(date || '').trim()).map(renderFrag).join('\n\n');
 }
 
