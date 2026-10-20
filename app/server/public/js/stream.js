@@ -11,6 +11,8 @@
 
   async function send() {
     const ta = $('msg-input');
+    // 生成中发送键已变「停止」：不接受新消息（不做排队发送，停止后再发）
+    if (state.status === 'active') { toast('正在生成中，请先停止'); return; }
     const content = ta.value.trim();
     // 没有文字就不发（避免产生空消息）；上传文件告知行在发送时拼在正文前（见下）。
     if (!content) {
@@ -136,8 +138,9 @@
     es.addEventListener('status', ev => {
       const d = JSON.parse(ev.data);
       state.status = d.status;
+      if (d.model_id) state.modelId = d.model_id;
       renderHeader();
-      updatePhaseBar(d);
+      updateHeaderActions();
       updateScrollBottomBtn(); // 状态切换同步右下角转圈(开始/结束干活)
     });
     es.addEventListener('assistant_delta', ev => {
@@ -238,13 +241,11 @@
                   // 历史保留展示，但摘要之前的旧消息已存档：同步淡出 + 尾部说明，和重进入后的样式一致。
                   archiveDomBeforeSummary();
                   toast('已生成摘要：旧历史已存档，后续对话从摘要开始');
-                  const cpBtn = $('compress-btn');
-                  if (cpBtn) cpBtn.disabled = state.status === 'active';
+                  updateHeaderActions();
                 } else if (d.is_summary && state.pendingSummary && !hasText) {
                   // AI 总结为空/出错，复位状态。用于按钮状态还原。
                   state.pendingSummary = false;
-                  const cpBtn = $('compress-btn');
-                  if (cpBtn) cpBtn.disabled = state.status === 'active';
+                  updateHeaderActions();
                 }
         });
     // 参数流式生成早卡：id+name 就绪即建卡展开，长参数（write_file 大文件）期间不再是死寂 typing
@@ -313,8 +314,7 @@
       if (state.pendingSummary) {
         state.pendingSummary = false;
         toast('压缩回合已结束，未收到摘要，历史未变动');
-        const cpBtn = $('compress-btn');
-        if (cpBtn) cpBtn.disabled = state.status === 'active';
+        updateHeaderActions();
       }
       state.streaming = false;
       state.streamEl = null; // 防御性清理:回合异常结束(如终止)时不留悬空气泡到下一轮

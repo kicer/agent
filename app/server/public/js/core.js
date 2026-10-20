@@ -164,6 +164,7 @@
     pendingModel: '',           // welcome 预选模型（ensureSession 建档时透传 model_id）
     sessionId: null,            // 当前会话
     sessionTitle: '',           // 当前会话标题
+    modelId: '',                // 当前会话绑定的模型 id（顶部动作区展示/切换）
     status: '',                 // 当前会话状态(SSE 更新)
     schedule: null,             // 当前会话定时任务（详情 schedule 字段，null=无）
     sessions: [],               // 抽屉列表缓存
@@ -194,9 +195,8 @@
       state.view = view;
       $('welcome-view').classList.toggle('hidden', view !== 'welcome');
       $('chat-view').classList.toggle('hidden', view !== 'chat');
-      $('new-chat-btn').classList.toggle('hidden', view !== 'chat'); // 新建按钮仅对话状态显示
       renderHeader();
-      updatePhaseBar(); // 状态栏仅对话视图显示
+      updateHeaderActions(); // 顶部动作区可用态随视图切换（定时任务/压缩需要会话）
       updateScrollBottomBtn();
     }
 

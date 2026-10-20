@@ -356,14 +356,15 @@
     state.sessionTitle = (s && s.title) || '';
     state.sessionType = (s && s.assistant_type) || 'secretary'; // 顶部 icon 跟随会话类型
     state.status = (s && s.status) || '';
-    state.schedule = detail.schedule || null; // 定时任务状态条数据（随 updatePhaseBar 一并渲染）
+    state.modelId = (s && s.model_id) || ''; // 顶部动作区展示当前模型
+    state.schedule = detail.schedule || null; // 定时任务数据（顶部动作区副标题）
     state.toolCards = {};
     state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
     state.toolCallMsgIds = {}; // tool_call.id → tool 消息行 id（展开时懒加载用）
     userPaused = false;
     removeTyping();
     renderHeader();
-    updatePhaseBar({ model_id: s && s.model_id });
+    updateHeaderActions();
     const box = $('chat-view');
     box.innerHTML = '';
     appendMessagesDom(detail.messages || [], box).closeArc();

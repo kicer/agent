@@ -237,6 +237,29 @@ router.delete('/:id', wrap((req, res) => {
   res.json(engine.deleteSession(req.params.id, delDir));
 }));
 
+// 手动创建定时任务（顶部动作区「定时任务」→ 本会话还没有任务时的新建弹窗入口）。
+// 与 AI schedule 工具同源（scheduler.createTask）：cron 校验、最小间隔 1h、提示词上限完全一致；
+// brief 取提示词首行（与工具路径「人话描述」同义），作为下班日记碎片的底子。
+router.post('/:id/schedule', wrap((req, res) => {
+  const db = engine.getDb();
+  const body = req.body || {};
+  const s = db.prepare('SELECT id FROM sessions WHERE id = ?').get(req.params.id);
+  if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const prompt = String(body.prompt || '').trim();
+  if (!prompt) throw Object.assign(new Error('提示词不能为空'), { status_code: 400 });
+  const cron = String(body.cron_expr || '').trim();
+  if (!cron) throw Object.assign(new Error('请选择执行频次'), { status_code: 400 });
+  let r;
+  try {
+    r = scheduler.createTask(db, req.params.id, cron, prompt, prompt.split('\n')[0].slice(0, 40), '', '');
+  } catch (e) {
+    // cron 不合法/间隔不足/已有任务：都是调用方输入问题，回 400 让前端 toast
+    throw Object.assign(e, { status_code: 400 });
+  }
+  log.info('scheduler', (req.user || '-') + ' 手动创建定时任务 ' + cron + ' ' + req.params.id);
+  res.json(r);
+}));
+
 // 手动修改定时任务（会话详情 schedule 弹窗入口）：提示词 + 频次（前端预设控件组合出的 cron，兼容自定义表达式）。
 // cron 变化才重算 next_run_at（同样以 now 为基准）；不插通知消息——每次触发前历史会被存档，
 // AI 只看到投递的 prompt 本身，改完下次触发自然生效。

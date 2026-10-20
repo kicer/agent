@@ -55,6 +55,7 @@ input, textarea { font: inherit; color: inherit; border: 0; outline: none; backg
   gap: 8px;
   padding: 10px 12px;
   min-height: 56px;
+  background: var(--drawer-bg);
 }
 .header .icon-btn {
   width: 36px; height: 36px; border-radius: 50%;
@@ -734,7 +735,7 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
   border-radius: 12px;
 }
 /* 定时任务会话标记:左缘紫色短竖条，绝对定位压在 conv-item 左 padding 区，不吃标题宽度；
-   颜色与 schedule-bar 紫色体系呼应，区别于状态色(蓝/绿/黄) */
+   紫色体系与「定时任务」动作项同语义，区别于状态色(蓝/绿/黄) */
 .conv-wrap.scheduled::before {
   content: ""; position: absolute; left: 2px; top: 24%; bottom: 24%;
   width: 3px; border-radius: 2px; background: #7048e8;
@@ -806,50 +807,13 @@ footer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0
 .scroll-bottom-btn .sb-spinner path { stroke: #3964FE; stroke-width: 2.5; stroke-linecap: round; fill: none; }
 @keyframes sb-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
-/* ================= 会话状态栏(phase-bar,搬自 style.css) ================= */
-.phase-bar {
-  flex: none; display: flex; align-items: center; gap: 2px;
-  padding: 6px 12px; background: var(--page); border-bottom: 1px solid var(--border);
-}
-/* 状态栏随会话状态染色:排队=淡蓝、执行中=绿底、保持中=黄底;
-   完成=中性浅灰、终止=淡红底,均与顶部白底标题栏区分 */
-.phase-bar.queued { background: #f1f4ff; border-bottom-color: #dfe4fb; }
-.phase-bar.active { background: #f0f9f2; border-bottom-color: #cde8d3; }
-.phase-bar.held { background: #fffbe8; border-bottom-color: #f5e3b3; }
-.phase-bar.completed { background: #f4f5f8; border-bottom-color: #e3e6ed; }
-.phase-bar.cancelled { background: #fdf3f2; border-bottom-color: #f5d7d3; }
-.status-pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; padding: 3px 10px; border-radius: 10px;
-  background: #eceff5; color: #5c6674;
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.status-pill::before {
-  content: ''; width: 7px; height: 7px; border-radius: 50%;
-  background: currentColor; flex-shrink: 0;
-}
-.status-pill.active { background: #e3f2e6; color: #1c7a2e; }
-.status-pill.active::before { animation: pill-pulse 1.2s ease-in-out infinite; }
-.status-pill.held { background: #fff4dc; color: #8a6400; }
-.status-pill.queued { background: #e9edff; color: var(--active); }
-.status-pill.cancelled { background: #fdecea; color: #b3382c; }
-/* 状态胶囊里的模型名 = 「更换模型」入口（held/cancelled 下可点，与独立「选择模型」同一弹窗，见 sessions.js updatePhaseBar） */
-.status-pill .pill-model { cursor: pointer; border-bottom: 1px dashed currentColor; }
-.status-pill .pill-model:hover { opacity: .7; }
-@keyframes pill-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
 /* 微信绑定内联卡（账户页）：登录码用服务端 SVG 内联渲染（非 <img>，无坏图帧）；未就绪时占位不跳高 */
 .wx-qr { display: flex; justify-content: center; align-items: center; margin: 10px 0 4px; min-height: 236px; }
 .wx-qr svg { width: 220px; height: 220px; background: #fff; padding: 8px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
 .wx-qr-wait { color: var(--gray-light); font-size: 13px; }
 .wx-id { float: right; font-weight: 400; font-size: 11px; color: var(--gray-light); margin-top: 5px; }
-.stop-link {
-  background: none; border: none; cursor: pointer; flex: none;
-  color: #c33; font-size: 12px; padding: 4px 6px;
-}
-.stop-link.muted { color: #8a6400; }
-.stop-link:active { opacity: 0.6; }
-/* 「清空」钮推到状态栏最右 */
-#clear-msg-btn { margin-left: auto; color: #b3382c; }
+
 
 /* ================= 工具调用卡片(样式/交互同步 index 的 .tool-card) ================= */
 .tool-card {
@@ -1198,7 +1162,7 @@ label.icon-btn { cursor: pointer; }
 	.modal .del-dir { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink); margin-bottom: 14px; cursor: pointer; }
 	.modal .del-dir input { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--active); }
 
-	/* 模型选择弹窗(会话页 phase-bar「选择模型」入口) */
+	/* 模型选择弹窗(顶部动作区「切换模型」/欢迎页头像入口) */
 	.msw-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
 	.msw-titles h3 { margin: 0 0 4px 0; font-size: 16px; }
 	.msw-sub { font-size: 13px; color: var(--gray-light); margin: 0; }
@@ -1326,3 +1290,140 @@ body.pv-resizing #pv-pane iframe { pointer-events: none; }
 .ui-card .name { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ui-card .sub { display: block; font-size: 12px; color: var(--gray); }
 .ui-card .go { font-size: 13px; color: var(--active); white-space: nowrap; }
+
+/* ================= 顶部动作区（切换模型 / 定时任务 / 压缩上下文 / 新建会话） =================
+   桌面端平铺 4 个圆形图标（与 header 左侧历史钮同款 .header .icon-btn）；
+   移动端收进右上角「更多」下拉菜单，菜单项与图标共用 data-act，事件统一由 sessions.js 分发。 */
+.header-actions { flex: none; position: relative; display: flex; align-items: center; gap: 2px; }
+.ha-icons { display: flex; align-items: center; gap: 2px; }
+.header-actions .icon-btn:disabled { opacity: .35; cursor: default; }
+/* 「更多」钮：窄屏才出现（.header .icon-btn 已给尺寸/圆形，这里只控制显隐） */
+.header .ha-more { display: none; }
+/* 下拉菜单：锚在动作区右下，轻边框 + 浮层阴影，风格与 .pv-suggest 一致 */
+.ha-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 70;
+  min-width: 202px; max-width: min(78vw, 280px);
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px; background: var(--page); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: 0 12px 32px rgba(15, 17, 21, .16);
+  animation: ha-menu-in .14s ease-out;
+}
+@keyframes ha-menu-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.ha-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px;
+  padding: 0 10px; border-radius: 10px; font-size: 14px; color: var(--ink); text-align: left;
+}
+.ha-item .ic { width: 18px; height: 18px; color: var(--gray); }
+.ha-item:active { background: var(--surface); }
+.ha-item:disabled { opacity: .38; cursor: default; }
+.ha-item-main { flex: 1 1 auto; min-width: 0; white-space: nowrap; }
+/* 副标题（当前模型名 / 定时任务频次）：过长省略号截断，不把菜单撑宽 */
+.ha-item-sub {
+  flex: 0 1 auto; min-width: 0; max-width: 54%;
+  font-size: 12px; color: var(--gray);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@media (hover: hover) and (pointer: fine) {
+  .ha-item:hover { background: var(--surface); }
+  .header-actions .ha-btn:hover { background: var(--surface); }
+}
+@media (max-width: 639px) {
+  .ha-icons { display: none; }
+  /* 「更多」钮：移动端扩到 44px 触控热区（图标尺寸不变） */
+  .header .ha-more { display: flex; width: 44px; height: 44px; }
+}
+/* 宽屏下下拉菜单不参与布局（窗口从窄拖宽时残留的展开态也不会挡住内容） */
+@media (min-width: 640px) {
+  .header .ha-menu { display: none; }
+}
+
+/* ---------- 桌面端（≥640px）：标题左对齐，属性区紧随标题，右侧只留「新建会话」 ----------
+   作用域限定在 #chat-header：设置页也用 .header/.header-center，不能跟着左对齐。 */
+@media (min-width: 640px) {
+  /* margin-left：标题与左侧「历史/侧边栏」钮拉开距离，避免文字贴上按钮 */
+  #chat-header .header-center { flex: 0 1 auto; justify-content: flex-start; text-align: left; margin-left: 10px; }
+  #chat-header .header-title { justify-content: flex-start; }
+  #chat-header .header-meta { display: flex; }
+  #chat-header .header-actions { margin-left: auto; }
+}
+
+/* 会话属性区（默认隐藏；桌面端才展开）：模型名 / 定时任务 / 压缩 */
+.header-meta { display: none; flex: none; align-items: center; gap: 4px; min-width: 0; }
+.hdr-chip {
+  position: relative; display: inline-flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 9px; border-radius: 10px;
+  font-size: 12.5px; color: var(--gray); white-space: nowrap;
+}
+.hdr-chip .ic { width: 14px; height: 14px; }
+.hdr-chip .hdr-label { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hdr-chip:active { opacity: .75; }
+.hdr-chip:disabled { opacity: .38; cursor: default; }
+/* hover/按下态的 opacity<1 会给胶囊自己创建层叠上下文（把气泡内部的 z-index 关在里面）；
+   而 main 里带 opacity 的 .msg-archived 也是层叠上下文且 DOM 在 header 之后，
+   会盖住气泡。这里给交互态整体抬一层，保证气泡始终在消息内容之上。 */
+.hdr-chip:hover, .hdr-chip:focus-visible, .hdr-chip:active { z-index: 10; }
+/* 模型位兼做会话状态指示：浅底 + 同色文字 + 圆点（做法同旧 schedule-bar 的「浅底同色字」，
+   色值取自旧状态胶囊；active 的圆点做呼吸动画，代替已移除的 phase-bar 转圈） */
+.hdr-model {
+  max-width: 200px;
+  padding: 0 13px; /* 带状态底色的胶囊，左右留白比纯文字位稍大，文字不贴边 */
+  background: #eceff5; color: #5c6674;
+}
+.hdr-model::before {
+  content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor;
+}
+.hdr-model .hdr-label { border-bottom: 1px dashed currentColor; }
+.hdr-model[data-status="active"] { background: #e3f2e6; color: #1c7a2e; }
+.hdr-model[data-status="active"]::before { animation: hdr-pulse 1.2s ease-in-out infinite; }
+.hdr-model[data-status="held"] { background: #fff4dc; color: #8a6400; }
+.hdr-model[data-status="cancelled"] { background: #fdecea; color: #b3382c; }
+.hdr-model[data-status="completed"] { background: #f4f5f8; color: #5c6674; }
+@keyframes hdr-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+/* 定时任务：无任务=只留灰色时钟图标（点击新建）；有任务=紫色频次文字（点击编辑，配色同原 schedule-bar） */
+.hdr-sched { max-width: 190px; }
+.hdr-sched:not(.on) { padding: 0 7px; } /* 纯图标时收紧内边距，不显得空 */
+/* 图标尺寸/描边对齐压缩键的圆柱图标（.hdr-compact 也是 19px / 1.6 描边） */
+#header-meta .hdr-sched .ic { width: 19px; height: 19px; stroke-width: 1.7; }
+.hdr-sched.on { background: #f8f5ff; color: #5f3dc4; }
+/* 压缩：沿用原状态栏的蓝色圆柱图标 */
+#header-meta .hdr-compact { color: var(--active); }
+#header-meta .hdr-compact .ic { width: 19px; height: 19px; }
+#header-meta .icon-btn:disabled { opacity: .35; cursor: default; }
+
+/* 桌面图标/文字位的悬停提示：原生 title 有 ~1s 延迟，改用 CSS 气泡（hover / 键盘焦点立即出现） */
+.ha-btn, .hdr-chip { position: relative; }
+@media (hover: hover) and (pointer: fine) {
+  .ha-btn::after, .hdr-chip::after {
+    content: attr(data-tip);
+    position: absolute; top: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%) translateY(-2px);
+    max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+    padding: 5px 9px; border-radius: 8px;
+    background: rgba(15, 17, 21, .9); color: #fff;
+    font-size: 12px; line-height: 1.2; white-space: nowrap;
+    opacity: 0; pointer-events: none; z-index: 80;
+    transition: opacity .12s ease, transform .12s ease;
+  }
+  .ha-btn:hover::after, .ha-btn:focus-visible::after,
+  .hdr-chip:hover::after, .hdr-chip:focus-visible::after {
+    opacity: 1; transform: translateX(-50%) translateY(0);
+  }
+  /* 最右侧「新建会话」气泡改右对齐，避免被 #app 的 overflow:hidden 裁掉 */
+  .ha-icons .ha-btn:last-child::after { left: auto; right: 0; transform: translateY(-2px); }
+  .ha-icons .ha-btn:last-child:hover::after,
+  .ha-icons .ha-btn:last-child:focus-visible::after { transform: translateY(0); }
+  /* 属性文字位的悬停反馈：模型位已有状态底色，只降透明度不改色 */
+  .hdr-model:hover { opacity: .82; }
+  .hdr-sched:hover { background: var(--surface); }
+  .hdr-sched.on:hover { background: #f1ecff; color: #4c2fa8; }
+  #header-meta .hdr-compact:hover { background: var(--surface); }
+  .header-actions .ha-btn:hover { background: var(--surface); }
+  /* 模型位的提示带「状态 + 模型 id」，比另外两个稍长，宽度上限放宽一档 */
+  #header-meta .hdr-model::after { max-width: 300px; }
+}
+
+/* 发送键 = 发送⇄停止：生成中只换图标（白色方块），底色保持 --active 不变，输入区不跳动 */
+.send-btn .stop-sq { display: none; width: 11px; height: 11px; border-radius: 2px; background: #fff; }
+.send-btn[data-state="stop"] > svg { display: none; }
+.send-btn[data-state="stop"] .stop-sq { display: block; }

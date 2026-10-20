@@ -29,7 +29,18 @@
       send();
     }
   });
-  $('send-btn').addEventListener('click', () => send()); // 发送按钮与 Enter 行为一致
+  // 发送键双职：生成中变「停止」（白色方块），点击终止当前回合；否则正常发送。
+  // 400ms 内重复点击忽略：防双击重复 abort（服务端 status 事件回来前按钮仍是停止态）。
+  let stopClickAt = 0;
+  $('send-btn').addEventListener('click', () => {
+    if (state.status === 'active') {
+      if (Date.now() - stopClickAt < 400) return;
+      stopClickAt = Date.now();
+      stopSession();
+      return;
+    }
+    send();
+  });
 
   // 深度思考开关：每次发消息随 body 传给后端，后端会合并该模型的 thinking_params
   $('deep-think-btn').addEventListener('click', () => {

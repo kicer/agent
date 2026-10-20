@@ -48,27 +48,7 @@
         margin: 10px 0 12px; font-size: 11px; color: var(--gray);
       }
       .archived-note::before, .archived-note::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-      /* 状态栏图标按钮（压缩）：仅显示 SVG、去掉文字 padding；保持与文字按钮同高。 */
-      .stop-link.icon-only { padding: 0 8px; line-height: 0; }
-      .stop-link.icon-only .ic { width: 18px; height: 18px; vertical-align: middle; }
-      /* 状态栏「压缩」图标按钮：主操作色（蓝色），与其他 stop-link 区分（终止/选择模型是灰） */
-      .stop-link.icon-only.icon-primary { color: var(--active); }
-      .stop-link.icon-only.icon-primary:hover { color: #2854d6; }
-      /* 推到 phase-bar 最右侧（独立动作，与左侧状态区分；「选择模型」与压缩同列右靠） */
-      .phase-bar .phase-bar-right { margin-left: auto; }
-      /* 定时任务状态条：整条可点，弹详情窗（改频次/提示词、删除；创建走 AI 的 schedule 工具），紫色调区别于状态栏；
-         左侧 3px 竖条与侧边栏定时任务会话的紫色标记同一语义。
-         高度与 phase-bar 对齐：同 6px 上下内边距，sched-text 用与 stop-link 同构的 12px 字 + 4px 上下 padding（天然同 line-box），eye 同 icon-only 钮 */
-      .schedule-bar {
-        flex: none; display: flex; align-items: center; gap: 8px;
-        padding: 6px 12px; font-size: 12px; color: #5f3dc4; cursor: pointer;
-        background: #f8f5ff; border-bottom: 1px solid #e7def9; border-left: 3px solid #7048e8;
-      }
-      .schedule-bar:active { opacity: 0.75; }
-      .schedule-bar .sched-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 0; }
-      /* eye 图标与 phase-bar 右侧 icon-only 钮垂直对齐：同 6px 上下内边距、同 0 8px 水平、同 18px 图标 */
-      .schedule-bar .sched-eye { margin-left: auto; flex: none; padding: 0 8px; line-height: 0; }
-      .schedule-bar .sched-eye .ic { width: 18px; height: 18px; vertical-align: middle; }
+
       /* schedule 弹窗控件（.modal select/input 的 100% 宽会撑满整行，这里收窄成本行内样式） */
       #schedule-modal .sched-row { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; font-size: 14px; color: var(--ink); flex-wrap: wrap; }
       #schedule-modal .sched-row select,
@@ -106,28 +86,58 @@
   <div id="app">
 
     <!-- ================= 顶部导航栏 ================= -->
-    <header class="header">
+    <header class="header" id="chat-header">
       <button class="icon-btn" id="menu-btn" title="历史记录" aria-label="打开历史记录">
         <svg viewBox="0 0 24 24" class="ic sm"><path stroke-width="2" stroke-linecap="round" d="M4 5h16M4 15h10"/></svg>
       </button>
       <div class="header-center" id="header-center"><!-- 未对话状态为空白,JS 注入对话信息 --></div>
-      <button class="icon-btn hidden" id="new-chat-btn" title="新建对话" aria-label="新建对话">
-              <svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </button>
-          </header>
 
-    <!-- ================= 会话状态栏(搬自 index 的 phase-bar;仅在对话中显示) ================= -->
-    <div id="phase-bar" class="phase-bar hidden">
-      <span class="status-pill" id="status-pill">--</span>
-      <button class="stop-link hidden" id="stop-btn" onclick="stopSession()">终止</button>
-      <button class="stop-link hidden phase-bar-right" id="model-switch-btn" onclick="openModelSwitch()">选择模型</button>
-      <button class="stop-link icon-only icon-primary phase-bar-right hidden" id="compress-btn" title="压缩上下文" aria-label="压缩上下文" onclick="summarizeChat()">
-        <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path></svg>
-      </button>
-    </div>
+      <!-- 标题右侧的会话属性区（仅桌面端）：模型名（文字）/ 定时任务（无任务=灰色入口·有任务=紫色频次）/ 压缩。
+           无会话时只留模型占位（选模型），定时与压缩隐藏。 -->
+      <div class="header-meta" id="header-meta">
+        <button class="hdr-chip hdr-model" id="hdr-model" data-act="model" data-tip="切换模型" aria-label="切换模型">
+          <span class="hdr-label" id="hdr-model-text">选择模型</span>
+        </button>
+        <button class="hdr-chip hdr-sched hidden" id="hdr-sched" data-act="schedule" data-tip="定时任务" aria-label="定时任务">
+          <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><polyline points="12 7.5 12 12 15.5 14"></polyline></svg>
+          <span class="hdr-label" id="hdr-sched-text">定时任务</span>
+        </button>
+        <button class="icon-btn ha-btn hdr-compact hidden" id="hdr-compact" data-act="compact" data-tip="压缩上下文" aria-label="压缩上下文">
+          <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path></svg>
+        </button>
+      </div>
 
-    <!-- ================= 定时任务状态栏(有任务才显示;数据随会话详情下发,见 routes/sessions.js GET /:id) ================= -->
-    <div id="schedule-bar" class="schedule-bar hidden" onclick="openScheduleModal()"></div>
+      <!-- 右侧动作区：桌面端只留「新建会话」；移动端整组收进「更多」下拉菜单。
+           桌面属性区与菜单项共用 data-act，事件统一在 sessions.js 分发。 -->
+      <div class="header-actions" id="header-actions">
+        <div class="ha-icons">
+          <button class="icon-btn ha-btn" data-act="new" data-tip="新建会话" aria-label="新建会话">
+            <svg class="ic sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+        </div>
+        <button class="icon-btn ha-more" id="ha-more" title="更多" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false" aria-controls="ha-menu">
+          <svg class="ic sm" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle></svg>
+        </button>
+        <div class="ha-menu hidden" id="ha-menu" role="menu">
+          <button class="ha-item" role="menuitem" data-act="model">
+            <svg class="ic sm" viewBox="0 0 24 24"><line x1="3" y1="7" x2="21" y2="7"></line><circle cx="9" cy="7" r="2.6"></circle><line x1="3" y1="17" x2="21" y2="17"></line><circle cx="15" cy="17" r="2.6"></circle></svg>
+            <span class="ha-item-main">切换模型</span><span class="ha-item-sub hidden" id="ha-model-sub"></span>
+          </button>
+          <button class="ha-item" role="menuitem" data-act="schedule">
+            <svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><polyline points="12 7.5 12 12 15.5 14"></polyline></svg>
+            <span class="ha-item-main">定时任务</span><span class="ha-item-sub hidden" id="ha-sched-sub"></span>
+          </button>
+          <button class="ha-item" role="menuitem" data-act="compact">
+            <svg class="ic sm" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path></svg>
+            <span class="ha-item-main">压缩上下文</span>
+          </button>
+          <button class="ha-item" role="menuitem" data-act="new">
+            <svg class="ic sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span class="ha-item-main">新建会话</span>
+          </button>
+        </div>
+      </div>
+    </header>
 
     <main>
       <!-- ================= 未对话状态:欢迎页 ================= -->
@@ -164,8 +174,10 @@
             <button class="plus-btn" id="attach-btn" title="上传文件" aria-label="上传文件">
               <svg viewBox="0 0 24 24" class="ic sm"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
             </button>
-            <button class="send-btn" id="send-btn" title="发送" aria-label="发送">
+            <!-- 同一按钮两态：发送（↑）/ 停止（白色方块）。data-state 由 JS 切换，尺寸不变避免输入区跳动 -->
+            <button class="send-btn" id="send-btn" data-state="send" title="发送" aria-label="发送">
               <svg viewBox="0 0 24 24" class="ic sm"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+              <span class="stop-sq" aria-hidden="true"></span>
             </button>
           </div>
         </div>
@@ -340,7 +352,7 @@
         <button class="modal-close-btn" onclick="closeScheduleModal()">
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
-        <h3>定时任务</h3>
+        <h3 id="schedule-modal-title">定时任务</h3>
         <div class="sched-row">
           <select id="sched-freq" onchange="schedFreqUi()">
             <option value="daily">每天</option>
@@ -361,8 +373,8 @@
         <div class="sched-meta" id="sched-modal-meta"></div>
         <textarea id="sched-modal-prompt" rows="6" placeholder="每次触发时投递给本会话的提示词"></textarea>
         <div class="btn-row">
-          <button class="ghost-btn danger" onclick="deleteSchedule()">删除</button>
-          <button class="primary-btn" onclick="saveSchedule()">更新</button>
+          <button class="ghost-btn danger" id="sched-del-btn" onclick="deleteSchedule()">删除</button>
+          <button class="primary-btn" id="sched-save-btn" onclick="saveSchedule()">更新</button>
         </div>
       </div>
     </div>
@@ -398,7 +410,7 @@
       </div>
     </div>
 
-    <!-- 已完成/已终止会话:选择模型继续(搬自 index;phase-bar「选择模型」入口) -->
+    <!-- 已完成/已终止会话:选择模型继续(搬自 index;顶部动作区「切换模型」入口) -->
     <div id="bind-model-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeModelSwitch()">
       <div class="modal">
         <div class="msw-header">

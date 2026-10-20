@@ -157,7 +157,8 @@
       if (typeof pvCloseDoc === 'function') pvCloseDoc(); // 同上:收起文档预览右栏,防旧会话内容残留
       state.sessionId = id;
       state.status = '';
-      state.schedule = null; // 防详情返回前残留上一会话的任务状态条
+      state.modelId = '';
+      state.schedule = null; // 防详情返回前残留上一会话的任务状态
       // 先从抽屉列表缓存取会话类型，让顶部 icon 立即正确；详情回来后由 renderDetail 纠正
       const cached = (state.sessions || []).find(x => x.id === id);
       state.sessionType = (cached && cached.assistant_type) || 'secretary';
@@ -199,7 +200,7 @@
     state.pendingModel = '';
     setView('chat');
     renderHeader();
-    updatePhaseBar();
+    updateHeaderActions();
     connectStream();
     return s.id;
   }
@@ -212,6 +213,7 @@
     state.sessionTitle = '';
     state.sessionType = 'secretary';
     state.status = '';
+    state.modelId = '';
     state.schedule = null;
     state.pendingModel = '';
     state.attachments = [];
@@ -247,54 +249,109 @@
     } catch (e) { toast('重命名失败:' + e.message); }
   }
 
-  // ---------- 会话状态栏(搬自 index 的 phase-bar 功能) ----------
-  function updatePhaseBar(d) {
-    const bar = $('phase-bar');
-    if (!bar) return;
-    // 定时任务状态条与会话状态栏同刷新入口（其内部自判视图/有无任务，早退路径也要走到）
-    updateScheduleBar();
-    if (!(state.view === 'chat' && state.sessionId)) { bar.classList.add('hidden'); return; }
-    bar.classList.remove('hidden');
-    const pill = $('status-pill');
-    const stMap = { active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' };
-    const statusText = stMap[state.status] || state.status || '--';
-    // 持有绑定的态都附带当前模型：key 非独占、无租约，绑定跨结版持续可见；
-    // held/cancelled 下模型名即「更换模型」入口（复用选择弹窗），输出中(active)只展示不给点；
-    // completed 收走展示（手动断开/超时长自动收口），再发言仍沿用原绑定
-    const showModel = !!(d && d.model_id && state.status !== 'completed');
-    const switchable = showModel && state.status !== 'active';
-    if (switchable) {
-      pill.innerHTML = esc(statusText) + ' · <span class="pill-model" title="点击更换模型" onclick="openModelSwitch()">' + esc(d.model_id) + '</span>';
-    } else if (showModel) {
-      pill.innerHTML = esc(statusText) + ' · ' + esc(d.model_id);
-    } else {
-      pill.textContent = statusText;
-    }
-    // 状态胶囊配色:活跃中绿(执行中)、保持中黄(已答完、保持模型中)等;状态栏整体同步染色
-    pill.className = 'status-pill ' + (state.status || '');
-    bar.className = 'phase-bar ' + (state.status || '');
-    // 活跃中提供「终止」;保持中改为「断开」(纯状态动作:收起保持态徽标，绑定仍在、再发言继续用原模型)
-    const btn = $('stop-btn');
-    const actionable = state.status === 'active' || state.status === 'held';
-    btn.classList.toggle('hidden', !actionable);
-    btn.textContent = state.status === 'held' ? '断开' : '终止';
-    btn.classList.toggle('muted', state.status === 'held');
-    // 「选择模型」独立按钮：胶囊里的模型名可点时（held/cancelled）不再重复给入口；
-    // completed（无模型名）或事件未带 model_id 时仍靠它继续/换模；active 维持原逻辑隐藏
-        const msBtn = $('model-switch-btn');
-        if (msBtn) msBtn.classList.toggle('hidden', !(state.sessionId && state.status && !switchable && state.status !== 'active'));
-        // 状态栏「压缩」按钮：active 时不允许（避免与正在跑的回合抢上下文）;
-        // 其余状态可点。未发起总结时可点；发起后按钮 disabled 防双击。
-        const cpBtn = $('compress-btn');
-        if (cpBtn) {
-          const allowShow = !!(state.sessionId && state.status && state.status !== 'active');
-          cpBtn.classList.toggle('hidden', !allowShow);
-          // 只有不在请求中时才允许 active 决定 disabled；避免总结流程中被打断时再次被 allowed
-          if (!state.pendingSummary) cpBtn.disabled = state.status === 'active';
-        }
-      }
+  // ---------- 顶部动作区（切换模型 / 定时任务 / 压缩上下文 / 新建会话） ----------
+  // 原 phase-bar 状态栏已移除：运行状态由发送按钮（发送⇄停止）表达，模型名与定时任务信息收进动作区；
+  // 桌面端平铺 4 个图标，移动端（<640px）收进「更多」下拉菜单，两者共用 data-act。
+  function currentModelLabel() {
+    return state.sessionId ? (state.modelId || '') : (state.pendingModel || '');
+  }
 
-  // ---------- 定时任务状态条（整条可点→详情弹窗；创建只走 AI 工具，频次/提示词可在弹窗内改） ----------
+  function updateHeaderActions() {
+    const inChat = state.view === 'chat' && !!state.sessionId;
+    const running = state.status === 'active';
+    // 定时任务需要会话；压缩额外要求不在生成中（回合进行中后端会 409）
+    const compactOk = inChat && !running && !state.pendingSummary;
+    document.querySelectorAll('#header-meta [data-act], #header-actions [data-act]').forEach(el => {
+      const act = el.dataset.act;
+      if (act === 'schedule') el.disabled = !inChat;
+      else if (act === 'compact') el.disabled = !compactOk;
+    });
+    // 当前模型：桌面文字位（仅会话内显示）+ 移动菜单副标题（过长由 CSS 省略号截断）
+    const name = currentModelLabel();
+    const mtext = $('hdr-model-text');
+    if (mtext) mtext.textContent = name || '选择模型';
+    const mchip = $('hdr-model');
+    if (mchip) {
+      // 新建会话页（welcome）不展示模型位，由欢迎页头像入口接管
+      mchip.classList.toggle('hidden', !inChat);
+      // 底色/文字色随会话状态变化（active/held/completed/cancelled），与旧状态胶囊一致
+      mchip.dataset.status = inChat ? (state.status || '') : '';
+      // 状态文字只在 tooltip 里保留——颜色是主信号，悬停给明确语义；顺带展示（可能被截断的）完整模型名
+      const stText = { active: '活跃中', held: '保持中', completed: '已完成', cancelled: '已终止' }[state.status] || '';
+      mchip.dataset.tip = stText ? stText + ' · ' + (name || '切换模型') : (name ? '切换模型 · ' + name : '切换模型');
+    }
+    const msub = $('ha-model-sub');
+    if (msub) { msub.textContent = name; msub.classList.toggle('hidden', !name); }
+    // 定时任务：无任务=灰色「定时任务」（点击新建），有任务=紫色频次（点击编辑）；无会话整块隐藏
+    const hasSched = !!state.schedule;
+    const schip = $('hdr-sched');
+    if (schip) {
+      schip.classList.toggle('hidden', !inChat);
+      schip.classList.toggle('on', hasSched);
+      // 无任务时只留时钟图标（文字整块收起）；有任务才展开频次文字
+      const stext = $('hdr-sched-text');
+      if (stext) {
+        stext.textContent = hasSched ? cronText(state.schedule.cron_expr) : '';
+        stext.classList.toggle('hidden', !hasSched);
+      }
+      schip.dataset.tip = hasSched ? '定时任务 · 点击编辑' : '定时任务 · 点击新建';
+    }
+    // 压缩图标仅会话内有意义
+    const cchip = $('hdr-compact');
+    if (cchip) cchip.classList.toggle('hidden', !inChat);
+    // 移动菜单里的定时任务副标题
+    const ssub = $('ha-sched-sub');
+    if (ssub) {
+      const t = inChat ? (hasSched ? cronText(state.schedule.cron_expr) : '未设置') : '';
+      ssub.textContent = t;
+      ssub.classList.toggle('hidden', !t);
+    }
+    // 发送键在生成中切「停止」：同一按钮换图标，尺寸不变，输入区不跳动
+    const sb = $('send-btn');
+    if (sb) {
+      sb.dataset.state = running ? 'stop' : 'send';
+      sb.title = running ? '停止生成' : '发送';
+      sb.setAttribute('aria-label', running ? '停止生成' : '发送');
+    }
+  }
+
+  function openHeaderMenu() {
+    updateHeaderActions();
+    $('ha-menu').classList.remove('hidden');
+    $('ha-more').setAttribute('aria-expanded', 'true');
+  }
+  function closeHeaderMenu() {
+    const m = $('ha-menu');
+    if (!m || m.classList.contains('hidden')) return;
+    m.classList.add('hidden');
+    const t = $('ha-more');
+    if (t) t.setAttribute('aria-expanded', 'false');
+  }
+  function toggleHeaderMenu() {
+    if ($('ha-menu').classList.contains('hidden')) openHeaderMenu(); else closeHeaderMenu();
+  }
+  function runHeaderAction(act) {
+    closeHeaderMenu();
+    if (act === 'model') openModelSwitch();
+    else if (act === 'schedule') openScheduleModal();
+    else if (act === 'compact') summarizeChat();
+    else if (act === 'new') newChat();
+  }
+  // 桌面属性区（模型/定时任务/压缩）与移动菜单项共用同一批 data-act，事件只在这里绑一次。
+  (function bindHeaderActions() {
+    document.querySelectorAll('#header-meta [data-act], #header-actions [data-act]').forEach(el => {
+      el.addEventListener('click', () => { if (!el.disabled) runHeaderAction(el.dataset.act); });
+    });
+    $('ha-more').addEventListener('click', toggleHeaderMenu);
+    // 点动作区以外关闭菜单（Esc 同）
+    document.addEventListener('click', e => {
+      if ($('ha-menu').classList.contains('hidden')) return;
+      if (!e.target.closest('#header-actions')) closeHeaderMenu();
+    });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeHeaderMenu(); });
+  })();
+
+  // ---------- 定时任务（弹窗改频次/提示词；无任务时同一弹窗即新建） ----------
   const CRON_DOW = ['日', '一', '二', '三', '四', '五', '六'];
   // cron 人类可读化：只覆盖常见形态（每天/每周几几点、每 N 小时），其余原样显示表达式
   function cronText(expr) {
@@ -310,22 +367,6 @@
       if (/^\d$/.test(dow) && hm) return '每周' + CRON_DOW[+dow] + ' ' + hm;
     }
     return String(expr);
-  }
-  function updateScheduleBar() {
-    const bar = $('schedule-bar');
-    if (!bar) return;
-    const sc = state.schedule;
-    if (!(state.view === 'chat' && state.sessionId && sc)) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
-    let last;
-    // running 不精确（AI 跑完到下次 tick 间仍显示），对 UI 够用；无专用轮询，重进会话时刷新
-    if (sc.last_status === 'running') last = '执行中…';
-    else if (sc.last_status === 'ok') last = '上次 ok';
-    else if (sc.last_status === 'error') last = '上次 error' + (sc.last_note ? ': ' + sc.last_note : '');
-    else if (sc.last_status === 'skipped') last = '上次 跳过' + (sc.last_note ? '：' + sc.last_note : '');
-    else last = '下次 ' + fmtTime(sc.next_run_at);
-    bar.innerHTML = '<span class="sched-text">' + esc(cronText(sc.cron_expr)) + ' · ' + esc(last) + '</span>'
-      + '<span class="sched-eye"><svg class="ic" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></span>';
-    bar.classList.remove('hidden');
   }
   // 频次控件显隐：每天=[时分] 每周=[天][时分] 每隔=[N][小时] 自定义=[cron 文本框]
   function schedFreqUi() {
@@ -374,32 +415,60 @@
     if (!(mm >= 0 && mm <= 59)) throw new Error('分钟需为 0-59');
     return mm + ' ' + hh + ' * * ' + (f === 'weekly' ? $('sched-dow').value : '*');
   }
+  // 定时任务弹窗两种形态：edit = 已有任务（改频次/提示词/删除）；create = 本会话还没任务（直接新建）
+  let schedMode = 'edit';
   function openScheduleModal() {
+    if (!(state.view === 'chat' && state.sessionId)) { toast('先打开一个会话，再设置定时任务'); return; }
     const sc = state.schedule;
-    if (!sc || state.view !== 'chat') return;
-    schedFillFromCron(sc.cron_expr);
-    let meta = sc.next_run_at ? '下次执行 ' + fmtTime(sc.next_run_at) : '';
-    if (sc.last_run_at) meta += (meta ? '\n' : '') + '上次执行 ' + fmtTime(sc.last_run_at) + (sc.last_status ? ' · ' + sc.last_status : '');
-    $('sched-modal-meta').textContent = meta;
-    $('sched-modal-prompt').value = sc.prompt || '';
+    schedMode = sc ? 'edit' : 'create';
+    const title = $('schedule-modal-title');
+    const delBtn = $('sched-del-btn');
+    const saveBtn = $('sched-save-btn');
+    if (sc) {
+      schedFillFromCron(sc.cron_expr);
+      let meta = sc.next_run_at ? '下次执行 ' + fmtTime(sc.next_run_at) : '';
+      if (sc.last_run_at) meta += (meta ? '\n' : '') + '上次执行 ' + fmtTime(sc.last_run_at) + (sc.last_status ? ' · ' + sc.last_status : '');
+      $('sched-modal-meta').textContent = meta;
+      $('sched-modal-prompt').value = sc.prompt || '';
+      if (title) title.textContent = '定时任务';
+      if (delBtn) delBtn.classList.remove('hidden');
+      if (saveBtn) saveBtn.textContent = '更新';
+    } else {
+      // 新建：默认每天 09:00，提示词留空
+      $('sched-freq').value = 'daily';
+      $('sched-dow').value = '1';
+      $('sched-hh').value = 9;
+      $('sched-mm').value = 0;
+      schedFreqUi();
+      $('sched-modal-meta').textContent = '本会话还没有定时任务，填好频次与提示词后点「创建」。';
+      $('sched-modal-prompt').value = '';
+      if (title) title.textContent = '新建定时任务';
+      if (delBtn) delBtn.classList.add('hidden');
+      if (saveBtn) saveBtn.textContent = '创建';
+    }
     $('schedule-modal').classList.remove('hidden');
   }
   function closeScheduleModal() { $('schedule-modal').classList.add('hidden'); }
   async function saveSchedule() {
     const id = state.sessionId;
-    if (!id || !state.schedule) return;
+    if (!id) return;
     const prompt = $('sched-modal-prompt').value.trim();
     if (!prompt) { toast('提示词不能为空'); return; }
     let cron;
     try { cron = schedComposeCron(); } catch (e) { toast(e.message); return; }
+    const isCreate = schedMode === 'create' || !state.schedule;
     try {
-      await req('PATCH', '/api/sessions/' + id + '/schedule', { prompt: prompt, cron_expr: cron });
-      toast('定时任务已更新');
+      if (isCreate) {
+        await req('POST', '/api/sessions/' + id + '/schedule', { prompt: prompt, cron_expr: cron });
+      } else {
+        await req('PATCH', '/api/sessions/' + id + '/schedule', { prompt: prompt, cron_expr: cron });
+      }
+      toast(isCreate ? '定时任务已创建' : '定时任务已更新');
       closeScheduleModal();
-      // 频次变了 next_run_at 由后端重算，重拉详情同步状态条（与删除后同一套刷新路径）
+      // 频次变了 next_run_at 由后端重算，重拉详情同步动作区（与删除后同一套刷新路径）
       const detail = await req('GET', '/api/sessions/' + id + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount));
       if (state.sessionId === id) { renderDetail(detail); connectStream(); }
-    } catch (e) { toast('更新失败:' + e.message); }
+    } catch (e) { toast((isCreate ? '创建失败:' : '更新失败:') + e.message); }
   }
   async function deleteSchedule() {
     if (!state.sessionId) return;
@@ -428,6 +497,8 @@
     } catch (e) { toast((held ? '断开失败:' : '终止失败:') + e.message); }
   }
   async function openModelSwitch() {
+    // 生成中后端会拒绝换绑（回合进行中）：直接提示，不弹一个选了也绑不上的窗
+    if (state.status === 'active') { toast('AI 正在输出，请稍后再切换模型'); return; }
     // welcome（无会话）也可开：模型选择记为预选项，ensureSession 建档时兑现。有会话则即点即绑，行为与原逻辑一致。
     const list = $('bind-model-list');
     const sub = $('bind-model-sub');
@@ -519,7 +590,7 @@
     } catch (_) {}
   }
   // ---------- 「压缩」上下文总结 ----------
-    // 用户点 phase-bar「压缩」按钮 → 弹窗选动作（右上角 X 关闭 = 不做任何事）：
+    // 用户点顶部动作区「压缩上下文」→ 弹窗选动作（右上角 X 关闭 = 不做任何事）：
     //   摘要（generate_only）：AI 总结落库后，后端把摘要标 type='summary'、之前的消息标 type='archived'
     //     （UI 保留全部展示，但旧消息不再发给模型）；前端把摘要前旧消息就地淡出存档。
     //   清空：直接走 clearChat()（DELETE 全部聊天记录，从零开始，不可恢复）。
@@ -544,8 +615,7 @@
     async function startSummary() {
       if (!state.sessionId || state.pendingSummary) return;
       state.pendingSummary = true;
-      const btn = $('compress-btn');
-      if (btn) btn.disabled = true;
+      updateHeaderActions(); // 「压缩」项置灰，防重复点击
       try {
         const r = await req('POST', '/api/sessions/' + state.sessionId + '/summarize');
         // 开始压缩后直接把「压缩指令」当成普通用户消息发出来（后端回显 prompt）；
@@ -555,7 +625,7 @@
         toast('已生成摘要中…');
       } catch (e) {
         state.pendingSummary = false;
-        if (btn) btn.disabled = false;
+        updateHeaderActions();
         toast('压缩失败：' + e.message);
       }
     }
@@ -659,7 +729,6 @@
           if (state.sessionId === id) { renderDetail(detail); connectStream(); }
           loadSessionList();
         } catch (e) { toast('清空失败：' + e.message); }
-        const cpBtn = $('compress-btn');
-        if (cpBtn) cpBtn.disabled = state.status === 'active';
+        updateHeaderActions();
       }
 
