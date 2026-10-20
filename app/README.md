@@ -1,60 +1,49 @@
-# Agent 任务台（app）
+# agent-core
 
-按仓库根目录 `README.md` 设计方案实现的自用通用 Agent 系统。
+`agent` 仓库的 core 服务：Express + SQLite + 静态 H5 前端。
 
-## 目录结构
-
-```
-app/
-├── server/
-│   ├── server.js            # 入口：装配配置/DB/总线/路由/静态资源
-│   ├── config.js            # config.yml 加载与校验
-│   ├── db.js                # SQLite（better-sqlite3，WAL）
-│   ├── engine.js            # 会话管理 + 模型池 FIFO 调度 + Agent 主循环
-│   ├── llm.js               # OpenAI 兼容上游流式调用（SSE 解析/工具分片合并）
-│   ├── mcp.js               # MCP 客户端：mcp_servers 工具发现（tools/list）与转发（tools/call）
-│   ├── sse.js               # 按会话分组的 SSE 事件总线
-│   ├── routes/
-│   │   ├── sessions.js      # 会话 CRUD（10.1）
-│   │   ├── messages.js      # 消息/SSE/start/stop（10.2）
-│   │   └── files.js         # 文件上传/列表/下载/删除（10.3）
-│   ├── tools/
-│   │   ├── definitions.json # 内置 16 个工具的 JSON Schema
-│   │   └── executor.js      # 内置工具执行器（任务目录沙箱；未知工具名转 MCP）
-│   ├── templates/profile-default.txt  # System prompt 模板（直接编辑）
-│   └── public/              # H5 前端（Vanilla JS + SSE；无构建，index.html + js/ 六模块按序加载）
-├── test/                    # mock 上游 + 端到端冒烟测试
-├── config.example.yml       # core 专属配置模板（部署时生成/复制为仓库根 config.yml 挂进容器）
-├── Dockerfile / docker-compose.yml
-```
+对外能力、部署与配置见仓库根 [`../README.md`](../README.md)；内部结构、数据模型与修改约束见 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)。
 
 ## 本地运行
 
 ```bash
 cd app
 npm install
-cp config.example.yml config.yml   # platforms 可先留空（启动后在设置页添加）；本地跑再把 workspace_root / data_root 改回 ./data/...
-npm start                            # http://localhost:8090
+cp config.example.yml config.yml
+# 本地调试时把 workspace_root / data_root 改到仓库内可写目录
+AGENT_CONFIG=./config.yml node server/server.js
 ```
+
+默认监听 `8090`。`platforms` 可以留空，启动后到设置页添加模型并重启。
 
 ## 测试
 
 ```bash
-cd app
-npm test            # 启动 mock 上游 + 真实 server 的端到端冒烟测试（25 项断言）
+npm test
 ```
 
-## 提示词与工具 schema
+端到端冒烟测试会启动 mock 模型上游（`:9999`）和真实 server（`:8099`），测试数据隔离在 `test/tmp`。
 
-System prompt 完全静态（所有会话共用，利于上游前缀缓存），在 `server/templates/profile-default.txt` 直接编辑；工具定义在 `server/tools/definitions.json`。改完重启服务。
+> 注意：`test/smoke.js` 仍有旧断言——排队已从运行期移除，且 `GET /api/sessions/:id` 不再直接返回 `role=tool` 行（改为按需加载）。当前会在 `[2] 工具调用` 与 `[5] 排队调度` 失败；修改相关路径时先同步测试，不要把它当作全绿基线。
 
-## 关键行为速查
+其他测试：
 
-- 会话创建即尝试绑定空闲模型；无空闲则进全局队列 FIFO。
-- 每轮 AI 完成（无工具调）或用户终止后释放模型；新消息重新入队。
-- 规划阶段点「开始执行」：追加固定模板消息并切 execution。
-- 终止：置位标志 + kill 进程组 + 中止模型流，不再发新请求。
-- 所有文件路径解析到任务目录内，拒绝越界。
-- MCP 服务在 config.yml 的 `mcp_servers` 配置（可多个，每项 name?/url/headers/enable?/timeout_ms?，enable 默认 true、false 时启动不加载其工具；timeout_ms 为该服务单次工具调用最大等待，默认 60s）；启动时发现其工具，追加在内置工具之后与 system prompt 一起发给模型；服务不可用仅启动日志告警，工具名重名时加「服务名__」前缀。
+```bash
+node test/remote-exec.test.js   # 远端 executor 集成
+node test/trim-smoke.js         # 历史裁剪
+node test/dep-check.js          # 依赖完整性
+```
 
-部署见 `../docs/DEPLOY.md`。
+## 关键文件
+
+| 文件 | 职责 |
+|---|---|
+| `server/server.js` | 装配配置、DB、SSE、路由与启动顺序 |
+| `server/engine.js` | 会话、模型池、Agent 主循环、压缩、标题、日记收口 |
+| `server/llm.js` | 消息组装与上游流式调用 |
+| `server/tools/executor.js` | 内置工具与路径沙箱 |
+| `server/tools/definitions.json` | 内置工具 schema |
+| `server/routes/` | HTTP API |
+| `server/public/` | 前端（无构建，按序加载脚本） |
+
+修改前先读架构文档的「修改时必须遵守的约束」一节。

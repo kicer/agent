@@ -1,4 +1,4 @@
-// 文件管理 API（README 10.3）：上传 / 列表 / 下载 / 删除
+// 文件管理 API（docs/ARCHITECTURE.md §5.15）：上传 / 列表 / 下载 / 删除
 const express = require('express');
 const fs = require('fs');
 const path = require('path');

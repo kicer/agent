@@ -1,883 +1,420 @@
-# 自用通用 Agent 系统——完整设计方案
+# Agent 任务台
 
-## 一、项目概述
+自托管的通用 Agent 系统。浏览器或微信发来任务，服务端调度模型、调用工具，在独立工作目录里生成文件并回传结果。
 
-构建一个运行在自有 Docker 服务器上的**通用任务 Agent**，带 H5 移动端友好的 Web 界面。用户可以创建会话、与 AI 对话讨论需求、上传文件、让 AI 执行任务（生成文件、处理数据、搜索信息、执行脚本等），并可下载结果文件。
+它不是聊天壳子：每个会话对应一个真实的 Linux 工作目录，模型可以读写文件、执行命令、抓网页、操作 SQLite、调用技能和 MCP 服务；命令在隔离容器中运行，文件可以直接下载或生成公网临时链接。
 
-### 核心特性
-
-- 多模型账号并行调度（ds1、ds2、ds3…）
-- 任务目录自动创建，文件隔离
-- 流式输出展示
-- 任务状态开关（规划 / 执行）
-- 排队机制，用户可离线输入
-- 工具调用（文件操作、终端、网络抓取、网页搜索）
-- 多模态图片识别（模型默认视为支持 vision，read_file 读图会压缩回传图片内容；不支持的模型配 vision: false 显式关；用户上传仅存任务目录，不自动发送）
-- 借鉴 Zed agent 的 system prompt 和工具定义
+- 面向个人或小团队自用，单实例部署。
+- 模型层兼容任何 OpenAI `/chat/completions` 接口。
+- 前端是免构建的移动优先 H5，HTTPS 下可安装为 PWA。
 
 ---
 
-## 二、模型与并发
+## 能力
 
-### 2.1 模型池配置
+| 能力 | 说明 |
+|---|---|
+| 任务会话 | 每个会话一个独立目录 `tasks/<会话 id>/`，历史、文件、模型绑定都随会话保存 |
+| 模型池 | 多平台、每平台多 key、每平台多模型；key 共享并发，不独占、不排队 |
+| 工具调用 | 文件读写编辑、目录列举、复制、命令执行、网页抓取、SQLite、定时任务、技能、长期记忆等 14 个内置工具 |
+| 隔离执行 | `terminal` 和技能在 `agent-executor` 容器中运行，只看到当前会话目录，根文件系统只读 |
+| 大文件交付 | 文件面板上传/下载/打包 zip；外部服务取图走带过期时间的公网短链 |
+| 上下文管理 | 手动压缩、按 token 阈值提示压缩、历史重放自动裁剪、会话标题自动生成 |
+| 定时任务 | 每会话最多一个 cron 任务；触发前清空模型可见历史，按计划执行并推送结果 |
+| 微信接入 | 扫码绑定个人微信，文本/图片/视频/文件进入同一套会话与命令体系 |
+| 长期记忆 | 会话收口时生成第一人称工作日记；微信新会话注入最近几条，`recall` 可检索全部 |
+| 用户画像 | 记录称谓、行业、偏好，会话创建时冻结注入，跨会话生效 |
+| 技能 | 目录式技能（`SKILL.md` + `run.py`/`run.sh`），可在设置页管理 |
+| MCP | 启动时发现外部 MCP 服务的工具，与内置工具一起提供给模型 |
+| 多用户 | 登录账号、管理员角色、按用户隔离的会话列表与画像 |
 
-配置文件（如 `config.yml`）中定义模型列表：
+---
+
+## 快速开始
+
+### 前置条件
+
+- Linux 服务器，Docker 与 Docker Compose v2。
+- 至少一个 OpenAI 兼容模型平台的 API Key。
+- 一个可用端口，默认 `8090`。
+
+### 1. 生成配置
+
+在仓库根目录执行：
+
+```bash
+BIGMODEL_KEY=xxx \
+DEEPSEEK_KEY=yyy \
+QWEN_KEY=zzz \
+AUTH_USER=admin \
+AUTH_PASSWORD='换一个强密码' \
+PUBLIC_IP=1.2.3.4 \
+./scripts/init.sh
+```
+
+三个模型 Key 都可选，填几个启用几个。脚本会生成：
+
+- `.env`：`EXECUTOR_TOKEN`、`WXBOT_TOKEN`、`AGENT_PORT` 等部署变量。
+- `config.yml`：模型平台、登录账号、MCP 服务、公网前缀。
+
+`ZHIPU_KEY` 可选，用于 `image_task` / `video_task` 两个 MCP 服务；不填则它们以 `enable: false` 写入配置。
+
+`AUTH_USER` / `AUTH_PASSWORD` 不传时默认是 `admin` / `admin`，首次部署务必改掉。`PUBLIC_IP` 不传会尝试自动探测；探测失败则 `public_link` 为空，外部服务取图功能不可用。
+
+`.env` 里的密钥会复用，重新执行不会让登录态失效；旧的 `config.yml` 会先备份为 `config.yml.bak.<时间戳>`。
+
+注意：`config.yml` 每次都会按本次环境变量重新生成，平台 Key 不保存在 `.env` 里。已经部署过的实例请用设置页改配置，或带上原有变量重跑；只想刷新密钥时用 `./scripts/init.sh --env-only`。
+
+### 2. 创建外部网络
+
+根 `docker-compose.yml` 把 `my-app-network` 声明为 external，首次部署需要先创建：
+
+```bash
+docker network inspect my-app-network >/dev/null 2>&1 || docker network create my-app-network
+```
+
+同栈的 `agent-mcp-net` 由本仓库的 compose 创建，不需要手动建。
+
+### 3. 启动
+
+```bash
+docker compose up -d --build
+docker compose logs -f agent-core
+```
+
+看到 `Agent server listening on 8090` 即启动完成。
+
+首次启动还会运行一次性的 `agent-executor-init`，把技能依赖安装到 `./skills/deps`，随后自动退出，属正常现象。
+
+### 4. 访问
+
+浏览器打开：
+
+```text
+http://<服务器 IP>:<AGENT_PORT>
+```
+
+使用 `init.sh` 里的账号登录。默认端口 `8090`，可用 `.env` 的 `AGENT_PORT` 修改。
+
+对外只需要放行这一个端口。`agent-executor`、`wxbot` 和 MCP 服务都只在 Docker 内网，不映射到宿主机。
+
+### 5. 使用外部 MCP 服务（可选）
+
+`init.sh` 默认写入同栈 MCP 服务：
 
 ```yaml
-models:
-  - id: ds1
-    display_name: "AMD DeepSeek 1"
-  - id: ds2
-    display_name: "AMD DeepSeek 2"
-  - id: ds3
-    display_name: "AMD DeepSeek 3"
+mcp_servers:
+  - name: web_search
+    url: "http://mcp_web_search:3000/"
+  - name: officecli
+    url: "http://mcp_officecli:3000/"
 ```
 
-- 所有模型 ID 使用**同一个上游 URL**（由 cli-proxy-api 代理）。
-- 每个模型 ID 对应一个独立账号，互不共享。
-- 同时活跃会话数上限 = 模型 ID 数量。
+这些服务未启动时，core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会出现。需要时先启动 MCP 栈；不需要就在设置页删除或设为 `enable: false`。
 
-### 2.2 调度规则
-
-- 会话创建时尝试绑定空闲模型：
-  - 有空闲 → 立即绑定，进入活跃状态。
-  - 无空闲 → 会话进入排队状态，用户可输入但 AI 不应答。
-- 任务执行期间，该会话内所有模型请求**始终使用同一个模型 ID**（保证前缀缓存命中）。
-- 模型释放后立即检查全局等待队列，按 **FIFO** 取出最早排队的会话绑定。
+> 全新机器上两个网络有先后顺序：先启动本仓库（创建 `agent-mcp-net`），再启动 MCP 仓库。MCP 侧声明该网络为 external。
 
 ---
 
-## 三、任务阶段状态机
+## 使用
 
-### 3.1 阶段定义
+### 会话与模型
 
-| 阶段 | 含义 | 驱动方式 |
-|---|---|---|
-| **规划（Planning）** | 用户与 AI 讨论需求，澄清细节 | 用户点击「开始执行」→ 切换到执行 |
-| **执行（Execution）** | AI 按 task.md 实际干活 | AI 完成任务 或 用户点击「终止」→ 结束 |
+- 新建会话时自动绑定一个模型；不选则按平台轮转选择。
+- 会话创建后模型绑定保持，重启、追问都不会丢。
+- 模型被删除或禁用后，下一条消息会自动改选原平台的可用模型。
+- 管理员可在「设置 → 用户」给某个用户锁定默认模型。
+- 顶部「切换模型」只在该会话空闲时可用；正在输出时会拒绝换绑。
 
-### 3.2 界面开关
+会话状态：
 
-界面顶部固定一个状态按钮（物理开关样式）：
+| 状态 | 含义 |
+|---|---|
+| 保持中 | 回合已结束，可以直接继续追问 |
+| 活跃中 | 正在执行模型回合 |
+| 已完成 | 已手动断开或空闲超时收口，仍可继续发消息 |
+| 已终止 | 用户主动停止 |
 
-- **规划阶段**：按钮显示「▶ 开始执行」
-  - 点击后：系统自动追加一条 user 消息（见下文），阶段切换为执行。
-- **执行阶段**：按钮显示「■ 终止」
-  - 点击后：设置终止标志，kill 当前进程（如有），模型释放，任务结束。
+### 文件
 
-### 3.3 追加的 user 消息模板
+- 输入框附件、微信附件都落在 `tasks/<会话 id>/`。
+- 右侧「任务文件」面板支持上传、下载、批量打包、删除、子目录浏览。
+- 模型生成的文件与用户上传的文件在同一目录，AI 可直接继续处理。
+- 超过 50 MB 的单文件上传会被拒绝；移动端大图上传前会在浏览器端压缩。
 
-用户点击「开始执行」时，系统向消息流中追加：
+### 上下文压缩
 
-```
-我说完了，你可以开始干活了。先把我上面说的需求整理成 task.md 文件写入任务目录，然后按照 task.md 开始执行。
-```
+- 顶部「压缩」可手动触发：模型基于完整历史生成摘要，摘要之前的消息标记为已存档，UI 仍可见，但不再发给模型。
+- 当单回合输入 token 超过 `agent.auto_compress_tokens` 时，前端会弹一次确认框，询问是否压缩。
+- 历史重放还会自动把较旧的 `write_file` 参数正文、`fetch` / `read_file` 回执替换为单行占位，数据库与 UI 不受影响。
 
-此消息走正常发送流程（若会话活跃则实时发送；若排队则进入待发送队列）。
+### 定时任务
 
----
+对 AI 说「每天早上九点汇总……」，它会在当前会话创建 cron 任务：
 
-## 四、会话状态模型
+- 每会话最多一个任务，最小间隔 1 小时，时区固定 `Asia/Shanghai`。
+- 每次触发前，会话历史整体标记为已存档，模型只看到任务提示词，等价一次全新会话。
+- 执行结果留在会话里，同时可通过微信推送。
+- 创建任务后，当前会话会收口为该任务的「专柜」，用户下一条消息自动进入新会话。
 
-| 状态 | 含义 | 模型绑定 | 用户输入行为 |
-|---|---|---|---|
-| **排队中** | 无模型空闲，用户可输入，消息暂存并进入全局等待队列 | 无 | 可输入，AI 不应答（灰色图标） |
-| **活跃中** | 已绑定模型，实时对话/执行 | 有 | 消息实时发给模型 |
-| **保持中（held）** | AI 已答完，在租约内继续占用模型等待追问 | 有（临时保持） | 消息直接复用已绑模型，免排队 |
-| **已完成/已取消** | 租约到期释放、任务结束或用户终止，模型已释放 | 无 | 可继续输入，自动再次进入排队 |
+### 微信
 
-> held 租约规则（`model_hold` 可配置）：页面无观看者超过 `idle_release_ms`（默认 3 分钟）即释放；有人观看最长保持 `active_max_ms`（默认 30 分钟），防止挂着页面霸占模型池。「绑定模型但闲置」的会话（如新建后从未发言）同受此租约管理，到期自动变已完成并释放模型。
+在「设置 → 账户 → 微信绑定」生成二维码，扫码后即可单线对话：
 
-> 「已完成」和「已取消」本质相同，都回到“空闲”状态，仅记录一个结束原因。
+- 微信消息复用同一套会话和命令层，支持 `/new`、`/list`、`/switch`、`/delete`、`/rename`、`/models`、`/think`、`/stop`、`/compact`、`/clear`、`/status`、`/help`。
+- 图片、视频、文件会落到当前会话目录；单发媒体只留痕，不唤醒 AI。
+- AI 最终回复会推回微信；较长回复自动分段，超长时落成 `.md` 文件卡片。
+- 定时任务完成或失败也会通知微信。
 
-### 4.1 核心流程
+### 长期记忆
 
-1. **创建会话**：生成任务 ID，创建任务目录，尝试绑定空闲模型。
-2. **用户输入**：
-   - 活跃中 / 保持中 → 实时发送（held 直接复用已绑模型）。
-   - 排队中 / 已完成 → 消息暂存，会话自动进入全局等待队列。
-3. **模型分配**：模型空闲时，从全局队列 FIFO 取会话，绑定，将暂存消息一次性发出。
-4. **回合结束**：AI 答完，会话进入 held（模型不释放，可无缝追问）；租约到期无追问 → 释放变 completed；用户终止 → cancelled 并立即释放。
-
----
-
-## 五、任务目录
-
-- 会话创建时立即创建目录：`/workspace/tasks/{task_id}/`
-- 目录永久保留，用户可在 Web 端删除任务时勾选同时删除目录。
-- 上传的文件直接存入该目录。
-- `task.md` 由 AI 在用户确认开始执行后通过 `write_file` 工具生成。
+- 会话空闲超过 `memory.wrap_idle_ms`（默认 4 小时）后，后台生成一条工作日记碎片，并归档、解绑通道。
+- 微信新会话开场注入最近 `memory.inject_max` 条碎片。
+- AI 可用 `recall` 工具按关键词、日期索引、具体某天检索全部日记。
+- 删除会话会连带删除它的日记碎片；清空会话在普通情况下也会删除，但定时任务「专柜」例外。
+- 日记调试页：`/memory.html`。
 
 ---
 
-## 六、终止机制
-
-- 用户点击「终止」：设置 `cancelled` 标志。
-- 若模型正在流式输出：等待当前输出完成，不再继续。
-- 若正在执行 `terminal` 或脚本进程：立即 kill。
-- 之后不再发起新的模型请求或工具调用。
-- 模型 ID 立即释放。
-
----
-
-## 七、借鉴 Zed 的 System Prompt 与工具定义
-
-> 以下内容从 Zed 实际请求日志中提取，直接沿用，保持与 Zed 一致以利用缓存和验证过的行为。
-
-### 7.1 System Prompt（完整）
-
-```
-# /app/server/templates/profile-default.txt
-```
-
-> 注：system prompt 完全静态（所有会话共用，利于前缀缓存）。动态会话信息（日期、任务目录、模型显示名）在新建会话时作为首条 user 消息自动发送，跟会话走。`<available_skills>` 当前为空，预留扩展。
-
-### 7.2 内置工具定义（12 个；去掉 diagnostics、skill、spawn_agent；web_search 移至 MCP 服务）
-
-以下工具定义沿用 Zed 原始 JSON Schema，**保持字段完全一致以利于缓存**。
-
-#### 1. `copy_path`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "copy_path",
-    "description": "Copies a file or directory in the project, and returns confirmation that the copy succeeded.\nDirectory contents will be copied recursively.\n\nThis tool should be used when it's desirable to create a copy of a file or directory without modifying the original.\nIt's much more efficient than doing this by separately reading and then writing the file or directory's contents, so this tool should be preferred over that approach whenever copying is the goal.\nThe only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.",
-    "parameters": {
-      "required": ["source_path", "destination_path"],
-      "properties": {
-        "source_path": {
-          "description": "The source path of the file or directory to copy.\nIf a directory is specified, its contents will be copied recursively.\n\n<example>\nIf the project has the following files:\n\n- directory1/a/something.txt\n- directory2/a/things.txt\n- directory3/a/other.txt\n\nYou can copy the first file by providing a source_path of \"directory1/a/something.txt\"\n</example>",
-          "type": "string"
-        },
-        "destination_path": {
-          "description": "The destination path where the file or directory should be copied to.\n\n<example>\nTo copy \"directory1/a/something.txt\" to \"directory2/b/copy.txt\", provide a destination_path of \"directory2/b/copy.txt\"\n</example>",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 2. `create_directory`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "create_directory",
-    "description": "Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.\n\nThis tool creates a directory and all necessary parent directories. It should be used whenever you need to create new directories within the project.\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.",
-    "parameters": {
-      "required": ["path"],
-      "properties": {
-        "path": {
-          "description": "The path of the new directory.\n\n<example>\nIf the project has the following structure:\n\n- directory1/\n- directory2/\n\nYou can create a new directory by providing a path of \"directory1/new_directory\"\n</example>\n\n<example>\nTo create a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.\n</example>",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 3. `delete_path`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "delete_path",
-    "description": "Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.\n\nThe only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.",
-    "parameters": {
-      "required": ["path"],
-      "properties": {
-        "path": {
-          "description": "The path of the file or directory to delete.\n\n<example>\nIf the project has the following files:\n\n- directory1/a/something.txt\n- directory2/a/things.txt\n- directory3/a/other.txt\n\nYou can delete the first file by providing a path of \"directory1/a/something.txt\"\n</example>",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 4. `edit_file`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "edit_file",
-    "description": "This is a tool for applying edits to an existing file.\n\nBefore using this tool, use the `read_file` tool to understand the file's contents and context.\nTo create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.\n\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.\n\n`read_file` prefixes each line of its output with a line number right-aligned in a\n6-character field followed by a single tab, then the line's actual content. When you\nderive `old_text` or `new_text` from that output, strip this prefix and keep only what\ncomes after the tab, preserving the original indentation (tabs and spaces) exactly.\nNever include any part of the line number prefix in `old_text` or `new_text`.",
-    "parameters": {
-      "required": ["path", "edits"],
-      "properties": {
-        "path": {
-          "description": "The full path of the file to edit in the project.\n\nWARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.\n\nThe following examples assume we have two root directories in the project:\n- /a/b/backend\n- /c/d/frontend\n\n<example>\n`backend/src/main.rs`\n\nNotice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!\n</example>\n\n<example>\n`frontend/db.js`\n</example>\n\n<example>\nTo edit a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.\n</example>",
-          "type": "string"
-        },
-        "edits": {
-          "description": "List of edit operations to apply sequentially.\nEach edit finds `old_text` in the file and replaces it with `new_text`.",
-          "type": "array",
-          "items": {
-            "description": "A single edit operation that replaces old text with new text\nProperly escape all text fields as valid JSON strings.\nRemember to escape special characters like newlines (`\\n`) and quotes (`\"`) in JSON strings.",
-            "type": "object",
-            "properties": {
-              "old_text": {
-                "description": "The exact text to find in the file. This will be matched using fuzzy matching\nto handle minor differences in whitespace or formatting.\n\nBe minimal with replacements:\n- For unique lines, include only those lines\n- For non-unique lines, include enough context to identify them",
-                "type": "string"
-              },
-              "new_text": {
-                "description": "The text to replace it with",
-                "type": "string"
-              }
-            },
-            "required": ["old_text", "new_text"]
-          }
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 5. `fetch`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "fetch",
-    "description": "Fetches a URL and returns the content as Markdown.\n\nThis tool is not run inside the terminal OS sandbox, but it still refuses to\nreach any host that hasn't been granted network access. It shares the same\nper-host grants as the `terminal` tool: approving a host for one authorizes\nit for the other, whether the grant is for this thread or saved permanently.\nWhen unsandboxed access has been granted, these restrictions are lifted\nentirely, matching the terminal, which is also how loopback and IP-literal\nhosts (which can't be granted individually) become reachable.",
-    "parameters": {
-      "required": ["url"],
-      "properties": {
-        "url": {
-          "description": "The URL to fetch.",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 6. `find_path`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "find_path",
-    "description": "Find file paths that match a given pattern.\n\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths sorted alphabetically\n- Prefer the `grep` tool to this tool when searching for symbols unless you have specific information about paths.\n- Use this tool when you need to find files by name patterns\n- Results are paginated with 50 matches per page. Use the optional 'offset' parameter to request subsequent pages.",
-    "parameters": {
-      "required": ["glob"],
-      "properties": {
-        "glob": {
-          "description": "The glob to match against every path in the project.\n\n<example>\nIf the project has the following root directories:\n\n- directory1/a/something.txt\n- directory2/a/things.txt\n- directory3/a/other.txt\n\nYou can get back the first two paths by providing a glob of \"*thing*.txt\"\n</example>",
-          "type": "string"
-        },
-        "offset": {
-          "description": "Optional starting position for paginated results (0-based).\nWhen not provided, starts from the beginning.",
-          "type": "integer",
-          "default": 0,
-          "minimum": 0
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 7. `grep`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "grep",
-    "description": "Searches the contents of files in the project with a regular expression\n\n- Prefer this tool to path search when searching for symbols in the project, because you won't need to guess what path it's in.\n- Supports full regex syntax (eg. \"log.*Error\", \"function\\\\s+\\\\w+\", etc.)\n- Pass an `include_pattern` if you know how to narrow your search on the files system\n- Never use this tool to search for paths. Only search file contents with this tool.\n- Use this tool when you need to find files containing specific patterns\n- Results are paginated with 20 matches per page. Use the optional 'offset' parameter to request subsequent pages.\n- DO NOT use HTML entities solely to escape characters in the tool parameters.",
-    "parameters": {
-      "required": ["regex"],
-      "properties": {
-        "regex": {
-          "description": "A regex pattern to search for in the entire project. Note that the regex will be parsed by the Rust `regex` crate.\n\nDo NOT specify a path here! This will only be matched against the code **content**.",
-          "type": "string"
-        },
-        "include_pattern": {
-          "description": "A glob pattern for the paths of files to include in the search.\nSupports standard glob patterns like \"**/*.rs\" or \"frontend/src/**/*.ts\".\nIf omitted, all files in the project will be searched.\n\nThe glob pattern is matched against the full path including the project root directory.\n\n<example>\nIf the project has the following root directories:\n\n- /a/b/backend\n- /c/d/frontend\n\nUse \"backend/**/*.rs\" to search only Rust files in the backend root directory.\nUse \"frontend/src/**/*.ts\" to search TypeScript files only in the frontend root directory (sub-directory \"src\").\nUse \"**/*.rs\" to search Rust files across all root directories.\n</example>",
-          "type": "string",
-          "nullable": true
-        },
-        "offset": {
-          "description": "Optional starting position for paginated results (0-based).\nWhen not provided, starts from the beginning.",
-          "type": "integer",
-          "default": 0,
-          "minimum": 0
-        },
-        "case_sensitive": {
-          "description": "Whether the regex is case-sensitive. Defaults to false (case-insensitive).",
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 8. `list_directory`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "list_directory",
-    "description": "Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.\n\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.",
-    "parameters": {
-      "required": ["path"],
-      "properties": {
-        "path": {
-          "description": "The fully-qualified path of the directory to list in the project.\n\nThis path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill directory under `~/.agents/skills`.\n\n<example>\nIf the project has the following root directories:\n\n- directory1\n- directory2\n\nYou can list the contents of `directory1` by using the path `directory1`.\n</example>\n\n<example>\nIf the project has the following root directories:\n\n- foo\n- bar\n\nIf you wanna list contents in the directory `foo/baz`, you should use the path `foo/baz`.\n</example>\n\n<example>\nTo list a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.\n</example>",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 9. `move_path`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "move_path",
-    "description": "Moves or rename a file or directory in the project, and returns confirmation that the move succeeded.\n\nIf the source and destination directories are the same, but the filename is different, this performs a rename. Otherwise, it performs a move.\n\nThis tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.\nThe only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.",
-    "parameters": {
-      "required": ["source_path", "destination_path"],
-      "properties": {
-        "source_path": {
-          "description": "The source path of the file or directory to move/rename.\n\n<example>\nIf the project has the following files:\n\n- directory1/a/something.txt\n- directory2/a/things.txt\n- directory3/a/other.txt\n\nYou can move the first file by providing a source_path of \"directory1/a/something.txt\"\n</example>",
-          "type": "string"
-        },
-        "destination_path": {
-          "description": "The destination path where the file or directory should be moved/renamed to.\nIf the paths are the same except for the filename, then this will be a rename.\n\n<example>\nTo move \"directory1/a/something.txt\" to \"directory2/b/renamed.txt\",\nprovide a destination_path of \"directory2/b/renamed.txt\"\n</example>",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 10. `read_file`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "read_file",
-    "description": "Reads the content of the given file in the project.\n\n- Never attempt to read a path that hasn't been previously mentioned.\n- For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.\n  This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.\n  Do NOT retry reading the same file without line numbers if you receive an outline.\n- This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.\n  Image files are returned as visual content that you can analyze directly.\n\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.",
-    "parameters": {
-      "required": ["path"],
-      "properties": {
-        "path": {
-          "description": "The relative path of the file to read.\n\nThis path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill under `~/.agents/skills`.\n\n<example>\nIf the project has the following root directories:\n\n- /a/b/directory1\n- /c/d/directory2\n\nIf you want to access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.\nIf you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.\n</example>\n\n<example>\nTo read a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.\n</example>",
-          "type": "string"
-        },
-        "start_line": {
-          "description": "Optional line number to start reading on (1-based index)",
-          "type": "integer",
-          "nullable": true,
-          "minimum": 0,
-          "default": null
-        },
-        "end_line": {
-          "description": "Optional line number to end reading on (1-based index, inclusive)",
-          "type": "integer",
-          "nullable": true,
-          "minimum": 0,
-          "default": null
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 11. `terminal`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "terminal",
-    "description": "Executes a shell one-liner and returns the combined output.\n\nThis tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.\n\nThe output results will be shown to the user already, only list it again if necessary, avoid being redundant.\n\nMake sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.\n\nDo not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.\n\nDo not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.\n\nDo not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.\n\nFor potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.\n\nRemember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.\n\nThe terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:\n\n- Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).\n- Prefer Git flags that avoid optional metadata writes when possible, such as `git --no-optional-locks status` instead of `git status`.\n- Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).\n- For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.",
-    "parameters": {
-      "required": ["command", "cd"],
-      "properties": {
-        "command": {
-          "description": "The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.\n\nREMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.",
-          "type": "string"
-        },
-        "cd": {
-          "description": "Working directory for the command. This must be one of the root directories of the project.",
-          "type": "string"
-        },
-        "timeout_ms": {
-          "description": "Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.",
-          "type": "integer",
-          "nullable": true,
-          "minimum": 0
-        },
-        "head_lines": {
-          "description": "Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.",
-          "type": "integer",
-          "nullable": true,
-          "minimum": 0,
-          "default": null
-        },
-        "tail_lines": {
-          "description": "Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.",
-          "type": "integer",
-          "nullable": true,
-          "minimum": 0,
-          "default": null
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-#### 12. `write_file`
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "write_file",
-    "description": "This is a tool for creating a new file or overwriting an existing file with completely new contents.\n\nTo make granular edits to an existing file, prefer the `edit_file` tool instead.\n\nBefore using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location\n\nThe only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.",
-    "parameters": {
-      "required": ["path", "content"],
-      "properties": {
-        "path": {
-          "description": "The full path of the file to create or overwrite in the project.\n\nWARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.\n\nThe following examples assume we have two root directories in the project:\n- /a/b/backend\n- /c/d/frontend\n\n<example>\n`backend/src/main.rs`\n\nNotice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!\n</example>\n\n<example>\n`frontend/db.js`\n</example>\n\n<example>\nTo create or overwrite a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.\n</example>",
-          "type": "string"
-        },
-        "content": {
-          "description": "The entire content for the file.",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  }
-}
-```
-
-> 说明：Zed 原始 16 个工具中去掉 `diagnostics`、`skill`、`spawn_agent`、`web_search`，内置保留上述 12 个。`web_search` 等外部能力改由 MCP 服务提供：在 config 的 `mcp_servers`（url + headers）配置，启动时 `tools/list` 自动发现并追加到内置工具之后一起发给模型，与内置工具严格分离。
-
----
-
-## 八、技术架构
-
-### 8.1 技术栈
-
-- **后端**：Node.js（或 Python FastAPI，二选一，建议 Node.js 因前端同构）
-- **前端**：单页 H5 + Vanilla JS + SSE（不引入重型框架）
-- **数据库**：SQLite
-- **部署**：Docker Compose
-- **认证**：内置多用户登录（用户名/明文密码配在 `config.yml` 的 `auth.users`，登录页 + HttpOnly cookie，不做任务隔离；不用 nginx htpasswd，因手机浏览器原生下载不带 Basic 头会失败）
-
-### 8.2 系统组件
-
-```
-┌─────────────────────────────────────────────────┐
-│                    Web UI (H5)                  │
-│  会话列表 │ 聊天界面 │ 任务详情 │ 文件管理       │
-└──────────────────┬──────────────────────────────┘
-                   │ SSE / REST
-┌──────────────────▼──────────────────────────────┐
-│              Agent 后端服务 (Docker)             │
-│  ┌──────────────────────────────────────────┐   │
-│  │  会话管理 & 模型调度器                    │   │
-│  │  (模型池: ds1, ds2, ds3...)              │   │
-│  └──────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────┐   │
-│  │  Agent 核心循环                           │   │
-│  │  (模型请求 → 工具调用 → 结果反馈)          │   │
-│  └──────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────┐   │
-│  │  工具执行器                               │   │
-│  │  (文件/终端/fetch/web_search)            │   │
-│  └──────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────┐   │
-│  │  任务目录管理                             │   │
-│  │  /workspace/tasks/{task_id}/             │   │
-│  └──────────────────────────────────────────┘   │
-└──────────────────┬──────────────────────────────┘
-                   │ HTTP (SSE)
-┌──────────────────▼──────────────────────────────┐
-│           cli-proxy-api (上游代理)              │
-│  同一 URL，多个模型 ID 映射不同账号              │
-└──────────────────┬──────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────┐
-│        上游 AI 服务 (developer.amd.com.cn)      │
-└─────────────────────────────────────────────────┘
-```
-
----
-
-## 九、数据模型设计
-
-### 9.1 SQLite 表结构
-
-```sql
--- 会话表
-CREATE TABLE sessions (
-  id TEXT PRIMARY KEY,              -- 任务 ID，如 "task-20260830-001"
-  title TEXT DEFAULT '',            -- 会话标题（可由 AI 生成或用户填写）
-  status TEXT NOT NULL,             -- queued | active | held | completed | cancelled
-  model_id TEXT,                    -- 当前绑定的模型 ID（ds1/ds2/ds3），释放/排队时为空
-  last_model_id TEXT,               -- 最近用过的模型；释放后新消息优先回绑，被占才另选空闲
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  completed_at INTEGER,
-  cancelled_at INTEGER,
-  held_at INTEGER                   -- 进入 held（保持租约）的时间
-);
-
--- 消息表
-CREATE TABLE messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT NOT NULL,
-  role TEXT NOT NULL,               -- system | user | assistant | tool
-  content TEXT,                     -- 文本内容（assistant 工具调用时可为空）
-  tool_calls TEXT,                  -- JSON 字符串，assistant 工具调用
-  tool_call_id TEXT,                -- tool 角色消息关联的 tool_call id
-  name TEXT,                        -- 工具名称（tool 角色）
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES sessions(id)
-);
-
--- 文件表（记录任务目录中的文件，用于下载）
-CREATE TABLE files (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT NOT NULL,
-  filename TEXT NOT NULL,           -- 相对任务目录的路径
-  size INTEGER,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES sessions(id)
-);
-
--- 模型池配置（也可存配置文件，此处作为运行时状态）
-CREATE TABLE model_pool (
-  id TEXT PRIMARY KEY,              -- ds1, ds2, ds3
-  display_name TEXT,
-  is_busy INTEGER DEFAULT 0,
-  current_session_id TEXT
-);
-
--- 全局等待队列
-CREATE TABLE wait_queue (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT NOT NULL,
-  queued_at INTEGER NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES sessions(id)
-);
-```
-
-### 9.2 任务目录结构
-
-```
-/workspace/tasks/
-└── {task_id}/
-    ├── task.md          # 需求说明（AI 在确认开始后生成）
-    ├── ...              # 用户上传的文件和 AI 生成的文件
-```
-
----
-
-## 十、API 设计
-
-### 10.1 会话管理
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/sessions` | 创建会话，生成任务目录，尝试绑定模型 |
-| GET | `/api/sessions` | 获取会话列表 |
-| GET | `/api/sessions/{id}` | 获取会话详情（含消息、状态、阶段） |
-| DELETE | `/api/sessions/{id}?delete_dir=true` | 删除会话，可选删除任务目录 |
-
-### 10.2 消息与交互
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/sessions/{id}/messages` | 发送用户消息（活跃时实时发送，排队时暂存） |
-| GET | `/api/sessions/{id}/stream` | SSE 流式获取会话事件（模型输出、工具调用等） |
-| POST | `/api/sessions/{id}/start` | 点击「开始执行」：追加 user 消息，阶段切换为 execution |
-| POST | `/api/sessions/{id}/stop` | 终止任务：设置取消标志，kill 进程，释放模型 |
-
-### 10.3 文件管理
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/sessions/{id}/files` | 上传文件到任务目录 |
-| GET | `/api/sessions/{id}/files` | 列出任务目录文件 |
-| GET | `/api/sessions/{id}/files/{filename}` | 下载文件 |
-| DELETE | `/api/sessions/{id}/files/{filename}` | 删除文件 |
-
----
-
-## 十一、Agent 核心循环
-
-### 11.1 伪代码
-
-```
-function runAgent(session):
-    model_id = session.model_id
-    messages = loadMessages(session.id)  # 完整消息历史
-
-    while not session.cancelled:
-        # 构建请求
-        request = {
-            model: model_id,
-            messages: messages,
-            stream: true,
-            stream_options: {include_usage: true},
-            temperature: 1.0,
-            tools: TOOLS_DEFINITIONS
-        }
-
-        # 调用模型（流式）
-        response = callModelStreaming(request)
-
-        # 累积模型输出
-        assistant_message = {role: "assistant", content: "", tool_calls: []}
-
-        for chunk in response:
-            if session.cancelled:
-                break  # 停止处理剩余 chunk，但当前 chunk 已完成
-            if chunk.delta.content:
-                assistant_message.content += chunk.delta.content
-                emitSSE(session, "assistant_text", chunk.delta.content)
-            if chunk.delta.tool_calls:
-                # 累积工具调用参数（分片拼接）
-                mergeToolCalls(assistant_message.tool_calls, chunk.delta.tool_calls)
-
-        if session.cancelled:
-            break
-
-        # 保存 assistant 消息
-        saveMessage(session, assistant_message)
-
-        # 检查是否有工具调用
-        if assistant_message.tool_calls and len(assistant_message.tool_calls) > 0:
-            # 执行所有工具调用（可并行）
-            tool_results = []
-            for tool_call in assistant_message.tool_calls:
-                if session.cancelled:
-                    break
-                emitSSE(session, "tool_call", tool_call)
-                result = executeTool(tool_call, session)  # 可能触发 kill
-                emitSSE(session, "tool_result", result)
-                tool_results.append({
-                    role: "tool",
-                    tool_call_id: tool_call.id,
-                    content: result
-                })
-                saveMessage(session, tool_results[-1])
-
-            # 将工具结果加入消息历史
-            messages.append(assistant_message)
-            messages.extend(tool_results)
-            continue  # 继续循环，让模型处理工具结果
-        else:
-            # 无工具调用，任务结束
-            break
-
-    # 释放模型
-    releaseModel(session)
-    session.status = "completed"  # 或 "cancelled"
-    updateSession(session)
-
-    # 检查等待队列
-    dispatchNextQueuedSession()
-```
-
-### 11.2 工具执行器要点
-
-- **文件工具**：所有路径必须解析到任务目录内（防路径穿越）。
-- **terminal**：使用 `child_process.spawn`，设置超时（默认 30s），输出截断（前 10000 字符）。支持 kill。
-- **fetch**：使用 HTTP 客户端抓取，转换为 Markdown 返回。
-- **MCP 工具**：外部 MCP 服务在 config 的 `mcp_servers` 配置（url + headers，可多个）；启动时 `tools/list` 发现工具追加到内置工具之后，调用经 `tools/call` 转发（如 web_search）。
-
-### 11.3 模型调度器要点
-
-- 维护模型池状态（is_busy、current_session_id）。
-- 会话创建时尝试分配空闲模型。
-- 模型释放时从 wait_queue 取最早会话绑定，并发送暂存消息。
-- 同一会话内所有模型请求使用同一 model_id。
-
----
-
-## 十二、前端页面设计
-
-### 12.1 页面结构
-
-```
-┌──────────────────────────────────────────┐
-│  顶部栏：任务状态开关 + 新建会话按钮      │
-├──────────────────────────────────────────┤
-│  主区域：                                 │
-│  ├─ 会话列表（左侧或抽屉）               │
-│  └─ 聊天/任务详情（右侧主视图）          │
-│      ├─ 消息气泡（用户/AI/工具调用）     │
-│      ├─ 文件上传按钮                     │
-│      ├─ 文件列表                         │
-│      └─ 输入框                           │
-└──────────────────────────────────────────┘
-```
-
-### 12.2 移动端交互
-
-- 会话列表与详情通过滑动切换（参考采购清单页交互）。
-- 状态开关固定在顶部，规划阶段显示「▶ 开始执行」，执行阶段显示「■ 终止」。
-- 排队中时 AI 头像灰色，输入框仍可输入，发送后消息进入暂存队列。
-
-### 12.3 消息展示
-
-- 用户消息：右侧气泡。
-- AI 文本：左侧气泡，流式显示。
-- 工具调用：特殊卡片，显示工具名和参数摘要。
-- 工具结果：折叠显示，可展开查看完整输出。
-
----
-
-## 十三、Docker 部署
-
-### 13.1 Docker Compose（顶层 `docker-compose.yml`）
+## 配置
+
+`config.yml` 只给 `agent-core` 读取，包含平台密钥和登录密钥。`agent-executor`、`wxbot` 不挂载、不读取它。
+
+主要配置段：
+
+| 段 | 作用 |
+|---|---|
+| `platforms` | 模型平台池：`name`、`url`、`type`、`models`、`keys` |
+| `model_profiles` | prompt + 工具名单组合；模型用 `profile: <名>` 引用 |
+| `tools_deny` | 全局工具黑名单，默认屏蔽元工具 `lab` |
+| `auth` | 登录账号、`secret`、有效期；留空则不启用认证 |
+| `mcp_servers` | 外部 MCP 服务：`url`、`headers`、`enable`、`timeout_ms`、工具名单 |
+| `public_link` | 公网临时链接前缀与有效期 |
+| `agent` | 温度、最大工具迭代、重试、语言、压缩阈值、空闲收口、历史裁剪 |
+| `memory` | 日记注入条数、保留期、空闲收口阈值 |
+| `terminal` / `fetch` | 命令超时与输出上限、抓取超时、字节数、SSRF 开关 |
+| `skills` | 技能目录与单次执行超时 |
+| `upload` | 前端大图压缩阈值与参数 |
+| `workspace_root` / `data_root` | 任务目录与 SQLite / 调试产物目录 |
+
+平台结构示例：
 
 ```yaml
-services:
-  agent:
-    build: ./app
-    restart: unless-stopped
-    ports:
-      - "${AGENT_PORT:-8090}:8090"      # 直接映射宿主机端口，IP:端口 访问
-    volumes:
-      - ./tasks:/workspace/tasks        # 持久化：任务目录
-      - ./data:/workspace/data          # 持久化：数据目录 + SQLite
-      - ./config.yml:/app/config.yml
-    environment:
-      - PORT=8090
-      - AGENT_CONFIG=/app/config.yml
-    networks:
-      - agent-mcp-net
-
-networks:
-  agent-mcp-net:
-    name: agent-mcp-net      # 由本仓库创建（固定名字）；mcp 侧 external 加入
-    driver: bridge
-```
-
-### 13.2 对外暴露（IP:端口）
-
-无域名/反代时，compose 直接把容器 8090 映射到宿主机 8090，浏览器访问 `http://<服务器IP>:8090`（端口可用 `.env` 的 `AGENT_PORT` 改）。网络 `agent-mcp-net` 与 `mcp` 仓库的服务共用、由本仓库创建（无需手动 `docker network create`，但因此要**先起 agent 再起 mcp**）：core 与 executor 都靠它按容器名访问 MCP。认证用应用内置的多用户登录（`config.yml` 的 `auth.users`，登录页 `/login`），多用户共享同一任务库，不做任务隔离。
-
-**对外只开这一个端口**（executor 与 mcp 服务都不映射宿主机）。其中一条是反向入站：外部服务（如智谱）生成视频前要拉参考图，走的是 core 的匿名短链 `GET /p/<id>`——由 AI 调内置工具 `mint_public_link`（传文件名，core 在进程内现签）拿到，没有任何额外的签发端口，见 `docs/DEPLOY.md` 第 4.1 节。
-
-HTTP 直连时浏览器不认为这是“安全上下文”：PWA/Service Worker 不注册、`navigator.clipboard` 降级（前端已有回退），登录 cookie 无 `Secure` 标志可正常工作。日后若加 HTTPS 反代，**SSE 需关代理缓冲**（`proxy_buffering off`），详见 `docs/DEPLOY.md`。
-
----
-
-## 十四、配置文件示例
-
-完整字段与默认值见 `app/config.example.yml`（core 专属，与 `server/config.js` 的 `DEFAULTS` 一一对应）；
-部署时由 `scripts/init.sh` 生成的顶层 `config.yml` 只覆盖 `platforms` / `auth` / `mcp_servers`。
-
-```yaml
-# 模型池:平台(platforms) → models（平台层,多 key 共用）+ keys(api_key/concurrency)。
-# url/type 配在平台层;模型只声明 {id, display_name, profile, vision}。加载时打平成全局模型列表。
 platforms:
-  - name: proxy-a
-    url: "https://proxy-a.example.com/v1"
-    type: openai                    # 选填,缺省取 name;决定余额查询适配器
+  - name: bigmodel
+    url: https://open.bigmodel.cn/api/paas/v4
+    type: bigmodel          # 决定余额查询适配器
     models:
-      - id: ds1
-        display_name: "AMD DeepSeek 1"   # 选填,缺省同 id
-        profile: mini                    # 选填,引用顶层 model_profiles 的 prompt+tools 组合
+      - id: glm-5.3-flash
+        vision: true
+        extra_params: { reasoning_effort: "low", tool_stream: true }
+        thinking_params: { reasoning_effort: "max" }
     keys:
       - api_key: "sk-..."
-        concurrency: 1              # 该 Key 并发会话数,默认 1
-
-# 模型 profile:预定义「system prompt 文件 + tools 白名单」组合,模型用 profile: <名> 引用。
-# 内置 mini/zero 两套默认组合,可用同名覆盖或新增;详见 §5.8。
-model_profiles:
-  mini:
-    tools_allow: [read_file, write_file, edit_file, list_directory, terminal]
-    system_prompt_file: mini-system.txt   # 相对 server/templates/
-
-workspace_root: "/workspace/tasks"
-
-terminal:
-  default_timeout_ms: 30000
-  max_output_chars: 10000
-
-agent:
-  temperature: 1.0
-  max_tool_iterations: 100
 ```
 
----
+通用模型字段：
 
-## 十五、开发阶段规划
+- `enable: false`：模型不进池，不参与分配。
+- `vision: false`：读图时不回传像素，只给文字占位。
+- `profile: <名>`：引用 `model_profiles`，不配则使用默认全量 prompt 与工具。
+- `reasoning_ack_field`：需要把思考链回传给上游时填写，例如 DeepSeek 系的 `reasoning_content`。
 
-1. **阶段一：核心后端**
-   - 数据模型与 SQLite 初始化
-   - 会话管理 API
-   - 模型池与调度器
-   - Agent 核心循环（支持工具调用）
+日常修改配置建议使用设置页；改完需重启生效。设置页写入前会先校验，非法配置不会覆盖原文件。
 
-2. **阶段二：前端**
-   - 会话列表页
-   - 聊天界面（SSE 流式）
-   - 文件上传/下载
-   - 状态开关
+### 环境变量
 
-3. **阶段三：集成与部署**
-   - Docker 化
-   - nginx-proxy 集成
-   - 基本认证
-   - 测试与优化
+| 变量 | 作用 |
+|---|---|
+| `AGENT_CONFIG` | core 配置文件路径，容器内固定 `/app/config.yml` |
+| `PORT` | core 监听端口，容器内 `8090` |
+| `EXECUTOR_URL` | `agent-executor` 地址；空则命令在 core 进程内本地执行，仅适合开发 |
+| `EXECUTOR_TOKEN` | core ↔ executor 的 Bearer token，两侧同值 |
+| `WXBOT_URL` | wxbot 地址；置空则微信功能整体关闭 |
+| `WXBOT_TOKEN` | core ↔ wxbot 的共享 token |
+| `VIRTUAL_HOST` | 设置后 `public_link.base_url` 强制取 `https://<第一个域名>` |
+| `PREVIEW_PROXIES` | 覆盖内置预览反代注册表（JSON 数组） |
+| `EXECUTOR_LOG_LEVEL` / `WXBOT_LOG_LEVEL` | 两个附属服务的日志等级 |
 
----
-
-## 十六、备注
-
-- 本方案借鉴 Zed agent 的 system prompt 和工具定义，保持格式一致以利用上游前缀缓存。
-- `skill` 和 `spawn_agent` 工具暂不实现，但预留扩展位。
-- 所有文件操作必须限制在任务目录内。
-- 模型调度遵循 FIFO，同一会话始终使用同一模型 ID。
+`config.yml` 与 `.env` 都含密钥，已在 `.gitignore` 中。不要提交，也不要挂给不需要它的容器。
 
 ---
 
-**文档版本**：v1.0  
-**最后更新**：2026-08-30
+## 内置工具
+
+模型实际收到的工具是内置工具加 MCP 工具，再经 `tools_deny` 与模型 `profile` 过滤。
+
+| 工具 | 用途 |
+|---|---|
+| `read_file` | 读文本或图片；大文件返回符号大纲；支持 `@<会话 id>/<路径>` 只读查看历史会话文件 |
+| `write_file` | 新建或覆盖文本文件 |
+| `edit_file` | 按 `old_text` / `new_text` 做精确或容错编辑 |
+| `list_directory` | 单层列目录；支持 `@<会话 id>/<路径>` |
+| `copy_path` | 复制文件或目录；可从历史会话导入文件 |
+| `terminal` | 执行 shell 命令；默认在会话目录，超时可终止 |
+| `fetch` | 抓取 HTTP/HTTPS 并转 Markdown；带 SSRF 防护与分段续读 |
+| `mint_public_link` | 为会话内文件签发短期公网链接 |
+| `skill` | 技能 `list` / `get` / `run` |
+| `db` | 操作会话本地 `data.db`：`exec`、`query`、`insert`、`tables`、`schema` |
+| `schedule` | 定时任务 `get` / `list` / `create` / `update` / `delete` |
+| `profile` | 用户画像 `list` / `set` / `add` / `remove` |
+| `recall` | 长期记忆 `search` / `days` / `day` |
+| `lab` | 元工具：按名字调用任意工具，`help` 可列出全部工具；默认被全局黑名单屏蔽 |
+
+跨会话路径只读：`@` 形式只用于 `read_file`、`list_directory` 和 `copy_path` 的源路径，且只能访问同一用户自己的会话。要真正处理旧文件，先用 `copy_path` 导入当前会话。
+
+---
+
+## 技能
+
+技能是 `skills/<名字>/` 目录：
+
+```text
+skills/my-skill/
+├── SKILL.md          # 必需：描述、input_schema、可选 required / visit_url
+├── run.py | run.sh   # 必需：入口，唯一命令行参数是 JSON 字符串
+├── requirements.txt  # 可选：Python 依赖
+└── install.sh        # 可选：系统层安装脚本，镜像构建期执行
+```
+
+- `SKILL.md` 的 `description` 会进入 system prompt，模型启动时就知道有哪些技能。
+- `input_schema.required` 在 `skill op=run` 前校验。
+- 入口脚本以绝对路径启动；远端执行时 cwd 是会话目录，本地开发时是技能目录。相对路径参数会先按会话目录转成绝对路径。
+- `requirements.txt` 的依赖由 `agent-executor-init` 安装到 `skills/deps`；技能容器通过 `PYTHONPATH` 可见。
+- `install.sh` 在镜像构建期以 root 执行，用于必须落在系统层的依赖。改完需要重建 executor 镜像。
+- 技能目录在 executor 中只读，运行期不能修改技能本身。
+
+设置页支持创建、重命名、删除技能和在线编辑文本文件；技能列表变更后会实时刷新 system prompt 中的清单，无需重启。
+
+---
+
+## 安全模型
+
+### 部署边界
+
+- 对外只暴露 `agent-core` 端口。
+- `agent-executor` 使用独立的 mount / PID / IPC namespace，只 bind 当前会话目录；根文件系统只读，丢弃全部 capability 后仅保留 `SYS_ADMIN`。
+- 命令容器没有独立网络 namespace，所以 executor 会拒绝来自自身容器网卡的 `/exec` 请求，避免 token 泄漏后被借用。
+- `wxbot` 只挂内网；微信登录凭证在 `./wxbot/data`，等同微信账号权限，不要外泄。
+- 配置文件、`.env`、微信凭证、任务目录、SQLite 都属于敏感数据。
+
+### 认证与授权
+
+- 登录使用 HMAC 签名的 HttpOnly Cookie，支持 `Authorization: Basic` 作为脚本 / curl 的兜底。
+- `auth.users` 留空则完全关闭认证，只适合本机或完全可信网络。
+- 管理员接口：配置读写、用户管理、进程重启。
+- **重要**：系统按单租户设计。除上述管理员接口外，会话、消息、文件、技能等 API 只校验「已登录」，不按用户做资源级授权；按用户的会话列表隔离发生在前端查询层。不要把实例开放给互不信任的用户。
+
+### 公网临时链接
+
+`mint_public_link` 生成 22 字符随机 ID，链接形如：
+
+```text
+http://<host>/p/<id>
+```
+
+- 只由 core 进程内的工具签发，签发前校验文件在任务目录内且 `realpath` 未越界。
+- 默认 30 分钟过期，可配置 1 分钟到 24 小时。
+- 链接可重复使用，直到过期；服务重启后全部失效。
+- 任何人拿到链接即可匿名访问，不要对含密钥的文件签发。
+
+### HTTPS
+
+仓库不内置 TLS 反向代理。直接 `http://IP:端口` 使用时：
+
+- PWA / Service Worker 不会注册。
+- 复制按钮会回退到旧 API。
+- 登录 Cookie 不带 `Secure` 标志，HTTP 下正常工作。
+
+如果前面加 nginx 等反向代理，SSE 必须关闭缓冲：
+
+```nginx
+proxy_http_version 1.1;
+proxy_buffering off;
+proxy_read_timeout 3600s;
+```
+
+若设置了 `VIRTUAL_HOST`，公网链接前缀会自动变成 `https://<域名>`；仓库默认 compose 里带有 `VIRTUAL_HOST=agent.ai.foresh.com`，不接反向代理时应删除或改成自己的域名。
+
+---
+
+## 运维
+
+### 数据位置
+
+| 宿主机路径 | 容器内 | 内容 |
+|---|---|---|
+| `./tasks/` | `/workspace/tasks` | 每个会话的工作目录 |
+| `./data/` | `/workspace/data` | SQLite `.agent.db`、`prompt.txt` 调试产物 |
+| `./skills/` | `/workspace/skills` | 技能与共享依赖 |
+| `./config.yml` | `/app/config.yml` | core 配置 |
+| `./wxbot/data/` | `/data` | 微信登录凭证 |
+
+备份至少覆盖 `data/`、`tasks/`、`config.yml`；需要保留微信登录态时再备份 `wxbot/data/`。
+
+### 升级
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+数据库与任务目录都在 bind mount 中，升级不丢数据。进程重启时，执行中的回合会被打断；`active` 会话会归位为保持中，用户再发消息即可继续。
+
+### 日志与健康检查
+
+```bash
+docker compose logs -f agent-core
+docker compose logs -f agent-executor
+docker compose logs -f wxbot
+curl -s http://127.0.0.1:8090/api/health
+```
+
+- core 日志等级由 `config.yml` 的 `log_level` 控制，改完重启生效。
+- executor / wxbot 的日志等级由各自环境变量控制，`debug` 会打印完整交互。
+- 启动时会在 `data/prompt.txt` 写入实际下发的 system prompt 与各 profile 的工具清单，便于核对。
+
+### 常见问题
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 启动时报 `network agent-mcp-net has active endpoints` | 先停 MCP 栈，再停本栈；重新 `up` 会恢复 |
+| `config.yml` 变成目录 | 启动前文件不存在，Docker 自动建了同名目录；停容器、删目录、放入配置文件 |
+| 没有可用模型 | `platforms` 为空或模型全部禁用；在设置页添加后重启 |
+| 创建会话报「无可用模型」 | 模型池为空，或指定模型所在平台没有 key |
+| 技能依赖缺失 | 重新 `docker compose up -d --build agent-executor`；或检查 `skills/deps` |
+| 微信设置页显示未连接 | wxbot 未启动，或 `WXBOT_TOKEN` 两侧不一致 |
+| 图生视频拉不到参考图 | `public_link.base_url` 未配置，或公网不可达 |
+
+---
+
+## 目录
+
+```text
+agent/
+├── app/                  agent-core：Express + SQLite + 前端静态资源
+├── executor/             agent-executor：隔离命令执行与 Office 预览网关
+├── wxbot/                微信 iLink 协议调制解调器
+├── skills/               技能目录
+├── tasks/                会话工作目录（运行时生成）
+├── data/                 SQLite 与调试产物（运行时生成）
+├── docs/                 架构与专题文档
+├── docker-compose.yml
+└── scripts/init.sh
+```
+
+进一步阅读：
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：内部架构、数据模型、关键流程、修改约束。
+- [docs/OFFICE.md](docs/OFFICE.md)：Office 文档技能与预览链路。
+- [docs/tool-design.md](docs/tool-design.md)：工具接口设计规范。
+
+## 开发
+
+```bash
+cd app
+npm install
+node server/server.js
+```
+
+测试与调试细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 第 9 节。

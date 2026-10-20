@@ -1,5 +1,5 @@
 // 文本命令接入端（channel）API：给没有可点击 UI 的端（IM 桥、CLI 等）提供会话内操作的文字入口。
-// 设计（docs/ARCHITECTURE.md §4.1/§7）：
+// 设计（docs/ARCHITECTURE.md §5.13）：
 // - 命令只在 /api/channel/send 解析，不进普通消息路由——Web 上以斜杠开头的文本照常发给模型。
 //   命令是无 UI 端的按钮替代品，不是全局协议（防误伤路径/代码讨论这类合法文本）。
 // - 每个 (user, channel) 记一个「当前会话」（channel_sessions 表）：接入端没有会话列表 UI，
