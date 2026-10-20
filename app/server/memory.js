@@ -6,7 +6,7 @@
 // - day = 事件日（Asia/Shanghai），由 last_active_at 派生：人回忆问的是「哪天干的活」，不是「哪天补记的」；
 // - last_active_at = 收口时快照的最后一条真实 user/assistant 消息时刻（存量数据可为 NULL）；
 // - text = 纯日记正文（"- " 行列表），【来源会话 id】展示样式只在渲染层拼，存储零冗余元数据；
-// - title 不落碎片表，渲染时 join sessions 取当前标题；
+// - 会话标题不进回忆头部：标题是会话名，不是事件内容，容易把「回忆」带偏；
 // - (user, session_id) 主键即「每会话唯一碎片」的存储级保证（engine 侧 journaled_at 是扫描预排除）；
 // - 注入 =「嘴边的工作记忆」：开场只带最近 inject_max 片（day 优先、同日按 last_active_at 倒序）；更早的没消失——
 //   recall 工具 op=search/days/day 走全表；retain_days > 0 才按 day 硬裁（默认 0 = 不按时间删，
@@ -66,13 +66,13 @@ function markJournaled(db, sessionId, ms) {
 }
 
 // ---------- 读：开场注入文本（wechat/web 新会话的数据源） ----------
-// 最近 inject_max 片按事件日优先（同序供 injectedIds/journalFor 共用），逐片「## id, date, title」自描述：
+// 最近 inject_max 片按事件日优先（同序供 injectedIds/journalFor 共用），逐片「## id, date」自描述：
 // 新日在前、天内按发生顺序。
 // 选取序单点定义在此（调试 API/页面走 injectedIds 取名单，不另算一套，避免两边错位）。
 const INJECT_ORDER = ' ORDER BY f.day DESC, COALESCE(f.last_active_at, f.created_at) DESC';
-// 读路径统一列清单：renderFrag 依赖 day/last_active_at/title，三处查询不再各写 SELECT，避免漏列。
-const FRAG_COLS = 'f.session_id, f.day, f.text, f.last_active_at, s.title';
-const FRAG_FROM = ' FROM memory_fragments f LEFT JOIN sessions s ON s.id = f.session_id';
+// 读路径统一列清单：renderFrag 依赖 day/last_active_at，三处查询不再各写 SELECT，避免漏列。
+const FRAG_COLS = 'f.session_id, f.day, f.text, f.last_active_at';
+const FRAG_FROM = ' FROM memory_fragments f';
 // 注入窗名单：与 journalFor 同选取规则的 session_id 列表（调试页打「已注入」标用）。
 function injectedIds(db, cfg, user) {
   const cap = injectMax(cfg);
@@ -81,12 +81,11 @@ function injectedIds(db, cfg, user) {
     'SELECT f.session_id FROM memory_fragments f WHERE f.user = ?' + INJECT_ORDER + ' LIMIT ?'
   ).all(String(user || ''), cap).map(r => r.session_id);
 }
-// 渲染逐片自描述：「## id=…, date=YYYY-MM-DD HH:MM:SS, title=…」——新在前、天内按发生顺序。
-// 旧数据没有 last_active_at 时只显示 day；标题为空时整段省略，绝不拼出 undefined。
+// 渲染逐片自描述：「## id=…, date=YYYY-MM-DD HH:MM:SS」——新在前、天内按发生顺序。
+// 旧数据没有 last_active_at 时只显示 day；不拼 title，避免会话名把回忆带偏。
 function renderFrag(r) {
   const when = stampString(r.last_active_at) || r.day || '未知';
-  const title = String(r.title || '').replace(/\s+/g, ' ').trim();
-  return '## id=' + r.session_id + ', date=' + when + (title ? ', title=' + title : '') + '\n' + r.text;
+  return '## id=' + r.session_id + ', date=' + when + '\n' + r.text;
 }
 function journalFor(db, cfg, user) {
   const cap = injectMax(cfg);
