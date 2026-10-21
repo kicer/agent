@@ -8,9 +8,9 @@
 
 技能是一个自包含的目录，通常存放在技能根目录（默认为 `skills/`）下。每个技能包含一个描述文件（`SKILL.md`）和一个可执行入口（`run.py` 或 `run.sh`）。Agent 通过以下流程使用技能：
 
-1. 调用 `skill`（op=list）查看所有可用技能的名称和简介；
-2. 调用 `skill`（op=get）获取某个技能的详细说明；
-3. 调用 `skill`（op=run）执行技能，传入所需参数。
+1. 调用 `skill` 的 `{"list":"all"}` 查看所有可用技能的名称和简介；
+2. 调用 `skill` 的 `{"get":"<技能名>"}` 获取某个技能的详细说明；
+3. 调用 `skill` 的 `{"run":"<技能名>","args":{...}}` 执行技能，传入所需参数。
 
 技能可以处理任何任务，例如文件格式转换、数据处理、网页抓取等。
 
@@ -58,10 +58,10 @@ mcp_tool: image_task         # 可选：声明后端为某个 MCP 工具（此�
 ```
 
 - `name`：技能名称，应与目录名一致。
-- `description`：一句话描述技能功能，用于 `skill` op=list 展示。
+- `description`：一句话描述技能功能，用于 `{"list":"all"}` 的清单展示。
 - `input_schema`：输入参数的 JSON Schema 定义，用于参数校验和文档生成。
 - `output_schema`：输出结果的描述（可选）。
-- `visit_url`：（可选）页面类技能声明的访问路径模板，`{task_id}` 占位执行时替换为会话 id。`op=run` 成功后由 core（tools/executor.js）拼上 `public_link.base_url`，在输出末尾追加一行「访问地址：<完整 URL>」——技能进程跑在 executor 隔离视图里不知道公网地址，完整链接只能 core 补；AI 拿到相对路径会原样转给用户，而相对路径打不开。
+- `visit_url`：（可选）页面类技能声明的访问路径模板，`{task_id}` 占位执行时替换为会话 id。`run` 成功后由 core（tools/executor.js）拼上 `public_link.base_url`，在输出末尾追加一行「访问地址：<完整 URL>」——技能进程跑在 executor 隔离视图里不知道公网地址，完整链接只能 core 补；AI 拿到相对路径会原样转给用户，而相对路径打不开。
 - `mcp_tool`：（可选）声明该技能的后端是某个已注册的 MCP 工具（见 3.3）。声明后不需要 `run.py` / `run.sh`。
 - 若未提供 Front Matter，系统会尝试从正文第一行提取描述。
 
@@ -82,7 +82,7 @@ mcp_tool: image_task         # 可选：声明后端为某个 MCP 工具（此�
 - 自动处理某某
 
 ## 使用说明
-通过 `skill`（op=run）调用，参数：
+通过 `skill` 的 `{"run":"<技能名>","args":{...}}` 调用，参数：
 - `input`：某某路径（必填）
 - `output`：某某路径（可选，默认与输入同名）
 ```
@@ -91,7 +91,7 @@ mcp_tool: image_task         # 可选：声明后端为某个 MCP 工具（此�
 
 ### 3.3 MCP 后端技能（无入口脚本）
 
-front matter 里写 `mcp_tool: <工具名>`，这个技能的 `op=run` 就不落 executor 沙箱，而是由 **core
+front matter 里写 `mcp_tool: <工具名>`，这个技能的 `run` 就不落 executor 沙箱，而是由 **core
 直接调用 `mcp.callTool`** 转发给 `mcp_servers` 里配置的服务：
 
 ```yaml
@@ -102,12 +102,12 @@ mcp_tool: image_task
 ---
 ```
 
-- `input_args` **原样透传**成 MCP 工具的 `arguments`；参数校验由 MCP 服务负责（不做
-  `input_schema.required` 预检——MCP 工具的参数常与 op 相关，静态必填列表会误伤）。
+- `args` **原样透传**成 MCP 工具的 `arguments`；参数校验由 MCP 服务负责（不做
+  `input_schema.required` 预检——MCP 工具的参数常与它自己的 `op` 相关，静态必填列表会误伤）。
 - **不经过沙箱**，所以也不需要密钥：凭证留在 core 的 `mcp_servers[].headers` 里。
   executor 的环境变量白名单会按名字丢掉 `*KEY` / `*TOKEN`，沙箱本来也拿不到。
 - 目的通常是省上下文：把该服务设成 `mode: silent`，工具不进模型的 tools 数组，模型只看到
-  技能清单里的一行描述，需要时再用 `op=get` 读本文件。
+  技能清单里的一行描述，需要时再用 `{"get":"<名>"}` 读本文件。
 - `mcp_tool` 填**最终工具名**（与内置工具重名时会被加 `<服务名>__` 前缀，见 `app/AGENTS.md`）。
 - 启动时 core 会自检：声明的工具不在注册表里会打 `warn`，不会等到模型第一次调用才暴露。
 
@@ -202,7 +202,7 @@ Agent 调用技能时，传入的文件路径可能是相对路径（相对于�
 
 - **运行时的工作目录是「会话任务目录」，不是技能目录**（远端模式下即 executor 隔离视图里的 `/workspace/tasks/<会话>`）。技能进程只能看到当前会话的数据，看不到其他会话。
 - 因此技能内部引用**自身资源**（模板、字体、配置等）时，**必须**基于脚本位置取绝对路径，不要依赖 cwd：Python 用 `Path(__file__).resolve().parent`，Shell 用 `"$(dirname "$0")"`。
-- 读写会话数据用 `input_args` 里传入的路径即可；相对路径会被预转绝对路径，且在隔离视图里与 Agent 看到的是同一份数据。
+- 读写会话数据用 `args` 里传入的路径即可；相对路径会被预转绝对路径，且在隔离视图里与 Agent 看到的是同一份数据。
 
 ---
 
@@ -254,7 +254,7 @@ input_schema:
 ---
 
 ## 使用说明
-通过 `skill`（op=run）调用，参数：
+通过 `skill` 的 `{"run":"<技能名>","args":{...}}` 调用，参数：
 - `text`：要回显的文本（必填）
 ```
 

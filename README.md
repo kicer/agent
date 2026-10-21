@@ -263,7 +263,7 @@ platforms:
 | `terminal` | 执行 shell 命令；默认在会话目录，超时可终止 |
 | `fetch` | 抓取 HTTP/HTTPS 并转 Markdown；带 SSRF 防护与分段续读 |
 | `mint_public_link` | 为会话内文件签发短期公网链接 |
-| `skill` | 技能 `list` / `get` / `run` |
+| `skill` | 技能：`{"list":"all"}` / `{"get":"<名>"}` / `{"run":"<名>","args":{...}}`（动词作键，三选一） |
 | `db` | 操作会话本地 `data.db`：`exec`、`query`、`insert`、`tables`、`schema` |
 | `schedule` | 定时任务 `get` / `list` / `create` / `update` / `delete` |
 | `profile` | 用户画像 `list` / `set` / `add` / `remove` |
@@ -287,8 +287,8 @@ skills/my-skill/
 ```
 
 - `SKILL.md` 的 `description` 会进入 system prompt，模型启动时就知道有哪些技能。
-- `input_schema.required` 在 `skill op=run` 前校验。
-- `mcp_tool`：声明后端为某个 MCP 工具。此时 `op=run` 由 core 直接转发给 MCP（不落沙箱、不需要密钥），
+- `input_schema.required` 在 `{"run":"<名>","args":{...}}` 前校验。
+- `mcp_tool`：声明后端为某个 MCP 工具。此时 `run` 由 core 直接转发给 MCP（不落沙箱、不需要密钥），
   配合该服务的 `mode: silent` 就能把工具从模型的 tools 数组里隐藏，只留一行技能描述。仓库自带的
   `skills/image`、`skills/video` 就是这么封装的 `image_task` / `video_task`。
 - 入口脚本以绝对路径启动；远端执行时 cwd 是会话目录，本地开发时是技能目录。相对路径参数会先按会话目录转成绝对路径。

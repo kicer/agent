@@ -178,8 +178,8 @@ function dumpPromptBundle() {
 // 启动时先发现各 MCP 服务的工具（单个服务失败只警告，不阻止启动），
 // 并对技能列表做快照（注入 system prompt，见 llm.setSkillListText），完成后开始监听。
 mcp.init(cfg).then(async () => {
-  // 技能列表快照：模型直接感知已有技能，免先 skill op=list 探索；
-  // 此处失败不阻塞启动，skill op=list 仍可做实时兑底。
+  // 技能列表快照：模型直接感知已有技能，免先 {"list":"all"} 探索；
+  // 此处失败不阻塞启动，{"list":"all"} 仍可做实时兜底。
   try {
     const list = await skills.listSkills({ cfg });
     llm.setSkillListText(skills.formatSkillListForPrompt(list));

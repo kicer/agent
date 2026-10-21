@@ -170,12 +170,15 @@ POST /api/sessions/:id/messages
   `source_path`，且只限同一用户的会话。写侧显式拒绝——否则会造出字面 `@task-x` 目录。
 - `checkToolArgs` + `unwrapToolArgs`：前者做结构性预检并生成 `errAck`，后者按 schema 逐层剥掉
   弱模型多包的信封。两者都是纯函数并已导出，便于回归验证。
-- 技能（`tools/skills.js`）：`SKILL.md` front matter 提供 `description`/`input_schema`；
-  `input_schema.required` 在 `run` 前校验；相对路径参数按会话目录转绝对路径；入口一律用绝对路径
-  （远端 cwd 是会话目录）。配了 executor 就走 `remote-exec`，否则本地 `spawn`。
+- 技能（`tools/skills.js`）：`SKILL.md` front matter 提供 `description`/`input_schema`。
+  工具参数是「动词作键」：`{"list":"all"}` / `{"get":"<名>"}` / `{"run":"<名>","args":{...}}`，
+  三者恰好给一个（无法用 `required` 表达，校验在 `toolSkill` 里做）。`input_schema.required` 在
+  `run` 前校验；相对路径参数按会话目录转绝对路径；入口一律用绝对路径（远端 cwd 是会话目录）。
+  配了 executor 就走 `remote-exec`，否则本地 `spawn`。旧形状 `{op, name, input_args}` 仅由
+  `toolSkill` 兜底翻译（存量技能文档里还写着它），不再对外文档化。
   声明了 `mcp_tool` 的技能走另一条后端：`runSkill` 在 `absolutizeArgs` **之前**分流，由 core
   直接 `mcp.callTool` 转发（不落沙箱，所以也不需要任何密钥）；否则 URL 与含 `/` 的 prompt 会被
-  当路径改写。此时不跑 `input_schema.required` 校验（参数是 op 相关的，交给 MCP 服务管）。
+  当路径改写。此时不跑 `input_schema.required` 校验（参数与 MCP 工具自己的 `op` 相关，交给服务管）。
 - MCP（`mcp.js`）：启动时 `initialize` → `notifications/initialized` → `tools/list`；与内置或已有
   MCP 工具重名时加 `<服务名>__` 前缀；请求随带 `X-Session-Dir`、`X-Public-Base`；
   `content` 里的 `ui_card` 块不进模型上下文，转成 SSE `ui_card` 事件。

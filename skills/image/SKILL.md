@@ -10,7 +10,7 @@ mcp_tool: image_task
 
 ## 参数
 
-`input_args` 原样透传给底层服务：
+`args` 原样透传给底层服务：
 
 - `op=create`：`prompt` 必填。描述越具体越好（主体、风格、构图、光线、画面里的文字要求）。
 - `op=get`：`task_id` 必填，取回任务状态；`SUCCESS` 时返回图片 URL。
@@ -20,7 +20,7 @@ mcp_tool: image_task
 1. 提交
 
    ```
-   skill op=run name=image input_args={"op":"create","prompt":"一只橘猫趴在窗台上晒太阳，水彩风格"}
+   skill {"run":"image","args":{"op":"create","prompt":"一只橘猫趴在窗台上晒太阳，水彩风格"}}
    ```
 
    → 返回 `task_id` 与 `task_status: PROCESSING`
@@ -28,7 +28,7 @@ mcp_tool: image_task
 2. 查询
 
    ```
-   skill op=run name=image input_args={"op":"get","task_id":"<上一步返回的 id>"}
+   skill {"run":"image","args":{"op":"get","task_id":"<上一步返回的 id>"}}
    ```
 
    → `SUCCESS` 时返回 `Image N: <url>`

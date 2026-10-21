@@ -31,7 +31,7 @@ visit_url: /app/{task_id}/
 
 ## 初始化
 
-调用 `skill(name="data-page", op="run")`，无需参数。它会把以下文件复制到 `.app/`：
+调用 `skill {"run":"data-page"}`，无需参数。它会把以下文件复制到 `.app/`：
 
 - `table.html` / `dashboard.html` / `kanban.html` —— 三个数据页模板
 - `nav.html` —— 多页导航首页模板（静态卡片，无 config）
@@ -80,7 +80,7 @@ const taskId = location.pathname.split('/').filter(Boolean)[1];
 
 1. **明确数据结构**：与用户确认字段。如果描述模糊，可以建议合理的结构。
 2. **创建表并录入数据**：用 `db` 工具完成。
-3. **初始化**：调用 `skill(name="data-page", op="run")`。
+3. **初始化**：调用 `skill {"run":"data-page"}`。
 4. **为每个要生成的页面写 config 文件**（见下一节）。**不要读也不要改模板本身**。
 5. **选定入口页 `.app/index.html`**（index 是副本，允许编辑；模板本体不动）：
    - **用到 ≥2 个模板页** → `cp .app/nav.html .app/index.html`，改标题为业务名，并把未启用页面的卡片删掉（没配过的页点开会报 no such table）。子页标题左侧的「‹」返回键链回此导航页。

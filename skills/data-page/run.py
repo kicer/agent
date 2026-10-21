@@ -25,7 +25,7 @@ def main():
         try:
             args = json.loads(sys.argv[1])
             if not isinstance(args, dict):
-                raise ValueError('input_args 必须是 JSON 对象')
+                raise ValueError('技能参数必须是 JSON 对象')
             if args:
                 print('本技能无参数，收到：' + json.dumps(args, ensure_ascii=False),
                       file=sys.stderr)

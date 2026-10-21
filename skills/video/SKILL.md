@@ -10,7 +10,7 @@ mcp_tool: video_task
 
 ## 参数
 
-`input_args` 原样透传给底层服务：
+`args` 原样透传给底层服务：
 
 - `op=create`：`prompt` 与 `image_url` **至少给一个**。
   - 文生视频：只给 `prompt`（≤512 字符）。
@@ -24,7 +24,7 @@ mcp_tool: video_task
 1. 提交
 
    ```
-   skill op=run name=video input_args={"op":"create","prompt":"镜头缓慢推进，海浪拍打礁石","with_audio":true}
+   skill {"run":"video","args":{"op":"create","prompt":"镜头缓慢推进，海浪拍打礁石","with_audio":true}}
    ```
 
    → 返回 `task_id`
@@ -32,7 +32,7 @@ mcp_tool: video_task
 2. 查询
 
    ```
-   skill op=run name=video input_args={"op":"get","task_id":"<上一步返回的 id>"}
+   skill {"run":"video","args":{"op":"get","task_id":"<上一步返回的 id>"}}
    ```
 
    → `SUCCESS` 时返回 `Video URL: <url>`

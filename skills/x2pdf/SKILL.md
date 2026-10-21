@@ -66,7 +66,7 @@ output_schema:
 
 ## 调用方式
 
-通过 `skill`(op=run)调用,参数:
+通过 `skill` 的 `{"run":"x2pdf","args":{...}}` 调用,参数:
 - `input`:输入文件路径(必填)
 - `output`:PDF 输出路径(可选,默认与输入同名)
 - `css`:自定义 CSS 文件路径(可选,仅 md/html/txt)

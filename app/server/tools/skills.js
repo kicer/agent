@@ -3,7 +3,7 @@
 // 一次性处理——镜像已带的包跳过，缺的装进 skills/deps，运行期经 executor 容器 env 的 PYTHONPATH 可见。
 // 技能统一存放于技能根目录（cfg.skills_root，所有任务/会话共享；容器内挂 ./skills → /workspace/skills），每个技能一个子目录：
 //   <skill>/SKILL.md（必须）、run.py | run.sh（入口）、requirements.txt、install.sh（可选）。
-// 入口脚本约定接收一个 JSON 字符串作为唯一命令行参数（含全部 input_args）。
+// 入口脚本约定接收一个 JSON 字符串作为唯一命令行参数（含全部 args）。
 // 后端两种：脚本（run.py/run.sh，落 executor 沙箱执行）与 MCP（front matter 声明 mcp_tool，
 // run 由 core 直接调 mcp.callTool，不经沙箱——凭证留在 core，模型只看到一行技能描述）。
 const fs = require('fs');
@@ -52,7 +52,7 @@ function extractDescription(content) {
   return line || '(无描述)';
 }
 
-// ---------- 3.1 skill op=list ----------
+// ---------- 3.1 skill list ----------
 async function listSkills(ctx) {
   const root = skillsRoot(ctx);
   if (!fs.existsSync(root)) {
@@ -86,10 +86,10 @@ async function listSkills(ctx) {
 // ---------- system prompt 注入：可用技能列表 ----------
 // 把技能列表格式化成 “## Available Skills” 段落（每行 `- [**required** ]名字: 描述`；
 // listSkills 已按名字 localeCompare 排序，行序恒定，不破坏前缀缓存；
-// 参数查 op=get，执行 op=run；描述如需实时复核仍可查 op=list）。
+// 参数查 get，执行 run；描述如需实时复核仍可查 list）。
 // 由 llm.setSkillListText 拼入 system prompt：启动时快照（server.js）与技能变更后
 // （routes/skills.js 的创建/重命名/删除/文件变更）调用，让模型直接感知已装技能，
-// 省掉先 op=list 探索的往返。
+// 省掉先 list 探索的往返。
 function formatSkillListForPrompt(list) {
   if (!list || !list.length) return '';
   const lines = list.map(s => {
@@ -100,7 +100,7 @@ function formatSkillListForPrompt(list) {
   return '## Available Skills\n' + lines.join('\n');
 }
 
-// ---------- 3.2 skill op=get ----------
+// ---------- 3.2 skill get ----------
 async function getSkillInfo(ctx, skillName) {
   const dir = skillDir(ctx, skillName);
   const mdPath = path.join(dir, 'SKILL.md');
@@ -134,7 +134,7 @@ function absolutizeArgs(inputArgs, baseDir) {
   return out;
 }
 
-// 按 input_schema 校验 input_args（仅校验 required 字段存在且非空）。
+// 按 input_schema 校验技能参数（仅校验 required 字段存在且非空）。
 function validateArgs(fm, inputArgs, skillName) {
   const schema = fm && fm.input_schema;
   if (!schema || !Array.isArray(schema.required)) return;
@@ -146,7 +146,7 @@ function validateArgs(fm, inputArgs, skillName) {
 
 // 前台执行技能入口，带超时与取消支持；成功 resolve stdout，失败 reject SkillExecutionError。
 // 配了 executor：入口命令拼成单条 shell 行（参数单引号转义，JSON payload 安全）交远端执行，
-// cwd 由调用方给出（op=run 传会话目录以命中 session 隔离与虚拟视图）；
+// cwd 由调用方给出（run 传会话目录以命中 session 隔离与虚拟视图）；
 // 技能依赖的 PYTHONPATH 由 executor 容器 env 提供，core 不感知依赖层。
 function runEntry(ctx, entry, args, cwd, timeoutMs) {
   const cfg = ctx.cfg;
@@ -210,11 +210,11 @@ function runEntry(ctx, entry, args, cwd, timeoutMs) {
   });
 }
 
-// ---------- 3.3 skill op=run ----------
+// ---------- 3.3 skill run ----------
 async function runSkill(ctx, skillName, inputArgs) {
   // 非对象参数会在 absolutizeArgs 的 Object.entries 里静默错位成垃圾键值（如字符串→索引对象），显式拦下。
   if (inputArgs != null && (typeof inputArgs !== 'object' || Array.isArray(inputArgs))) {
-    throw new SkillExecutionError('input_args 必须是对象（键值参数），收到：' + JSON.stringify(inputArgs).slice(0, 80), 1);
+    throw new SkillExecutionError('技能参数必须是对象（键值参数），收到：' + JSON.stringify(inputArgs).slice(0, 80), 1);
   }
   const dir = skillDir(ctx, skillName);
   if (!fs.existsSync(dir)) throw new SkillNotFoundError('技能不存在：' + skillName);
