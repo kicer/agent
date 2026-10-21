@@ -182,6 +182,10 @@ async function openFilePreview(name, sizeText) {
   try {
     if (!desk) { await pvRenderLegacy(name, r, my); return; }
     let node = null, tb = { refresh: false, popup: false };
+    // blob URL 不能在此登记到 pvState：show() 内部先调 pvClearBody()，那会把"刚建的"这个也一并撤销，
+    // 于是 img/iframe 真正去取时 URL 已失效（Chrome 报 net::ERR_FILE_NOT_FOUND；Safari 撤回更宽松才没暴露）。
+    // 统一等 show() 之后登记，陈旧序号则立即撤销防泄漏。
+    let newBlobUrl = null;
     if (kind === 'html') {
       const fr = document.createElement('iframe');
       fr.className = 'pv-frame';
@@ -190,13 +194,13 @@ async function openFilePreview(name, sizeText) {
       node = fr;
     } else if (kind === 'pdf') {
       const u = URL.createObjectURL(await r.blob());
-      pvState.blobUrl = u; pvState.url = u;
+      newBlobUrl = u;
       const fr = document.createElement('iframe');
       fr.className = 'pv-frame'; fr.title = String(name); fr.src = u; // 不加 sandbox：内建查看器插件需要 unrestricted 帧
       node = fr; tb = { refresh: false, popup: true };
     } else if (kind === 'img') {
       const u = URL.createObjectURL(await r.blob());
-      pvState.blobUrl = u; pvState.url = u;
+      newBlobUrl = u;
       const im = document.createElement('img');
       im.className = 'pv-img'; im.src = u; im.alt = String(name);
       im.addEventListener('click', () => openImageViewer(u, String(name).split('/').pop()));
@@ -206,6 +210,10 @@ async function openFilePreview(name, sizeText) {
       if (node.__tb) { tb = node.__tb; delete node.__tb; }
     }
     show(node, tb);
+    if (newBlobUrl) {
+      if (my === pvSeq) pvState.blobUrl = pvState.url = newBlobUrl;
+      else { try { URL.revokeObjectURL(newBlobUrl); } catch (_) {} }
+    }
   } catch (e) {
     if (my === pvSeq) desk ? show(pvInfoNode(name, sizeText, '预览失败：' + e.message), { refresh: false, popup: false }) : toast('预览失败：' + e.message);
   }
