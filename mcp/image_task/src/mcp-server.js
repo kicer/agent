@@ -185,7 +185,10 @@ function runImageTask({ task, token, model, prompt }) {
 
 // ===== op=create：提交图片生成（立即返回 task_id，后台执行）=====
 async function handleCreate({ args, headers, token }) {
-  if (!args.prompt) {
+  // schema 只约束了 min(1)，"   " 这种纯空白能通过校验并白跑一次出图，所以这里 trim 后再判。
+  // 顺手用 trim 过的值：上游拿到的 prompt 不带首尾空白。
+  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+  if (!prompt) {
     return {
       isError: true,
       content: [{ type: "text", text: 'op=create requires "prompt".' }],
@@ -202,13 +205,13 @@ async function handleCreate({ args, headers, token }) {
   const task = {
     status: "PROCESSING",
     model,
-    prompt: args.prompt,
+    prompt,
     createdAt: Date.now(),
   };
   tasks.set(taskId, task);
 
   // token/model 在此刻从本次请求 header 捕获进闭包，后台完成前无需再取
-  runImageTask({ task, token, model, prompt: args.prompt });
+  runImageTask({ task, token, model, prompt });
 
   const summary =
     `Model: ${model}\n` +
@@ -223,14 +226,16 @@ async function handleCreate({ args, headers, token }) {
 
 // ===== op=get：查询任务状态（只读本地表，不碰上游）=====
 async function handleGet({ args }) {
-  if (!args.task_id) {
+  // 与 handleCreate 同理：纯空白 task_id 应报"缺参数"，而不是得到 Unknown task_id "   " 这种含糊错误。
+  const taskId = typeof args.task_id === "string" ? args.task_id.trim() : "";
+  if (!taskId) {
     return {
       isError: true,
       content: [{ type: "text", text: 'op=get requires "task_id".' }],
     };
   }
 
-  const task = tasks.get(args.task_id);
+  const task = tasks.get(taskId);
   if (!task) {
     return {
       isError: true,
@@ -238,7 +243,7 @@ async function handleGet({ args }) {
         {
           type: "text",
           text:
-            `Unknown task_id "${args.task_id}". ` +
+            `Unknown task_id "${taskId}". ` +
             `Finished tasks are kept for 1 hour and are lost on service restart.`,
         },
       ],
@@ -251,7 +256,7 @@ async function handleGet({ args }) {
         {
           type: "text",
           text:
-            `task_id: ${args.task_id}\n` +
+            `task_id: ${taskId}\n` +
             `model: ${task.model}\n` +
             `task_status: PROCESSING\n` +
             `\n` +
@@ -267,25 +272,24 @@ async function handleGet({ args }) {
       content: [
         {
           type: "text",
-          text: `task_id: ${args.task_id}\ntask_status: FAIL\nerror: ${task.error}`,
+          text: `task_id: ${taskId}\ntask_status: FAIL\nerror: ${task.error}`,
         },
       ],
     };
   }
 
-  // SUCCESS：输出格式与原同步版 create 一致（摘要块 + 每张图一个 URL 块）
-  const lines = task.urls.map((u, i) => `Image ${i + 1}: ${u}`).join("\n");
+  // SUCCESS：单块输出。旧格式是「摘要块 + 每张图一个裸 URL 块」，但 core 的 mcp.callTool
+  // 只把 text 块用 \n 拼起来（串前端/微信也不认裸 URL 块），结果就是同一 URL 在模型面前出现两遍。
+  const lines =
+    task.urls.length === 1
+      ? `Image URL: ${task.urls[0]}`
+      : task.urls.map((u, i) => `Image ${i + 1}: ${u}`).join("\n");
   const summary =
-    `task_id: ${args.task_id}\n` +
+    `task_id: ${taskId}\n` +
     `model: ${task.model}\n` +
     `task_status: SUCCESS\n` +
     `${lines}`;
-  return {
-    content: [
-      { type: "text", text: summary },
-      ...task.urls.map((u) => ({ type: "text", text: u })),
-    ],
-  };
+  return { content: [{ type: "text", text: summary }] };
 }
 
 function buildServer() {
@@ -303,28 +307,33 @@ function buildServer() {
 
   server.tool(
     "image_task",
-    `AI image generation.
+    `AI image generation task.
 
-op=create  Submit a new task. Returns a task_id immediately; generation runs in background.
-           Requires prompt.
-op=get     Fetch the status of a previously submitted task. Requires task_id.
-           On SUCCESS, returns the image URLs.
+Operations:
+- \`create\`: Create a new generation task. Requires \`prompt\`. Returns \`task_id\` immediately; generation runs in background.
+- \`get\`: Check an existing task. Requires \`task_id\`. Returns status and, on SUCCESS, image URLs.
 
-Typical flow: call op=create, then call op=get with the returned task_id until task_status is SUCCESS or FAIL.`,
+Examples:
+- New image request → \`{"op":"create","prompt":"A cat sitting in a garden"}\`
+- Check task result → \`{"op":"get","task_id":"<task_id from create>"}\`
+
+Workflow: call \`create\` once, then call \`get\` with the returned \`task_id\` until \`task_status\` is \`SUCCESS\` or \`FAIL\`. Never call \`get\` without a \`task_id\`, and never submit duplicate tasks just to check status.`,
     {
-      op: z.enum(["create", "get"]).describe("Operation to perform."),
+      op: z
+        .enum(["create", "get"])
+        .describe("Use create to start a new image generation task; use get to check a task by its task_id."),
       prompt: z
         .string()
         .min(1)
         .optional()
         .describe(
-          "Image generation prompt; describe the desired scene in detail. Required when op=create."
+          "Image generation prompt; describe the desired scene in detail. Required for create; omit for get."
         ),
       task_id: z
         .string()
         .min(1)
         .optional()
-        .describe("task_id returned by op=create. Required when op=get."),
+        .describe("task_id returned by create. Required for get; omit for create."),
     },
     async (args, extra) => {
       // SDK 在 tool callback 的 extra.requestInfo.headers 里会透传当前 HTTP 请求的 headers

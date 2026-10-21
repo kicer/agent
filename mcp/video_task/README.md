@@ -105,12 +105,11 @@ docker exec mcp_video_task node -e "fetch('http://localhost:3000/health').then(r
 
 ### 返回（op=get）
 
-- **`SUCCESS`**：返回 `Video URL`（智谱签名 URL，**24h 左右有效**，需及时转存），外加一张 `Cover` 封面图：
+- **`SUCCESS`**：单个 `text` 块，含 `Video URL`（智谱签名 URL，**24h 左右有效**，需及时转存），以及 `Cover` 封面图：
   ```jsonc
   {
     "content": [
-      { "type": "text", "text": "task_id: ...\nmodel: cogvideox-flash\ntask_status: SUCCESS\nVideo URL: https://...\nCover: https://..." },
-      { "type": "text", "text": "https://...video url..." }
+      { "type": "text", "text": "task_id: ...\nmodel: cogvideox-flash\ntask_status: SUCCESS\nVideo URL: https://...\nCover: https://..." }
     ]
   }
   ```

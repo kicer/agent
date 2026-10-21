@@ -193,7 +193,11 @@ async function queryAsyncResult({ token, id }) {
 
 // ---------- op=create 的业务处理 ----------
 async function handleCreate({ args, headers, token }) {
-  if (!args.prompt && !args.image_url) {
+  // 纯空白 prompt 等同没给：schema 只校验类型/长度，不校验内容。
+  // 不 trim 的话，“   ”会被当成合法 prompt 提交（text-to-video 拿到空白提示词，
+  // image-to-video 则多传一个无意义字段）。
+  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+  if (!prompt && !args.image_url) {
     return {
       isError: true,
       content: [
@@ -223,7 +227,7 @@ async function handleCreate({ args, headers, token }) {
     const data = await submitVideo({
       token,
       model,
-      prompt: args.prompt,
+      prompt,
       image_url: args.image_url,
       quality,
       with_audio: args.with_audio ?? false,
@@ -258,7 +262,10 @@ async function handleCreate({ args, headers, token }) {
 
 // ---------- op=get 的业务处理 ----------
 async function handleGet({ args, token }) {
-  if (!args.task_id) {
+  // 与 handleCreate 同理：纯空白 task_id 不能直接拼进上游路径，
+  // 否则会得到一条含编码后空白的上游报错，既无从归因也误导模型。
+  const taskId = typeof args.task_id === "string" ? args.task_id.trim() : "";
+  if (!taskId) {
     return {
       isError: true,
       content: [{ type: "text", text: 'op=get requires "task_id".' }],
@@ -266,7 +273,7 @@ async function handleGet({ args, token }) {
   }
 
   try {
-    const data = await queryAsyncResult({ token, id: args.task_id });
+    const data = await queryAsyncResult({ token, id: taskId });
     const status = data.task_status || "UNKNOWN";
 
     if (status === "SUCCESS") {
@@ -290,12 +297,9 @@ async function handleGet({ args, token }) {
         `task_status: SUCCESS\n` +
         `Video URL: ${v.url}\n` +
         (v.cover_image_url ? `Cover: ${v.cover_image_url}\n` : "");
-      return {
-        content: [
-          { type: "text", text: summary },
-          { type: "text", text: v.url },
-        ],
-      };
+      // 单块输出：URL 已经写在摘要里，旧版额外回一个裸 URL 块会让模型
+      // （core 会把 text 块 join 成一段）看到同一个链接两遍。
+      return { content: [{ type: "text", text: summary }] };
     }
 
     // PROCESSING / FAIL / 其他：原样返回关键字段
@@ -336,43 +340,49 @@ function buildServer() {
 
   server.tool(
     "video_task",
-    `AI video generation.
+    `AI video generation task.
 
-op=create  Submit a new task. Returns a task_id immediately; generation runs asynchronously.
-           Requires at least one of prompt or image_url.
-           - text-to-video: pass prompt only.
-           - image-to-video: also pass image_url.
-op=get     Fetch the status of a previously submitted task. Requires task_id.
-           On SUCCESS, returns the video URL.
+Operations:
+- \`create\`: Start a new video generation task. Requires at least one of \`prompt\` or \`image_url\`. Returns \`task_id\` immediately; generation runs in background.
+- \`get\`: Check an existing task. Requires \`task_id\`. Returns status and, on SUCCESS, the video URL.
 
-Typical flow: call op=create, then call op=get with the returned task_id until task_status is SUCCESS or FAIL.`,
+Examples:
+- Text-to-video → \`{"op":"create","prompt":"A cat running in a garden"}\`
+- Image-to-video → \`{"op":"create","image_url":"https://example.com/cat.jpg","prompt":"The cat runs forward"}\`
+- Check task → \`{"op":"get","task_id":"<task_id from create>"}\`
+
+Workflow: call \`create\` once, then call \`get\` with the returned \`task_id\` until \`task_status\` is \`SUCCESS\` or \`FAIL\`. Never create duplicate tasks just to check status.`,
     {
-      op: z.enum(["create", "get"]).describe("Operation to perform."),
+      op: z
+        .enum(["create", "get"])
+        .describe(
+          "Use create to start video generation; use get to check a task by its task_id."
+        ),
       prompt: z
         .string()
         .max(512)
         .optional()
         .describe(
-          "Video text description (max 512 chars). Used with op=create. When combined with image_url it serves as the motion/action description."
+          "Video description, max 512 characters. Required for text-to-video; when combined with image_url it describes the motion."
         ),
       image_url: z
         .string()
         .url()
         .optional()
         .describe(
-          "Reference image for image-to-video. Used with op=create. Must be a publicly reachable URL to a png/jpeg/jpg <= 5MB (for local files, first use the agent's built-in tool to mint a public temporary URL)."
+          "Reference image for image-to-video: publicly reachable png/jpeg/jpg URL <= 5 MB. For local files, first use the built-in mint_public_link tool to get a public temporary URL."
         ),
       with_audio: z
         .boolean()
         .optional()
         .describe(
-          "Whether to generate AI audio. Used with op=create. Default false."
+          "Whether to generate AI audio. Used with create; defaults to false."
         ),
       task_id: z
         .string()
         .min(1)
         .optional()
-        .describe("task_id returned by op=create. Required when op=get."),
+        .describe("task_id returned by create. Required for get; omit for create."),
     },
     async (args, extra) => {
       const headers = extra?.requestInfo?.headers;

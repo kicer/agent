@@ -110,13 +110,12 @@ docker exec mcp_image_task node -e "fetch('http://localhost:3000/health').then(r
 `op=get` 按任务状态返回：
 
 - `PROCESSING`：提示几秒后再查；
-- `SUCCESS`：若干 `text` 块，第一块是摘要，后续每块各包含一张图片的 URL（方便 LLM 直接贴图或下载）：
+- `SUCCESS`：单个 `text` 块，摘要后跟图片 URL（单图直接给 `Image URL:`，多图按 `Image N:` 逐行列出）：
 
 ```jsonc
 {
   "content": [
-    { "type": "text", "text": "task_id: <uuid>\nmodel: CogView-3-Flash\ntask_status: SUCCESS\nImage 1: https://maas-watermark-prod-new.cn-wlcb.ufileos.com/..." },
-    { "type": "text", "text": "https://maas-watermark-prod-new.cn-wlcb.ufileos.com/..." }
+    { "type": "text", "text": "task_id: <uuid>\nmodel: CogView-3-Flash\ntask_status: SUCCESS\nImage URL: https://maas-watermark-prod-new.cn-wlcb.ufileos.com/..." }
   ]
 }
 ```
