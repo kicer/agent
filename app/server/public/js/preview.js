@@ -35,10 +35,15 @@ function pvKind(name) {
   return 'none';
 }
 
+// 刷新/新窗口两个钮对**所有**预览类型统一开放：
+//   refresh → pvState.reload（各类型都注入「按同一路径重开」，与地址条回车同一条路）
+//   popup   → pvState.url（office=预览网关；文本/HTML/图片/PDF=blob URL；不支持的类型=下载地址）
+// 服务端文件响应一律是 attachment，直接导航只会触发下载，所以能用 blob 的一律走 blob。
 function pvToolbar(o) {
   document.getElementById('pv-refresh').classList.toggle('hidden', !o.refresh);
   document.getElementById('pv-popup').classList.toggle('hidden', !o.popup);
   pvState.reload = typeof o.reload === 'function' ? o.reload : null;
+  pvState.url = o.url === undefined ? null : o.url;
 }
 
 // 每次展示内容都过一遍：标题显示相对路径(子目录可见)，右上角下载钮随文件走
@@ -53,6 +58,7 @@ function pvHeader(name, sizeText) {
 function pvClearBody() {
   document.getElementById('pv-body').innerHTML = '';
   pvState.reload = null; // 换内容/关窗后旧的刷新动作立即失效
+  pvState.url = null;    // 新窗口地址同理：不清会残留上一份内容的 blob/网关 URL
   if (pvState.blobUrl) { try { URL.revokeObjectURL(pvState.blobUrl); } catch (_) {} pvState.blobUrl = null; }
 }
 
@@ -117,7 +123,7 @@ async function pvOpenOffice(name, sizeText) {
   let load;
   if (desk) {
     pvOpenPane(); pvClearBody();
-    pvHeader(name, sizeText); pvToolbar({ refresh: true, popup: false });
+    pvHeader(name, sizeText); pvToolbar({ refresh: true, popup: true, reload: () => openFilePreview(name, sizeText), url });
     load = pvLoadingBox();
     document.getElementById('pv-body').appendChild(load); // 开窗即刻可见，冷启动转圈等首帧
   } else {
@@ -131,15 +137,19 @@ async function pvOpenOffice(name, sizeText) {
   const missing = head && head.status === 404;
   if (missing) {
     const node = pvInfoNode(name, sizeText, '预览服务中暂无这份文档 —— 只有 AI 在本任务中生成/编辑过的文档才能在线预览(较旧的文档可能已被自动清理)。');
-    if (desk) { pvClearBody(); document.getElementById('pv-body').appendChild(node); }
-    else { const b = document.getElementById('fs-body'); b.innerHTML = ''; b.appendChild(node); }
+    if (desk) {
+      // pvClearBody 会清掉 reload/url：占位卡仍要保留刷新/新窗口，否则按钮可见但点了没反应
+      pvClearBody(); document.getElementById('pv-body').appendChild(node);
+      const dl = '/api/sessions/' + encodeURIComponent(state.sessionId) + '/files/download?path=' + encodeURIComponent(name);
+      pvToolbar({ refresh: true, popup: true, reload: () => openFilePreview(name, sizeText), url: dl });
+    } else { const b = document.getElementById('fs-body'); b.innerHTML = ''; b.appendChild(node); }
     return;
   }
   const fr = document.createElement('iframe');
   fr.className = desk ? 'pv-frame' : 'fs-html-frame';
   fr.title = String(name);
   fr.src = url;
-  if (desk) { try { load.remove(); } catch (_) {} document.getElementById('pv-body').appendChild(fr); pvToolbar({ refresh: true, popup: true }); }
+  if (desk) { try { load.remove(); } catch (_) {} document.getElementById('pv-body').appendChild(fr); pvToolbar({ refresh: true, popup: true, reload: () => openFilePreview(name, sizeText), url }); }
   else { const b = document.getElementById('fs-body'); b.innerHTML = ''; b.appendChild(fr); }
   pvState.url = url;
 }
@@ -152,11 +162,15 @@ async function openFilePreview(name, sizeText) {
   if (kind === 'pdf' && !navigator.pdfViewerEnabled) kind = 'none'; // WebView 内嵌不了 PDF：给占位卡，不再自动下载
   const desk = pvDesktop();
   const my = ++pvSeq;
+  // 工具栏两动作全局统一：刷新 = 按同一路径重开（与地址条回车同一条路），
+  // 新窗口 = 打开当前内容；没有可打开的 URL 时（不支持预览/读失败）退回下载地址。
+  const reload = () => openFilePreview(name, sizeText);
+  const downloadUrl = '/api/sessions/' + encodeURIComponent(state.sessionId) + '/files/download?path=' + encodeURIComponent(name);
+  const tbAll = { refresh: true, popup: true, reload, url: downloadUrl };
   if (desk) {
     pvOpenPane(); pvClearBody(); // 立即开窗 + 转圈，点击零延迟可见
     pvHeader(name, sizeText);
-    // 文本类加载期间就把刷新钮露出来：重开即刷新，不必等首帧(也避免刷新时按钮闪断)
-    pvToolbar({ refresh: kind === 'text', popup: false, reload: kind === 'text' ? () => openFilePreview(name, sizeText) : null });
+    pvToolbar(tbAll);
     document.getElementById('pv-body').appendChild(pvLoadingBox());
   }
   const show = (node, tb) => {
@@ -164,7 +178,7 @@ async function openFilePreview(name, sizeText) {
     if (desk) {
       pvClearBody(); pvHeader(name, sizeText);
       document.getElementById('pv-body').appendChild(node);
-      if (tb) pvToolbar(tb);
+      pvToolbar(tb || tbAll);
     } else pvOverlayShow(node);
   };
   if (kind === 'none') {
@@ -172,7 +186,7 @@ async function openFilePreview(name, sizeText) {
     const hint = /\.pdf$/i.test(low)
       ? '当前浏览器不支持页内预览 PDF，请下载后用系统查看器打开。'
       : '该格式暂不支持在线预览，可下载后本地打开。';
-    show(pvInfoNode(name, sizeText, hint), { refresh: false, popup: false });
+    show(pvInfoNode(name, sizeText, hint), tbAll);
     return;
   }
   let r;
@@ -181,41 +195,43 @@ async function openFilePreview(name, sizeText) {
     if (r.status === 401) { if (my === pvSeq) location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search); return; }
     if (!r.ok) { let msg = 'HTTP ' + r.status; try { msg = (await r.json()).error || msg; } catch (_) {} throw new Error(msg); }
   } catch (e) {
-    if (my === pvSeq) { desk ? show(pvInfoNode(name, sizeText, '读取失败：' + e.message), { refresh: false, popup: false }) : (pvCloseOverlayQuiet(), toast('预览失败：' + e.message)); }
+    if (my === pvSeq) { desk ? show(pvInfoNode(name, sizeText, '读取失败：' + e.message), tbAll) : (pvCloseOverlayQuiet(), toast('预览失败：' + e.message)); }
     return;
   }
   try {
     if (!desk) { await pvRenderLegacy(name, r, my); return; }
-    let node = null, tb = { refresh: false, popup: false };
+    let node = null, tb = tbAll;
     // blob URL 不能在此登记到 pvState：show() 内部先调 pvClearBody()，那会把"刚建的"这个也一并撤销，
     // 于是 img/iframe 真正去取时 URL 已失效（Chrome 报 net::ERR_FILE_NOT_FOUND；Safari 撤回更宽松才没暴露）。
     // 统一等 show() 之后登记，陈旧序号则立即撤销防泄漏。
     let newBlobUrl = null;
     if (kind === 'html') {
+      const src = rewriteHtmlDocSrcs(await r.text(), name); // 相对资源改写，否则 about:srcdoc/blob 基准下全 404
       const fr = document.createElement('iframe');
       fr.className = 'pv-frame';
       fr.setAttribute('sandbox', 'allow-same-origin allow-scripts');
-      fr.srcdoc = rewriteHtmlDocSrcs(await r.text(), name); // 相对资源改写，否则 about:srcdoc 基准下全 404
+      fr.srcdoc = src;
+      newBlobUrl = URL.createObjectURL(new Blob([src], { type: 'text/html;charset=utf-8' }));
+      tb = Object.assign({}, tbAll, { url: newBlobUrl }); // 新窗口=改写后的页面（与面板里同一份）
       node = fr;
     } else if (kind === 'pdf') {
       const u = URL.createObjectURL(await r.blob());
       newBlobUrl = u;
       const fr = document.createElement('iframe');
       fr.className = 'pv-frame'; fr.title = String(name); fr.src = u; // 不加 sandbox：内建查看器插件需要 unrestricted 帧
-      node = fr; tb = { refresh: false, popup: true };
+      node = fr; tb = Object.assign({}, tbAll, { url: u });
     } else if (kind === 'img') {
       const u = URL.createObjectURL(await r.blob());
       newBlobUrl = u;
       const im = document.createElement('img');
       im.className = 'pv-img'; im.src = u; im.alt = String(name);
       im.addEventListener('click', () => openImageViewer(u, String(name).split('/').pop()));
-      node = im; tb = { refresh: false, popup: true };
+      node = im; tb = Object.assign({}, tbAll, { url: u });
     } else { // text/md/代码/json/csv
       node = await pvTextNode(name, sizeText, r);
       if (node.__tb) {
-        tb = node.__tb; delete node.__tb;
-        // 文本内容没有 iframe 可 reload：刷新 = 按同路径重读一次(文件可能已被工具改写)
-        tb.refresh = true; tb.reload = () => openFilePreview(name, sizeText);
+        tb = Object.assign({}, tbAll, node.__tb); delete node.__tb;
+        if (/^blob:/.test(tb.url || '')) newBlobUrl = tb.url;
       }
     }
     show(node, tb);
@@ -224,10 +240,29 @@ async function openFilePreview(name, sizeText) {
       else { try { URL.revokeObjectURL(newBlobUrl); } catch (_) {} }
     }
   } catch (e) {
-    if (my === pvSeq) desk ? show(pvInfoNode(name, sizeText, '预览失败：' + e.message), { refresh: false, popup: false }) : toast('预览失败：' + e.message);
+    if (my === pvSeq) desk ? show(pvInfoNode(name, sizeText, '预览失败：' + e.message), tbAll) : toast('预览失败：' + e.message);
   }
 }
 function pvCloseOverlayQuiet() { const fs = document.getElementById('fs-viewer'); if (!fs.classList.contains('hidden') && fs.querySelector('.pv-loading')) closeFullscreen(); }
+
+// 文本类「新窗口」承载：md 用面板同一份渲染 HTML（图片已改写成绝对下载地址），
+// 其余按 text/plain 原样打开——服务端文件响应一律 attachment，直接导航只会触发下载。
+// md 里原样透传的 <script> 在面板(innerHTML)本就不执行，但 blob 文档会执行，故先剔除以保持一致。
+function pvMdDoc(html, name) {
+  const css =
+    'body{margin:0;padding:24px 32px 48px;max-width:900px;font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#1f2328;background:#fff}' +
+    'img{max-width:100%;height:auto}pre{background:#f6f8fa;padding:12px 14px;border-radius:8px;overflow:auto}' +
+    'code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}' +
+    'table{border-collapse:collapse}th,td{border:1px solid #d8dee4;padding:6px 10px}' +
+    'blockquote{margin:0;padding:0 14px;color:#57606a;border-left:3px solid #d8dee4}' +
+    'a{color:#0969da}';
+  const title = esc(String(name || '').split('/').pop() || '预览');
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>' + title + '</title><style>' + css + '</style></head><body>' +
+    html.replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '') + '</body></html>';
+}
+function pvTextUrl(text) { return URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' })); }
 
 // 桌面文本渲染：md 走气泡 markdown；txt/log 原文排版；代码/配置/数据等宽 pre；二进制嗅探回退占位卡
 async function pvTextNode(name, sizeText, r) {
@@ -243,14 +278,18 @@ async function pvTextNode(name, sizeText, r) {
     wrap.className = 'msg other';
     wrap.innerHTML = '<div class="' + cls + ' pv-doc">' + html + '</div>';
     decorateCodePre(wrap);
-    const n = wrap.firstChild; n.__tb = { refresh: true, popup: false };
+    const n = wrap.firstChild;
+    // q.fmt=false 表示 marked 不可用、面板就是原文排版：新窗口也按纯文本开，避免空白被折叠
+    n.__tb = q.fmt
+      ? { popup: true, url: URL.createObjectURL(new Blob([pvMdDoc(html, name)], { type: 'text/html;charset=utf-8' })) }
+      : { popup: true, url: pvTextUrl(text) };
     return n;
   }
   if (PV_PLAIN.test(low)) {
     const wrap = document.createElement('div');
     wrap.className = 'msg other';
     wrap.innerHTML = '<div class="bubble-ai pv-doc">' + esc(text) + '</div>';
-    const n = wrap.firstChild; n.__tb = { refresh: true, popup: false };
+    const n = wrap.firstChild; n.__tb = { popup: true, url: pvTextUrl(text) };
     return n;
   }
   const frag = document.createDocumentFragment();
@@ -269,7 +308,7 @@ async function pvTextNode(name, sizeText, r) {
   const holder = document.createElement('div');
   holder.className = 'pv-plain';
   holder.appendChild(frag);
-  holder.__tb = { refresh: true, popup: false };
+  holder.__tb = { popup: true, url: pvTextUrl(text) }; // 新窗口用全文，不受面板截断影响
   return holder;
 }
 
