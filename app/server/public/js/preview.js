@@ -15,7 +15,8 @@ const PV_PLAIN = /\.(txt|log)$/i;
 const PV_TEXT = /\.(md|markdown|txt|log|csv|tsv|json|jsonl|xml|yml|yaml|toml|ini|conf|cfg|properties|env|py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|c|h|cpp|hpp|cc|cs|go|rs|rb|php|swift|sh|bash|zsh|bat|ps1|sql|lua|r|dart|vue|css|less|scss|srt|vtt)$/i;
 const PV_TEXT_MAX = 512 * 1024; // 文本预览截断阈值(字符)，超出提示下载看全文
 let pvSeq = 0; // 预览序号：快速连点时旧请求不许再动 DOM
-const pvState = { name: null, url: null, blobUrl: null, drawerWasOpen: false, mobilePush: false };
+// reload: 当前内容的"重新载入"动作(文本类无 iframe，按名重开)；为 null 时回退到 reload iframe
+const pvState = { name: null, url: null, blobUrl: null, reload: null, drawerWasOpen: false, mobilePush: false };
 
 function pvDesktop() { return window.matchMedia('(min-width: 960px)').matches; }
 
@@ -37,6 +38,7 @@ function pvKind(name) {
 function pvToolbar(o) {
   document.getElementById('pv-refresh').classList.toggle('hidden', !o.refresh);
   document.getElementById('pv-popup').classList.toggle('hidden', !o.popup);
+  pvState.reload = typeof o.reload === 'function' ? o.reload : null;
 }
 
 // 每次展示内容都过一遍：标题显示相对路径(子目录可见)，右上角下载钮随文件走
@@ -50,6 +52,7 @@ function pvHeader(name, sizeText) {
 
 function pvClearBody() {
   document.getElementById('pv-body').innerHTML = '';
+  pvState.reload = null; // 换内容/关窗后旧的刷新动作立即失效
   if (pvState.blobUrl) { try { URL.revokeObjectURL(pvState.blobUrl); } catch (_) {} pvState.blobUrl = null; }
 }
 
@@ -151,7 +154,9 @@ async function openFilePreview(name, sizeText) {
   const my = ++pvSeq;
   if (desk) {
     pvOpenPane(); pvClearBody(); // 立即开窗 + 转圈，点击零延迟可见
-    pvHeader(name, sizeText); pvToolbar({ refresh: false, popup: false });
+    pvHeader(name, sizeText);
+    // 文本类加载期间就把刷新钮露出来：重开即刷新，不必等首帧(也避免刷新时按钮闪断)
+    pvToolbar({ refresh: kind === 'text', popup: false, reload: kind === 'text' ? () => openFilePreview(name, sizeText) : null });
     document.getElementById('pv-body').appendChild(pvLoadingBox());
   }
   const show = (node, tb) => {
@@ -207,7 +212,11 @@ async function openFilePreview(name, sizeText) {
       node = im; tb = { refresh: false, popup: true };
     } else { // text/md/代码/json/csv
       node = await pvTextNode(name, sizeText, r);
-      if (node.__tb) { tb = node.__tb; delete node.__tb; }
+      if (node.__tb) {
+        tb = node.__tb; delete node.__tb;
+        // 文本内容没有 iframe 可 reload：刷新 = 按同路径重读一次(文件可能已被工具改写)
+        tb.refresh = true; tb.reload = () => openFilePreview(name, sizeText);
+      }
     }
     show(node, tb);
     if (newBlobUrl) {
@@ -234,14 +243,14 @@ async function pvTextNode(name, sizeText, r) {
     wrap.className = 'msg other';
     wrap.innerHTML = '<div class="' + cls + ' pv-doc">' + html + '</div>';
     decorateCodePre(wrap);
-    const n = wrap.firstChild; n.__tb = { refresh: false, popup: false };
+    const n = wrap.firstChild; n.__tb = { refresh: true, popup: false };
     return n;
   }
   if (PV_PLAIN.test(low)) {
     const wrap = document.createElement('div');
     wrap.className = 'msg other';
     wrap.innerHTML = '<div class="bubble-ai pv-doc">' + esc(text) + '</div>';
-    const n = wrap.firstChild; n.__tb = { refresh: false, popup: false };
+    const n = wrap.firstChild; n.__tb = { refresh: true, popup: false };
     return n;
   }
   const frag = document.createDocumentFragment();
@@ -260,7 +269,7 @@ async function pvTextNode(name, sizeText, r) {
   const holder = document.createElement('div');
   holder.className = 'pv-plain';
   holder.appendChild(frag);
-  holder.__tb = { refresh: false, popup: false };
+  holder.__tb = { refresh: true, popup: false };
   return holder;
 }
 
@@ -326,6 +335,7 @@ document.getElementById('pv-max').addEventListener('click', () => {
   pvSetMaxUI(max);
 });
 document.getElementById('pv-refresh').addEventListener('click', () => {
+  if (typeof pvState.reload === 'function') { pvState.reload(); return; }
   const f = document.getElementById('pv-body').querySelector('iframe');
   if (!f) return;
   try { f.contentWindow.location.reload(); } catch (_) { const s = f.src; f.src = ''; f.src = s; }
