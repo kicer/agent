@@ -129,6 +129,9 @@ const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.
 // read_file 读图（仅当会话绑定的模型 vision: true）：sharp 压缩后落盘到任务目录 .imgcache/，
 // 返回 {text, image_rel}；engine 拼成 image_ref 内容块落库，llm.buildMessages 发请求前
 // 现签成公网外链（GET /p/<id>）进 image_url 块，base64 不再进 DB/请求体。
+// text 一律是 imageReceipt 生成的 JSON 对象（字段契约见下），不是散文：
+// 这份回执会被三层改写（executor 产出 / engine 同回合去重 / llm 签外链失败降级），
+// 散文回执让模型只能靠语义猜「到底有没有图」，历史事故是反复 read_file 补看烧 token。
 const IMG_MAX_INPUT_BYTES = 50 * 1024 * 1024; // 与上传上限一致
 const IMG_MAX_SIDE = 2000;                    // 长边压缩阈值（px）
 const IMG_JPEG_QUALITY = 80;
@@ -178,14 +181,51 @@ function outlineWrapper(outlineText) {
     'For example, to read a function shown as [L100-150], use start_line: 100 and end_line: 150.';
 }
 
+// read_file 图片回执的统一信封。字段是模型唯一可判定的事实，回执不再写中文句子：
+//   ok              调用本身是否成功（ok=true + image_attached=false 是合法形态：同回合重复读被去重）
+//   path            模型请求的路径（@ 历史形原样保留）；投递产物路径只在服务端内部用，不回执
+//   image_attached  服务端是否产出了图块、会随本批回执之后的那条 user 消息投递（≠上游已收到）
+//   reason          仅 image_attached=false 时有值，稳定枚举（no_vision / too_large / past_session /
+//                   decode_failed / sharp_missing / already_delivered / link_unavailable /
+//                   omitted_already_sent）——模型按它分支，不要读 hint 猜
+//   retryable       重试同一调用是否有意义（图片这条路上恒 false：同样的字节只会得到同样的结果）
+//   width/height    实际投递的像素尺寸；source_width/height + resized 只在确实缩放过时出现
+//   hint            一句人话补充，仅供解释，不承载判定
+function imageReceipt(o) {
+  const out = { ok: o.ok === true, tool: 'read_file', kind: 'image', path: o.path, image_attached: o.image_attached === true };
+  for (const k of ['reason', 'retryable', 'width', 'height', 'format', 'bytes_in', 'bytes_out',
+    'resized', 'source_width', 'source_height', 'hint']) {
+    if (o[k] !== undefined) out[k] = o[k];
+  }
+  return JSON.stringify(out);
+}
+
 // 用 sharp 压缩（按 EXIF 摆正、长边 ≤2000px、JPEG 质量 80）并落盘 .imgcache/。
-// 成功返回 {text, image_rel}；产物文件名带源文件指纹（mtime+size），同图重复读复用同一份不增殖。
+// 成功返回 {text, image_rel}，失败返回 {text}（text 都是 imageReceipt 的 JSON）。
+// 产物文件名带源文件指纹（mtime+size），同图重复读复用同一份不增殖。
 // 无收益守卫（与浏览器端压缩同款）：重编码 JPEG 反而 ≥ 原图时不落盘，image_rel 直指原文件。
-// sharp 缺失或解码失败时退回纯文本提示，不让整个工具回合报错。
+// sharp 缺失或解码失败时只回执原因，不让整个工具回合报错。
 async function readImageAsBlocks(ctx, abs, rel, size) {
   let sharp;
   try { sharp = require('sharp'); }
-  catch (_) { return '[图片文件] ' + rel + '（' + size + ' 字节）。服务端未安装 sharp，无法压缩回传图片内容。'; }
+  catch (_) {
+    return {
+      text: imageReceipt({
+        ok: false, path: rel, image_attached: false, reason: 'sharp_missing', retryable: false, bytes_in: size,
+        hint: '服务端未安装 sharp，无法压缩回传图片内容',
+      }),
+    };
+  }
+  // 源尺寸只读文件头（metadata 不解码像素）；EXIF orientation 5-8 表示显示时旋转 90°，
+  // 宽高要交换才与模型最终看到的画面一致（sharp 的 rotate() 会真的转）。
+  let src = null;
+  try {
+    const m = await sharp(abs).metadata();
+    if (m && m.width && m.height) {
+      const swap = Number(m.orientation) >= 5;
+      src = { w: swap ? m.height : m.width, h: swap ? m.width : m.height, format: m.format || null };
+    }
+  } catch (_) { src = null; }
   try {
     const r = await sharp(abs)
       .rotate()
@@ -195,7 +235,13 @@ async function readImageAsBlocks(ctx, abs, rel, size) {
     if (r.data.length >= size) {
       // 低内容熵图（截图/线稿/纯色）JPEG 重编码可能比原图还大：不产出缓存，外链直接指向原文件
       return {
-        text: '[图片文件] ' + rel + '（' + size + ' 字节，压缩无收益，按原图回传）',
+        text: imageReceipt({
+          ok: true, path: rel, image_attached: true,
+          width: src ? src.w : undefined, height: src ? src.h : undefined,
+          format: src && src.format ? src.format : undefined,
+          bytes_in: size, bytes_out: size, resized: false,
+          hint: '压缩无收益，按原图回传',
+        }),
         image_rel: rel,
       };
     }
@@ -208,13 +254,21 @@ async function readImageAsBlocks(ctx, abs, rel, size) {
       await fsp.mkdir(path.dirname(outAbs), { recursive: true });
       await fsp.writeFile(outAbs, r.data);
     }
-    return {
-      text: '[图片文件] ' + rel + '（原 ' + size + ' 字节，已压缩为 ' + r.info.width + '×' + r.info.height +
-        ' JPEG ' + r.data.length + ' 字节）',
-      image_rel: cacheRel,
+    const receipt = {
+      ok: true, path: rel, image_attached: true,
+      width: r.info.width, height: r.info.height, format: 'jpeg',
+      bytes_in: size, bytes_out: r.data.length,
+      resized: src ? (r.info.width !== src.w || r.info.height !== src.h) : undefined,
     };
+    if (src) { receipt.source_width = src.w; receipt.source_height = src.h; }
+    return { text: imageReceipt(receipt), image_rel: cacheRel };
   } catch (err) {
-    return '[图片文件] ' + rel + '（' + size + ' 字节），图片解码/压缩失败：' + (err && err.message || err);
+    return {
+      text: imageReceipt({
+        ok: false, path: rel, image_attached: false, reason: 'decode_failed', retryable: false, bytes_in: size,
+        hint: '图片解码/压缩失败：' + (err && err.message || err),
+      }),
+    };
   }
 }
 
@@ -244,15 +298,29 @@ async function toolReadFile(ctx, args) {
       // 不做「偷偷复制」：图片要出现在模型视野里，字节必须落到本会话才能签外链（engine 的
       // mintImageUrl 与前端下载路由都以当前 taskDir 为根），那本质已是一次导入——与其藏进
       // .imgcache 不进文件表，不如让模型明确知道历史图片必须先 copy_path。
-      return '[图片文件] ' + disp + '（' + st.size + ' 字节）历史会话图片不支持直接读取。' +
-        '图片需要先 copy_path（source_path 用这个 @ 路径）导入本会话，再 read_file——导入后图片、terminal、mint 全量生效。';
+      return {
+        text: imageReceipt({
+          ok: false, path: disp, image_attached: false, reason: 'past_session', retryable: false, bytes_in: st.size,
+          hint: '历史会话图片不支持直接读取：先 copy_path（source_path 用这个 @ 路径）导入本会话，再 read_file——导入后图片、terminal、mint 全量生效',
+        }),
+      };
     }
     const rel = relOf(ctx.taskDir, abs);
     if (!ctx.vision) {
-      return '[图片文件] ' + rel + '（' + st.size + ' 字节）。图片文件，当前模型不支持视觉识别，无法回传图片内容。';
+      return {
+        text: imageReceipt({
+          ok: false, path: rel, image_attached: false, reason: 'no_vision', retryable: false, bytes_in: st.size,
+          hint: '当前模型不支持视觉识别，无法回传图片像素；请基于文件名/大小作答，或直接告知用户',
+        }),
+      };
     }
     if (st.size > IMG_MAX_INPUT_BYTES) {
-      return '[图片文件] ' + rel + '（' + st.size + ' 字节）过大（上限 ' + IMG_MAX_INPUT_BYTES + ' 字节），已跳过回传。';
+      return {
+        text: imageReceipt({
+          ok: false, path: rel, image_attached: false, reason: 'too_large', retryable: false, bytes_in: st.size,
+          hint: '超过回传上限 ' + IMG_MAX_INPUT_BYTES + ' 字节；可先用 terminal 缩小（如 ImageMagick）再读',
+        }),
+      };
     }
     return await readImageAsBlocks(ctx, abs, rel, st.size);
   }
@@ -1660,7 +1728,8 @@ const HANDLERS = {
 };
 
 // ctx: {sessionId, taskDir, run, cfg, db, vision}
-// 返回值一般为字符串；read_file 读图且 ctx.vision 为 true 时返回 {text, image_rel}。
+// 返回值一般为字符串；read_file 读图时返回 {text, image_rel}，text 是结构化 JSON 回执
+// （见 imageReceipt），image_rel 缺省表示本次不投递像素。
 // 内置工具优先；未命中时交给 MCP 注册表（启动时发现的服务工具）。
 async function executeTool(baseCtx, name, args) {
   const handler = HANDLERS[name];

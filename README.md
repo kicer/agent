@@ -224,7 +224,7 @@ platforms:
 通用模型字段：
 
 - `enable: false`：模型不进池，不参与分配。
-- `vision: false`：读图时不回传像素，只给文字占位。
+- `vision: false`：读图时不回传像素，回执只给结构化说明（`reason: no_vision`）。
 - `profile: <名>`：引用 `model_profiles`，不配则使用默认全量 prompt 与工具。
 - `reasoning_ack_field`：需要把思考链回传给上游时填写，例如 DeepSeek 系的 `reasoning_content`。
 

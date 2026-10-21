@@ -139,6 +139,10 @@ POST /api/sessions/:id/messages
   发请求时 `image_ref` 现签公网短链（`mintUrl`，每次请求重签、不会中途过期）。
   `tool` 回执里的未消费图片会**挪出回执**，合并成该批回执之后的一条 `user` 消息
   （`tool` 角色带图是非标准形态，很多上游会吞图）；已消费的图降级为文字占位。
+- `read_file` 读图的回执是**结构化 JSON**（`tools/executor.js` 的 `imageReceipt`：`ok` /
+  `image_attached` / `reason` / `width` / `height` …），不是散文。发送侧三处改写（engine 同回合去重、
+  `buildMessages` 签外链失败与已消费重放）一律走 `patchImageReceipt` **只改字段**；
+  追加句子会让 JSON 不可解析，模型又退回从自然语言猜「像素到底到没到」。
 - 占位裁剪（`agent.trim_write_rounds` / `trim_result_rounds`）：距尾 ≥N 个 assistant 轮的
   `write_file.content`、`fetch`/`read_file` 回执换成单行占位。**只改发给上游的副本**，DB 与 UI 不动。
 - `compressMessages` = `buildMessages` + 末尾一条压缩指令 `user`。**铁律**：压缩请求必须与上一次
@@ -165,7 +169,7 @@ POST /api/sessions/:id/messages
   出现即报配置错（不静默忽略）。
 - `executeTool(baseCtx, name, args)`：先查 `HANDLERS` 表，未命中再交给 MCP 注册表。
   `ctx = {sessionId, taskDir, run, cfg, db, vision}`；工具返回字符串，`read_file` 读图时返回
-  `{text, image_rel}`（由 engine 转成 `image_ref` 块）。
+  `{text, image_rel}`（`text` 是结构化 JSON 回执，由 engine 转成 `image_ref` 块）。
 - **路径沙箱**：所有路径经 `resolveInTask` 解析到 `taskDir` 内；`/tmp` 会被映射到
   `<taskDir>/.tmp`（与 executor 容器里 `/tmp` 的 bind 对齐）。符号链接越界一律拒绝。
 - **跨会话只读**：`@<session-id>/<rel>` 只允许 `list_directory`、`read_file`、`copy_path` 的

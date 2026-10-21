@@ -126,13 +126,38 @@ function cachedDecodeBlocks(session, row) {
   return blocks;
 }
 
+// read_file 图片回执是单个 JSON 对象（字段契约见 tools/executor.js 的 imageReceipt）。
+// 发送侧要改写回执时只动字段，绝不追加句子：拼在 JSON 后面会让整条回执不可解析，
+// 模型又退回「从自然语言里猜像素到底到没到」。非 JSON / 非图片回执（旧库散文、文本读取正文）
+// 返回 null，调用方自行回退。
+function patchImageReceipt(text, patch) {
+  if (typeof text !== 'string' || text.charAt(0) !== '{') return null;
+  let o;
+  try { o = JSON.parse(text); } catch (_) { return null; }
+  if (!o || o.kind !== 'image') return null;
+  return JSON.stringify(Object.assign(o, patch));
+}
+// 图片编号标签：从回执字段生成「read_file <path> 1080×1920」，只用于把图与回执对上号。
+// 旧库散文回执退回首行（历史行照旧可读）。
+function imageLabel(text) {
+  if (typeof text === 'string' && text.charAt(0) === '{') {
+    try {
+      const o = JSON.parse(text);
+      if (o && o.kind === 'image') return 'read_file ' + (o.path || '') + (o.width && o.height ? ' ' + o.width + '×' + o.height : '');
+    } catch (_) { /* 落到下面按散文取首行 */ }
+  }
+  return (text || 'read_file 图片回传').split('\n')[0];
+}
+
 // 将 DB 消息行转为 OpenAI messages 数组（不含 system，由调用方拼接）。
 // 图片两种形态：旧库/用户粘贴附件的 image_url 块（data: URL）原样透传；
 // 新版 read_file 读图存的是 image_ref 块（{rel}，指向任务目录 .imgcache/ 产物）。
 // tool 回执里的未消费图不放在回执内发送——tool 角色带 image_url 非标准形态，
 // 大量 OpenAI 兼容上游会整批忽略或只认批次最后一张，模型看不到图却见回执写着
 // 「已回传」，会反复 read_file 补看（死循环烧 token，见多模态回退复盘）；
-// 故回执降级为纯文本，图块现签成 image_url（mintUrl 公网链回调）后统一并入
+// 故回执里只留文字（read_file 读图时是一个结构化 JSON 对象，字段见
+// tools/executor.js 的 imageReceipt；发送侧只改字段、不追加句子），图块现签成
+// image_url（mintUrl 公网链回调）后统一并入
 // 该批之后的一条 user 消息（user 角色各家通吃）：逐图说明文字全部置顶、图块按回执顺序紧随
 //（对齐官方示例排布；探针实测 DS 对交替排布也兼容，取低风险形态），
 // 并附「先逐张简述再继续任务」指令——兼作送达自检，破弱模型的“没收到”惯性叙事；
@@ -267,13 +292,21 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
     let content = row.content || '';
     if (blocks) {
       if (i < lastAssistant) {
-        content = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n') +
-          '\n[图片数据已省略：本图已随上一条回执发送过，不再重复携带；若你当时未能识别其内容，请直接告知用户，勿反复重读同一文件]';
+        content = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n');
+        // 已消费的图重放时不再携带像素：把回执的 image_attached 降为 false 并给出原因，
+        // 模型读字段就知道「不是又丢了」，不会因叙事惯性重读。旧库散文回执保持原有尾巴。
+        const consumed = patchImageReceipt(content, {
+          image_attached: false, reason: 'omitted_already_sent', retryable: false,
+          hint: '该图已在此前的轮次投递过，重放时不再重复携带像素；若你当时未能识别，请直接告知用户，勿反复重读同一文件',
+        });
+        content = consumed !== null ? consumed
+          : content + '\n[图片数据已省略：本图已随上一条回执发送过，不再重复携带；若你当时未能识别其内容，请直接告知用户，勿反复重读同一文件]';
       } else if (row.role === 'tool') {
         // 未消费的图：回执只留文字，图块挪进批次后的 user 合并消息（见 pendingImages/Labels）
         const texts = blocks.filter(b => b && b.type === 'text').map(b => b.text);
         content = texts.join('\n');
-        const label = (texts[0] || 'read_file 图片回传').split('\n')[0];
+        const label = imageLabel(texts[0]);
+        let mintFailed = false;
         for (const b of blocks) {
           if (!b || (b.type !== 'image_ref' && b.type !== 'image_url')) continue;
           const seq = ++imgSeq;
@@ -287,8 +320,18 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
             pendingLabels.push('[图片 ' + seq + '] ' + label);
             pendingImages.push({ type: 'image_url', image_url: { url } });
           } else {
-            pendingLabels.push('[图片 ' + seq + '] ' + label + '（外链不可用，未取得像素：请直接告知用户，勿反复重读同一文件）');
+            mintFailed = true;
+            pendingLabels.push('[图片 ' + seq + '] ' + label + '（未送达：link_unavailable）');
           }
+        }
+        // 签不到外链 = 本次请求像素确实到不了：当场把回执字段降级，让模型拿到的是
+        // 「ok 但 image_attached=false + reason」，而不是一句需要它自己解读的说明。
+        if (mintFailed) {
+          const degraded = patchImageReceipt(content, {
+            image_attached: false, reason: 'link_unavailable', retryable: false,
+            hint: '服务端签不出图片外链，本张图的像素未能随本次请求送达；请直接告知用户，勿反复重读同一文件',
+          });
+          if (degraded !== null) content = degraded;
         }
       } else {
         // user 行（粘贴附件/旧形态）：image_url 块（data: URL）原样；image_ref → 现签公网外链
@@ -646,4 +689,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setPayloadTrim, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setPayloadTrim, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages, patchImageReceipt };

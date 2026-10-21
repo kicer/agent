@@ -2,7 +2,7 @@
 // 单进程内存模型：JS 单线程 + better-sqlite3 同步 API，不存在跨进程竞争。
 const fs = require('fs');
 const path = require('path');
-const { buildMessages, callModel, encodeBlocks, decodeBlocks, compressMessages, titleMessages, setProfilePrompts } = require('./llm');
+const { buildMessages, callModel, encodeBlocks, decodeBlocks, compressMessages, titleMessages, setProfilePrompts, patchImageReceipt } = require('./llm');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const publicFiles = require('./public-files');
 const mcp = require('./mcp');
@@ -771,30 +771,48 @@ async function runLoopInner(sessionId, run) {
           isError = true;
         }
       }
-      // 工具可返回 {text, image_rel}（read_file 读图且模型支持 vision，压缩产物在 .imgcache/）：
-      // 落库时以 image_ref 内容块拼进 tool 消息（哨兵 JSON，见 llm.js encodeBlocks）；
-      // buildMessages 发请求前把未消费的图现签成公网外链 image_url 块，并入该批回执之后的
-      // 一条 user 消息发送（tool 角色带图非标准形态，上游支持度差）；前端工具卡走带 cookie 的下载路由渲染。
+      // 工具可返回 {text, image_rel}（read_file 读图且模型支持 vision，压缩产物在 .imgcache/，
+      // text 是 imageReceipt 生成的结构化 JSON 回执）：落库时以 image_ref 内容块拼进 tool 消息
+      // （哨兵 JSON，见 llm.js encodeBlocks）；buildMessages 发请求前把未消费的图现签成公网
+      // 外链 image_url 块，并入该批回执之后的一条 user 消息发送（tool 角色带图非标准形态，
+      // 上游支持度差）；前端工具卡走带 cookie 的下载路由渲染。
       let outText;
       let imageRel = null;
-      if (output && typeof output === 'object' && output.image_rel) {
-        outText = String(output.text || '');
-        imageRel = String(output.image_rel);
+      if (output && typeof output === 'object' && typeof output.text === 'string') {
+        outText = output.text;
+        if (output.image_rel) imageRel = String(output.image_rel);
       } else {
         outText = String(output == null ? '' : output);
       }
       if (run.cancelled && !isError) outText = (outText ? outText + '\n' : '') + '（用户已终止任务）';
       // 死循环护栏：同回合内同一张图只投递一次——上游能认多图（探针实测同消息双外链全对），
       // 不再按批次限流；但模型若因惯性叙事反复重读同一文件，每轮都签新图就是纯烧 token，
-      // 故已投递过的图再读只回文字提示（run 随回合销毁，新回合自动重置，追问重看不受影响）。
+      // 故已投递过的图再读只回执「未附加 + 原因」。改写回执的字段而不是追加句子：
+      // 追加会把 JSON 弄成不可解析的尾巴，模型又只能靠语义猜。run 随回合销毁，
+      // 新回合自动重置，追问重看不受影响。
       if (imageRel) {
         if (!run.imgDelivered) run.imgDelivered = new Set();
         if (run.imgDelivered.has(imageRel)) {
-          outText += '\n[该图片本回合已投递过，不再重复携带；若你未看到它，请直接告知用户，勿反复重读同一文件]';
+          const patched = patchImageReceipt(outText, {
+            image_attached: false, reason: 'already_delivered', retryable: false,
+            hint: '该图片本回合已投递过，不再重复携带；若你未看到它，请直接告知用户，勿反复重读同一文件',
+          });
+          outText = patched !== null
+            ? patched
+            : outText + '\n[该图片本回合已投递过，不再重复携带；若你未看到它，请直接告知用户，勿反复重读同一文件]';
           imageRel = null;
         } else {
           run.imgDelivered.add(imageRel);
         }
+      }
+      // 回执自报的「环境故障」也算失败（UI 打 ✕、库里 is_error=true），预期拒绝不算：
+      // no_vision / too_large / past_session / already_delivered / link_unavailable 都是正常答复。
+      // 限定工具名再解析，避免把 db 的大块查询结果白解一遍。
+      if (!isError && tc.function.name === 'read_file' && typeof outText === 'string' && outText.charAt(0) === '{') {
+        try {
+          const o = JSON.parse(outText);
+          if (o && o.kind === 'image' && o.ok === false && (o.reason === 'decode_failed' || o.reason === 'sharp_missing')) isError = true;
+        } catch (_) { /* 非结构化回执（旧格式）不处理 */ }
       }
       log.debug('tool', sessionId + ' ' + tc.function.name + (isError ? ' 失败: ' : ' 完成: ') + outText);
       const toolContent = imageRel
