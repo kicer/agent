@@ -158,6 +158,9 @@ POST /api/sessions/:id/messages
   白名单、`tools_deny` 黑名单（**deny 赢**；profile 不配 deny 时继承全局 `tools_deny`）。
   `tools_allow: []` = 零工具（纯文本组合）。过滤只影响"模型看得到什么"，名单外工具若真被调用，
   `executeTool` 仍会执行（不误杀）。
+- MCP 服务按 `mcp_servers[].mode` 参与：`advertise`（默认）进 `toolDefs` 下发；`silent` 只进
+  `toolIndex`（`mcp.hasTool` 为真，技能 `mcp_tool` 与 `lab` 可调）但不进 tools 数组；`disable`
+  连 `tools/list` 都不发。旧字段 `enable` 已废弃，出现即报配置错（不静默忽略）。
 - `executeTool(baseCtx, name, args)`：先查 `HANDLERS` 表，未命中再交给 MCP 注册表。
   `ctx = {sessionId, taskDir, run, cfg, db, vision}`；工具返回字符串，`read_file` 读图时返回
   `{text, image_rel}`（由 engine 转成 `image_ref` 块）。

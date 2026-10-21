@@ -335,8 +335,14 @@
         </div>
         <div class="mpe-cks" style="margin-top:14px">
           <label class="mpe-num">单次调用超时<input type="number" id="mce-timeout" min="1000" max="600000" step="1000" placeholder="默认 60000">ms</label>
-          <label class="mpe-ck"><input type="checkbox" id="mce-enable" checked>启用</label>
         </div>
+        <label class="mpe-field">工具暴露
+          <select id="mce-mode">
+            <option value="advertise">advertise（下发给模型）</option>
+            <option value="silent">silent（仅技能可调用）</option>
+            <option value="disable">disable（不加载）</option>
+          </select>
+        </label>
         <div class="btn-row mpe-foot">
           <button class="ghost-btn danger hidden" id="mce-del-btn" onclick="mcpUI.del()">删除服务</button>
           <button class="primary-btn" onclick="mcpUI.save()">保存</button>

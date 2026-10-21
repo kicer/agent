@@ -78,7 +78,9 @@ auth:                                              # users 留空 = 不启用登
       role: admin                                  # admin=管理员（全部设置 + 用户管理）；user 或缺省=普通用户（仅账户页）
       # model: qwen-tp/qwen3.8-flash               # 选填：该用户新建会话时锁定的模型（内部键「平台名/模型id」）
 
-# MCP 服务列表（仓库自带的 mcp/ 三个服务，或栈外服务）：每项 {name?, url, headers?, enable?(默认 true), timeout_ms?, tools_allow?, tools_deny?}。
+# MCP 服务列表（仓库自带的 mcp/ 三个服务，或栈外服务）：每项 {name?, url, headers?, mode?(默认 advertise), timeout_ms?, tools_allow?, tools_deny?}。
+# mode 三态：advertise=工具下发给模型；silent=只注册可调用（技能 mcp_tool / lab）不下发；disable=不连接、不发现。
+# 旧字段 enable 已废弃，写进配置会启动报错。
 mcp_servers: []
 
 public_link:

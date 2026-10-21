@@ -193,7 +193,8 @@ mcp.init(cfg).then(async () => {
       log.info('startup', '  workspace_root=' + cfg.workspace_root);
       log.info('startup', '  data_root=' + cfg.data_root);
       log.info('startup', '  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
-      const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url + (s.enable === false ? '(禁用)' : '')).join(', ');
+      const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url +
+        (s.mode === 'disable' ? '(禁用)' : s.mode === 'silent' ? '(仅技能)' : '')).join(', ');
       log.info('startup', '  mcp_servers=' + (mcpList || '(none)'));
       log.info('startup', '  auth=' + (auth.enabled ? 'login: ' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
       log.info('startup', '  wxbot=' + (cfg.wxbot.url && cfg.wxbot.token ? cfg.wxbot.url : '(未启用)'));

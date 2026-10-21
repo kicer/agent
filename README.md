@@ -61,7 +61,7 @@ PUBLIC_IP=1.2.3.4 \
 - `.env`：`EXECUTOR_TOKEN`、`WXBOT_TOKEN`、`AGENT_PORT` 等部署变量。
 - `config.yml`：模型平台、登录账号、MCP 服务、公网前缀。
 
-`image_task` / `video_task` 两个 MCP 服务复用 `BIGMODEL_KEY`（智谱与 BigModel 是同一个 key）；未配置 `BIGMODEL_KEY` 时它们以 `enable: false` 写入配置。
+`image_task` / `video_task` 两个 MCP 服务复用 `BIGMODEL_KEY`（智谱与 BigModel 是同一个 key）；未配置 `BIGMODEL_KEY` 时它们以 `mode: disable` 写入配置。
 
 `AUTH_USER` / `AUTH_PASSWORD` 不传时默认是 `admin` / `admin`，首次部署务必改掉。
 
@@ -109,6 +109,16 @@ mcp_servers:
 `web_search` / `image_task` / `video_task` 与 core 由同一个根 `docker-compose.yml` 启动，没有先后顺序，也不占宿主机端口。工具说明、header 覆盖项与调试方式见 [mcp/README.md](mcp/README.md)。
 
 接入栈外的 MCP 服务：在设置页添加 `url` / `headers`，或在 `config.yml` 的 `mcp_servers` 追加一项。服务不可达时 core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。
+
+每个服务可用 `mode` 控制「工具是否下发给模型」：
+
+| `mode` | 连接/发现 | 模型可见 | 谁可以调用 |
+|---|---|---|---|
+| `advertise`（默认） | ✓ | ✓ | 模型与技能 |
+| `silent` | ✓ | ✗ | 技能（`mcp_tool`）与 `lab` |
+| `disable` | ✗ | ✗ | 无人 |
+
+`silent` 用于「能力包在技能后面」的场景：工具照常发现并注册，只是不进模型的 tools 数组，省掉每轮的 schema 开销。旧字段 `enable` 已废弃，写进配置会直接启动报错。
 
 工具发现只在启动时做一次，因此发现失败后会自动按 **2s / 20s / 1min 重试 3 次**（覆盖 compose 并行拉起与宿主机重启后的容器乱序）；成功后工具在下一轮请求即可用，三次都失败则需重启 core。三个 MCP 服务都配了 `/health` 健康检查，`docker ps` 可直接看状态。
 
@@ -186,7 +196,7 @@ mcp_servers:
 | `model_profiles` | prompt + 工具名单组合；模型用 `profile: <名>` 引用 |
 | `tools_deny` | 全局工具黑名单，默认屏蔽元工具 `lab` |
 | `auth` | 登录账号、`secret`、有效期；留空则不启用认证 |
-| `mcp_servers` | 外部 MCP 服务：`url`、`headers`、`enable`、`timeout_ms`、工具名单 |
+| `mcp_servers` | 外部 MCP 服务：`url`、`headers`、`mode`（advertise / silent / disable）、`timeout_ms`、工具名单 |
 | `public_link` | 公网临时链接前缀与有效期 |
 | `agent` | 温度、最大工具迭代、重试、语言、压缩阈值、空闲收口、历史裁剪 |
 | `memory` | 日记注入条数、保留期、空闲收口阈值 |

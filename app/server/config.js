@@ -121,7 +121,8 @@ const DEFAULTS = {
   },
   // 登录认证：{users:[{user,password}], secret?, ttl_ms?}；null / users 空 = 不启用。
   auth: null,
-  // 外部 MCP 服务列表（无默认值）：{name?, url, headers?, enable?(默认 true), timeout_ms?(默认 60s)}。
+  // 外部 MCP 服务列表（无默认值）：{name?, url, headers?, mode?(默认 advertise), timeout_ms?(默认 60s)}。
+  // mode 三态：advertise=工具下发给模型；silent=只注册可调用（技能/lab）不下发；disable=不加载。
   mcp_servers: [],
   // 公网临时链接：base_url 非空才启用 mint_public_link；容器配 VIRTUAL_HOST 时以它为准。
   public_link: { base_url: '', ttl_ms: 1800000 },
@@ -340,7 +341,7 @@ function parseAndValidate(rawText, configPath) {
   }
 
   // MCP 服务规范化：url 必填；name 缺省取主机名首段；headers 为普通键值对象（如 Authorization）；
-  // enable 缺省 true，显式 false 时启动不加载该服务的工具（见 mcp.init）；
+  // mode 缺省 advertise，见下方三态校验（工具是否下发 / 是否加载，见 mcp.init）；
   // timeout_ms 为该服务单次 tools/call 的最大等待，缺省 60s（长任务服务如视频生成可调大）。
   if (!Array.isArray(cfg.mcp_servers)) cfg.mcp_servers = [];
   for (const s of cfg.mcp_servers) {
@@ -348,8 +349,17 @@ function parseAndValidate(rawText, configPath) {
     if (!s.name) {
       try { s.name = String(new URL(s.url).hostname.split('.')[0]); } catch (_) { s.name = 'mcp'; }
     }
-    // 容错 YAML 里写成字符串 "false" / "off" 的情况，统一归一为布尔
-    s.enable = !(s.enable === false || s.enable === 'false' || s.enable === 'off' || s.enable === 0);
+    // 旧字段 enable 已废弃且不静默忽略：未知键会被无声丢弃，那样「以为关了」的服务会照常连上、
+    // 照常烧额度。宁可启动即报错，把迁移动作逼到明面上。
+    if (s.enable !== undefined) {
+      throw new Error('mcp_servers 的 enable 已废弃，请改用 mode: advertise | silent | disable');
+    }
+    // 三态：advertise（默认，工具下发给模型）/ silent（注册但不下发，配合技能 mcp_tool 使用）/
+    // disable（不连接、不发现）。拼错要报错而不是回落默认，否则又是一次静默降级。
+    const mode = String(s.mode == null ? '' : s.mode).trim().toLowerCase();
+    if (!mode) s.mode = 'advertise';
+    else if (mode === 'advertise' || mode === 'silent' || mode === 'disable') s.mode = mode;
+    else throw new Error('mcp_servers 的 mode 只能是 advertise / silent / disable，收到：' + mode);
     const headers = {};
     for (const [k, v] of Object.entries(s.headers || {})) headers[k] = String(v);
     s.headers = headers;

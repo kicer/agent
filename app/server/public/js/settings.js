@@ -1416,11 +1416,13 @@
     } catch (e) { toast('删除失败:' + e.message); }
   }
 
-  // ---------- 页:MCP 服务(增/改/删;name / url / 多 headers / timeout_ms / enable) ----------
+  // ---------- 页:MCP 服务(增/改/删;name / url / 多 headers / timeout_ms / mode) ----------
   // 与模型池共用 PATCH /api/config 的细粒度 edit 接口:
   //   · 新增 = append 到 mcp_servers;
   //   · 删 = delete mcp_servers[pi];
-  //   · 改 = setIn mcp_servers[pi].(name|url|timeout_ms|enable);headers 是普通键值对象,整体 setIn 一次到位。
+  //   · 改 = setIn mcp_servers[pi].(name|url|timeout_ms|mode);headers 是普通键值对象,整体 setIn 一次到位。
+  // mode 三态:advertise(默认,工具下发给模型) / silent(只注册可调用,不下发) / disable(不加载):
+  // 默认值不写进文件——选 advertise 时删键,回落到 config.js 的缺省。
   // 运行配置(cg.effective.mcp_servers)即文件刚解析后的视图,按 pi 直接定位;重启后才会重新发现工具。
   let mcpEdit = null; // 工作态:{ idx, headers:[{key, value, masked}] };idx=-1 为新增
   const MCP_HEADER_MASK = '*****'; // 与后端 routes/config.js 的掩码保持一致
@@ -1449,16 +1451,20 @@
         ? '<div class="restart-bar"><span>配置已写入，重启后生效</span><button class="primary-btn" onclick="sUI.restartNow()">重启服务</button></div>'
         : '';
       box.innerHTML = banner + SET.cfgMcp.map(mcpCardHtml).join('') +
-        '<div class="empty-tip">点卡片编辑 MCP 服务，启用后启动时发现其工具并追加到内置工具之后。</div>';
+        '<div class="empty-tip">点卡片编辑 MCP 服务。advertise 的工具启动时发现并追加到内置工具之后；silent 只注册可调用（供技能 mcp_tool），不下发给模型。</div>';
     } catch (e) {
       const b = $('mcp-list');
       if (b && (!ctx || ctx())) b.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
     }
   }
-  // MCP 卡:头部 = 名称 + url + enable 状态;体内 = headers 键值列表。整卡点击进入编辑。
+  // MCP 卡:头部 = 名称 + url + mode 状态;体内 = headers 键值列表。整卡点击进入编辑。
   function mcpCardHtml(s, pi) {
-    const off = s.enable === false;
-    const stateHtml = off ? '<span class="model-card-state off">已禁用</span>' : '<span class="model-card-state idle">启用</span>';
+    const mode = s.mode || 'advertise';
+    const stateHtml = mode === 'disable'
+      ? '<span class="model-card-state off">已禁用</span>'
+      : mode === 'silent'
+        ? '<span class="model-card-state idle">仅技能可见</span>'
+        : '<span class="model-card-state idle">启用</span>';
     const entries = Object.entries(s.headers || {});
     // header 值等同密码对待:后端 effective 已脱敏为固定短掩码,这里透传展示;若收到未脱敏原文也一律替换,不外显
     const maskVal = (v) => { const str = String(v == null ? '' : v); if (!str) return '--'; return str.includes('*') ? esc(str) : MCP_HEADER_MASK; };
@@ -1490,7 +1496,7 @@
     $('mce-url').value = add ? '' : (s.url || '');
     // 运行配置里的 timeout_ms 已被 config.js 填上缺省值,所以这里显示的就是当前生效值(没配则为 60000)。
     $('mce-timeout').value = add || s.timeout_ms == null ? '' : String(s.timeout_ms);
-    $('mce-enable').checked = add ? true : (s.enable !== false);
+    $('mce-mode').value = add ? 'advertise' : (s.mode || 'advertise');
     $('mce-del-btn').classList.toggle('hidden', add);
     renderMcpHeaders();
     $('mcp-edit-modal').classList.remove('hidden');
@@ -1530,7 +1536,7 @@
     const edits = [];
     const name = $('mce-name').value.trim();
     const url = $('mce-url').value.trim();
-    const enable = $('mce-enable').checked;
+    const mode = $('mce-mode').value;
     // 超时:留空 = 不写入该项（沿用缺省 60s）。区间在 UI 先把一道,
     // 比写进 YAML 再被 config.js 静默夹掉好排查（两边上限保持 600000 一致）。
     const tmoRaw = $('mce-timeout').value.trim();
@@ -1545,7 +1551,7 @@
       if (!url) throw new Error('请填写 url');
       const obj = { url };
       if (name) obj.name = name;
-      if (!enable) obj.enable = false;
+      if (mode !== 'advertise') obj.mode = mode;
       if (tmo != null) obj.timeout_ms = tmo;
       const headers = {};
       for (const r of mcpEdit.headers) {
@@ -1560,7 +1566,10 @@
       if (!url) throw new Error('请填写 url');
       if (name !== (cur.name || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'name'], value: name });
       if (url !== (cur.url || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'url'], value: url });
-      if (!!cur.enable !== enable) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'enable'], value: enable });
+      // mode:默认值不写进文件(选 advertise 就删键)
+      if ((cur.mode || 'advertise') !== mode) edits.push(mode === 'advertise'
+        ? { path: ['mcp_servers', mcpEdit.idx, 'mode'], op: 'delete' }
+        : { path: ['mcp_servers', mcpEdit.idx, 'mode'], value: mode });
       // 超时:清空 = 删掉该键（回落到缺省）;后端 deleteIn 支持嵌套键,无键时是空操作。
       const curTmo = cur.timeout_ms == null ? null : Number(cur.timeout_ms);
       if (tmo !== curTmo) edits.push(tmo == null

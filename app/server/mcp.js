@@ -1,8 +1,9 @@
 // 极简 MCP 客户端（Streamable HTTP：JSON-RPC over HTTP，无状态，响应可能是 SSE 帧包裹的 JSON）。
-// MCP 服务在 config.yml 的 mcp_servers 中配置（可多个）：{name?, url, headers?, enable?, timeout_ms?, tools_allow?, tools_deny?}。
-// 启动时 init() 对每个服务调 tools/list 发现工具（enable: false 的服务跳过加载；配了 tools_allow/tools_deny
+// MCP 服务在 config.yml 的 mcp_servers 中配置（可多个）：{name?, url, headers?, mode?, timeout_ms?, tools_allow?, tools_deny?}。
+// 启动时 init() 对每个服务调 tools/list 发现工具（mode: disable 的服务跳过加载；配了 tools_allow/tools_deny
 // 时按名单过滤），发现失败的服务按 2s / 20s / 1min 再试 3 次（容器并行启动/重启后的乱序兜底），转成 OpenAI function 格式，
 // 追加在内置工具（definitions.json）之后一起随 system prompt 发给模型；
+// mode: silent 的服务工具照常注册进 toolIndex（技能 mcp_tool / lab 可调），只是不追加进 toolDefs（模型看不到）。
 // 工具调用经 tools/call 转发给对应服务。
 // 与内置工具严格分离：本模块不碰内置定义；MCP 工具默认沿用原始名，
 // 仅当与内置工具或其他 MCP 工具重名时加「服务名__」前缀。
@@ -141,11 +142,14 @@ async function loadServer(s) {
     let tools = all;
     if (Array.isArray(s.tools_allow)) tools = tools.filter(t => s.tools_allow.includes(t && t.name));
     if (Array.isArray(s.tools_deny)) tools = tools.filter(t => !s.tools_deny.includes(t && t.name));
+    let hidden = 0;
     for (const t of tools) {
       if (!t || !t.name) continue;
       let name = t.name;
       if (builtinNames.has(name) || toolIndex.has(name)) name = s.name + '__' + name;
+      // 先进索引：silent 的工具要能被技能（mcp_tool）与 lab 调到，只是不下发。
       toolIndex.set(name, { server: s, tool: t.name });
+      if (s.mode === 'silent') { hidden++; continue; }
       toolDefs.push({
         type: 'function',
         function: {
@@ -157,6 +161,7 @@ async function loadServer(s) {
     }
     let msg = s.name + ': 发现 ' + tools.length + ' 个工具' + (s.sessionId ? ' (session)' : '');
     if (tools.length !== all.length) msg += '（服务端共 ' + all.length + ' 个，已按 tools_allow/tools_deny 过滤）';
+    if (hidden) msg += '（mode=silent：' + hidden + ' 个不下发给模型，仅供技能调用）';
     log.info('mcp', msg);
     // 配了名单却一个都没过滤中，十有八九是名单里的名字跟 tools/list 返回不一致；
     // 不 warn 的话排查时只能对着「发现 0 个工具」干瞪眼。
@@ -213,9 +218,9 @@ async function init(cfg) {
   const servers = (cfg && cfg.mcp_servers) || [];
   const failed = [];
   for (const s of servers) {
-    // enable: false 时启动不加载该服务（不建工具表；配置保留，改回 true 重启后恢复）
-    if (s.enable === false) {
-      log.info('mcp', s.name + ': enable=false，跳过工具加载');
+    // mode: disable 时启动不加载该服务（不建工具表；配置保留，改回 advertise 重启后恢复）
+    if (s.mode === 'disable') {
+      log.info('mcp', s.name + ': mode=disable，跳过工具加载');
       continue;
     }
     if (!(await loadServer(s))) failed.push(s);
