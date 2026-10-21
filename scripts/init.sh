@@ -211,10 +211,12 @@ EOF
     url: "http://mcp_image_task:3000/mcp"
     headers:
       Authorization: "Bearer $BIGMODEL_KEY"
+    mode: skill            # 不下发给模型，以技能形式暴露（skill 工具里 list/get/run）
   - name: video_task
     url: "http://mcp_video_task:3000/mcp"
     headers:
       Authorization: "Bearer $BIGMODEL_KEY"
+    mode: skill
 EOF
     else
         cat <<'EOF'

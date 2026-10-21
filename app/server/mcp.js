@@ -3,7 +3,8 @@
 // 启动时 init() 对每个服务调 tools/list 发现工具（mode: disable 的服务跳过加载；配了 tools_allow/tools_deny
 // 时按名单过滤），发现失败的服务按 2s / 20s / 1min 再试 3 次（容器并行启动/重启后的乱序兜底），转成 OpenAI function 格式，
 // 追加在内置工具（definitions.json）之后一起随 system prompt 发给模型；
-// mode: silent 的服务工具照常注册进 toolIndex（技能 mcp_tool / lab 可调），只是不追加进 toolDefs（模型看不到）。
+// mode: skill 的服务工具照常注册进 toolIndex（lab 可调），不追加进
+// toolDefs，而是由 tools/skills.js 自动包装成技能（get 返回注册表里的原始 input_schema）。
 // 工具调用经 tools/call 转发给对应服务。
 // 与内置工具严格分离：本模块不碰内置定义；MCP 工具默认沿用原始名，
 // 仅当与内置工具或其他 MCP 工具重名时加「服务名__」前缀。
@@ -15,7 +16,7 @@ const log = require('./log');
 const CALL_TIMEOUT_MS = 60000;
 
 let toolDefs = [];                    // OpenAI function 格式（所有 MCP 工具）
-const toolIndex = new Map();          // 发送名 -> { server, tool }（服务配置 + 原始工具名）
+const toolIndex = new Map();          // 发送名 -> { server, tool, def }（服务配置 + 原始工具名 + 原始契约）
 let builtinNames = new Set();
 let PUBLIC_BASE = ''; // core 自身公网前缀（loadConfig 已归一：VIRTUAL_HOST 优先 config.yml）；随每次请求 X-Public-Base 头下发
 
@@ -147,21 +148,20 @@ async function loadServer(s) {
       if (!t || !t.name) continue;
       let name = t.name;
       if (builtinNames.has(name) || toolIndex.has(name)) name = s.name + '__' + name;
-      // 先进索引：silent 的工具要能被技能（mcp_tool）与 lab 调到，只是不下发。
-      toolIndex.set(name, { server: s, tool: t.name });
-      if (s.mode === 'silent') { hidden++; continue; }
-      toolDefs.push({
-        type: 'function',
-        function: {
-          name,
-          description: t.description || t.title || '',
-          parameters: t.inputSchema || t.input_schema || { type: 'object', properties: {} },
-        },
-      });
+      // 先进索引：mode=skill 的工具同样要能被 lab 调到，只是不下发。
+      // 索引里连规范化后的契约一起留住，技能 get 时原样返回（单一份真相，不会跟 MCP 实现漂移）。
+      const def = {
+        name,
+        description: t.description || t.title || '',
+        parameters: t.inputSchema || t.input_schema || { type: 'object', properties: {} },
+      };
+      toolIndex.set(name, { server: s, tool: t.name, def });
+      if (s.mode === 'skill') { hidden++; continue; }
+      toolDefs.push({ type: 'function', function: def });
     }
     let msg = s.name + ': 发现 ' + tools.length + ' 个工具' + (s.sessionId ? ' (session)' : '');
     if (tools.length !== all.length) msg += '（服务端共 ' + all.length + ' 个，已按 tools_allow/tools_deny 过滤）';
-    if (hidden) msg += '（mode=silent：' + hidden + ' 个不下发给模型，仅供技能调用）';
+    if (hidden) msg += '（mode=skill：' + hidden + ' 个以技能形式暴露，不下发给模型）';
     log.info('mcp', msg);
     // 配了名单却一个都没过滤中，十有八九是名单里的名字跟 tools/list 返回不一致；
     // 不 warn 的话排查时只能对着「发现 0 个工具」干瞪眼。
@@ -233,6 +233,25 @@ function toolDefinitions() { return toolDefs; }
 
 function hasTool(name) { return toolIndex.has(name); }
 
+// mode=skill 的工具：不进 tools 数组，由 skills.js 包装成技能（list/get/run）。
+// 名字一律用最终可调用名（含重名时的 server__ 前缀），否则模型拿到的是调不通的名字。
+function skillTools() {
+  const out = [];
+  for (const [name, e] of toolIndex) {
+    if (!e || !e.server || e.server.mode !== 'skill' || !e.def) continue;
+    out.push({ name, description: e.def.description, parameters: e.def.parameters, server: e.server.name, tool: e.tool });
+  }
+  return out;
+}
+
+// 只认 mode=skill：advertise 的工具已经直接下发给模型，不必再绕技能这一层。
+function getSkillTool(name) {
+  const key = String(name == null ? '' : name).trim();
+  const e = toolIndex.get(key);
+  if (!e || !e.server || e.server.mode !== 'skill' || !e.def) return null;
+  return { name: key, description: e.def.description, parameters: e.def.parameters, server: e.server.name, tool: e.tool };
+}
+
 // 把工具调用转发给对应 MCP 服务，返回给模型的文本结果。
 // 超时取该服务的 timeout_ms（config.js 里归一化 + 夹过区间）；这里再兜一次底，
 // 兼容没走配置加载的调用方（如测试里手搓的 cfg）。
@@ -276,4 +295,4 @@ async function notifyTool(name, args, timeoutMs, extraHeaders) {
   }
 }
 
-module.exports = { init, toolDefinitions, hasTool, callTool, notifyTool };
+module.exports = { init, toolDefinitions, hasTool, skillTools, getSkillTool, callTool, notifyTool };

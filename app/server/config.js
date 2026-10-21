@@ -122,7 +122,8 @@ const DEFAULTS = {
   // 登录认证：{users:[{user,password}], secret?, ttl_ms?}；null / users 空 = 不启用。
   auth: null,
   // 外部 MCP 服务列表（无默认值）：{name?, url, headers?, mode?(默认 advertise), timeout_ms?(默认 60s)}。
-  // mode 三态：advertise=工具下发给模型；silent=只注册可调用（技能/lab）不下发；disable=不加载。
+  // mode 三态：advertise=工具下发给模型；skill=不下发，改为以技能形式暴露（get 返回原始
+  // input_schema，run 直接转发）；disable=不加载。
   mcp_servers: [],
   // 公网临时链接：base_url 非空才启用 mint_public_link；容器配 VIRTUAL_HOST 时以它为准。
   public_link: { base_url: '', ttl_ms: 1800000 },
@@ -352,14 +353,14 @@ function parseAndValidate(rawText, configPath) {
     // 旧字段 enable 已废弃且不静默忽略：未知键会被无声丢弃，那样「以为关了」的服务会照常连上、
     // 照常烧额度。宁可启动即报错，把迁移动作逼到明面上。
     if (s.enable !== undefined) {
-      throw new Error('mcp_servers 的 enable 已废弃，请改用 mode: advertise | silent | disable');
+      throw new Error('mcp_servers 的 enable 已废弃，请改用 mode: advertise | skill | disable');
     }
-    // 三态：advertise（默认，工具下发给模型）/ silent（注册但不下发，配合技能 mcp_tool 使用）/
+    // 三态：advertise（默认，工具下发给模型）/ skill（不下发，改为以技能形式暴露）/
     // disable（不连接、不发现）。拼错要报错而不是回落默认，否则又是一次静默降级。
     const mode = String(s.mode == null ? '' : s.mode).trim().toLowerCase();
     if (!mode) s.mode = 'advertise';
-    else if (mode === 'advertise' || mode === 'silent' || mode === 'disable') s.mode = mode;
-    else throw new Error('mcp_servers 的 mode 只能是 advertise / silent / disable，收到：' + mode);
+    else if (mode === 'advertise' || mode === 'skill' || mode === 'disable') s.mode = mode;
+    else throw new Error('mcp_servers 的 mode 只能是 advertise / skill / disable，收到：' + mode);
     const headers = {};
     for (const [k, v] of Object.entries(s.headers || {})) headers[k] = String(v);
     s.headers = headers;

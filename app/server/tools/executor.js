@@ -1504,6 +1504,8 @@ function toolDb(ctx, args) {
 // list 的值是范围而非布尔：将来技能分类落地时直接扩成 {list:"<分类>"}，调用形状不变，
 // 模型不用学第二套写法。今天只认 "all" 且报错点名——静默返回全部会让错拼的分类名
 // 看起来「能用」，将来接分类时更难排查。
+// {list:"all"} 的清单 = 目录技能 + mode=skill 的 MCP 工具；get/run 对两者一视同仁：
+// 目录技能读 SKILL.md，MCP 技能直接回注册表里的原始 input_schema。
 // args 仅 run 用且可缺省：runSkill 把 null 视作 {}，真正缺哪些字段由各技能 input_schema
 // 校验点名报错（工具层再 gate 一层是双重门槛，无益）。
 // 旧形状 {op, name, input_args} 仍接受：存量技能文档的调用示例里写的是它，模型 get 到
@@ -1554,7 +1556,7 @@ async function legacyToolSkill(ctx, a) {
   const name = String(a.name == null ? '' : a.name).trim();
   switch (op) {
     case 'list':
-      return JSON.stringify(await skills.listSkills(ctx), null, 2);
+      return JSON.stringify(await skills.listCallableSkills(ctx), null, 2);
     case 'get':
       if (!name) throw new Error('op=get 缺少技能名。' + SKILL_USAGE);
       return skills.getSkillInfo(ctx, name);
@@ -1582,7 +1584,7 @@ async function toolSkill(ctx, args) {
     const scope = String(a.list).trim().toLowerCase();
     if (scope !== 'all') throw new Error('list 目前只支持 "all"（技能分类尚未提供），收到："' + scope + '"');
     rejectSkillArgs(a, 'list');
-    return JSON.stringify(await skills.listSkills(ctx), null, 2);
+    return JSON.stringify(await skills.listCallableSkills(ctx), null, 2);
   }
   const name = skillNameArg(a[verb], verb);
   if (verb === 'get') {

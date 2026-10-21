@@ -112,13 +112,13 @@ mcp_servers:
 
 每个服务可用 `mode` 控制「工具是否下发给模型」：
 
-| `mode` | 连接/发现 | 模型可见 | 谁可以调用 |
-|---|---|---|---|
-| `advertise`（默认） | ✓ | ✓ | 模型与技能 |
-| `silent` | ✓ | ✗ | 技能（`mcp_tool`）与 `lab` |
-| `disable` | ✗ | ✗ | 无人 |
+| `mode` | 连接/发现 | 进 tools 数组 | 进技能清单 | 谁可以调用 |
+|---|---|---|---|---|
+| `advertise`（默认） | ✓ | ✓ | ✗ | 模型与技能 |
+| `skill` | ✓ | ✗ | ✓ | `skill` 工具与 `lab` |
+| `disable` | ✗ | ✗ | ✗ | 无人 |
 
-`silent` 用于「能力包在技能后面」的场景：工具照常发现并注册，只是不进模型的 tools 数组，省掉每轮的 schema 开销。旧字段 `enable` 已废弃，写进配置会直接启动报错。
+`skill` 用于「能力包在技能后面」的场景：工具照常发现并注册，只是不进模型的 tools 数组，改为以技能形式暴露——`{"list":"all"}` 能看到它，`{"get":"<名>"}` 直接返回 MCP 原始的 `description` + `input_schema`，`{"run":"<名>","args":{…}}` 转发给服务。不用在 `skills/` 里建目录。旧字段 `enable` 已废弃，`mode: silent` 已移除（启动会报错并提示改用 `skill`）。
 
 工具发现只在启动时做一次，因此发现失败后会自动按 **2s / 20s / 1min 重试 3 次**（覆盖 compose 并行拉起与宿主机重启后的容器乱序）；成功后工具在下一轮请求即可用，三次都失败则需重启 core。三个 MCP 服务都配了 `/health` 健康检查，`docker ps` 可直接看状态。
 
@@ -196,7 +196,7 @@ mcp_servers:
 | `model_profiles` | prompt + 工具名单组合；模型用 `profile: <名>` 引用 |
 | `tools_deny` | 全局工具黑名单，默认屏蔽元工具 `lab` |
 | `auth` | 登录账号、`secret`、有效期；留空则不启用认证 |
-| `mcp_servers` | 外部 MCP 服务：`url`、`headers`、`mode`（advertise / silent / disable）、`timeout_ms`、工具名单 |
+| `mcp_servers` | 外部 MCP 服务：`url`、`headers`、`mode`（advertise / skill / disable）、`timeout_ms`、工具名单 |
 | `public_link` | 公网临时链接前缀与有效期 |
 | `agent` | 温度、最大工具迭代、重试、语言、压缩阈值、空闲收口、历史裁剪 |
 | `memory` | 日记注入条数、保留期、空闲收口阈值 |
@@ -280,17 +280,16 @@ platforms:
 
 ```text
 skills/my-skill/
-├── SKILL.md          # 必需：描述、input_schema、可选 required / visit_url / mcp_tool
-├── run.py | run.sh   # 入口，唯一命令行参数是 JSON 字符串（声明 mcp_tool 时不需要）
+├── SKILL.md          # 必需：描述、input_schema、可选 required / visit_url
+├── run.py | run.sh   # 入口，唯一命令行参数是 JSON 字符串
 ├── requirements.txt  # 可选：Python 依赖
 └── install.sh        # 可选：系统层安装脚本，镜像构建期执行
 ```
 
 - `SKILL.md` 的 `description` 会进入 system prompt，模型启动时就知道有哪些技能。
 - `input_schema.required` 在 `{"run":"<名>","args":{...}}` 前校验。
-- `mcp_tool`：声明后端为某个 MCP 工具。此时 `run` 由 core 直接转发给 MCP（不落沙箱、不需要密钥），
-  配合该服务的 `mode: silent` 就能把工具从模型的 tools 数组里隐藏，只留一行技能描述。仓库自带的
-  `skills/image`、`skills/video` 就是这么封装的 `image_task` / `video_task`。
+- MCP 工具不用建目录：给该服务配 `mode: skill`，平台会自动把它暴露成技能（`get` 返回 MCP 原始的
+  `input_schema`，`run` 转发），见上文「同栈 MCP 服务」。
 - 入口脚本以绝对路径启动；远端执行时 cwd 是会话目录，本地开发时是技能目录。相对路径参数会先按会话目录转成绝对路径。
 - `requirements.txt` 的依赖由 `agent-executor-init` 安装到 `skills/deps`；技能容器通过 `PYTHONPATH` 可见。
 - `install.sh` 在镜像构建期以 root 执行，用于必须落在系统层的依赖。改完需要重建 executor 镜像。

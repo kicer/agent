@@ -336,7 +336,7 @@ function buildServer() {
 
   server.tool(
     "video_task",
-    `Manages asynchronous video generation tasks.
+    `AI video generation.
 
 op=create  Submit a new task. Returns a task_id immediately; generation runs asynchronously.
            Requires at least one of prompt or image_url.

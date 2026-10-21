@@ -303,7 +303,7 @@ function buildServer() {
 
   server.tool(
     "image_task",
-    `Manages asynchronous image generation tasks.
+    `AI image generation.
 
 op=create  Submit a new task. Returns a task_id immediately; generation runs in background.
            Requires prompt.

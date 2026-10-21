@@ -1421,7 +1421,7 @@
   //   · 新增 = append 到 mcp_servers;
   //   · 删 = delete mcp_servers[pi];
   //   · 改 = setIn mcp_servers[pi].(name|url|timeout_ms|mode);headers 是普通键值对象,整体 setIn 一次到位。
-  // mode 三态:advertise(默认,工具下发给模型) / silent(只注册可调用,不下发) / disable(不加载):
+  // mode 三态:advertise(默认,工具下发给模型) / skill(不下发,以技能形式暴露) / disable(不加载):
   // 默认值不写进文件——选 advertise 时删键,回落到 config.js 的缺省。
   // 运行配置(cg.effective.mcp_servers)即文件刚解析后的视图,按 pi 直接定位;重启后才会重新发现工具。
   let mcpEdit = null; // 工作态:{ idx, headers:[{key, value, masked}] };idx=-1 为新增
@@ -1451,7 +1451,7 @@
         ? '<div class="restart-bar"><span>配置已写入，重启后生效</span><button class="primary-btn" onclick="sUI.restartNow()">重启服务</button></div>'
         : '';
       box.innerHTML = banner + SET.cfgMcp.map(mcpCardHtml).join('') +
-        '<div class="empty-tip">点卡片编辑 MCP 服务。advertise 的工具启动时发现并追加到内置工具之后；silent 只注册可调用（供技能 mcp_tool），不下发给模型。</div>';
+        '<div class="empty-tip">点卡片编辑 MCP 服务。advertise 的工具启动时发现并追加到内置工具之后；skill 不下发，改为以技能形式暴露（skill 工具里 get 拿到原始 input_schema）。</div>';
     } catch (e) {
       const b = $('mcp-list');
       if (b && (!ctx || ctx())) b.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
@@ -1462,8 +1462,8 @@
     const mode = s.mode || 'advertise';
     const stateHtml = mode === 'disable'
       ? '<span class="model-card-state off">已禁用</span>'
-      : mode === 'silent'
-        ? '<span class="model-card-state idle">仅技能可见</span>'
+      : mode === 'skill'
+        ? '<span class="model-card-state idle">以技能暴露</span>'
         : '<span class="model-card-state idle">启用</span>';
     const entries = Object.entries(s.headers || {});
     // header 值等同密码对待:后端 effective 已脱敏为固定短掩码,这里透传展示;若收到未脱敏原文也一律替换,不外显

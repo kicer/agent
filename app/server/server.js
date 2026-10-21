@@ -181,20 +181,9 @@ mcp.init(cfg).then(async () => {
   // 技能列表快照：模型直接感知已有技能，免先 {"list":"all"} 探索；
   // 此处失败不阻塞启动，{"list":"all"} 仍可做实时兜底。
   try {
-    const list = await skills.listSkills({ cfg });
+    const list = await skills.listCallableSkills({ cfg });
     llm.setSkillListText(skills.formatSkillListForPrompt(list));
     log.info('startup', '  skills=' + (list.length ? list.map(s => s.name).join(', ') : '(none)'));
-    // mcp_tool 后端自检（mcp.init 已完成，注册表是本轮发现的最终状态）：
-    // 启动期点名，避免模型第一次调用才撞墙；两条路并存时也告一声，方便渐进迁移。
-    const advertised = new Set(mcp.toolDefinitions().map(t => t && t.function && t.function.name));
-    for (const s of list) {
-      if (!s.mcp_tool) continue;
-      if (!mcp.hasTool(s.mcp_tool)) {
-        log.warn('startup', '技能 ' + s.name + ' 的 MCP 后端不可用：' + s.mcp_tool + '（检查 mcp_servers 与 mode）');
-      } else if (advertised.has(s.mcp_tool)) {
-        log.info('startup', '技能 ' + s.name + ' 的 MCP 后端 ' + s.mcp_tool + ' 同时下发给模型（两条路并存）');
-      }
-    }
   } catch (e) {
     log.warn('startup', '技能列表生成失败：' + e.message);
   }
@@ -205,7 +194,7 @@ mcp.init(cfg).then(async () => {
       log.info('startup', '  data_root=' + cfg.data_root);
       log.info('startup', '  models=' + cfg.models.map(m => m.id + '@' + m.url).join(', '));
       const mcpList = (cfg.mcp_servers || []).map(s => s.name + '@' + s.url +
-        (s.mode === 'disable' ? '(禁用)' : s.mode === 'silent' ? '(仅技能)' : '')).join(', ');
+        (s.mode === 'disable' ? '(禁用)' : s.mode === 'skill' ? '(技能)' : '')).join(', ');
       log.info('startup', '  mcp_servers=' + (mcpList || '(none)'));
       log.info('startup', '  auth=' + (auth.enabled ? 'login: ' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
       log.info('startup', '  wxbot=' + (cfg.wxbot.url && cfg.wxbot.token ? cfg.wxbot.url : '(未启用)'));

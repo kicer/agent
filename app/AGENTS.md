@@ -158,9 +158,11 @@ POST /api/sessions/:id/messages
   白名单、`tools_deny` 黑名单（**deny 赢**；profile 不配 deny 时继承全局 `tools_deny`）。
   `tools_allow: []` = 零工具（纯文本组合）。过滤只影响"模型看得到什么"，名单外工具若真被调用，
   `executeTool` 仍会执行（不误杀）。
-- MCP 服务按 `mcp_servers[].mode` 参与：`advertise`（默认）进 `toolDefs` 下发；`silent` 只进
-  `toolIndex`（`mcp.hasTool` 为真，技能 `mcp_tool` 与 `lab` 可调）但不进 tools 数组；`disable`
-  连 `tools/list` 都不发。旧字段 `enable` 已废弃，出现即报配置错（不静默忽略）。
+- MCP 服务按 `mcp_servers[].mode` 参与：`advertise`（默认）进 `toolDefs` 下发；`skill` 只进
+  `toolIndex`（`mcp.hasTool` 为真，`lab` 可调），且由 `skills.js` 自动
+  包装成技能（`mcp.skillTools()` / `getSkillTool()`，get 返回注册表里的原始 inputSchema）；
+  `disable` 连 `tools/list` 都不发。旧字段 `enable` 已废弃，`mode: silent` 已移除，
+  出现即报配置错（不静默忽略）。
 - `executeTool(baseCtx, name, args)`：先查 `HANDLERS` 表，未命中再交给 MCP 注册表。
   `ctx = {sessionId, taskDir, run, cfg, db, vision}`；工具返回字符串，`read_file` 读图时返回
   `{text, image_rel}`（由 engine 转成 `image_ref` 块）。
@@ -176,9 +178,11 @@ POST /api/sessions/:id/messages
   `run` 前校验；相对路径参数按会话目录转绝对路径；入口一律用绝对路径（远端 cwd 是会话目录）。
   配了 executor 就走 `remote-exec`，否则本地 `spawn`。旧形状 `{op, name, input_args}` 仅由
   `toolSkill` 兜底翻译（存量技能文档里还写着它），不再对外文档化。
-  声明了 `mcp_tool` 的技能走另一条后端：`runSkill` 在 `absolutizeArgs` **之前**分流，由 core
-  直接 `mcp.callTool` 转发（不落沙箱，所以也不需要任何密钥）；否则 URL 与含 `/` 的 prompt 会被
-  当路径改写。此时不跑 `input_schema.required` 校验（参数与 MCP 工具自己的 `op` 相关，交给服务管）。
+  模型可见的技能清单是 `listCallableSkills`（目录技能 + `mode=skill` 的 MCP 工具，同名时目录胜出）；
+  设置页的技能 API 仍只用 `listSkills`（按目录增删改），两者不要混用。
+  mode=skill 的 MCP 技能在 `runSkill` 里位于 `absolutizeArgs` **之前**：直接 `mcp.callTool` 转发
+  （不落沙箱，也不需要密钥），因此 URL 与含 `/` 的 prompt 不会被当路径改写；同样不跑
+  `input_schema.required` 校验（参数与 MCP 工具自己的 `op` 相关，交给服务管）。
 - MCP（`mcp.js`）：启动时 `initialize` → `notifications/initialized` → `tools/list`；与内置或已有
   MCP 工具重名时加 `<服务名>__` 前缀；请求随带 `X-Session-Dir`、`X-Public-Base`；
   `content` 里的 `ui_card` 块不进模型上下文，转成 SSE `ui_card` 事件。
