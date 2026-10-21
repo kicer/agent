@@ -100,18 +100,18 @@ docker exec mcp_image_task node -e "fetch('http://localhost:3000/health').then(r
 
 `op=get` 按任务状态返回：
 
-- `PROCESSING`：提示几秒后再查；
-- `SUCCESS`：单个 `text` 块，摘要后跟图片 URL（单图直接给 `Image URL:`，多图按 `Image N:` 逐行列出）：
+- `PROCESSING`：带上已等待秒数 `elapsed`，建议等待 `min(30, 3 + floor(elapsed / 5))` 秒后再查；
+- `SUCCESS`：单个 `text` 块，摘要后跟图片 URL（单图直接给 `Image URL:`，多图按 `Image N:` 逐行列出）；`elapsed` 为从 `create` 到完成的总耗时：
 
 ```jsonc
 {
   "content": [
-    { "type": "text", "text": "task_id: <uuid>\nmodel: CogView-4\nprovider: zhipu\ntask_status: SUCCESS\nImage URL: https://..." }
+    { "type": "text", "text": "task_id: <uuid>\nmodel: CogView-4\nprovider: zhipu\nelapsed: 12s\ntask_status: SUCCESS\nImage URL: https://..." }
   ]
 }
 ```
 
-- `FAIL`：`isError: true`，正文含 `task_status: FAIL` 与错误信息（上游 4xx/5xx、无 URL 返回等都会归档到这里）。
+- `FAIL`：`isError: true`，正文含 `task_status: FAIL`、总耗时 `elapsed` 与错误信息（上游 4xx/5xx、无 URL 返回等都会归档到这里）。
 
 URL 由上游签名下发，**带有效期**（通常 24h），需要长期保存请及时转存。
 
@@ -389,6 +389,9 @@ A: 和 `video_task` 保持同一套任务型契约；同时避免一次生图把
 
 **Q: 任务一直 PROCESSING 会不会没完没了？**
 A: 不会。上游调用封顶 180s，超时直接记 `FAIL`。
+
+**Q: 为什么 PROCESSING 时建议的等待时间会变长？**
+A: 轮询间隔按 `min(30, 3 + floor(elapsed / 5))` 退避：前期密查尽快拿到结果，后期拉长间隔减少无意义轮询，封顶 30s。
 
 **Q: create 之后服务容器重启了，get 会怎样？**
 A: 任务表在进程内存里，重启即丢失，`get` 会返回 unknown task_id。需要重新 `create`。

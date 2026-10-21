@@ -248,6 +248,7 @@ function runImageTask({ task, target, prompt, image }) {
     image,
   })
     .then((data) => {
+      task.finishedAt = Date.now();
       const urls = extractUrls(data);
       if (urls.length === 0) {
         task.status = "FAIL";
@@ -261,6 +262,7 @@ function runImageTask({ task, target, prompt, image }) {
       }
     })
     .catch((e) => {
+      task.finishedAt = Date.now();
       task.status = "FAIL";
       task.error = `${e.message}${
         e.detail ? ` Details: ${JSON.stringify(e.detail)}` : ""
@@ -359,6 +361,20 @@ async function handleCreate({ args, headers }) {
   return { content: [{ type: "text", text: summary }] };
 }
 
+// 从 create 到完成（未完成则到当前）的累计秒数。
+// 已完成任务用 finishedAt 定格，避免它留在表里越查越大。
+function elapsedSeconds(task) {
+  const end = task.status === "PROCESSING"
+    ? Date.now()
+    : (task.finishedAt || Date.now());
+  return Math.max(0, Math.round((end - task.createdAt) / 1000));
+}
+
+// 轮询退避：起步 3s，之后每多等 5s 加 1s，封顶 30s。
+function pollIntervalSeconds(elapsed) {
+  return Math.min(30, 3 + Math.floor(elapsed / 5));
+}
+
 // ===== op=get：查询任务状态（只读本地表，不碰上游）=====
 async function handleGet({ args }) {
   // 与 handleCreate 同理：纯空白 task_id 应报"缺参数"，而不是得到 Unknown task_id "   " 这种含糊错误。
@@ -386,6 +402,8 @@ async function handleGet({ args }) {
   }
 
   if (task.status === "PROCESSING") {
+    const elapsed = elapsedSeconds(task);
+    const retryAfter = pollIntervalSeconds(elapsed);
     return {
       content: [
         {
@@ -394,9 +412,10 @@ async function handleGet({ args }) {
             `task_id: ${taskId}\n` +
             `model: ${task.model}\n` +
             `provider: ${task.provider}\n` +
+            `elapsed: ${elapsed}s\n` +
             `task_status: PROCESSING\n` +
             `\n` +
-            `Call op="get" again in a few seconds.`,
+            `Task is still processing. Sleep for ${retryAfter} seconds, then call op="get" again.`,
         },
       ],
     };
@@ -411,6 +430,7 @@ async function handleGet({ args }) {
           text:
             `task_id: ${taskId}\n` +
             `provider: ${task.provider}\n` +
+            `elapsed: ${elapsedSeconds(task)}s\n` +
             `task_status: FAIL\n` +
             `error: ${task.error}`,
         },
@@ -428,6 +448,7 @@ async function handleGet({ args }) {
     `task_id: ${taskId}\n` +
     `model: ${task.model}\n` +
     `provider: ${task.provider}\n` +
+    `elapsed: ${elapsedSeconds(task)}s\n` +
     `task_status: SUCCESS\n` +
     `${lines}`;
   return { content: [{ type: "text", text: summary }] };
