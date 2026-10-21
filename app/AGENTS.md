@@ -173,11 +173,12 @@ POST /api/sessions/:id/messages
 - `checkToolArgs` + `unwrapToolArgs`：前者做结构性预检并生成 `errAck`，后者按 schema 逐层剥掉
   弱模型多包的信封。两者都是纯函数并已导出，便于回归验证。
 - 技能（`tools/skills.js`）：`SKILL.md` front matter 提供 `description`/`input_schema`。
-  工具参数是「动词作键」：`{"list":"all"}` / `{"get":"<名>"}` / `{"run":"<名>","args":{...}}`，
-  三者恰好给一个（无法用 `required` 表达，校验在 `toolSkill` 里做）。`input_schema.required` 在
-  `run` 前校验；相对路径参数按会话目录转绝对路径；入口一律用绝对路径（远端 cwd 是会话目录）。
-  配了 executor 就走 `remote-exec`，否则本地 `spawn`。旧形状 `{op, name, input_args}` 仅由
-  `toolSkill` 兜底翻译（存量技能文档里还写着它），不再对外文档化。
+  工具参数是扁平的 `{op, name, args}`：`op` 必填且三选一（`list`/`get`/`run`），`name` 供
+  get/run 指认技能，`args` 仅 run 用；条件必填写不进 schema，由 `toolSkill` 校验并点名。
+  `toolSkill` 在入口把旧字段名 `input_args` 归一化成 `args`，之后只走一条分派路径
+  （曾有两条路径，其中一条只读 `input_args`，会静默丢参）。
+  `input_schema.required` 在 `run` 前校验；相对路径参数按会话目录转绝对路径；入口一律用绝对路径
+  （远端 cwd 是会话目录）。配了 executor 就走 `remote-exec`，否则本地 `spawn`。
   模型可见的技能清单是 `listCallableSkills`（目录技能 + `mode=skill` 的 MCP 工具，同名时目录胜出）；
   设置页的技能 API 仍只用 `listSkills`（按目录增删改），两者不要混用。
   mode=skill 的 MCP 技能在 `runSkill` 里位于 `absolutizeArgs` **之前**：直接 `mcp.callTool` 转发

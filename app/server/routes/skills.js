@@ -77,7 +77,7 @@ function absInSkill(dir, rel) {
 // 技能发生任何变更（创建/重命名/删除/文件增删改都经过本模块）后，
 // 重建 system prompt 的 “可用技能” 段落（llm.setSkillListText）：
 // 模型立即感知新技能或改名，无需重启。fire-and-forget：扫描失败不影响 API 响应，
-// skill {"list":"all"} 仍是实时兜底。
+// skill op=list 仍是实时兜底。
 function refreshSkillPrompt() {
   listCallableSkills({ cfg: engine.getConfig() })
     .then(list => llm.setSkillListText(formatSkillListForPrompt(list)))

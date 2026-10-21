@@ -118,7 +118,7 @@ mcp_servers:
 | `skill` | ✓ | ✗ | ✓ | `skill` 工具与 `lab` |
 | `disable` | ✗ | ✗ | ✗ | 无人 |
 
-`skill` 用于「能力包在技能后面」的场景：工具照常发现并注册，只是不进模型的 tools 数组，改为以技能形式暴露——`{"list":"all"}` 能看到它，`{"get":"<名>"}` 直接返回 MCP 原始的 `description` + `input_schema`，`{"run":"<名>","args":{…}}` 转发给服务。不用在 `skills/` 里建目录。旧字段 `enable` 已废弃，`mode: silent` 已移除（启动会报错并提示改用 `skill`）。
+`skill` 用于「能力包在技能后面」的场景：工具照常发现并注册，只是不进模型的 tools 数组，改为以技能形式暴露——`{"op":"list"}` 能看到它，`{"op":"get","name":"<名>"}` 直接返回 MCP 原始的 `description` + `input_schema`，`{"op":"run","name":"<名>","args":{…}}` 转发给服务。不用在 `skills/` 里建目录。旧字段 `enable` 已废弃，`mode: silent` 已移除（启动会报错并提示改用 `skill`）。
 
 工具发现只在启动时做一次，因此发现失败后会自动按 **2s / 20s / 1min 重试 3 次**（覆盖 compose 并行拉起与宿主机重启后的容器乱序）；成功后工具在下一轮请求即可用，三次都失败则需重启 core。三个 MCP 服务都配了 `/health` 健康检查，`docker ps` 可直接看状态。
 
@@ -263,7 +263,7 @@ platforms:
 | `terminal` | 执行 shell 命令；默认在会话目录，超时可终止 |
 | `fetch` | 抓取 HTTP/HTTPS 并转 Markdown；带 SSRF 防护与分段续读 |
 | `mint_public_link` | 为会话内文件签发短期公网链接 |
-| `skill` | 技能：`{"list":"all"}` / `{"get":"<名>"}` / `{"run":"<名>","args":{...}}`（动词作键，三选一） |
+| `skill` | 技能：`op` = `list` / `get` / `run`；`name` 指技能，`args` 传参数 |
 | `db` | 操作会话本地 `data.db`：`exec`、`query`、`insert`、`tables`、`schema` |
 | `schedule` | 定时任务 `get` / `list` / `create` / `update` / `delete` |
 | `profile` | 用户画像 `list` / `set` / `add` / `remove` |
@@ -287,7 +287,7 @@ skills/my-skill/
 ```
 
 - `SKILL.md` 的 `description` 会进入 system prompt，模型启动时就知道有哪些技能。
-- `input_schema.required` 在 `{"run":"<名>","args":{...}}` 前校验。
+- `input_schema.required` 在 `op=run` 前校验。
 - MCP 工具不用建目录：给该服务配 `mode: skill`，平台会自动把它暴露成技能（`get` 返回 MCP 原始的
   `input_schema`，`run` 转发），见上文「同栈 MCP 服务」。
 - 入口脚本以绝对路径启动；远端执行时 cwd 是会话目录，本地开发时是技能目录。相对路径参数会先按会话目录转成绝对路径。

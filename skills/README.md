@@ -8,9 +8,9 @@
 
 技能是一个自包含的目录，通常存放在技能根目录（默认为 `skills/`）下。每个技能包含一个描述文件（`SKILL.md`）和一个可执行入口（`run.py` 或 `run.sh`）。Agent 通过以下流程使用技能：
 
-1. 调用 `skill` 的 `{"list":"all"}` 查看所有可用技能的名称和简介；
-2. 调用 `skill` 的 `{"get":"<技能名>"}` 获取某个技能的详细说明；
-3. 调用 `skill` 的 `{"run":"<技能名>","args":{...}}` 执行技能，传入所需参数。
+1. 调用 `skill` 的 `{"op":"list"}` 查看所有可用技能的名称和简介；
+2. 调用 `skill` 的 `{"op":"get","name":"<技能名>"}` 获取某个技能的详细说明；
+3. 调用 `skill` 的 `{"op":"run","name":"<技能名>","args":{...}}` 执行技能，传入所需参数。
 
 技能可以处理任何任务，例如文件格式转换、数据处理、网页抓取等。
 
@@ -57,7 +57,7 @@ visit_url: /app/{task_id}/   # 可选：页面类技能的访问路径模板
 ```
 
 - `name`：技能名称，应与目录名一致。
-- `description`：一句话描述技能功能，用于 `{"list":"all"}` 的清单展示。
+- `description`：一句话描述技能功能，用于 `op=list` 的清单展示。
 - `input_schema`：输入参数的 JSON Schema 定义，用于参数校验和文档生成。
 - `output_schema`：输出结果的描述（可选）。
 - `visit_url`：（可选）页面类技能声明的访问路径模板，`{task_id}` 占位执行时替换为会话 id。`run` 成功后由 core（tools/executor.js）拼上 `public_link.base_url`，在输出末尾追加一行「访问地址：<完整 URL>」——技能进程跑在 executor 隔离视图里不知道公网地址，完整链接只能 core 补；AI 拿到相对路径会原样转给用户，而相对路径打不开。
@@ -80,7 +80,7 @@ visit_url: /app/{task_id}/   # 可选：页面类技能的访问路径模板
 - 自动处理某某
 
 ## 使用说明
-通过 `skill` 的 `{"run":"<技能名>","args":{...}}` 调用，参数：
+通过 `skill` 的 `{"op":"run","name":"<技能名>","args":{...}}` 调用，参数：
 - `input`：某某路径（必填）
 - `output`：某某路径（可选，默认与输入同名）
 ```
@@ -92,10 +92,10 @@ visit_url: /app/{task_id}/   # 可选：页面类技能的访问路径模板
 把 `config.yml` 里某个 MCP 服务配成 `mode: skill` 即可：它的每个工具会自动成为技能，不需要
 `SKILL.md`，也不需要入口脚本。
 
-- `{"list":"all"}` 里出现工具名，描述取 MCP `description` 的第一行；
-- `{"get":"<工具名>"}` 直接返回 MCP 原始的 `description` + `input_schema`（单一来源，不会与
+- `{"op":"list"}` 里出现工具名，描述取 MCP `description` 的第一行；
+- `{"op":"get","name":"<工具名>"}` 直接返回 MCP 原始的 `description` + `input_schema`（单一来源，不会与
   实现漂移）；
-- `{"run":"<工具名>","args":{…}}` 把 `args` 原样透传成 MCP 的 `arguments`，由 core 直接转发。
+- `{"op":"run","name":"<工具名>","args":{…}}` 把 `args` 原样透传成 MCP 的 `arguments`，由 core 直接转发。
 
 几个约束：
 
@@ -251,7 +251,7 @@ input_schema:
 ---
 
 ## 使用说明
-通过 `skill` 的 `{"run":"<技能名>","args":{...}}` 调用，参数：
+通过 `skill` 的 `{"op":"run","name":"<技能名>","args":{...}}` 调用，参数：
 - `text`：要回显的文本（必填）
 ```
 

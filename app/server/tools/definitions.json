@@ -337,25 +337,23 @@
     "type": "function",
     "function": {
       "name": "skill",
-      "description": "Run or inspect the skills installed on this server. A skill is a directory under the skill root whose SKILL.md defines its purpose and input_schema.\n\nPass EXACTLY ONE verb key:\n{\"list\":\"all\"}  List every installed skill with a one-line description, read live from the skill root; an empty list is not an error.\n{\"get\":\"<name>\"}  Return the skill's full raw SKILL.md (front matter included): purpose, input_schema and usage notes. Call it before run for a skill you have not used in this conversation.\n{\"run\":\"<name>\",\"args\":{...}}  Execute the skill; args are key/value pairs matching its input_schema, and may be omitted for skills that take none.\n\nrun returns the skill's combined stdout+stderr as plain text after it exits (exit 0 with no output yields '（无输出）'); a non-zero exit raises an error containing the output and [exit code: N]. Relative paths in args are resolved against the session working directory, so pass output paths explicitly and never rely on the skill's cwd. Default timeout 120 seconds: the process group is killed and the error includes partial output collected so far (a timeout is not a skill failure).",
+      "description": "Run or inspect the skills installed on this server. Each skill describes its purpose and input_schema.\n\n{\"op\":\"list\"}  list every skill with a one-line description\n{\"op\":\"get\",\"name\":\"<skill>\"}  return the skill's full details; call it before the first run\n{\"op\":\"run\",\"name\":\"<skill>\",\"args\":{...}}  execute it; args follow its input_schema\n\nop is required. op=get and op=run require name. Put skill arguments inside args, never at the top level.",
       "parameters": {
         "type": "object",
+        "required": ["op"],
         "properties": {
-          "list": {
+          "op": {
             "type": "string",
-            "description": "Scope of the listing. The only scope today is \"all\" (every installed skill)."
+            "enum": ["list", "get", "run"],
+            "description": "Operation to perform on skills."
           },
-          "get": {
+          "name": {
             "type": "string",
-            "description": "Skill name (subdirectory name under the skill root): return its SKILL.md."
-          },
-          "run": {
-            "type": "string",
-            "description": "Skill name: execute it with args."
+            "description": "Skill name. Required with op=get and op=run."
           },
           "args": {
             "type": "object",
-            "description": "Only with run: the skill's input arguments, e.g. {\"input\": \"file.md\", \"output\": \"out.pdf\"}. Omit it for skills that take no arguments."
+            "description": "Only with op=run: the skill's input arguments, e.g. {\"input\":\"a.md\",\"output\":\"b.pdf\"}. Omit for skills that take no arguments."
           }
         }
       }

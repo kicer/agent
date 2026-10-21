@@ -1498,18 +1498,14 @@ function toolDb(ctx, args) {
   }
 }
 
-// skill：技能三件套（list/get/run）合并后的单工具（依据 docs/tool-design.md §一）。
-// 参数形状是「动词作键、技能名作值」，三者恰好给一个：
-//   {list:"all"} / {get:"<名>"} / {run:"<名>", args:{...}}
-// list 的值是范围而非布尔：将来技能分类落地时直接扩成 {list:"<分类>"}，调用形状不变，
-// 模型不用学第二套写法。今天只认 "all" 且报错点名——静默返回全部会让错拼的分类名
-// 看起来「能用」，将来接分类时更难排查。
-// {list:"all"} 的清单 = 目录技能 + mode=skill 的 MCP 工具；get/run 对两者一视同仁：
-// 目录技能读 SKILL.md，MCP 技能直接回注册表里的原始 input_schema。
-// args 仅 run 用且可缺省：runSkill 把 null 视作 {}，真正缺哪些字段由各技能 input_schema
-// 校验点名报错（工具层再 gate 一层是双重门槛，无益）。
-// 旧形状 {op, name, input_args} 仍接受：存量技能文档的调用示例里写的是它，模型 get 到
-// 旧示例就会照着发；仅作兼容兜底，不再对外文档化（文档只体现新形状）。
+// skill：技能三件套（list/get/run）合并后的单工具（依据 docs/tool-design.md §一/§二/§三）。
+// 扁平参数：op 是唯一必填的开关，name 供 get/run 指认技能，args 仅 run 用；条件必填写不进
+// schema，由 toolSkill 校验并在报错里点名（§四/§五）。
+// 旧字段名 input_args 在入口归一化成 args（存量技能文档里仍写着它），之后只走一条分派路径——
+// 曾有两条执行路径，其中一条只读 input_args，{op:"run", args:{...}} 的参数会被静默丢弃。
+// 上一版「动词作键」不再兼容：schema 的 required:["op"] 会在 checkToolArgs 阶段先拦下，
+// 留着分支只会是死代码（lab 直调除外，不值得为它多一条路径）。
+// op=list 的清单取 listCallableSkills：目录技能 + mode=skill 的 MCP 工具；get/run 对两者一视同仁。
 // visit_url（front matter 可选）：页面产物类技能声明访问路径模板，run 成功后在本层拼
 // public_link.base_url（与 mint_public_link 同源）追加完整「访问地址」——技能进程跑在
 // executor 隔离视图里不知道公网前缀，AI 拿到相对路径就会原样转给用户，而相对路径打不开。
@@ -1531,67 +1527,35 @@ async function runSkillWithVisit(ctx, name, inputArgs) {
     : rel + '（站内路径：public_link.base_url 未配置，拼不出公网前缀）');
 }
 
-const SKILL_USAGE = 'skill 用法：{"list":"all"} / {"get":"<技能名>"} / {"run":"<技能名>","args":{...}}，三者恰好给一个';
-
-// 技能名必须是单 token：它要原样塞进 {run:"<名>"} 的值里，空格与等号会让日志与
-// 报错里的表达产生歧义（'/' 与 '..' 由 skills.skillDir 拦下）。
-function skillNameArg(value, verb) {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new Error('skill ' + verb + ' 需要一个技能名字符串，收到：' + JSON.stringify(value).slice(0, 60) + '。' + SKILL_USAGE);
-  }
-  const name = value.trim();
-  if (/[\s=]/.test(name)) throw new Error('技能名不能含空格或等号："' + name + '"');
-  return name;
-}
+const SKILL_USAGE = 'skill 用法：{"op":"list"} / {"op":"get","name":"<技能名>"} / {"op":"run","name":"<技能名>","args":{...}}';
 
 // list/get 带非空 args 一律报错而不是静默丢弃：否则模型会以为参数生效了。
-function rejectSkillArgs(a, verb) {
-  if (!a.args || typeof a.args !== 'object' || !Object.keys(a.args).length) return;
-  throw new Error(verb + ' 不接受 args，只有 run 才带参数。' + SKILL_USAGE);
+function rejectSkillArgs(skillArgs, op) {
+  if (!skillArgs || typeof skillArgs !== 'object' || !Object.keys(skillArgs).length) return;
+  throw new Error('op=' + op + ' 不接受 args，只有 op=run 才带参数。' + SKILL_USAGE);
 }
 
-// 旧形状 {op, name, input_args} 的等价翻译（兼容存量技能文档，见上方注释）。
-async function legacyToolSkill(ctx, a) {
-  const op = String(a.op == null ? '' : a.op).trim().toLowerCase();
-  const name = String(a.name == null ? '' : a.name).trim();
-  switch (op) {
-    case 'list':
-      return JSON.stringify(await skills.listCallableSkills(ctx), null, 2);
-    case 'get':
-      if (!name) throw new Error('op=get 缺少技能名。' + SKILL_USAGE);
-      return skills.getSkillInfo(ctx, name);
-    case 'run':
-      if (!name) throw new Error('op=run 缺少技能名。' + SKILL_USAGE);
-      return runSkillWithVisit(ctx, name, a.input_args);
-    default:
-      throw new Error('未知的 op："' + op + '"。' + SKILL_USAGE);
-  }
-}
-
+// 旧字段名 input_args 在这里归一化成 args，再走同一条分派（见上方注释）。
 async function toolSkill(ctx, args) {
   const a = args || {};
-  const verbs = ['list', 'get', 'run'].filter(k => a[k] !== undefined && a[k] !== null && a[k] !== false);
-  if (!verbs.length) {
-    // 三个动词键都没给时才回落到旧形状：两种都给时以新形状为准。
-    if (a.op !== undefined || a.name !== undefined || a.input_args !== undefined) return legacyToolSkill(ctx, a);
-    throw new Error(SKILL_USAGE);
+  const op = String(a.op == null ? '' : a.op).trim().toLowerCase();
+  const name = String(a.name == null ? '' : a.name).trim();
+  const skillArgs = a.args !== undefined ? a.args : a.input_args;
+  if (!op) throw new Error('skill 缺少必填参数 op（list / get / run）。' + SKILL_USAGE);
+  switch (op) {
+    case 'list':
+      rejectSkillArgs(skillArgs, 'list');
+      return JSON.stringify(await skills.listCallableSkills(ctx), null, 2);
+    case 'get':
+      if (!name) throw new Error('op=get 缺少必填参数 name。' + SKILL_USAGE);
+      rejectSkillArgs(skillArgs, 'get');
+      return skills.getSkillInfo(ctx, name);
+    case 'run':
+      if (!name) throw new Error('op=run 缺少必填参数 name。' + SKILL_USAGE);
+      return runSkillWithVisit(ctx, name, skillArgs);
+    default:
+      throw new Error('未知的 op：' + JSON.stringify(op) + '。' + SKILL_USAGE);
   }
-  if (verbs.length > 1) {
-    throw new Error('skill 一次只能给一个动词键，收到 ' + verbs.join(' + ') + '。' + SKILL_USAGE);
-  }
-  const verb = verbs[0];
-  if (verb === 'list') {
-    const scope = String(a.list).trim().toLowerCase();
-    if (scope !== 'all') throw new Error('list 目前只支持 "all"（技能分类尚未提供），收到："' + scope + '"');
-    rejectSkillArgs(a, 'list');
-    return JSON.stringify(await skills.listCallableSkills(ctx), null, 2);
-  }
-  const name = skillNameArg(a[verb], verb);
-  if (verb === 'get') {
-    rejectSkillArgs(a, 'get');
-    return skills.getSkillInfo(ctx, name);
-  }
-  return runSkillWithVisit(ctx, name, a.args);
 }
 
 // lab：全工具统一入口（元工具，tools 数组收缩到 1 个仍可达内置 + MCP 全部能力）。
