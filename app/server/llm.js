@@ -114,7 +114,7 @@ function decodeBlocks(content) {
 // 含图行的解析缓存：哨兵 JSON 带 base64 大字段，工具循环里每个请求都整段 JSON.parse，
 // 已消费的图片解析完还只留文字块，纯重复劳动。按行 id 把解析结果挂在 session 上：
 // 单进程内存模型，行内容入库后不再变更，同一行只解析一次。
-// 缓存的是原始块数组而非「消费后投影」——消费与否仍按 lastAssistant 实时判定，
+// 缓存的是原始块数组而非「消费后投影」——消费与否仍按 lastAck 实时判定，
 // 删除后续 assistant 让图片回到「未消费」（需重新携带 base64）时也自然正确。
 function cachedDecodeBlocks(session, row) {
   if (typeof row.content !== 'string' || !row.content.startsWith('{"__blocks__":')) return null;
@@ -160,13 +160,16 @@ function imageLabel(text) {
 // image_url（mintUrl 公网链回调）后统一并入
 // 该批之后的一条 user 消息（user 角色各家通吃）：逐图说明文字全部置顶、图块按回执顺序紧随
 //（对齐官方示例排布；探针实测 DS 对交替排布也兼容，取低风险形态），
-// 并附「先逐张简述再继续任务」指令——兼作送达自检，破弱模型的“没收到”惯性叙事；
+// 并只对本批新增的图附「一句话说明」的自检指令——兼作送达自检，破弱模型的“没收到”
+// 惯性叙事；早前批次不再重复要求描述（旧版对全部未消费图每轮重发祈使句，驱动了重复循环）；
 // 签不到（base_url 未配等）降级为文字占位，绝不把 image_ref 这种非标准块发上游。
-// 省 token：图块保留到最后一条「收尾回复」（无 tool_calls 的 assistant）之前；
-// 中间轮只发 tool_calls 不算看过，图继续携带——14:33 实测 pt 证明图已进上下文而模型
-// 仍自述没看到（弱模型行为不可靠），行为鲁棒优先于极致省钱；更早的视为已消费，
-// 之前的视为已消费，发请求时替换为文字标记（措辞不再催促重读）。DB 始终存全量：
-// UI 历史照常渲染图片，模型如需重看可再次 read_file（新回执在尾部，会重新携带图片）。
+// 省 token：图块保留到「最后一次写过文本的 assistant」之前——模型把图片描述写在 content
+// 里、同时继续发 tool_calls，就是它确实看到像素的证据。旧判据只认「无 tool_calls 的收尾
+// 回复」，于正常的多步任务（工具轮不停）里图永远算未消费，每轮都把「逐张简述…然后继续
+// 完成用户的任务」重发一遍，模型照做又产生 tool_calls——自我维持的重复循环（2026-10 实机：
+// 同一批图被反复描述直到人工终止）。没写任何文本的中间轮仍算「没看过」，图继续随请求
+// 携带（14:33 实测：图已进上下文而模型仍自述没看到，行为鲁棒优先于极致省钱）。
+// DB 始终存全量：UI 历史照常渲染图片，模型如需重看可再次 read_file（新回执在尾部）。
 // 压缩摘要相关行（见 engine.runLoopInner / summarizeContext）：
 // - type='summary'（assistant，收尾答复）：不跳过。它是压缩后后续轮次的上下文起点，
 //   正常以 assistant 历史行发给模型；压缩收尾时打此标。
@@ -215,14 +218,23 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
   // tool 回执按 tool_call_id 索引：给 errAck 行拼错误提示时取执行时挡下的原因
   const toolRowById = new Map();
   for (const row of history) if (row.role === 'tool' && row.tool_call_id) toolRowById.set(row.tool_call_id, row);
-  // 「已消费」分界 = 最后一条给出收尾回复（无 tool_calls）的 assistant：模型只发
-  // tool_calls 的中间轮不算已阅图，图继续随请求携带直到它真正答复过一次。
+  // 「已消费」分界 = 最后一条**写过文本**的 assistant 行（不要求无 tool_calls）：
+  // 描述写在 content 里 + 继续调工具，就是模型真看到图的证据（见文件头注释的循环复盘）。
   // errAck / archived 不发模型，不算回复：它们之前的图不算被消费。
-  let lastAssistant = -1;
+  let lastAck = -1;
   for (let i = history.length - 1; i >= 0; i--) {
     const r = history[i];
-    if (r.role === 'assistant' && r.type !== 'errAck' && r.type !== 'archived' && !r.tool_calls) { lastAssistant = i; break; }
+    if (r.role !== 'assistant' || r.type === 'errAck' || r.type === 'archived') continue;
+    if (String(r.content || '').trim()) { lastAck = i; break; }
   }
+  // 「本批新增」起点 = 最后一条 assistant 行之后的 tool 回执（engine 每轮把新回执行追加在末尾）。
+  // 只有这些图带「请描述」的祈使句；更早批次仍未消费的图只静默携带，否则模型每轮都被
+  // 要求重述一遍旧图，进而把旧任务再推一遍。
+  let lastAssistantRow = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'assistant') { lastAssistantRow = i; break; }
+  }
+  const newFrom = lastAssistantRow + 1;
   const dropToolCallIds = new Set();
   // 旧版 summarize_request 「已答复」判定的前置信息：最后一次「回合收尾回复」（无 tool_calls 的 assistant）的位置。
   // 指令行在其之后 = 还在等 AI 响应这条指令（旧版压缩回合未收尾），应发给模型；在其之前 = 旧指令，跳过防污染。
@@ -237,6 +249,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
   const pendingImages = [];   // 待投递的图块（按回执顺序；签不到时不占位）
   const pendingLabels = [];   // 每图一行「对应回执」说明，合并进首条文字块（text 置顶、图在后）
   let imgSeq = 0;
+  let newCount = 0;           // 其中本批新增的图数：为 0 时不带「请描述」的祈使句
   history.forEach((row, i) => {
       // archived：UI 可见，但不进入模型上下文（节省 token）
       if (row.type === 'archived') return;
@@ -291,7 +304,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
     const blocks = cachedDecodeBlocks(session, row);
     let content = row.content || '';
     if (blocks) {
-      if (i < lastAssistant) {
+      if (i < lastAck) {
         content = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n');
         // 已消费的图重放时不再携带像素：把回执的 image_attached 降为 false 并给出原因，
         // 模型读字段就知道「不是又丢了」，不会因叙事惯性重读。旧库散文回执保持原有尾巴。
@@ -306,23 +319,21 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
         const texts = blocks.filter(b => b && b.type === 'text').map(b => b.text);
         content = texts.join('\n');
         const label = imageLabel(texts[0]);
+        const isNew = i >= newFrom;
         let mintFailed = false;
         for (const b of blocks) {
           if (!b || (b.type !== 'image_ref' && b.type !== 'image_url')) continue;
+          let block = b;
+          if (b.type === 'image_ref') {
+            const url = mintUrl ? mintUrl(b.rel) : null;
+            if (!url) { mintFailed = true; continue; } // 签不到就不占编号：没图可描述
+            block = { type: 'image_url', image_url: { url } };
+          }
           const seq = ++imgSeq;
-          if (b.type === 'image_url') { // 旧库内联 data: URL 原样
-            pendingLabels.push('[图片 ' + seq + '] ' + label);
-            pendingImages.push(b);
-            continue;
-          }
-          const url = mintUrl ? mintUrl(b.rel) : null;
-          if (url) {
-            pendingLabels.push('[图片 ' + seq + '] ' + label);
-            pendingImages.push({ type: 'image_url', image_url: { url } });
-          } else {
-            mintFailed = true;
-            pendingLabels.push('[图片 ' + seq + '] ' + label + '（未送达：link_unavailable）');
-          }
+          if (isNew) newCount++;
+          pendingImages.push(block);
+          pendingLabels.push('[图片 ' + seq + ']' + (isNew ? '（本批新增）' : '') + ' ' + label
+            + (isNew ? '' : '（早前批次，已投递过，不要重复描述）'));
         }
         // 签不到外链 = 本次请求像素确实到不了：当场把回执字段降级，让模型拿到的是
         // 「ok 但 image_attached=false + reason」，而不是一句需要它自己解读的说明。
@@ -350,16 +361,21 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
       messages.push({ role: row.role, content });
     }
   });
-  // 该批未消费图片合并发送：单条 text 置顶列出逐图对应说明，图块按编号顺序紧随；
-  // 「先简述每张图再继续」兼作送达自检——模型描述得出来 = 像素真到了；描述不出 = 真没到，
-  // 不会再像 14:33 那样带着图却沿“没收到”的叙事惯性重读。
-  if (pendingImages.length || pendingLabels.length) {
+  // 未消费图片合并发送：图上文字置顶、图块紧随（同序）。
+  // 只有「本批新增」的图才能带祈使句——旧版对所有未消费图每轮都写「逐张简述…然后
+  // 继续完成用户的任务」，模型把它当成新的用户任务，描述完继续干活→又产生 tool_calls→
+  // 图仍算未消费→再要求描述，自维持重复。早前批次只静默携带并明确「不要重复描述」。
+  if (pendingImages.length) {
+    const tail = newCount
+      ? '\n标注「本批新增」的图片是本轮新投递的：各用一句话说明里面有什么（确认像素已收到），'
+        + '然后继续你手头的工具流程。本条不是新的用户任务，不要在这里展开分析，也不要重读同一文件。'
+      : '\n以上均为早前批次已投递过的图片（像素仍在上下文中）：不要重复描述，也不要重读同一文件；专注完成用户的任务。';
     messages.push({
       role: 'user',
       content: [{ type: 'text',
-        text: '[系统提示] 以下不是用户新输入，是上面这批 tool 回执对应的图片（read_file 回传）：\n'
+        text: '[系统提示] 以下不是用户新输入，是你此前 read_file 回传的图片（按回执顺序）：\n'
           + pendingLabels.join('\n')
-          + (pendingImages.length ? '\n请按编号顺序逐张简述每张图片里有什么（表明像素确实送达），然后继续完成用户的任务。' : '') }]
+          + tail }]
         .concat(pendingImages),
     });
   }
@@ -371,7 +387,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
 // 页面可重抓；write 参数只是当时快照（后续 edit_file 一次就失真，本就不该被当现势引用）。
 // 组装请求时对「距尾 ≥N 个 assistant 轮」的行换单行占位：纯函数、DB 不动（UI 工具卡照旧
 // 可展全量）、与压缩归档正交（archived 行本来就不进模型）。距离按现存行数 assistant 轮：
-// 删中间消息可让已占位行短暂复活全文（一次性断前缀缓存，与图片消费 i<lastAssistant 同一
+// 删中间消息可让已占位行短暂复活全文（一次性断前缀缓存，与图片消费 i<lastAck 同一
 // 语义，接受）。阈值可配（config agent.trim_write_rounds / trim_result_rounds，0=关），
 // 启动时 setPayloadTrim 注入。
 let TRIM = { writeRounds: 1, resultRounds: 2 };

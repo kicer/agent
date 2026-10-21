@@ -143,6 +143,10 @@ POST /api/sessions/:id/messages
   `image_attached` / `reason` / `width` / `height` …），不是散文。发送侧三处改写（engine 同回合去重、
   `buildMessages` 签外链失败与已消费重放）一律走 `patchImageReceipt` **只改字段**；
   追加句子会让 JSON 不可解析，模型又退回从自然语言猜「像素到底到没到」。
+- 图片注入消息的两条硬约束（踩过循环）：①**消费判据是「最后一条写过文本的 assistant」**
+  （不要求无 `tool_calls`）——旧判据只认收尾回复，多步任务里图永远「未消费」；②**只有本批新增的图
+  带「一句话说明」的祈使句**，早前批次静默携带。两者合起来才断得掉「每轮要求描述 → 模型描述并继续
+  调工具 → 图仍算未消费」的自维持重复循环。
 - 占位裁剪（`agent.trim_write_rounds` / `trim_result_rounds`）：距尾 ≥N 个 assistant 轮的
   `write_file.content`、`fetch`/`read_file` 回执换成单行占位。**只改发给上游的副本**，DB 与 UI 不动。
 - `compressMessages` = `buildMessages` + 末尾一条压缩指令 `user`。**铁律**：压缩请求必须与上一次
