@@ -186,8 +186,8 @@ function outlineWrapper(outlineText) {
 //   path            模型请求的路径（@ 历史形原样保留）；投递产物路径只在服务端内部用，不回执
 //   image_attached  服务端是否产出了图块、会随本批回执之后的那条 user 消息投递（≠上游已收到）
 //   reason          仅 image_attached=false 时有值，稳定枚举（no_vision / too_large / past_session /
-//                   decode_failed / sharp_missing / already_delivered / link_unavailable /
-//                   omitted_already_sent）——模型按它分支，不要读 hint 猜
+//                   decode_failed / sharp_missing / already_delivered / link_unavailable）——
+//                   模型按它分支，不要读 hint 猜。注意：重放省略像素不属于回执事件，不写 reason。
 //   retryable       重试同一调用是否有意义（图片这条路上恒 false：同样的字节只会得到同样的结果）
 //   width/height    实际投递的像素尺寸；source_width/height + resized 只在确实缩放过时出现
 //   hint            一句人话补充，仅供解释，不承载判定

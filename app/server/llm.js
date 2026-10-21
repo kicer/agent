@@ -170,6 +170,8 @@ function imageLabel(text) {
 // 同一批图被反复描述直到人工终止）。没写任何文本的中间轮仍算「没看过」，图继续随请求
 // 携带（14:33 实测：图已进上下文而模型仍自述没看到，行为鲁棒优先于极致省钱）。
 // DB 始终存全量：UI 历史照常渲染图片，模型如需重看可再次 read_file（新回执在尾部）。
+// 重放时只省略像素块、**不改写回执字段**：回执是历史事实，改写成「未投递」会让模型
+// 把当时成功的读图误判为失败，进而反复重读同一条（2026-10 实机循环的直接成因）。
 // 压缩摘要相关行（见 engine.runLoopInner / summarizeContext）：
 // - type='summary'（assistant，收尾答复）：不跳过。它是压缩后后续轮次的上下文起点，
 //   正常以 assistant 历史行发给模型；压缩收尾时打此标。
@@ -305,15 +307,12 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
     let content = row.content || '';
     if (blocks) {
       if (i < lastAck) {
+        // 已消费的图重放时**只省略像素，不改写回执**：回执记的是「那次读取发生了什么」
+        //（当时确实投递了）；「这次重放不重复发」只是传输细节，不该写进历史事实。
+        // 若改写成 image_attached:false / reason:omitted_already_sent / retryable:false，
+        // 模型会把历史读图当成失败、认为「这次没拿到画面」，于是反复重读同一条（实测循环）。
+        // 确实需要重看时它自己再 read_file 即可，那条新回执会是完整的成功回执。
         content = blocks.filter(b => b && b.type === 'text').map(b => b.text).join('\n');
-        // 已消费的图重放时不再携带像素：把回执的 image_attached 降为 false 并给出原因，
-        // 模型读字段就知道「不是又丢了」，不会因叙事惯性重读。旧库散文回执保持原有尾巴。
-        const consumed = patchImageReceipt(content, {
-          image_attached: false, reason: 'omitted_already_sent', retryable: false,
-          hint: '该图已在此前的轮次投递过，重放时不再重复携带像素；若你当时未能识别，请直接告知用户，勿反复重读同一文件',
-        });
-        content = consumed !== null ? consumed
-          : content + '\n[图片数据已省略：本图已随上一条回执发送过，不再重复携带；若你当时未能识别其内容，请直接告知用户，勿反复重读同一文件]';
       } else if (row.role === 'tool') {
         // 未消费的图：回执只留文字，图块挪进批次后的 user 合并消息（见 pendingImages/Labels）
         const texts = blocks.filter(b => b && b.type === 'text').map(b => b.text);
@@ -340,7 +339,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
         if (mintFailed) {
           const degraded = patchImageReceipt(content, {
             image_attached: false, reason: 'link_unavailable', retryable: false,
-            hint: '服务端签不出图片外链，本张图的像素未能随本次请求送达；请直接告知用户，勿反复重读同一文件',
+            hint: '服务端签不出图片外链，本张图的像素未能随本次请求送达；重读也无法送达，请直接告知用户',
           });
           if (degraded !== null) content = degraded;
         }
@@ -368,8 +367,8 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
   if (pendingImages.length) {
     const tail = newCount
       ? '\n标注「本批新增」的图片是本轮新投递的：各用一句话说明里面有什么（确认像素已收到），'
-        + '然后继续你手头的工具流程。本条不是新的用户任务，不要在这里展开分析，也不要重读同一文件。'
-      : '\n以上均为早前批次已投递过的图片（像素仍在上下文中）：不要重复描述，也不要重读同一文件；专注完成用户的任务。';
+        + '然后继续你手头的工具流程。本条不是新的用户任务，不要在这里展开分析。'
+      : '\n以上均为早前批次已投递过的图片（像素仍在上下文中）：不要重复描述，专注完成用户的任务。';
     messages.push({
       role: 'user',
       content: [{ type: 'text',

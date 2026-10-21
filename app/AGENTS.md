@@ -138,11 +138,12 @@ POST /api/sessions/:id/messages
 - 含图消息：DB 里存 `{"__blocks__":[...]}` 哨兵 JSON（`encodeBlocks`/`decodeBlocks`）；
   发请求时 `image_ref` 现签公网短链（`mintUrl`，每次请求重签、不会中途过期）。
   `tool` 回执里的未消费图片会**挪出回执**，合并成该批回执之后的一条 `user` 消息
-  （`tool` 角色带图是非标准形态，很多上游会吞图）；已消费的图降级为文字占位。
+  （`tool` 角色带图是非标准形态，很多上游会吞图）；已消费的图只省略像素块，回执原样保留。
 - `read_file` 读图的回执是**结构化 JSON**（`tools/executor.js` 的 `imageReceipt`：`ok` /
-  `image_attached` / `reason` / `width` / `height` …），不是散文。发送侧三处改写（engine 同回合去重、
-  `buildMessages` 签外链失败与已消费重放）一律走 `patchImageReceipt` **只改字段**；
-  追加句子会让 JSON 不可解析，模型又退回从自然语言猜「像素到底到没到」。
+  `image_attached` / `reason` / `width` / `height` …），不是散文。发送侧改写只限两种真事件
+  （engine 同回合/同批去重、`buildMessages` 签外链失败），一律走 `patchImageReceipt` **只改字段**。
+- **已消费的图重放时只省略像素块，不改写回执**：回执是「那次读取」的历史事实，把当时成功的
+  读图改写成 `image_attached:false` 会让模型以为当时就没拿到画面 → 反复重读同一条（实测循环）。
 - 图片注入消息的两条硬约束（踩过循环）：①**消费判据是「最后一条写过文本的 assistant」**
   （不要求无 `tool_calls`）——旧判据只认收尾回复，多步任务里图永远「未消费」；②**只有本批新增的图
   带「一句话说明」的祈使句**，早前批次静默携带。两者合起来才断得掉「每轮要求描述 → 模型描述并继续

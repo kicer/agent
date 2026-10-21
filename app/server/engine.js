@@ -616,8 +616,7 @@ async function runLoopInner(sessionId, run) {
         }
         const txt = String(m.content || '');
         return m.role + (m.tool_calls ? '[calls]' : '')
-          + (txt.includes('图片数据已省略') || txt.includes('"omitted_already_sent"') ? '[图已省]' : '')
-          + (txt.includes('本回合已投递过') || txt.includes('"already_delivered"') ? '[图重复读挡回]' : '');
+          + (txt.includes('"already_delivered"') ? '[图重复读挡回]' : '');
       }).join(' '));
     }
     // 内置工具 + 启动时发现的 MCP 工具（按 profile 白名单过滤），一起随 system prompt 发给模型（压缩回合不发）
@@ -794,7 +793,7 @@ async function runLoopInner(sessionId, run) {
         if (!run.imgDelivered) run.imgDelivered = new Map();
         if (run.imgDelivered.get(imageRel) === iter) {
           const patched = patchImageReceipt(outText, {
-            image_attached: false, reason: 'already_delivered', retryable: false,
+            image_attached: false, reason: 'already_delivered', retryable: true,
             hint: '同一批 tool call 里已为这个文件投递过图片，本次不再重复；需要重看时在下一轮再读即可',
           });
           outText = patched !== null
