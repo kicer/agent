@@ -1,6 +1,7 @@
 ---
 name: office
 description: Office 文档(docx/xlsx/pptx)创建、精确编辑、结构检视
+required: true
 ---
 
 ## 功能

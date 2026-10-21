@@ -1,5 +1,5 @@
 ---
-name: img-utils
+name: image-process
 description: 图像处理（Pillow）。查看图片信息、格式转换、缩放、裁剪、压缩、文字水印、九宫格切片、多图拼图。仅做确定性图像处理，不做 AI 生成/修图
 input_schema:
   type: object
@@ -87,7 +87,7 @@ output_schema:
 - `grid`：把同一目录下多张图拼成一张 contact sheet（缩略图网格）
 
 ## 使用说明
-通过 `skill` 的 `{"run":"img-utils","args":{...}}` 调用，参数：
+通过 `skill` 的 `{"run":"image-process","args":{...}}` 调用，参数：
 - `action`：操作类型（必填）
 - `input`：输入图片或目录（必填；相对会话工作目录的路径即可，会自动转绝对路径）
 - `output`：输出路径（建议给全；不给时自动生成 `<原名>_<动作>.<原扩展名>`，绝不覆盖原图）

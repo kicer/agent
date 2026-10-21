@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-img-utils 技能主入口：用 Pillow 做确定性的图像处理（不含 AI 生成/语义修图）。
+image-process 技能主入口：用 Pillow 做确定性的图像处理（不含 AI 生成/语义修图）。
 
 支持动作 action：
 - info        查看图片信息（尺寸/模式/格式/体积）

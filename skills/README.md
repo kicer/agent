@@ -184,7 +184,7 @@ apt-get install -y -qq some-package
 
 - `install.sh` 必须可执行（`chmod +x install.sh`）。
 - 请保持幂等：init 侧以内容 hash 缓存（`.deps_installed`），构建侧靠 Docker 层缓存；脚本应在“依赖已就绪”时快速跳过。
-- 想两处都跑不报错：apt 类语句加 `|| true` 容错，并在脚本末尾自行校验“要的东西是否就绪”，就绪则 exit 0、否则 exit 1（参考 `img-utils/install.sh`）。否则 init 阶段（根文件系统只读）的 apt 失败会让整个技能被标记为“未就绪”。
+- 想两处都跑不报错：apt 类语句加 `|| true` 容错，并在脚本末尾自行校验“要的东西是否就绪”，就绪则 exit 0、否则 exit 1（参考 `image-process/install.sh`）。否则 init 阶段（根文件系统只读）的 apt 失败会让整个技能被标记为“未就绪”。
 - 改动 `install.sh` 后：系统包需 `docker compose build agent-executor`，资产需 `docker compose up -d`（或两者一起 `build && up`）。
 
 ### 5.3 缓存机制
@@ -291,7 +291,7 @@ A：目前所有技能共享同一个 `deps` 目录，建议锁定精确版本�
 
 查看现有的 `x2pdf` 技能（位于 `skills/x2pdf/`）可以了解一个较为完整的实现，包括如何自带声明 Python 依赖与系统级依赖（不假设镜像预烘）、按扩展名分派渲染后端、参数化版式 CSS 等。但请根据自身技能的实际需求进行设计，不必拘泥于该示例。
 
-图像处理类需求可参考 `skills/img-utils/`：它演示了一个纯 Python + 预装 Pillow 的实现（转换/缩放/裁剪/压缩/水印/切片/拼图，无 requirements.txt，仅靠 install.sh 保证中文字体），并明确区分“确定性图像处理”与“AI 生成/修图”的能力边界。
+图像处理类需求可参考 `skills/image-process/`：它演示了一个纯 Python + 预装 Pillow 的实现（转换/缩放/裁剪/压缩/水印/切片/拼图，无 requirements.txt，仅靠 install.sh 保证中文字体），并明确区分“确定性图像处理”与“AI 生成/修图”的能力边界。
 
 ---
 
