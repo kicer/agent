@@ -147,6 +147,9 @@ POST /api/sessions/:id/messages
   （不要求无 `tool_calls`）——旧判据只认收尾回复，多步任务里图永远「未消费」；②**只有本批新增的图
   带「一句话说明」的祈使句**，早前批次静默携带。两者合起来才断得掉「每轮要求描述 → 模型描述并继续
   调工具 → 图仍算未消费」的自维持重复循环。
+- 重读去重（engine `run.imgDelivered`）**只拦同一批 tool call 内的重复读**（一次请求里塞两份同样的图
+  没意义）；跨批次重读一律放行。不要写成「一回合只投递一次」，也不要靠推测「图还在不在上下文里」——
+  模型说拿不到就得给，而且文件可能已重新生成（路径相同、内容不同）；拦掉只会把新像素挡在门外。
 - 占位裁剪（`agent.trim_write_rounds` / `trim_result_rounds`）：距尾 ≥N 个 assistant 轮的
   `write_file.content`、`fetch`/`read_file` 回执换成单行占位。**只改发给上游的副本**，DB 与 UI 不动。
 - `compressMessages` = `buildMessages` + 末尾一条压缩指令 `user`。**铁律**：压缩请求必须与上一次

@@ -785,24 +785,24 @@ async function runLoopInner(sessionId, run) {
         outText = String(output == null ? '' : output);
       }
       if (run.cancelled && !isError) outText = (outText ? outText + '\n' : '') + '（用户已终止任务）';
-      // 死循环护栏：同回合内同一张图只投递一次——上游能认多图（探针实测同消息双外链全对），
-      // 不再按批次限流；但模型若因惯性叙事反复重读同一文件，每轮都签新图就是纯烧 token，
-      // 故已投递过的图再读只回执「未附加 + 原因」。改写回执的字段而不是追加句子：
-      // 追加会把 JSON 弄成不可解析的尾巴，模型又只能靠语义猜。run 随回合销毁，
-      // 新回合自动重置，追问重看不受影响。
+      // 只拦「同一批 tool call 里重复读同一文件」：一次请求里塞两份完全相同的图没意义。
+      // 跨批次重读一律放行。不按「本回合投递过没有」拦，也不按「图还在不在上下文里」拦：
+      // 前者会把第二次读取永久锁死（实测模型被逼去重新造图）；后者靠服务端推测模型看没看到，
+      // 一厢情愿——模型说拿不到就该给。再者文件可能已被重新生成，路径相同内容不同，
+      // 拦掉就是把新像素挡在门外（压缩产物的 rel 含 size+mtime，不同内容自然是不同 rel）。
       if (imageRel) {
-        if (!run.imgDelivered) run.imgDelivered = new Set();
-        if (run.imgDelivered.has(imageRel)) {
+        if (!run.imgDelivered) run.imgDelivered = new Map();
+        if (run.imgDelivered.get(imageRel) === iter) {
           const patched = patchImageReceipt(outText, {
             image_attached: false, reason: 'already_delivered', retryable: false,
-            hint: '该图片本回合已投递过，不再重复携带；若你未看到它，请直接告知用户，勿反复重读同一文件',
+            hint: '同一批 tool call 里已为这个文件投递过图片，本次不再重复；需要重看时在下一轮再读即可',
           });
           outText = patched !== null
             ? patched
-            : outText + '\n[该图片本回合已投递过，不再重复携带；若你未看到它，请直接告知用户，勿反复重读同一文件]';
+            : outText + '\n[同一批 tool call 里已为这个文件投递过图片，本次不再重复；需要重看时在下一轮再读即可]';
           imageRel = null;
         } else {
-          run.imgDelivered.add(imageRel);
+          run.imgDelivered.set(imageRel, iter);
         }
       }
       // 回执自报的「环境故障」也算失败（UI 打 ✕、库里 is_error=true），预期拒绝不算：
