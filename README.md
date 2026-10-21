@@ -280,14 +280,17 @@ platforms:
 
 ```text
 skills/my-skill/
-├── SKILL.md          # 必需：描述、input_schema、可选 required / visit_url
-├── run.py | run.sh   # 必需：入口，唯一命令行参数是 JSON 字符串
+├── SKILL.md          # 必需：描述、input_schema、可选 required / visit_url / mcp_tool
+├── run.py | run.sh   # 入口，唯一命令行参数是 JSON 字符串（声明 mcp_tool 时不需要）
 ├── requirements.txt  # 可选：Python 依赖
 └── install.sh        # 可选：系统层安装脚本，镜像构建期执行
 ```
 
 - `SKILL.md` 的 `description` 会进入 system prompt，模型启动时就知道有哪些技能。
 - `input_schema.required` 在 `skill op=run` 前校验。
+- `mcp_tool`：声明后端为某个 MCP 工具。此时 `op=run` 由 core 直接转发给 MCP（不落沙箱、不需要密钥），
+  配合该服务的 `mode: silent` 就能把工具从模型的 tools 数组里隐藏，只留一行技能描述。仓库自带的
+  `skills/image`、`skills/video` 就是这么封装的 `image_task` / `video_task`。
 - 入口脚本以绝对路径启动；远端执行时 cwd 是会话目录，本地开发时是技能目录。相对路径参数会先按会话目录转成绝对路径。
 - `requirements.txt` 的依赖由 `agent-executor-init` 安装到 `skills/deps`；技能容器通过 `PYTHONPATH` 可见。
 - `install.sh` 在镜像构建期以 root 执行，用于必须落在系统层的依赖。改完需要重建 executor 镜像。

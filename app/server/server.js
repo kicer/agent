@@ -184,6 +184,17 @@ mcp.init(cfg).then(async () => {
     const list = await skills.listSkills({ cfg });
     llm.setSkillListText(skills.formatSkillListForPrompt(list));
     log.info('startup', '  skills=' + (list.length ? list.map(s => s.name).join(', ') : '(none)'));
+    // mcp_tool 后端自检（mcp.init 已完成，注册表是本轮发现的最终状态）：
+    // 启动期点名，避免模型第一次调用才撞墙；两条路并存时也告一声，方便渐进迁移。
+    const advertised = new Set(mcp.toolDefinitions().map(t => t && t.function && t.function.name));
+    for (const s of list) {
+      if (!s.mcp_tool) continue;
+      if (!mcp.hasTool(s.mcp_tool)) {
+        log.warn('startup', '技能 ' + s.name + ' 的 MCP 后端不可用：' + s.mcp_tool + '（检查 mcp_servers 与 mode）');
+      } else if (advertised.has(s.mcp_tool)) {
+        log.info('startup', '技能 ' + s.name + ' 的 MCP 后端 ' + s.mcp_tool + ' 同时下发给模型（两条路并存）');
+      }
+    }
   } catch (e) {
     log.warn('startup', '技能列表生成失败：' + e.message);
   }

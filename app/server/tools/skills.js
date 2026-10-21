@@ -4,6 +4,8 @@
 // 技能统一存放于技能根目录（cfg.skills_root，所有任务/会话共享；容器内挂 ./skills → /workspace/skills），每个技能一个子目录：
 //   <skill>/SKILL.md（必须）、run.py | run.sh（入口）、requirements.txt、install.sh（可选）。
 // 入口脚本约定接收一个 JSON 字符串作为唯一命令行参数（含全部 input_args）。
+// 后端两种：脚本（run.py/run.sh，落 executor 沙箱执行）与 MCP（front matter 声明 mcp_tool，
+// run 由 core 直接调 mcp.callTool，不经沙箱——凭证留在 core，模型只看到一行技能描述）。
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
@@ -11,6 +13,8 @@ const { spawn } = require('child_process');
 const YAML = require('yaml');
 const log = require('../log');
 const rexec = require('../remote-exec');
+// 技能可声明 mcp_tool（front matter），run 时由 core 直接转发给 MCP；mcp.js 只依赖 ./log，不成环。
+const mcp = require('../mcp');
 
 class SkillNotFoundError extends Error {
   constructor(msg) { super(msg); this.name = 'SkillNotFoundError'; }
@@ -64,9 +68,16 @@ async function listSkills(ctx) {
     let content;
     try { content = await fsp.readFile(mdPath, 'utf8'); } catch (_) { continue; }
     // frontmatter 可选 required: true —— 进 system prompt 时行首标 **required**（配合模板里的强制条款）
-    let required = false;
-    try { required = parseFrontMatter(content).required === true; } catch (_) {}
-    out.push({ name: e.name, description: extractDescription(content), required: required });
+    // 可选 mcp_tool: <MCP 工具名> —— 声明后端为 MCP 服务（run 不落沙箱），仅在声明时带该键
+    let required = false, mcpTool = '';
+    try {
+      const fm = parseFrontMatter(content);
+      required = fm.required === true;
+      mcpTool = String(fm.mcp_tool || '').trim();
+    } catch (_) {}
+    const item = { name: e.name, description: extractDescription(content), required: required };
+    if (mcpTool) item.mcp_tool = mcpTool;
+    out.push(item);
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
@@ -211,12 +222,31 @@ async function runSkill(ctx, skillName, inputArgs) {
   const mdPath = path.join(dir, 'SKILL.md');
   if (!fs.existsSync(mdPath)) throw new SkillNotFoundError('技能缺少 SKILL.md：' + skillName);
 
-  // 先把相对路径参数按会话任务目录转成绝对路径（缺任务目录时退回进程当前目录）。
+  let fm = {};
+  try { fm = parseFrontMatter(await fsp.readFile(mdPath, 'utf8')); } catch (_) {}
+
+  // MCP 后端技能（front matter 声明 mcp_tool）：run 不落沙箱，由 core 直接转发给 MCP 服务。
+  // core 用 cfg.mcp_servers[].headers 里的凭证调服务，技能进程根本不参与——这是唯一
+  // 既能让模型只看到一行技能描述、又能让 key 不出 core 的路径（executor 的 env 白名单
+  // 会按名字丢掉 *KEY/*TOKEN，沙箱里既拿不到也不该拿到）。
+  // 必须在 absolutizeArgs 之前分流：它把「像路径」的参数改写成会话目录下的绝对路径，
+  // 而 URL（含 '/'）与含斜杠的 prompt 都会中招。
+  // 不跑 validateArgs：MCP 工具的参数是 op 相关的（如 op=create 才要 prompt），
+  // 静态 required 列表会误伤 op=get。
+  if (fm.mcp_tool) {
+    const tool = String(fm.mcp_tool).trim();
+    if (!mcp.hasTool(tool)) {
+      throw new SkillExecutionError('技能 ' + skillName + ' 的 MCP 后端不可用：' + tool +
+        '（检查 mcp_servers 是否含该服务，且 mode 不为 disable）', 1);
+    }
+    log.info('skills', '执行 ' + skillName + '：mcp_tool=' + tool);
+    return mcp.callTool(tool, inputArgs || {}, ctx);
+  }
+
+  // 以下是脚本后端（run.py / run.sh）：先把相对路径参数按会话任务目录转成绝对路径（缺任务目录时退回进程当前目录）。
   const args = absolutizeArgs(inputArgs || {}, ctx.taskDir || process.cwd());
   const payload = JSON.stringify(args);
 
-  let fm = {};
-  try { fm = parseFrontMatter(await fsp.readFile(mdPath, 'utf8')); } catch (_) {}
   validateArgs(fm, args, skillName);
 
   let entry, cmdArgs;
@@ -231,7 +261,7 @@ async function runSkill(ctx, skillName, inputArgs) {
     entry = 'bash';
     cmdArgs = [runSh, payload];
   } else {
-    throw new SkillExecutionError('技能 ' + skillName + ' 缺少入口 run.py 或 run.sh', 1);
+    throw new SkillExecutionError('技能 ' + skillName + ' 缺少入口 run.py 或 run.sh（也未声明 mcp_tool）', 1);
   }
 
   // cwd：远端取会话目录（executor 侧命中 session 隔离，技能看到的 /workspace/tasks/<sid>

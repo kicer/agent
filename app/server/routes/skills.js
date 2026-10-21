@@ -10,7 +10,7 @@ const multer = require('multer');
 const YAML = require('yaml');
 const engine = require('../engine');
 const llm = require('../llm');
-const { extractDescription, listSkills, formatSkillListForPrompt } = require('../tools/skills');
+const { extractDescription, parseFrontMatter, listSkills, formatSkillListForPrompt } = require('../tools/skills');
 const { sanitizeName } = require('./files');
 
 const router = express.Router();
@@ -118,8 +118,12 @@ router.get('/', wrap(async (req, res) => {
     const dir = path.join(root, e.name);
     let description = '(缺 SKILL.md)';
     let hasMd = false;
+    let mcpTool = '';
     try {
-      description = extractDescription(await fsp.readFile(path.join(dir, 'SKILL.md'), 'utf8'));
+      const content = await fsp.readFile(path.join(dir, 'SKILL.md'), 'utf8');
+      description = extractDescription(content);
+      // mcp_tool 后端没有入口脚本，徽章靠它区分（前端显示「mcp 后端」）
+      mcpTool = String(parseFrontMatter(content).mcp_tool || '').trim();
       hasMd = true;
     } catch (_) {}
     const files = listSkillFiles(dir);
@@ -128,7 +132,7 @@ router.get('/', wrap(async (req, res) => {
       description,
       has_md: hasMd,
       entry: fs.existsSync(path.join(dir, 'run.py')) ? 'py'
-        : fs.existsSync(path.join(dir, 'run.sh')) ? 'sh' : null,
+        : fs.existsSync(path.join(dir, 'run.sh')) ? 'sh' : (mcpTool ? 'mcp' : null),
       file_count: files.length,
       size: files.reduce((s, f) => s + (f.size || 0), 0),
       mtime: files.length ? Math.max.apply(null, files.map(f => f.mtime || 0)) : null,
@@ -156,6 +160,7 @@ router.post('/', wrap(async (req, res) => {
     '## 用法',
     '',
     '- 入口脚本 `run.py` 或 `run.sh`,接收一个 JSON 字符串作为唯一命令行参数(含全部入参)。',
+    '- 后端是 MCP 工具时改在 front matter 写 `mcp_tool: <工具名>`,不需要入口脚本。',
     '- 可选:`requirements.txt`(Python 依赖)、`install.sh`(系统依赖),首次执行前自动安装。',
     '',
   ].join('\n');

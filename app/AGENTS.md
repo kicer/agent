@@ -173,6 +173,9 @@ POST /api/sessions/:id/messages
 - 技能（`tools/skills.js`）：`SKILL.md` front matter 提供 `description`/`input_schema`；
   `input_schema.required` 在 `run` 前校验；相对路径参数按会话目录转绝对路径；入口一律用绝对路径
   （远端 cwd 是会话目录）。配了 executor 就走 `remote-exec`，否则本地 `spawn`。
+  声明了 `mcp_tool` 的技能走另一条后端：`runSkill` 在 `absolutizeArgs` **之前**分流，由 core
+  直接 `mcp.callTool` 转发（不落沙箱，所以也不需要任何密钥）；否则 URL 与含 `/` 的 prompt 会被
+  当路径改写。此时不跑 `input_schema.required` 校验（参数是 op 相关的，交给 MCP 服务管）。
 - MCP（`mcp.js`）：启动时 `initialize` → `notifications/initialized` → `tools/list`；与内置或已有
   MCP 工具重名时加 `<服务名>__` 前缀；请求随带 `X-Session-Dir`、`X-Public-Base`；
   `content` 里的 `ui_card` 块不进模型上下文，转成 SSE `ui_card` 事件。

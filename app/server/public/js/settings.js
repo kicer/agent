@@ -840,7 +840,7 @@
           '<div class="session-main">' +
             '<div class="session-name">' + esc(s.name) +
               (s.has_md ? '' : ' <span class="badge cancelled">缺 SKILL.md</span>') +
-              (s.entry ? ' <span class="badge active">' + s.entry + ' 入口</span>' : '') +
+              (s.entry ? ' <span class="badge active">' + (s.entry === 'mcp' ? 'mcp 后端' : s.entry + ' 入口') + '</span>' : '') +
             '</div>' +
             '<div class="skill-desc">' + esc(s.description || '') + '</div>' +
             '<div class="session-meta"><span>' + s.file_count + ' 个文件</span>' +
