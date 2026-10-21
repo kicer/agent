@@ -290,6 +290,21 @@
     return state.sessionId ? (state.modelId || '') : (state.pendingModel || '');
   }
 
+  // 发送键两态：只有「正在生成且输入框为空」才是停止。一开始输入文字就恢复发送——
+  // 运行中允许插话（后端 postUserMessage 返回 delivered:'live'，下一轮迭代会带上这条消息）。
+  // 输入框按 trim 判空：纯空白等同于空（与 send() 的裁剪一致，不能因为一个空格就发不了消息）。
+  function stopModeActive() {
+    return state.status === 'active' && !(($('msg-input') || {}).value || '').trim();
+  }
+  function updateSendBtn() {
+    const sb = $('send-btn');
+    if (!sb) return;
+    const stop = stopModeActive();
+    sb.dataset.state = stop ? 'stop' : 'send';
+    sb.title = stop ? '停止生成' : '发送';
+    sb.setAttribute('aria-label', stop ? '停止生成' : '发送');
+  }
+
   function updateHeaderActions() {
     const inChat = state.view === 'chat' && !!state.sessionId;
     const running = state.status === 'active';
@@ -341,12 +356,8 @@
       ssub.classList.toggle('hidden', !t);
     }
     // 发送键在生成中切「停止」：同一按钮换图标，尺寸不变，输入区不跳动
-    const sb = $('send-btn');
-    if (sb) {
-      sb.dataset.state = running ? 'stop' : 'send';
-      sb.title = running ? '停止生成' : '发送';
-      sb.setAttribute('aria-label', running ? '停止生成' : '发送');
-    }
+    // （是否真的显示停止还取决于输入框是否有字，见 stopModeActive）
+    updateSendBtn();
   }
 
   function openHeaderMenu() {

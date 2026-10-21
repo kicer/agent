@@ -11,10 +11,9 @@
 
   async function send() {
     const ta = $('msg-input');
-    // 生成中发送键已变「停止」：不接受新消息（不做排队发送，停止后再发）
-    if (state.status === 'active') { toast('正在生成中，请先停止'); return; }
     const content = ta.value.trim();
     // 没有文字就不发（避免产生空消息）；上传文件告知行在发送时拼在正文前（见下）。
+    // 运行中也是这条规则：有字就发（后端 live 追投），没字时按钮本身是「停止」。
     if (!content) {
       if (state.attachments.length) toast('附件需随一条文字消息发送');
       return;
@@ -25,6 +24,7 @@
     renderAttachChips();
     ta.value = '';
     autosize();
+    updateSendBtn(); // 清空后若仍在生成中，按钮应回到「停止」
 
     try {
       const id = await ensureSession();
@@ -46,7 +46,9 @@
         state.sessionTitle = content.length > 24 ? content.slice(0, 24) : content;
       }
       renderHeader();
-      addTyping();
+      // 运行中插话：正文字流进行中已有一个气泡作「活着」的信号，不再挂打字占位
+      //（刚挂上就会被下一个 delta 移除，只会闪一下）；工具间隙里补上占位反而有用。
+      if (!state.streaming) addTyping();
       loadSessionList();
     } catch (e) {
       // 发送失败:附件还原+草稿文本回填（发送前已清空输入框，挂起/失败不能让文字蒸发），
@@ -56,6 +58,7 @@
       if (content) {
         ta.value = content + (ta.value ? '\n' + ta.value : '');
         autosize();
+        updateSendBtn(); // 文字回填了：按钮回到「发送」（即使仍在生成中）
       }
       toast('发送失败:' + e.message);
     }

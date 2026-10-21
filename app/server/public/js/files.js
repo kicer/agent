@@ -3,7 +3,8 @@
   // ---------- 输入区 ----------
   const ta = $('msg-input');
   function autosize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }
-  ta.addEventListener('input', autosize);
+  // 输入内容变化直接影响发送键两态：运行中一旦有字就恢复「发送」（可插话），清空后又变回「停止」
+  ta.addEventListener('input', () => { autosize(); updateSendBtn(); });
   // 触屏设备(手机/平板)上:Enter 走默认行为(插入 \n),发消息靠发送按钮,
   // 避免软键盘的回车键直接被吞走导致连换行都打不出来。桌面/笔记本继续走 Enter=发送。
   // 用 (hover:none)&&(pointer:coarse) 判定「以触摸为主」的设备,标准且不依赖 UA 字符串。
@@ -29,11 +30,12 @@
       send();
     }
   });
-  // 发送键双职：生成中变「停止」（白色方块），点击终止当前回合；否则正常发送。
+  // 发送键双职：生成中且输入框为空时变「停止」（白色方块），点击终止当前回合；
+  // 输入框有字时它仍是「发送」——运行中允许插话，直接发出去（后端 live 追投）。
   // 400ms 内重复点击忽略：防双击重复 abort（服务端 status 事件回来前按钮仍是停止态）。
   let stopClickAt = 0;
   $('send-btn').addEventListener('click', () => {
-    if (state.status === 'active') {
+    if (stopModeActive()) {
       if (Date.now() - stopClickAt < 400) return;
       stopClickAt = Date.now();
       stopSession();
