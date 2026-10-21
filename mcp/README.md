@@ -5,7 +5,7 @@
 | 目录 | 容器名 | 作用 | 容器内端口 | MCP 端点 |
 |---|---|---|---|---|
 | `web_search/` | `mcp_web_search` | 免费网页搜索（Parallel / Exa，无需 key） | `3000` | `POST /` |
-| `image_task/` | `mcp_image_task` | 智谱 CogView 图片生成（单工具 op=create） | `3000` | `POST /mcp` |
+| `image_task/` | `mcp_image_task` | 图片生成 / 编辑（智谱原生或任意 OpenAI 兼容 `/images/generations`，单工具 op=create/get） | `3000` | `POST /mcp` |
 | `video_task/` | `mcp_video_task` | 智谱 CogVideo 视频生成（异步，单工具 op=create/get） | `3000` | `POST /mcp` |
 
 **这些服务一个宿主机端口都不占**——它们只挂在 `agent-mcp-net` 上，由 `agent-core` / `agent-executor`
@@ -37,9 +37,10 @@ mcp_servers:
 
 > 从旧的「agent + mcp 双仓库」部署升级：先在旧 mcp 仓库目录 `docker compose down`（只需一次，否则同名容器与网络会冲突），再 `up` 本栈。
 
-`image_task` / `video_task` 需要智谱 token，但 token **不由服务端保存**——每个请求从 header 读取
-（agent 侧配在 `config.yml` 的 `mcp_servers[].headers`，`init.sh` 会用 `BIGMODEL_KEY` 自动写入）。
-所以这里不用配任何密钥。
+`image_task` / `video_task` 的 token **不由服务端保存**——每个请求从 `Authorization` header 读取
+（agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。`video_task` 用智谱 token；
+`image_task` 用对应上游（智谱或 OpenAI 兼容网关）的 token，上游地址与模型分别由
+`X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定。所以这里不用配任何密钥。
 
 ### 调试端口
 
@@ -75,7 +76,7 @@ AI 把拿到的 URL 当 image_url 交给 video_task:3000/mcp
 | 服务 | 公网暴露 | 说明 |
 |---|---|---|
 | `mcp_web_search` | 无 | 服务端无鉴权，**永远不要映射出去**（会被白嫖搜索额度）；agent 走内网访问 |
-| `mcp_image_task` | 无 | token 由调用方自带，暴露后可被拿去消耗你的智谱额度 |
+| `mcp_image_task` | 无 | token 由调用方自带，暴露后可被拿去消耗你的上游图片额度 |
 | `mcp_video_task` | 无 | 它需要的公开临时 URL 由 agent 侧集成的工具提供，自己不占端口 |
 
 ## 单独调试

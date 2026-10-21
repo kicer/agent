@@ -1,12 +1,18 @@
 # MCP Image Task
 
-一个基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 的图片生成服务，对接智谱 BigModel 的 `CogView` 系列模型。每次调用通过 HTTP header 传入智谱 API 的 Bearer Token。只有一个工具 `image_task`，用 `op` 区分动作（`create` / `get`），对外提供与 `video_task` 一致的**异步任务**契约；上游为同步接口，异步语义由服务自维护的任务表模拟（见「架构与文件」）。
+一个基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 的图片生成 / 编辑服务。
+对外只有一个工具 `image_task`，用 `op` 区分动作（`create` / `get`），异步任务契约与 `video_task` 一致。
+
+上游支持两种协议，由 `X-Image-Task-Base-Url` 选择：
+
+| 通道 | 上游 | 请求体 |
+|---|---|---|
+| 智谱原生 | `https://open.bigmodel.cn/api/paas/v4/images/generations` | `{ model, prompt }` |
+| OpenAI 兼容 | 任意实现 `/images/generations` 的网关（如 `https://wb.ai.foresh.com/v1`） | `{ model, prompt, n: 1, response_format: "url", images? }` |
 
 - 协议：MCP **Streamable HTTP**（单端点 `/mcp`，支持 SSE 流）
-- 上游：[智谱 BigModel Images Generations API](https://open.bigmodel.cn/dev/api#images)
-- 默认模型：`CogView-3-Flash`
-- 端口：`3000`
-- 鉴权：**无服务端密钥**，每次请求必须从 header 携带智谱 token
+- 端口：容器内 `3000`（**不映射宿主机**，只在 `agent-mcp-net` 内被 agent 访问）
+- 鉴权：**无服务端密钥**，每次请求从 `Authorization` header 读取上游 key
 
 ---
 
@@ -14,16 +20,13 @@
 
 ### 启动（docker-compose）
 
-仓库根目录 `docker-compose.yml` 已包含本服务：
-
 ```bash
 cd /root/workspace/tools/agent
 docker compose up -d --build mcp_image_task
 ```
 
-服务容器名 `mcp_image_task`，容器内端口 3000，**默认不占宿主端口**：agent 走 `agent-mcp-net`
-按容器名访问（`http://mcp_image_task:3000/mcp`）。需要从宿主机 curl 调试时，去仓库根
-`docker-compose.yml` 把 `mcp_image_task` 注释掉的 `ports` 两行打开（默认写的是 8082），调试完记得注释回去。
+服务容器名 `mcp_image_task`。要从宿主机 curl 调试，把根 `docker-compose.yml` 里
+`mcp_image_task` 注释掉的 `ports` 两行打开（默认 8082），调试完记得注释回去。
 
 ```bash
 # 不占端口的健康检查
@@ -33,67 +36,55 @@ docker exec mcp_image_task node -e "fetch('http://localhost:3000/health').then(r
 
 ### MCP 客户端配置
 
-#### Claude Desktop / Cursor 等支持 `headers` 配置的客户端
-
 ```jsonc
-// Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json
-// Cursor:       ~/.cursor/mcp.json
 {
   "mcpServers": {
     "image_task": {
       "url": "http://localhost:8082/mcp",
       "headers": {
-        "Authorization": "Bearer <your-zhipu-api-key>"
+        "Authorization": "Bearer <upstream-api-key>",
+        "X-Image-Task-Base-Url": "zhipu",
+        "X-Image-Task-Model": "CogView-4"
       }
     }
   }
 }
 ```
 
-> 上面 `url` 里的端口 `8082` 需要先把 compose 里注释的 `ports` 打开（默认不占宿主端口）。
-
-> **重要**：客户端必须在 **每一个 HTTP 请求**（`initialize` / `notifications/initialized` / `tools/call`）都带上 `Authorization` header。配置在 `headers` 里、由客户端自动重发即可。直连模式下 token 不在 session 间共享。
-
-#### 不支持 `headers` 字段的客户端
-
-如果客户端只支持 `command`/`args` 启动方式，可改用 stdio 模式（需自行包一层把 token 注入环境变量，再让工具回调从环境变量读——当前实现 HTTP 模式下不依赖环境变量，需自行扩展）。
+> 客户端必须在**每一个 HTTP 请求**（`initialize` / `notifications/initialized` / `tools/call`）都带上
+> `Authorization`。`X-Image-Task-Base-Url` / `X-Image-Task-Model` 在 `tools/call` 时读取。
 
 ---
 
 ## 工具：image_task
 
-管理图片生成异步任务。典型流程：`op=create` 拿 `task_id`，然后不断 `op=get` 直到 `task_status` 为 `SUCCESS` 或 `FAIL`。
+典型流程：`op=create` 拿 `task_id`，然后不断 `op=get` 直到 `task_status` 为 `SUCCESS` 或 `FAIL`。
 
 | op | 作用 | 说明 |
 |---|---|---|
-| `create` | 提交图片生成任务，**立即**返回 `task_id`，生成在后台执行 | 需要 `prompt` |
+| `create` | 提交图片生成 / 编辑任务，**立即**返回 `task_id`，生成在后台执行 | 需要 `prompt` |
 | `get` | 查询任务状态；`SUCCESS` 时返回图片 URL | 需要 `task_id` |
 
-> 上游智谱 images 接口是同步阻塞的；这里的异步是对外的统一形态（对齐 `video_task`），服务内部把同步调用丢到后台跑并回写任务表。
+> 上游是同步阻塞的；这里的异步是对外统一形态（对齐 `video_task`），服务内部把同步调用丢到后台跑并回写任务表。
 
 ### 参数（AI 可见）
 
 | 名称 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `op` | `"create"` \| `"get"` | ✅ | 要执行的操作 |
-| `prompt` | string | op=create 时 ✅ | 图片生成提示词，描述想要的画面内容 |
+| `prompt` | string | op=create 时 ✅ | 提示词；文生图描述画面，图生图描述要改成什么样 |
 | `task_id` | string | op=get 时 ✅ | `op=create` 返回的任务 ID |
+| `image` | string | ❌ | 一张图的公网 `http(s)` URL，用于图生图 / 修图 |
 
-> 图片尺寸不再透传，走上游默认；尺寸档位与成本/成功率挂钩，AI 传错值经常直接报错。
+`image` 是模式开关：
 
-### Model 控制（不在工具参数中暴露）
+- 不传 → **文生图**；
+- 传一个公网 URL → **图生图 / 编辑**。
 
-模型名由调用方在 **tools/call 这一次的 HTTP header** 中传递，**AI 看不到也填不了**，避免其误传。识别顺序（首个非空值生效）：
+本地图片先用 `mint_public_link` 换成公网 URL，再传给 `image`。
 
-| 优先级 | Header |
-|---|---|
-| 1 | `X-Image-Task-Model` |
-| 2 | `X-Mcp-Model` |
-| 3 | `X-Model` |
-
-如果都没传，走代码内常量 `DEFAULT_MODEL = "CogView-3-Flash"`。
-
-**为什么不放进工具参数？** 调用方一般是 AI 助手（Claude / Cursor 等），它不需要也没能力选择用哪个模型；模型选择属于部署/路由策略，由请求的发起方在 HTTP header 里注入更可控。
+> 尺寸、质量、模型、上游地址都**不是**工具参数：它们属于部署策略，由调用方在 header 里固定，
+> 避免 AI 乱填尺寸档位或模型名白烧额度。智谱原生通道也不接受尺寸，直接走上游默认值。
 
 ### 返回
 
@@ -102,7 +93,7 @@ docker exec mcp_image_task node -e "fetch('http://localhost:3000/health').then(r
 ```jsonc
 {
   "content": [
-    { "type": "text", "text": "Model: CogView-3-Flash\ntask_id: <uuid>\ntask_status: PROCESSING\n\nImage generation is running in background. Call this tool again with op=\"get\" and task_id=\"<uuid>\" to fetch the result." }
+    { "type": "text", "text": "Model: CogView-4\nProvider: zhipu\nMode: text-to-image\ntask_id: <uuid>\ntask_status: PROCESSING\n\nImage generation is running in background. Call this tool again with op=\"get\" and task_id=\"<uuid>\" to fetch the result." }
   ]
 }
 ```
@@ -115,49 +106,137 @@ docker exec mcp_image_task node -e "fetch('http://localhost:3000/health').then(r
 ```jsonc
 {
   "content": [
-    { "type": "text", "text": "task_id: <uuid>\nmodel: CogView-3-Flash\ntask_status: SUCCESS\nImage URL: https://maas-watermark-prod-new.cn-wlcb.ufileos.com/..." }
+    { "type": "text", "text": "task_id: <uuid>\nmodel: CogView-4\nprovider: zhipu\ntask_status: SUCCESS\nImage URL: https://..." }
   ]
 }
 ```
 
 - `FAIL`：`isError: true`，正文含 `task_status: FAIL` 与错误信息（上游 4xx/5xx、无 URL 返回等都会归档到这里）。
 
-URL 由智谱签名下发，**带有效期**（通常 24h），如需长期保存请在收到后及时转存到自己的存储。
+URL 由上游签名下发，**带有效期**（通常 24h），需要长期保存请及时转存。
 
 ---
 
-## 鉴权细节
+## Headers（只有三个）
 
-每个 HTTP 请求必须携带智谱 API Token，server 从以下 header 字段按顺序识别，**首个非空值生效**：
-
-| 优先级 | Header | 说明 |
+| Header | 必填 | 说明 |
 |---|---|---|
-| 1 | `X-Image-Task-Token: <token>` | 直传，避免与客户端自身的 Authorization 冲突 |
-| 2 | `X-Mcp-Token: <token>` | 通用兜底 |
-| 3 | `Authorization: Bearer <token>` | 标准 OAuth 风格（排最后是为避免误用） |
+| `Authorization` | ✅ | `Bearer <key>`，原样作为上游 Bearer token |
+| `X-Image-Task-Base-Url` | ❌ | 别名或完整 URL；缺省 `zhipu` |
+| `X-Image-Task-Model` | 见下 | 模型名原样透传 |
 
-Token 仅在每次 tool call 时从 header 读取，不写入任何存储、不进 session。
+### Base-Url 别名
 
-### 错误响应
+| 值 | 实际地址 | 协议 |
+|---|---|---|
+| `zhipu`（默认） | `https://open.bigmodel.cn/api/paas/v4` | 智谱原生 |
+
+其余值必须是完整的 `http(s)` URL：
+
+```yaml
+X-Image-Task-Base-Url: "https://wb.ai.foresh.com/v1"
+```
+
+- 已经给到 `/images/generations` 全路径就直接用，否则自动补 `/images/generations`。
+- 解析后的 host 是 `bigmodel.cn`（含子域）→ 智谱原生请求体；其余 host → OpenAI 兼容请求体。
+- 因此把网关地址填进来即可，不需要额外指定“用哪家协议”。
+
+### 模型
+
+| 场景 | `X-Image-Task-Model` |
+|---|---|
+| Base-Url = `zhipu` | 可省略，缺省 `CogView-3-Flash` |
+| 其他 Base-Url | **必填**（不会把 CogView 误发到网关） |
+
+模型只由 header 决定，AI 看不到也填不了。换模型 = 改 header 后重启 core。
+
+### 图生图
+
+`image` 只对 OpenAI 兼容通道生效：
+
+| Base-Url | 传 `image` |
+|---|---|
+| `zhipu` | 直接返回错误：智谱不支持图生图（只做文生图） |
+| 网关 URL | 上游请求体带 `images: [url]` |
+
+### 请求体差异
+
+| 字段 | 智谱原生 | OpenAI 兼容 |
+|---|---|---|
+| `model` / `prompt` | ✅ | ✅ |
+| `n` | ❌ | 固定 `1` |
+| `response_format` | ❌ | 固定 `"url"` |
+| `size` / `quality` | ❌ | ❌（交给上游默认值） |
+| `images` | ❌ | 传图时带，数组形式 `[url]` |
+
+---
+
+## 配置示例
+
+### 智谱直连（默认）
+
+```yaml
+  - name: image_task
+    url: "http://mcp_image_task:3000/mcp"
+    headers:
+      Authorization: "Bearer <智谱 KEY>"
+      X-Image-Task-Model: "CogView-4"
+    mode: skill
+```
+
+### OpenAI 兼容网关（文生图）
+
+```yaml
+  - name: image_task
+    url: "http://mcp_image_task:3000/mcp"
+    headers:
+      Authorization: "Bearer <网关 KEY>"
+      X-Image-Task-Base-Url: "https://wb.ai.foresh.com/v1"
+      X-Image-Task-Model: "global:gpt-image-2.5-sunburst"
+    mode: skill
+```
+
+### OpenAI 兼容网关（图生图 / 修图）
+
+```yaml
+  - name: image_task
+    url: "http://mcp_image_task:3000/mcp"
+    headers:
+      Authorization: "Bearer <网关 KEY>"
+      X-Image-Task-Base-Url: "https://wb.ai.foresh.com/v1"
+      X-Image-Task-Model: "cn:hunyuan-image-alpha"
+    mode: skill
+```
+
+同一个网关换模型只改 `X-Image-Task-Model`；换供应商只改 `X-Image-Task-Base-Url`。
+
+---
+
+## 错误响应
 
 | 场景 | HTTP 状态 | 表现 |
 |---|---|---|
-| initialize 时缺 token | `401` | JSON-RPC `error.message` 提示补充 header |
-| op=create 缺 prompt / op=get 缺 task_id | `200`（MCP 工具返回） | `isError: true`，参数提示 |
-| op=get 查不到任务（ID 错/已过期/服务重启过） | `200`（MCP 工具返回） | `isError: true`，提示 unknown task_id |
-| 智谱 API 4xx/5xx | `200`（MCP 工具返回） | 在 `op=get` 中以 `isError: true` + `task_status: FAIL` 呈现，正文含智谱返回的状态码和 body |
-| 网络失败 | `200`（MCP 工具返回） | 同上，`task_status: FAIL`，正文含 `fetch` 错误信息 |
-| 上游挂住不回（超时 >120s） | `200`（MCP 工具返回） | 同上，`task_status: FAIL`，正文提示 timed out；不会出现永久 PROCESSING 的僵尸任务 |
+| 缺 `Authorization` | `200`（MCP 工具返回） | `isError: true`，提示补 header |
+| `X-Image-Task-Base-Url` 非法 | `200`（MCP 工具返回） | `isError: true`，列出可用别名 |
+| 非 zhipu 通道缺 `X-Image-Task-Model` | `200`（MCP 工具返回） | `isError: true`，提示补 header |
+| zhipu 通道传了 `image` | `200`（MCP 工具返回） | `isError: true`，提示智谱不支持图生图，改用 OpenAI 兼容端点 |
+| `image` 不是公网 http(s) URL | `200`（MCP 工具返回） | `isError: true`，提示只接受公网 URL，不接受文件上传 / base64 |
+| `op=create` 缺 prompt / `op=get` 缺 task_id | `200`（MCP 工具返回） | `isError: true`，参数提示 |
+| `op=get` 查不到任务 | `200`（MCP 工具返回） | `isError: true`，提示 unknown task_id |
+| 上游 4xx/5xx | `200`（MCP 工具返回） | 在 `op=get` 中以 `task_status: FAIL` 呈现，正文含上游状态码和 body |
+| 上游只回 `b64_json` | `200`（MCP 工具返回） | `task_status: FAIL`，提示本服务只接受 URL |
+| 网络失败 / 超时（>180s） | `200`（MCP 工具返回） | `task_status: FAIL`，不会出现永久 PROCESSING 的僵尸任务 |
+
+> JSON 请求体上限保持 2MB：`image` 只接受 URL，不接收文件或 base64。
 
 ---
 
 ## 用 curl 手工调试
 
-MCP Streamable HTTP 不是普通 REST，**必须按顺序**：`initialize` → `notifications/initialized` → `tools/call`。下面用一行版串起来：
+MCP Streamable HTTP **必须按顺序**：`initialize` → `notifications/initialized` → `tools/call`。
 
 ```bash
-# 把 <your-zhipu-api-key> 替换成你智谱的 API Key
-TOKEN="<your-zhipu-api-key>"
+TOKEN="<upstream-api-key>"
 
 # 1. initialize 拿 sessionId
 SESSION=$(curl -s -D - -X POST http://localhost:8082/mcp \
@@ -185,19 +264,12 @@ curl -s -X POST http://localhost:8082/mcp \
   -H "Mcp-Session-Id: $SESSION" \
   -d '{"jsonrpc": "2.0", "method": "notifications/initialized"}'
 
-# 3. 列出工具（可选验证）
+# 3. 文生图（智谱通道；换成网关时补 X-Image-Task-Base-Url / X-Image-Task-Model）
 curl -s -X POST http://localhost:8082/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "Mcp-Session-Id: $SESSION" \
-  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
-
-# 4. 调 image_task（op=create，立即返回 task_id）
-curl -s -X POST http://localhost:8082/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Image-Task-Model: CogView-4" \
   -H "Mcp-Session-Id: $SESSION" \
   -d '{
     "jsonrpc": "2.0",
@@ -212,7 +284,29 @@ curl -s -X POST http://localhost:8082/mcp \
     }
   }'
 
-# 5. 拿上一步返回的 task_id 轮询结果（直到 SUCCESS / FAIL）
+# 4. 图生图（OpenAI 兼容通道）
+curl -s -X POST http://localhost:8082/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Image-Task-Base-Url: https://wb.ai.foresh.com/v1" \
+  -H "X-Image-Task-Model: global:gpt-image-2.5-sunburst" \
+  -H "Mcp-Session-Id: $SESSION" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "tools/call",
+    "params": {
+      "name": "image_task",
+      "arguments": {
+        "op": "create",
+        "prompt": "把背景改成雪夜，其他保持不变",
+        "image": "https://example.com/input.png"
+      }
+    }
+  }'
+
+# 5. 轮询结果
 curl -s -X POST http://localhost:8082/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -220,7 +314,7 @@ curl -s -X POST http://localhost:8082/mcp \
   -H "Mcp-Session-Id: $SESSION" \
   -d '{
     "jsonrpc": "2.0",
-    "id": 4,
+    "id": 5,
     "method": "tools/call",
     "params": {
       "name": "image_task",
@@ -250,22 +344,23 @@ image_task/
 
 ### 关键设计
 
-- **单工具 + `op` 分发**：`image_task(op=create|get)`，与 `video_task` 的服务形态完全一致，agent 侧一套轮询逻辑通吃图片/视频
-- **同步上游 → 异步契约**：智谱 images 接口只支持同步，所以服务自维护一张任务表来模拟异步：
+- **单工具 + `op` 分发**：`image_task(op=create|get)`，与 `video_task` 的服务形态一致，agent 侧一套轮询逻辑通吃图片/视频
+- **同步上游 → 异步契约**：上游同步阻塞，所以服务自维护一张任务表来模拟异步：
   - `create` 本地生成 `task_id`（`randomUUID`），登记 `PROCESSING`，把同步调用丢后台（fire-and-forget），立即返回
-  - 后台完成时回写 `SUCCESS`（含 URLs）或 `FAIL`（含错误）；上游同步调用带 120s 超时（`AbortSignal.timeout`），超时记 `FAIL`，杜绝僵尸 `PROCESSING`
+  - 后台完成时回写 `SUCCESS`（含 URLs）或 `FAIL`（含错误）；上游同步调用带 180s 超时（`AbortSignal.timeout`），超时记 `FAIL`，杜绝僵尸 `PROCESSING`
   - `get` 只读本地表，不碰上游
-  - 表为进程内存 Map：已完成任务保留 1 小时（TTL）、容量上限 1000，每次 `create` 顺带淘汰；**容器重启后任务丢失**，`get` 会报 unknown task_id；**不适用于多副本部署**（表不互通）
-  - token/model 在 `create` 那一刻从请求 header 捕获进闭包，后台完成前不再读取，保持「每请求读 header」的无状态设计
-- **每 session 一个 transport + server**：通过 `Mcp-Session-Id` 复用，避免每请求重建
-- **模型参数不入 schema**：model 只从 HTTP header 读取（`X-Image-Task-Model` / `X-Mcp-Model` / `X-Model`），AI 不可见
-- **URL 提取**：`response.data[].url` 为准，若返回 `b64_json` 也会一并归档进任务表
+  - 表为进程内存 Map：已完成任务保留 1 小时（TTL）、容量上限 1000，每次 `create` 顺带淘汰；**容器重启后任务丢失**，`get` 会报 unknown task_id；**不适用于多副本部署**
+  - token / 上游地址 / 模型在 `create` 那一刻从请求 header 捕获进闭包，后台完成前不再读取
+- **每 session 一个 transport + server**：通过 `Mcp-Session-Id` 复用
+- **模型 / 上游地址不入 schema**：只从 HTTP header 读取，AI 不可见
+- **`image` 单一开关**：不传 = 文生图，传一个公网 URL = 图生图；`image` 是单个字符串，只接受公网 `http(s)` URL
+- **URL 提取**：只接受 `data[].url` 形式的 http(s) URL；上游若回 `b64_json` 则记 `FAIL` 并给出明确错误
 
 ### 默认模型
 
 ```js
 // src/mcp-server.js
-const DEFAULT_MODEL = "CogView-3-Flash";
+const DEFAULT_MODEL = "CogView-3-Flash";   // 仅 Base-Url=zhipu 时生效
 ```
 
 修改后 `docker compose up -d --build mcp_image_task` 即可生效。
@@ -275,31 +370,34 @@ const DEFAULT_MODEL = "CogView-3-Flash";
 ## 常见问题
 
 **Q: AI 不知道有哪些 model 可选，怎么办？**
-A: 这是设计意图。模型选择属于路由策略，不让 AI 决策。调用方在 HTTP header `X-Image-Task-Model` 里注入即可。
+A: 这是设计意图。模型选择属于部署 / 路由策略，由调用方在 `X-Image-Task-Model` 里固定，不让 AI 决策。
 
-**Q: 换模型需要重连 MCP session 吗？**
-A: 不需要。Model header 在每次 `tools/call` 都从当前请求读取，不需要重建 session。
+**Q: 换模型 / 换供应商要重连 MCP session 吗？**
+A: 不需要重建 session，但 core 的 `mcp_servers[].headers` 是启动时读取的，改完要 `docker compose restart agent-core`。
+
+**Q: 为什么只支持一张参考图？**
+A: 当前上游契约只稳定支持单张；`image` 因此是单个 URL 字符串。
+
+**Q: 图生图为什么在 zhipu 通道报错？**
+A: 智谱原生接口不支持图生图。把 `X-Image-Task-Base-Url` 指向支持 `images` 字段的 OpenAI 兼容网关即可。
+
+**Q: 本地图片怎么传？**
+A: 先调用 agent 内置的 `mint_public_link` 工具，把会话目录里的文件换成短期公网 URL，再传给 `image`。本服务不接受文件上传或 base64，上游服务器也无法访问你的本地路径。
 
 **Q: 上游是同步接口，为什么对外做成异步？**
-A: 为了和 `video_task` 保持同一套任务型契约，agent 侧只需维护一种「create 后轮询 get」的调用模式。同步调用被放到后台执行，对 AI 而言表现为标准异步任务。
+A: 和 `video_task` 保持同一套任务型契约；同时避免一次生图把 core 的 `tools/call` 拖超时。
 
 **Q: 任务一直 PROCESSING 会不会没完没了？**
-A: 不会。上游同步调用封顶 120s（`AbortSignal.timeout`），超时直接记 `FAIL`，`get` 会拿到明确的 timed out 错误；不存在僵尸任务。
+A: 不会。上游调用封顶 180s，超时直接记 `FAIL`。
 
 **Q: create 之后服务容器重启了，get 会怎样？**
-A: 任务表在进程内存里，重启即丢失，`get` 会返回 unknown task_id 的 `isError`。需要重新 `create`。图片生成只跑几秒，受影响窗口很小；若将来要上多副本或需要可靠恢复，再把表换成持久化存储。
-
-**Q: 为什么 get 不需要等上游？**
-A: `get` 只读本地任务表，上游调用只发生在 `create` 的后台一次，不会因轮询而重复计费/重复生图。
-
-**Q: 为什么 Model 优先级不是「工具参数 > header」？**
-A: 因为我们故意不在 schema 暴露 model 参数，AI 根本不会传 model，所以「工具参数 > header」这条分支实际上不存在。
+A: 任务表在进程内存里，重启即丢失，`get` 会返回 unknown task_id。需要重新 `create`。
 
 **Q: Token 会不会泄露到日志？**
-A: 当前实现只在 session 内存里持有，不会写入 stdout/stderr。Container 日志只打印 session id。
+A: 不会。只从 header 读取，不写入日志。
 
 **Q: 收到 `Missing valid Mcp-Session-Id` 错误？**
 A: 漏发了 `Mcp-Session-Id` header，或调 `tools/call` 前没先 `initialize`。
 
 **Q: URL 多久过期？**
-A: 智谱签发 URL 默认 24h 左右，详见响应里的 `Expires` 参数。需要长期使用请自行转存到 OSS/S3。
+A: 上游签发的 URL 通常 24h 左右。需要长期使用请自行转存。

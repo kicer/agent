@@ -6,8 +6,14 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-const ZHIPU_API_URL =
-  "https://open.bigmodel.cn/api/paas/v4/images/generations";
+// 上游地址既支持完整 URL，也支持别名。zhipu 走智谱原生协议（body 只有
+// model/prompt）；其余地址一律按 OpenAI 兼容的 /images/generations 协议
+// （body 加 n / response_format=url）。别名目前只保留 zhipu。
+const BASE_URL_ALIASES = {
+  zhipu: "https://open.bigmodel.cn/api/paas/v4",
+};
+// 只有智谱需要走原生请求体，其余主机一律按 OpenAI 兼容处理。
+const ZHIPU_HOST_SUFFIX = "bigmodel.cn";
 const DEFAULT_MODEL = "CogView-3-Flash";
 
 // 上游同步调用耗时上限（出图几十秒量级，留足余量）。
@@ -49,43 +55,102 @@ function parseArgs(argv) {
   return args;
 }
 
-function pickToken(headers) {
+// 对外只有三个 header：Authorization / X-Image-Task-Base-Url / X-Image-Task-Model。
+// 不再支持 X-Image-Task-Token、X-Mcp-Token、X-Mcp-Model、X-Model 等旧写法。
+function pickAuthToken(headers) {
   if (!headers) return null;
-  const candidates = [
-    headers["x-image-task-token"],
-    headers["x-mcp-token"],
-    headers["authorization"],
-  ];
-  for (const v of candidates) {
-    if (!v) continue;
-    const s = String(v).trim();
-    if (!s) continue;
-    if (/^Bearer\s+/i.test(s)) {
-      const t = s.replace(/^Bearer\s+/i, "").trim();
-      if (t) return t;
-    } else {
-      return s;
-    }
+  const s = String(headers["authorization"] || "").trim();
+  if (!s) return null;
+  if (/^Bearer\s+/i.test(s)) {
+    const t = s.replace(/^Bearer\s+/i, "").trim();
+    return t || null;
   }
-  return null;
+  return s;
 }
 
-function pickModel(headers) {
+function pickHeaderString(headers, name) {
   if (!headers) return null;
-  const v =
-    headers["x-image-task-model"] ||
-    headers["x-mcp-model"] ||
-    headers["x-model"];
-  if (!v) return null;
+  const v = headers[name];
+  if (v === undefined || v === null) return null;
   const s = String(v).trim();
   return s || null;
 }
 
-async function callZhipuImagesGenerations({ token, model, prompt }) {
-  const body = { model, prompt };
+function pickBaseUrl(headers) {
+  return pickHeaderString(headers, "x-image-task-base-url");
+}
+
+function pickModel(headers) {
+  return pickHeaderString(headers, "x-image-task-model");
+}
+
+// 解析 Base-Url：别名优先，否则必须是 http(s) URL。
+// 返回 { provider, url }：url 是最终 POST 的完整地址。
+function resolveEndpoint(rawBase) {
+  const raw = String(rawBase || "zhipu").trim().replace(/\/+$/, "");
+  const alias = BASE_URL_ALIASES[raw.toLowerCase()];
+  const base = alias || raw;
+
+  let host;
+  try {
+    if (!/^https?:\/\//i.test(base)) throw new Error("not http(s)");
+    host = new URL(base).hostname.toLowerCase();
+  } catch {
+    throw new Error(
+      `Invalid X-Image-Task-Base-Url "${raw}": use an alias (${Object.keys(BASE_URL_ALIASES).join(", ")}) ` +
+      "or a full http(s) URL."
+    );
+  }
+
+  // 已经给到 /images/generations 就直接用；否则补在 base 后面。
+  const url = /\/images\/generations$/i.test(base)
+    ? base
+    : base + "/images/generations";
+  const provider =
+    host === ZHIPU_HOST_SUFFIX || host.endsWith("." + ZHIPU_HOST_SUFFIX)
+      ? "zhipu"
+      : "openai";
+  return { provider, url };
+}
+
+// 模型只由 header 决定，AI 看不到也填不了。
+// zhipu 通道有默认模型；其他通道必须显式给 —— 否则会把 CogView 发到网关，
+// 换来的只是一个含义不明的 400。
+function resolveModel(headers, provider) {
+  const model = pickModel(headers);
+  if (model) return model;
+  if (provider === "zhipu") return DEFAULT_MODEL;
+  throw new Error(
+    "X-Image-Task-Model is required when X-Image-Task-Base-Url is not the zhipu alias."
+  );
+}
+
+// 一次解析出本次请求的上游、凭据、模型。
+// 配置问题同步抛错，由 create 直接回给调用方，不登记注定失败的任务。
+function resolveTarget(headers) {
+  const token = pickAuthToken(headers);
+  if (!token) {
+    throw new Error('Missing Authorization: use "Authorization: Bearer <token>".');
+  }
+  const { provider, url } = resolveEndpoint(pickBaseUrl(headers));
+  return { provider, url, token, model: resolveModel(headers, provider) };
+}
+
+async function callImagesGenerations({ provider, url, token, model, prompt, image }) {
+  // 智谱原生只认 model/prompt；OpenAI 兼容通道固定单图，并要求返回 URL
+  // （b64_json 几十 MB，既塞不进任务表也没法给模型看）。尺寸/质量一律不传，
+  // 交给上游默认值 —— 各家（尤其 CogView）对尺寸的限制并不一致。
+  // 传了 image 就是图生图；上游字段是数组，所以这里包一层。
+  const body =
+    provider === "zhipu"
+      ? { model, prompt }
+      : Object.assign(
+          { model, prompt, n: 1, response_format: "url" },
+          image ? { images: [image] } : null
+        );
   let resp;
   try {
-    resp = await fetch(ZHIPU_API_URL, {
+    resp = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -110,8 +175,9 @@ async function callZhipuImagesGenerations({ token, model, prompt }) {
     data = { raw: text };
   }
   if (!resp.ok) {
+    const label = provider === "zhipu" ? "Zhipu" : "OpenAI-compatible";
     const err = new Error(
-      `Zhipu API error: ${resp.status} ${resp.statusText} - ${text}`
+      `${label} API error: ${resp.status} ${resp.statusText} - ${text}`
     );
     err.status = resp.status;
     err.detail = data;
@@ -120,15 +186,24 @@ async function callZhipuImagesGenerations({ token, model, prompt }) {
   return data;
 }
 
+// 只认 http(s) URL。b64_json 不再当 URL 存：它会把任务表撑爆，模型也读不了。
 function extractUrls(data) {
   if (!data) return [];
-  if (Array.isArray(data.data)) {
-    return data.data
-      .map((it) => it && (it.url || it.b64_json))
-      .filter(Boolean);
-  }
-  if (typeof data.url === "string") return [data.url];
-  return [];
+  const items = Array.isArray(data.data)
+    ? data.data
+    : typeof data.url === "string"
+      ? [data]
+      : [];
+  return items
+    .map((it) => (it && typeof it.url === "string" ? it.url.trim() : ""))
+    .filter((u) => /^https?:\/\//i.test(u));
+}
+
+function hasInlineBase64(data) {
+  return (
+    Array.isArray(data && data.data) &&
+    data.data.some((it) => it && typeof it.b64_json === "string")
+  );
 }
 
 // ===== 自维护任务表（异步语义全靠这层模拟） =====
@@ -163,13 +238,23 @@ function pruneTasks() {
 }
 
 // 后台跑同步上游调用，结果回写任务表（fire-and-forget，不 await）
-function runImageTask({ task, token, model, prompt }) {
-  callZhipuImagesGenerations({ token, model, prompt })
+function runImageTask({ task, target, prompt, image }) {
+  callImagesGenerations({
+    provider: target.provider,
+    url: target.url,
+    token: target.token,
+    model: target.model,
+    prompt,
+    image,
+  })
     .then((data) => {
       const urls = extractUrls(data);
       if (urls.length === 0) {
         task.status = "FAIL";
-        task.error = `Zhipu returned no image URL. Raw response: ${JSON.stringify(data)}`;
+        task.error = hasInlineBase64(data)
+          ? "Upstream returned b64_json instead of a URL; this service only returns URLs. " +
+            "Use a model that supports response_format=url."
+          : `Upstream returned no image URL. Raw response: ${JSON.stringify(data)}`;
       } else {
         task.status = "SUCCESS";
         task.urls = urls;
@@ -184,7 +269,7 @@ function runImageTask({ task, token, model, prompt }) {
 }
 
 // ===== op=create：提交图片生成（立即返回 task_id，后台执行）=====
-async function handleCreate({ args, headers, token }) {
+async function handleCreate({ args, headers }) {
   // schema 只约束了 min(1)，"   " 这种纯空白能通过校验并白跑一次出图，所以这里 trim 后再判。
   // 顺手用 trim 过的值：上游拿到的 prompt 不带首尾空白。
   const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
@@ -195,26 +280,76 @@ async function handleCreate({ args, headers, token }) {
     };
   }
 
-  // model 完全由 HTTP header 控制（X-Image-Task-Model / X-Mcp-Model / X-Model），
-  // 不存进 session，每次从本次请求的 header 读取，未设置则用默认 CogView-3-Flash。
-  // AI 看不到 model 参数（schema 中已删除），避免其误传。
-  const model = pickModel(headers) || DEFAULT_MODEL;
+  // image 是文生图/图生图开关：不传 = 文生图；传一个公网 URL = 修图。
+  // 只接受公网 http(s) URL；本地文件请先由调用方用 mint_public_link 换成公网链接。
+  if (args.image !== undefined && typeof args.image !== "string") {
+    return {
+      isError: true,
+      content: [{ type: "text", text: 'op=create: "image" must be a string.' }],
+    };
+  }
+  const image = typeof args.image === "string" ? args.image.trim() : "";
+  if (image && !/^https?:\/\//i.test(image)) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text:
+            'op=create: "image" must be a public http(s) URL. ' +
+            "For a local file, call mint_public_link first to get a public URL.",
+        },
+      ],
+    };
+  }
+
+  // 上游地址、模型、凭据全部来自本次请求的 header（Authorization /
+  // X-Image-Task-Base-Url / X-Image-Task-Model），AI 看不到也填不了。
+  // 配置类错误直接回错，不登记一个必然失败的任务。
+  let target;
+  try {
+    target = resolveTarget(headers);
+  } catch (e) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: e.message }],
+    };
+  }
+
+  // 智谱原生接口不支持图生图；带 image 的请求只能走 OpenAI 兼容端点。
+  if (image && target.provider === "zhipu") {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text:
+            'Image editing is not supported by the configured model. ' +
+            'Remove "image" for text-to-image.',
+        },
+      ],
+    };
+  }
 
   pruneTasks();
   const taskId = randomUUID();
   const task = {
     status: "PROCESSING",
-    model,
+    provider: target.provider,
+    model: target.model,
     prompt,
     createdAt: Date.now(),
   };
   tasks.set(taskId, task);
 
-  // token/model 在此刻从本次请求 header 捕获进闭包，后台完成前无需再取
-  runImageTask({ task, token, model, prompt });
+  // target 与 image 在此刻从本次请求捕获进闭包，后台完成前无需再取
+  runImageTask({ task, target, prompt, image });
 
+  const mode = image ? "edit" : "text-to-image";
   const summary =
-    `Model: ${model}\n` +
+    `Model: ${target.model}\n` +
+    `Provider: ${target.provider}\n` +
+    `Mode: ${mode}\n` +
     `task_id: ${taskId}\n` +
     `task_status: PROCESSING\n` +
     `\n` +
@@ -258,6 +393,7 @@ async function handleGet({ args }) {
           text:
             `task_id: ${taskId}\n` +
             `model: ${task.model}\n` +
+            `provider: ${task.provider}\n` +
             `task_status: PROCESSING\n` +
             `\n` +
             `Call op="get" again in a few seconds.`,
@@ -272,7 +408,11 @@ async function handleGet({ args }) {
       content: [
         {
           type: "text",
-          text: `task_id: ${taskId}\ntask_status: FAIL\nerror: ${task.error}`,
+          text:
+            `task_id: ${taskId}\n` +
+            `provider: ${task.provider}\n` +
+            `task_status: FAIL\n` +
+            `error: ${task.error}`,
         },
       ],
     };
@@ -287,6 +427,7 @@ async function handleGet({ args }) {
   const summary =
     `task_id: ${taskId}\n` +
     `model: ${task.model}\n` +
+    `provider: ${task.provider}\n` +
     `task_status: SUCCESS\n` +
     `${lines}`;
   return { content: [{ type: "text", text: summary }] };
@@ -307,17 +448,18 @@ function buildServer() {
 
   server.tool(
     "image_task",
-    `AI image generation task.
+    `AI image generation and editing task.
 
 Operations:
-- \`create\`: Create a new generation task. Requires \`prompt\`. Returns \`task_id\` immediately; generation runs in background.
-- \`get\`: Check an existing task. Requires \`task_id\`. Returns status and, on SUCCESS, image URLs.
+- \`create\`: Create a generation task. Requires \`prompt\`. Returns \`task_id\` immediately; generation runs in background. Optionally pass \`image\` for image-to-image editing.
+- \`get\`: Check a task. Requires \`task_id\`. Returns status and, on SUCCESS, image URLs.
 
 Examples:
-- New image request → \`{"op":"create","prompt":"A cat sitting in a garden"}\`
-- Check task result → \`{"op":"get","task_id":"<task_id from create>"}\`
+- New image → \`{"op":"create","prompt":"A cat sitting in a garden"}\`
+- Edit an image → \`{"op":"create","prompt":"Make it snow","image":"https://..."}\`
+- Check result → \`{"op":"get","task_id":"<task_id from create>"}\`
 
-Workflow: call \`create\` once, then call \`get\` with the returned \`task_id\` until \`task_status\` is \`SUCCESS\` or \`FAIL\`. Never call \`get\` without a \`task_id\`, and never submit duplicate tasks just to check status.`,
+Workflow: call \`create\` once, then \`get\` with the returned \`task_id\` until \`task_status\` is \`SUCCESS\` or \`FAIL\`.`,
     {
       op: z
         .enum(["create", "get"])
@@ -334,12 +476,20 @@ Workflow: call \`create\` once, then call \`get\` with the returned \`task_id\` 
         .min(1)
         .optional()
         .describe("task_id returned by create. Required for get; omit for create."),
+      image: z
+        .string()
+        .min(1)
+        .regex(/^https?:\/\//i)
+        .optional()
+        .describe(
+          "One public image URL to edit; omit for text-to-image. For a local file, call mint_public_link first to get a public URL."
+        ),
     },
     async (args, extra) => {
       // SDK 在 tool callback 的 extra.requestInfo.headers 里会透传当前 HTTP 请求的 headers
       // （参见 webStandardStreamableHttp.js: buildRequestInfo 段）
       const headers = extra?.requestInfo?.headers;
-      const token = pickToken(headers);
+      const token = pickAuthToken(headers);
       if (!token) {
         return {
           isError: true,
@@ -347,7 +497,7 @@ Workflow: call \`create\` once, then call \`get\` with the returned \`task_id\` 
             {
               type: "text",
               text:
-                "Missing authentication token.",
+                'Missing Authorization: use "Authorization: Bearer <token>".',
             },
           ],
         };
@@ -355,7 +505,7 @@ Workflow: call \`create\` once, then call \`get\` with the returned \`task_id\` 
 
       switch (args.op) {
         case "create":
-          return await handleCreate({ args, headers, token });
+          return await handleCreate({ args, headers });
         case "get":
           return await handleGet({ args });
         default:
