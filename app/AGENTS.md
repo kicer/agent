@@ -185,6 +185,8 @@ POST /api/sessions/:id/messages
 - `checkToolArgs` + `unwrapToolArgs`：前者做结构性预检并生成 `errAck`，后者按 schema 逐层剥掉
   弱模型多包的信封。两者都是纯函数并已导出，便于回归验证。
 - 技能（`tools/skills.js`）：`SKILL.md` front matter 提供 `description`/`input_schema`。
+  front matter 的 `thinking: true` 会在 `get` 时把 `run.deepThink` 置真（不影响脚本本身）；
+  每回合只触发一次，engine 经 SSE `think_auto` 同步前端，开启后保持到用户手动关闭。
   工具参数是扁平的 `{op, name, args}`：`op` 必填且三选一（`list`/`get`/`run`），`name` 供
   get/run 指认技能，`args` 仅 run 用；条件必填写不进 schema，由 `toolSkill` 校验并点名。
   `toolSkill` 在入口把旧字段名 `input_args` 归一化成 `args`，之后只走一条分派路径

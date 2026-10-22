@@ -139,7 +139,7 @@
     state.lastSseAt = Date.now(); // 建连即重置静默计时
     // 任何具名事件都算连接存活：静默看门狗与回前台宽限共用（error 不列，原生连接错误也走 error）
     ['ping', 'status', 'assistant_delta', 'reasoning_delta', 'assistant_message', 'tool_call_start',
-      'tool_call_args', 'tool_call', 'tool_result', 'ui_card', 'auto_compress', 'done', 'title']
+      'tool_call_args', 'tool_call', 'tool_result', 'ui_card', 'auto_compress', 'done', 'title', 'think_auto']
       .forEach(function (n) { es.addEventListener(n, function () { markSseAlive(n); }); });
     es.addEventListener('status', ev => {
       const d = JSON.parse(ev.data);
@@ -148,6 +148,17 @@
       renderHeader();
       updateHeaderActions();
       updateScrollBottomBtn(); // 状态切换同步右下角转圈(开始/结束干活)
+    });
+    es.addEventListener('think_auto', ev => {
+      const d = JSON.parse(ev.data);
+      if (!d.supported) {
+        toast('当前模型未配置思考参数，技能 ' + d.skill + ' 的深度思考要求无法生效');
+        return;
+      }
+      if (state.deepThink) return;
+      state.deepThink = true;
+      $('deep-think-btn').classList.add('on');
+      toast('技能 ' + d.skill + ' 需要深度思考，已自动开启');
     });
     es.addEventListener('assistant_delta', ev => {
       const d = JSON.parse(ev.data);

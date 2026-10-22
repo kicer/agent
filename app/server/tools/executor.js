@@ -1614,10 +1614,19 @@ async function toolSkill(ctx, args) {
     case 'list':
       rejectSkillArgs(skillArgs, 'list');
       return JSON.stringify(await skills.listCallableSkills(ctx), null, 2);
-    case 'get':
+    case 'get': {
       if (!name) throw new Error('op=get 缺少必填参数 name。' + SKILL_USAGE);
       rejectSkillArgs(skillArgs, 'get');
-      return skills.getSkillInfo(ctx, name);
+      const info = await skills.getSkillInfo(ctx, name);
+      if (ctx.run && !ctx.run.deepThink && skills.parseFrontMatter(info).thinking === true) {
+        ctx.run.deepThink = true;
+        if (!ctx.run.thinkAuto) {
+          ctx.run.thinkAuto = true;
+          if (typeof ctx.onDeepThink === 'function') ctx.onDeepThink({ skill: name });
+        }
+      }
+      return info;
+    }
     case 'run':
       if (!name) throw new Error('op=run 缺少必填参数 name。' + SKILL_USAGE);
       return runSkillWithVisit(ctx, name, skillArgs);
