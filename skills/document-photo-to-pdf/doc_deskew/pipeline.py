@@ -54,8 +54,6 @@ OUT_DIR = 'out'
 CORNERS = os.path.join(OUT_DIR, 'corners.json')
 LABELS = ('左上', '右上', '右下', '左下')
 
-IMG_EXT = ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tif', '.tiff')
-
 
 # ---------------------------------------------------------------- 基础工具
 
@@ -113,18 +111,15 @@ def parse_quad(text):
 
 
 def collect_images(args):
-    """参数里的图片 + 当前目录全部图片（去重、按自然序）。"""
-    names = list(args)
+    """只接受显式传入的图片（去重、按自然序）；不再扫描当前目录。"""
+    names = [n for n in args if n]
     if not names:
-        names = [f for f in os.listdir('.')
-                 if f.lower().endswith(IMG_EXT) and os.path.isfile(f)]
+        raise SystemExit('必须显式指定图片，例如：prepare 图1.jpg 图2.jpg')
     seen, out = set(), []
     for n in names:
         if n not in seen:
             seen.add(n)
             out.append(n)
-    if not out:
-        raise SystemExit('没有找到图片：可在命令后面直接列文件名')
     missing = [n for n in out if not os.path.exists(n)]
     if missing:
         raise SystemExit('图片不存在：%s' % ', '.join(missing))
@@ -142,15 +137,38 @@ def out_path(prefix, i, name, ext='.png'):
 
 # ---------------------------------------------------------------- prepare
 
-def cmd_prepare(images):
+def cmd_prepare(images, auto_quad=True):
     os.makedirs(OUT_DIR, exist_ok=True)
-    from grid import draw_grid
+    import prepare as prep
     data = load_corners()
+    cand = {}
     for i, name in enumerate(images, 1):
         dst = out_path('网格', i, name)
-        draw_grid(name, dst)
+        if auto_quad:
+            corners, info = prep.detect_corners(name)
+            if corners:
+                prep.render(name, dst, corners=corners,
+                            edge_mask=info.get('edge_mask_small'),
+                            scale=info.get('scale', 1.0))
+                cand[name] = corners
+            else:
+                prep.render(name, dst)
+        else:
+            prep.render(name, dst)
         data.setdefault(name, None)
     save_corners({k: v for k, v in data.items() if v})
+
+    if cand:
+        print('[候选角点] 已叠加到网格图（品红实心圆 = 候选角点，品红虚线 = 候选四边形，黑 = 检出边线）')
+        print('')
+        print('| 图片 | 左上 | 右上 | 右下 | 左下 |')
+        print('|---|---|---|---|---|')
+        for name, pts in cand.items():
+            cells = ['%d,%d' % (round(p[0]), round(p[1])) for p in pts]
+            print('| %s | %s |' % (name, ' | '.join(cells)))
+        print('')
+        print('[仅供参考] 候选值不得直接写入 corners.json，一律以角标图人工判读为准')
+
     print('\n网格图已写入 %s/' % OUT_DIR)
     print('下一步：照着网格图读数，把角点写进 %s：' % CORNERS)
     for i, name in enumerate(images, 1):
@@ -201,12 +219,29 @@ def cmd_show():
     return 0
 
 
+
 # ---------------------------------------------------------------- 角标图
 
+def grid_path(name):
+    """找 prepare 生成的网格图（out/N-网格-<图名>.png）；没有返回 None。"""
+    base = os.path.splitext(os.path.basename(name))[0]
+    if not os.path.isdir(OUT_DIR):
+        return None
+    # 用完整的 "-网格-<basename>.png" 后缀精确匹配，避免 a.jpg / 合同a.jpg 这类包含关系串图
+    want = '-网格-%s.png' % base
+    hits = [fn for fn in os.listdir(OUT_DIR)
+            if fn[:1].isdigit() and fn.endswith(want)]
+    if not hits:
+        return None
+    # 同名网格图有多份时取最新的一份（防止旧轮次的残留文件）
+    fn = max(hits, key=lambda f: os.path.getmtime(os.path.join(OUT_DIR, f)))
+    return os.path.join(OUT_DIR, fn)
+
+
 def draw_marks(name, pts, dst):
-    """把四角画回原图（底图叠加与网格图相同的网格），供人工核查。"""
+    """把四角叠加到已生成的网格图上（找不到网格图时退回原图并即时叠网格）。"""
     from preview_quad import draw_quad
-    im = draw_quad(name, pts, with_grid=True)
+    im = draw_quad(name, pts, base_path=grid_path(name), with_grid=True)
     im.save(dst)
     return dst
 
@@ -353,8 +388,10 @@ def main():
         epilog=__doc__)
     sub = ap.add_subparsers(dest='cmd', required=True)
 
-    p = sub.add_parser('prepare', help='出网格图（out/1-网格-*.png）')
-    p.add_argument('images', nargs='*', help='图片名，省略则取当前目录所有图片')
+    p = sub.add_parser('prepare', help='出网格图（out/1-网格-*.png），叠加候选角点')
+    p.add_argument('images', nargs='*', help='图片名（必填，可多个）')
+    p.add_argument('--no-auto-quad', action='store_true',
+                   help='不跑候选角点检测，只出纯网格图')
 
     p = sub.add_parser('set', help='把一张图的角点写进 out/corners.json')
     p.add_argument('image', metavar='IMG', help='图片名（一次一张）')
@@ -380,7 +417,7 @@ def main():
                    help='另存边角放大块，便于细看')
 
     p = sub.add_parser('all', help='prepare + build 一步到位')
-    p.add_argument('images', nargs='*')
+    p.add_argument('images', nargs='*', help='图片名（必填，可多个）')
     p.add_argument('--out', default='文档_校正.pdf')
     p.add_argument('--paper', default=None)
     p.add_argument('--dpi', type=int, default=100)
@@ -390,7 +427,8 @@ def main():
     args = ap.parse_args()
 
     if args.cmd == 'prepare':
-        return cmd_prepare(collect_images(args.images))
+        return cmd_prepare(collect_images(args.images),
+                           auto_quad=not args.no_auto_quad)
     if args.cmd == 'set':
         return cmd_set(args)
     if args.cmd == 'show':

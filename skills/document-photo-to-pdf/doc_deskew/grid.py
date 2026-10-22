@@ -11,9 +11,14 @@ LINE_WIDTH = 2
 
 
 def draw_grid_on(im, step=50, major=100):
-    """在原图上叠加坐标网格，返回同一个 Image 对象（不落盘）。"""
+    """在原图上叠加坐标网格，返回叠加后的图像（不落盘）。
+
+    先画到独立的 RGBA 图层再合成：RGBA 底图直接画会被 ImageDraw 覆盖，
+    半透明线变成实心色，跟角标图上的网格对不上。
+    """
     W, H = im.size
-    d = ImageDraw.Draw(im, 'RGBA')
+    layer = Image.new('RGBA', im.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
     try:
         f = ImageFont.truetype(FONT, 18)
     except Exception:
@@ -33,7 +38,7 @@ def draw_grid_on(im, step=50, major=100):
     for y in range(0, H, major):
         d.rectangle([1, y + 1, 46, y + 21], fill=(255, 255, 255, 220))
         d.text((2, y + 1), str(y), fill=(0, 0, 200), font=f)
-    return im
+    return Image.alpha_composite(im.convert('RGBA'), layer).convert(im.mode)
 
 
 def draw_grid(src, dst, step=50, major=100):

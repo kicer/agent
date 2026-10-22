@@ -63,10 +63,14 @@ def get_font(size=26):
     return ImageFont.load_default()
 
 
-def draw_quad(img_path, pts, scale=1.0, with_grid=False):
-    im = Image.open(img_path).convert('RGB')
-    # 角标图默认叠上与网格图同一套网格：坐标读数与框边可以对着看
-    if with_grid:
+def draw_quad(img_path, pts, scale=1.0, base_path=None, with_grid=False):
+    """在底图上叠加四角标注。
+
+    base_path 非空时直接用该图当底图（通常是 prepare 生成的网格图，连同候选标记一起继承）；
+    为空时退回原图，with_grid=True 则即时叠一层网格。
+    """
+    im = Image.open(base_path or img_path).convert('RGB')
+    if with_grid and base_path is None:
         from grid import draw_grid_on
         im = draw_grid_on(im)
     if scale != 1.0:
