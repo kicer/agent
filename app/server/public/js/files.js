@@ -815,6 +815,12 @@
         card.dataset.done = '1'; // 仅成功上传的卡片参与发送时的告知行
         closeBtn.classList.remove('hidden');
       },
+      // 服务端重名会加 -1/-2:告知行必须用真实落盘名，否则模型读不到/读到旧文件
+      rename(name) {
+        card.dataset.name = name;
+        const el = card.querySelector('.up-name');
+        if (el) { el.textContent = name; el.title = name; }
+      },
       fail() {
         card.classList.add('err');
         mask.innerHTML = '<span class="up-pct">上传失败</span>';
@@ -830,12 +836,10 @@
 
   // 文件选择统一入口:先逐文件预处理(大图压缩询问/大文件确认,X或遮罩=放弃该文件)，
   // 只要还剩至少一个待传文件才自动建档(welcome 无会话时)并走即传路径(多文件并行上传+总进度条+逐卡进度)；
-  // 全部放弃或取消选择都不上传、不新建会话。
-  $('file-input').addEventListener('change', async e => {
-    const input = e.target;
-    const files = Array.prototype.slice.call(input.files || []); // 先快照再清空,FileList 是实时的
-    input.value = '';
-    if (!files.length) return;
+  // 全部放弃或取消选择都不上传、不新建会话。拖拽 drop 也走这里。
+  // 并发批次共用一个总进度条:各自登记 {loaded,total},绘制时求和,避免后一批把前一批的进度冲掉。
+  const uploadBatches = new Set();
+  async function uploadFilesNow(files) {
     // 逐个串行预处理(模态弹窗不能并行)
     const ready = [];
     for (const f of files) {
@@ -855,11 +859,13 @@
     const cards = ready.map(f => addUploadCard(f));
     // ---- 并行上传 + 实时进度 ----
     const progWrap = $('fp-progress'), progBar = $('fp-progress-bar'), progPct = $('fp-progress-pct');
-    const tot = ready.reduce((s, f) => s + f.size, 0);
-    const loaded = { v: 0 }; // 所有文件已上传字节总和
+    const batch = { loaded: 0, total: ready.reduce((s, f) => s + f.size, 0) };
+    uploadBatches.add(batch);
     let done = 0, errCount = 0;
     function paintProg() {
-      const pct = tot ? Math.min(100, Math.round(loaded.v / tot * 100)) : 0;
+      let loaded = 0, total = 0;
+      uploadBatches.forEach(b => { loaded += b.loaded; total += b.total; });
+      const pct = total ? Math.min(100, Math.round(loaded / total * 100)) : 0;
       progBar.style.width = pct + '%';
       progPct.textContent = pct + '%';
     }
@@ -874,28 +880,119 @@
       xhr.upload.onprogress = function (ev) {
         if (!ev.lengthComputable) return;
         // ev.loaded 是本文件累计已发字节,汇总时取本次增量避免多计
-        loaded.v += ev.loaded - lastLoaded;
+        batch.loaded += ev.loaded - lastLoaded;
         lastLoaded = ev.loaded;
         paintProg();
         card.setPct(ev.loaded / ev.total * 100);
       };
       xhr.onload = function () {
-        if (xhr.status === 200) { done++; card.done(); } else { errCount++; card.fail(); }
+        if (xhr.status === 200) {
+          done++;
+          try {
+            const u = (JSON.parse(xhr.responseText || '{}').uploaded || [])[0];
+            if (u && u.filename) card.rename(u.filename);
+          } catch (_) { /* 响应体异常不影响上传成功态 */ }
+          card.done();
+        } else { errCount++; card.fail(); }
         // 终态补齐(可能没收到最后一帧 100%)
-        if (lastLoaded < f.size) { loaded.v += f.size - lastLoaded; paintProg(); }
+        if (lastLoaded < f.size) { batch.loaded += f.size - lastLoaded; paintProg(); }
         resolve();
       };
       xhr.onerror = function () { errCount++; card.fail(); resolve(); };
       xhr.send(fd);
     }));
     await Promise.all(tasks);
+    if (batch.loaded < batch.total) batch.loaded = batch.total;
+    uploadBatches.delete(batch);
     paintProg();
     // 全部成功不再弹提示(卡片已完成态即反馈);有失败才提醒
     if (errCount) toast('已上传 ' + done + ' 个，失败 ' + errCount + ' 个');
     loadFiles();
-    // 1.2s 后收起进度条
-    setTimeout(() => { progWrap.classList.add('hidden'); progBar.style.width = '0%'; }, 1200);
+    // 1.2s 后收起进度条(还有别的批次在传就不收)
+    setTimeout(() => {
+      if (uploadBatches.size) return;
+      progWrap.classList.add('hidden'); progBar.style.width = '0%';
+    }, 1200);
+  }
+
+  $('file-input').addEventListener('change', e => {
+    const input = e.target;
+    const files = Array.prototype.slice.call(input.files || []); // 先快照再清空,FileList 是实时的
+    input.value = '';
+    if (files.length) uploadFilesNow(files).catch(er => toast('上传失败:' + (er && er.message || er)));
   });
+
+  // ---------- 拖拽文件到页面即上传(仅桌面浏览器,触屏没有 drag 事件) ----------
+  // 必须挂在 window 上:文件落到输入框/面板/抽屉等任何位置,若没有 drop 处理,
+  // 浏览器默认行为是导航去打开它,当前草稿和正在流式的回合会一起丢失。
+  function pickDroppedFiles(dt) {
+    // dataTransfer 只在事件回调内有效,这里同步取完;目录在 files 里是 0 字节条目,必须跳过
+    const items = dt.items ? Array.prototype.slice.call(dt.items) : [];
+    if (!items.length) return { files: Array.prototype.slice.call(dt.files || []), dirs: 0 };
+    const files = [];
+    let dirs = 0;
+    for (const it of items) {
+      if (it.kind !== 'file') continue;
+      let entry = null;
+      try { entry = it.webkitGetAsEntry && it.webkitGetAsEntry(); } catch (_) {}
+      if (entry && entry.isDirectory) { dirs++; continue; }
+      const f = it.getAsFile();
+      if (f) files.push(f);
+    }
+    return { files, dirs };
+  }
+  (function bindDropUpload() {
+    const overlay = $('drop-overlay');
+    if (!overlay) return;
+    let depth = 0, resetTimer = 0;
+    // 拖动页面内选中的文字也会触发 dragenter,只认带 Files 的拖拽
+    function hasFiles(e) {
+      const types = e.dataTransfer && e.dataTransfer.types;
+      return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
+    }
+    function show() {
+      clearTimeout(resetTimer);
+      depth = 1;
+      overlay.classList.remove('hidden');
+    }
+    function reset() {
+      depth = 0;
+      clearTimeout(resetTimer);
+      overlay.classList.add('hidden');
+    }
+    window.addEventListener('dragenter', e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); // 旧版 Chrome/Safari 需要它才让区域接受拖放
+      if (!depth) depth = 1;
+      clearTimeout(resetTimer);
+      overlay.classList.remove('hidden');
+    });
+    window.addEventListener('dragover', e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); // 缺这一步 drop 永远不会触发
+      e.dataTransfer.dropEffect = 'copy';
+      if (overlay.classList.contains('hidden')) show();
+    });
+    window.addEventListener('dragleave', e => {
+      if (!hasFiles(e)) return;
+      // 拖出窗口时浏览器不保证再配对一次 dragenter,relatedTarget 为 null 直接收干净
+      if (!e.relatedTarget) { reset(); return; }
+      depth = Math.max(0, depth - 1);
+      if (depth) return;
+      resetTimer = setTimeout(reset, 150);
+    });
+    window.addEventListener('dragend', reset);
+    window.addEventListener('drop', e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); // 阻止浏览器默认的“打开文件”
+      reset();
+      const picked = pickDroppedFiles(e.dataTransfer);
+      if (picked.files.length) {
+        uploadFilesNow(picked.files).catch(er => toast('上传失败:' + (er && er.message || er)));
+      }
+      if (picked.dirs) toast('暂不支持拖入文件夹' + (picked.files.length ? '，已忽略' : ''));
+    });
+  })();
 
 
   function renderAttachChips() {

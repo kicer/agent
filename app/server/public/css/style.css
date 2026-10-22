@@ -1429,3 +1429,32 @@ body.pv-resizing #pv-pane iframe { pointer-events: none; }
 .send-btn .stop-sq { display: none; width: 11px; height: 11px; border-radius: 2px; background: #fff; }
 .send-btn[data-state="stop"] > svg { display: none; }
 .send-btn[data-state="stop"] .stop-sq { display: block; }
+
+/* ================= 拖拽上传提示层 ================= */
+/* window 级 dragenter/dragover 期间显示。pointer-events:none 保证遮罩不抢 drop 目标,
+   drop 仍由 window 监听器接管(见 js/files.js)。
+   视觉沿用站内弹窗语言:与 .modal-overlay 同一底色,白底卡片 + 16px 圆角 + 投影,
+   图标用品牌蓝的浅色圆底,虚线框只作为「可投放」的轻提示。 */
+#drop-overlay {
+  position: fixed; inset: 0; z-index: 190;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 25, 50, 0.45);
+  pointer-events: none;
+  animation: drop-overlay-in .14s ease-out;
+}
+#drop-overlay .drop-hint {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 24px 36px;
+  max-width: 80vw; text-align: center;
+  border: 1.5px dashed rgba(57, 100, 254, 0.32);
+  border-radius: 16px;
+  background: var(--page); color: var(--ink);
+  font-size: 15px; font-weight: 600;
+  box-shadow: 0 12px 32px rgba(15, 17, 21, 0.18);
+}
+#drop-overlay .drop-hint .ic {
+  width: 50px; height: 50px; padding: 12px;
+  border-radius: 50%;
+  background: var(--active-soft); color: var(--active);
+}
+@keyframes drop-overlay-in { from { opacity: 0; } to { opacity: 1; } }

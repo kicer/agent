@@ -480,6 +480,14 @@
     <div class="fs-panel fs-src-panel hidden" id="fs-src-pane"><pre id="fs-src-code"></pre></div>
   </div>
 
+  <!-- 拖拽上传提示层:window 级 dragenter 时显示;pointer-events:none,不参与命中测试(逻辑见 js/files.js) -->
+  <div id="drop-overlay" class="hidden" aria-hidden="true">
+    <div class="drop-hint">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+      <span>松开即可上传</span>
+    </div>
+  </div>
+
   <script src="/js/core.js"></script>
   <script src="/js/chat.js"></script>
   <script src="/js/sessions.js"></script>
