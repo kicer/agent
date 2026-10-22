@@ -584,10 +584,14 @@ async function callModel(cfg, modelId, messages, tools, options) {
   // 没配/无思考的行零变化）。无论配与否都剥一遍 __reasoning，内部键不出仓库。
   if (body.messages && body.messages.length) {
     const ack = modelCfg.reasoning_ack_field;
+    // 思考模式下带 tool_calls 的 assistant 行必须回传 reasoning_content：中途开启思考时，
+    // 本轮早先的调用没有思维链，用空串占位（缺失会被上游 400，空串实测通过）。
     body.messages = body.messages.map(mm => {
-      if (!mm || !mm.__reasoning) return mm;
+      if (!mm || mm.role !== 'assistant') return mm;
+      const fill = !!(opts.deepThink && ack && mm.tool_calls && !mm.__reasoning);
+      if (!mm.__reasoning && !fill) return mm;
       const c = Object.assign({}, mm);
-      if (ack) c[ack] = c.__reasoning;
+      if (ack) c[ack] = c.__reasoning || '';
       delete c.__reasoning;
       return c;
     });
