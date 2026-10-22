@@ -27,12 +27,18 @@
       (u.cached == null ? '未上报' : u.cached + ' tok') + '，输出 ' + (u.ct || 0) + ' tok';
   }
 
-  function actionsHtml(ts, content, msgId, usage) {
+  function actionsHtml(ts, content, msgId, usage, canEdit) {
     const b64 = btoa(unescape(encodeURIComponent(content)));
     // 删除本条:仅已落库消息可删(传 m.id);流式未落库时无 id,不渲染
     const del = msgId
       ? '<button class="act act-del" title="删除本条" data-msg-id="' + msgId + '">' +
         '<svg class="ic sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>' +
+        '</button>'
+      : '';
+    // 编辑并重发:只给未压缩的用户消息(调用方传 canEdit);带 b64 回填输入框,避免从 DOM 反推
+    const edit = canEdit && msgId
+      ? '<button class="act act-edit" title="编辑并重发" data-msg-id="' + msgId + '" data-b64="' + b64 + '">' +
+        '<svg class="ic sm" viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg>' +
         '</button>'
       : '';
     const u = normUsage(usage);
@@ -45,6 +51,7 @@
       '<button class="act act-copy" title="复制" data-b64="' + b64 + '">' +
         '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
       '</button>' +
+      edit +
       del +
     '</div>';
   }
@@ -55,9 +62,10 @@
       ? '<div class="attach-line">📎 ' + esc(p.files.join('、')) + '</div>' : '';
     const r = mdHtml(p.text);
     // 复制内容取纯文本（不含【系统通知】附件行），与气泡里显示一致
+    // 编辑按钮只给「用户手打/粘贴」的消息：archived（已压缩存档）与 scheduler_note 等系统行不给
     return '<div class="msg me">' +
       '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
-      actionsHtml(m.created_at, p.text, m.id) +
+      actionsHtml(m.created_at, p.text, m.id, null, !m.type) +
     '</div>';
   }
 
@@ -513,7 +521,8 @@
     const wrap = document.createElement('div');
     wrap.className = 'msg me';
     wrap.innerHTML = '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
-      actionsHtml(Date.now(), content, msgId);
+      // 刚发送的用户消息同样可编辑（canEdit=true）；actionsHtml 只在有 msgId 时才渲染按钮
+      actionsHtml(Date.now(), content, msgId, null, true);
     decorateCodePre(wrap); // 用户消息里也可能有围栏代码块
     $('chat-view').appendChild(wrap);
     // 已落库的行记入增量跟踪：避免回前台补拉时把这条再追加一遍

@@ -9,6 +9,7 @@
    *   POST   /api/sessions {title:'', model_id:''}             首条消息自动建档
    *   GET    /api/sessions/:id                                 打开会话(消息+文件)
    *   POST   /api/sessions/:id/messages {content, attachments} 发送消息
+   *   POST   /api/sessions/:id/messages/:mid/edit              编辑用户消息（覆盖式重发）
    *   POST   /api/sessions/:id/files                           附件上传(multipart)
    *   GET    /api/sessions/:id/stream                          SSE 流式输出
    *   POST   /api/sessions/:id/stop | /release                  状态栏「终止/断开」
@@ -169,6 +170,7 @@
     schedule: null,             // 当前会话定时任务（详情 schedule 字段，null=无）
     sessions: [],               // 抽屉列表缓存
     attachments: [],            // 待发送附件 {file, name, size}
+    editingMsgId: 0,            // 正在编辑的历史消息 id（0=普通发送，覆盖式重发）
     lastImgBlobUrl: null,       // 任务文件图片预览的 blob URL，下次预览或开新图时回收
     lastPdfBlobUrl: null,       // 同上:PDF 页内预览的 blob URL(浏览器内建查看器用)
     es: null,                   // EventSource

@@ -17,6 +17,7 @@
   async function send() {
     const ta = $('msg-input');
     const content = ta.value.trim();
+    const editingId = state.editingMsgId || 0;
     // 没有文字就不发（避免产生空消息）；但只有附件时允许发送——粘贴长文本转成的 .txt 需要能单独发出。
     // 运行中也是这条规则：有字就发（后端 live 追投），没字又没附件时按钮本身是「停止」。
     if (!content && !state.attachments.length) return;
@@ -28,6 +29,7 @@
     autosize();
     updateSendBtn(); // 清空后若仍在生成中，按钮应回到「停止」
 
+    let domDropped = false;
     try {
       const id = await ensureSession();
       let atts = [];
@@ -42,7 +44,16 @@
         ? '用户上传了文件：' + names.join('、') + (content ? '\n\n' + content : '')
         : content;
       const body = { content: text, deepThink: !!state.deepThink };
-      const sent = await req('POST', '/api/sessions/' + id + '/messages', body);
+      let sent;
+      if (editingId) {
+        // 覆盖式编辑：先撤掉本地该条及其后的渲染，再让服务端删除同范围历史并以新内容重开一轮
+        dropDomFromMessage(editingId);
+        domDropped = true;
+        sent = await req('POST', '/api/sessions/' + id + '/messages/' + editingId + '/edit', body);
+        clearEditState();
+      } else {
+        sent = await req('POST', '/api/sessions/' + id + '/messages', body);
+      }
       clearUploadCards(); // 消息已发出(告知行已拼入正文),卡片使命完成清掉
 
       appendUserMsg(text, atts.map(a => a.name), sent && sent.message_id);
@@ -66,6 +77,8 @@
         autosize();
       }
       updateSendBtn(); // 文字/附件都可能被还原：按当前状态刷新发送键（附件在时不能停在停止态）
+      // 编辑请求失败(如运行中 409)：服务端历史未动，把被乐观撤掉的节点重拉回来
+      if (domDropped) restoreChatView();
       toast('发送失败:' + e.message);
     }
   }
@@ -435,6 +448,69 @@
     }
   });
 
+  // ---------- 编辑已发送的用户消息(覆盖式) ----------
+  // 发送时服务端会删除该条及其后的全部历史(含工具回执/摘要),前端同步丢弃同范围的 DOM。
+  // 已压缩存档的消息(type='archived')不给编辑入口：删掉摘要后它前面的行仍不发模型,上下文会断。
+  function clearEditState() {
+    state.editingMsgId = 0;
+    const bar = $('edit-bar');
+    if (bar) bar.classList.add('hidden');
+  }
+  function setEditState(msgId) {
+    state.editingMsgId = msgId;
+    const bar = $('edit-bar');
+    if (bar) bar.classList.remove('hidden');
+  }
+  // 乐观撤场：删掉该条及之后的所有节点(旧工具卡/打字点/流式气泡都在后面),
+  // 并把增量渲染游标回退到编辑点之前，免得后续软补拉把已丢的行当成还在。
+  function dropDomFromMessage(msgId) {
+    const box = $('chat-view');
+    const btn = box && box.querySelector('[data-msg-id="' + msgId + '"]');
+    const node = btn && btn.closest('.msg');
+    if (!node) return false;
+    let n = node;
+    while (n) { const next = n.nextElementSibling; n.remove(); n = next; }
+    let max = 0;
+    for (const k of Object.keys(state.renderedSigs)) {
+      const id = Number(k);
+      if (id >= msgId) delete state.renderedSigs[k];
+      else if (id > max) max = id;
+    }
+    state.lastRenderedMsgId = max;
+    return true;
+  }
+  // 编辑失败(如运行中 409)：服务端没动历史，重拉已加载量恢复被乐观撤掉的节点。
+  async function restoreChatView() {
+    try {
+      const detail = await req('GET', '/api/sessions/' + state.sessionId + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount));
+      if (state.view === 'chat') renderDetail(detail);
+    } catch (_) { /* 恢复失败不阻断主流程 */ }
+  }
+  $('chat-view').addEventListener('click', e => {
+    const btn = e.target.closest('.act-edit');
+    if (!btn) return;
+    const msgId = Number(btn.dataset.msgId);
+    if (!msgId || !state.sessionId) return;
+    if (state.status === 'active') { toast('任务执行中，暂不支持编辑'); return; }
+    let text = '';
+    try { text = decodeURIComponent(escape(atob(btn.dataset.b64 || ''))); } catch (_) { return; }
+    const ta = $('msg-input');
+    ta.value = text;
+    autosize();
+    updateSendBtn();
+    setEditState(msgId);
+    ta.focus();
+    try { ta.setSelectionRange(text.length, text.length); } catch (_) {}
+  });
+  $('edit-cancel').addEventListener('click', () => {
+    clearEditState();
+    const ta = $('msg-input');
+    ta.value = '';
+    autosize();
+    updateSendBtn();
+    ta.focus();
+  });
+
   // ---------- 全屏查看器(双击气泡/工具卡放大;图片单击放大;均同步 index) ----------
   // 源码查看:当前内容有源文本时(消息/文件预览)右上角 eye 钮可点,源码面板与渲染视图互切。
   // 源文本两条来路:预览调用方直接传(文件原文);双击消息时从尾部操作行复制钮取
@@ -476,8 +552,8 @@
     clone.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
     // 全屏查看直接展开参数/结果,方便观看
     clone.querySelectorAll('details').forEach(function (d) { d.open = true; });
-    // 克隆里摘掉删除钮:删除的委托绑在 chat-view,查看器里点了无响应,不留死按钮
-    clone.querySelectorAll('.act-del').forEach(function (n) { n.remove(); });
+    // 克隆里摘掉删除/编辑钮:二者的委托绑在 chat-view,查看器里点了无响应,不留死按钮
+    clone.querySelectorAll('.act-del, .act-edit').forEach(function (n) { n.remove(); });
     // 源文本:调用方传入优先(文件预览),否则从消息自带 b64 现取(双击场景)
     let s = src;
     if (s == null) {

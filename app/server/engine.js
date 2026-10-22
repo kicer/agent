@@ -1465,6 +1465,25 @@ function deleteMessage(sessionId, messageId) {
   return { ok: true, id: messageId, removed: removed + 1 };
 }
 
+// 覆盖式编辑用户消息：删掉该条及其后的全部历史（含 tool 回执/摘要），再以新内容重开一轮。
+// 编辑点是 user 行，前缀必然停在 assistant，不会留下无配对的 tool_call。
+// 运行中不支持：runLoop 每轮重载历史，中途截断会让当前回合的 tool 回执缺失。
+function editUserMessage(sessionId, messageId, content, opts) {
+  const session = getSession(sessionId);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const row = db.prepare('SELECT id, role FROM messages WHERE id = ? AND session_id = ?').get(messageId, sessionId);
+  if (!row) throw Object.assign(new Error('消息不存在'), { status_code: 404 });
+  if (row.role !== 'user') throw Object.assign(new Error('只能编辑用户消息'), { status_code: 400 });
+  const run = runs.get(sessionId);
+  if (run && run.looping) throw Object.assign(new Error('任务正在执行，请先终止再编辑'), { status_code: 409 });
+  // 先确保能开跑：无可用模型时抛 503，避免删完历史却发不出去
+  ensureBinding(session);
+  const removed = db.prepare('DELETE FROM messages WHERE session_id = ? AND id >= ?').run(sessionId, messageId).changes;
+  const r = postUserMessage(sessionId, content, opts);
+  log.info('msg', sessionId + ' 编辑消息 ' + messageId + '，丢弃其后 ' + Math.max(0, removed - 1) + ' 条历史');
+  return Object.assign({ removed: removed }, r);
+}
+
 // 删工具回执（任务执行卡片）：同步把对应 tool_call 从父 assistant 的 tool_calls 里摘掉，
 // 避免留下「有调用无结果」被严格上游拒收。父回合若是纯工具调用轮（无文本）且已无
 // 其余调用，则整行一起删（空气泡没有意义）；有文本则保留为普通文本回复。
@@ -1511,6 +1530,7 @@ module.exports = {
   clearSessionMessages,
   summarizeContext,
   deleteMessage,
+  editUserMessage,
   getSession,
   getRun,
   taskDirOf,

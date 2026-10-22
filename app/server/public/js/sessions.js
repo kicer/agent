@@ -86,6 +86,7 @@
         state.lastRenderedMsgId = 0;
         state.renderedSigs = {};
         state.streaming = false;
+        if (typeof clearEditState === 'function') clearEditState();
         setView('welcome'); // 复用 newChat 同样的视图切换路径
       }
       toast('已删除会话');
@@ -200,6 +201,7 @@
     state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
     state.streaming = false;
     state.attachments = [];
+    if (typeof clearEditState === 'function') clearEditState();
     userPaused = false;
     state.chatHasMore = false; // 分页状态先复位：防详情返回前用旧会话的游标/标志拉到错会话的消息
     state.chatOldestId = null;
@@ -249,6 +251,7 @@
     state.schedule = null;
     state.pendingModel = '';
     state.attachments = [];
+    if (typeof clearEditState === 'function') clearEditState();
     state.streamEl = null;
     state.streamText = '';
     state.toolCards = {};

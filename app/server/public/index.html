@@ -158,6 +158,11 @@
     <footer>
       <div class="attach-chips hidden" id="attach-chips"></div>
       <div class="input-shell">
+        <!-- 编辑已发送消息：覆盖式重发提示条（发送后丢弃该条及其后的历史） -->
+        <div class="edit-bar hidden" id="edit-bar">
+          <span>正在编辑已发送的消息，发送后将丢弃其后的历史</span>
+          <button id="edit-cancel" type="button">取消</button>
+        </div>
         <div class="up-cards hidden" id="up-cards" aria-label="已上传文件"></div>
         <textarea id="msg-input" placeholder="传送信息" rows="2" enterkeyhint="enter"></textarea>
         <div class="input-actions">
@@ -182,13 +187,13 @@
           </div>
         </div>
       </div>
+      <!-- 回到底部浮动按钮(搬自 index;上翻历史时出现、AI 输出中常驻转圈)。
+           放在 footer 内、相对 footer 顶边停靠:输入框长高/编辑条出现时不会被盖住 -->
+      <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" onclick="clickScrollBottom()" title="回到底部" aria-label="回到底部">
+        <svg class="sb-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        <svg class="sb-spinner hidden" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M22 12a10 10 0 0 1-10 10"></path></svg>
+      </button>
     </footer>
-
-    <!-- 回到底部浮动按钮(搬自 index;上翻历史时出现、AI 输出中常驻转圈) -->
-    <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" onclick="clickScrollBottom()" title="回到底部" aria-label="回到底部">
-      <svg class="sb-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
-      <svg class="sb-spinner hidden" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M22 12a10 10 0 0 1-10 10"></path></svg>
-    </button>
 
     <!-- ================= 历史记录抽屉 ================= -->
     <div id="scrim"></div>

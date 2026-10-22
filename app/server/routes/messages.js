@@ -28,6 +28,17 @@ router.post('/:id/messages', wrap((req, res) => {
 }));
 
 
+// 覆盖式编辑：删除该条及其后的历史，再以新内容重开一轮（运行中 409）。
+router.post('/:id/messages/:mid/edit', wrap((req, res) => {
+  const content = String((req.body && req.body.content) || '').trim();
+  if (!content) return res.status(400).json({ error: 'content 不能为空' });
+  const deepThink = !!(req.body && req.body.deepThink);
+  const r = engine.editUserMessage(req.params.id, Number(req.params.mid), content, { deepThink });
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 编辑消息 ' + req.params.mid +
+      '（丢弃其后 ' + Math.max(0, (r.removed || 1) - 1) + ' 条）');
+  res.json(r);
+}));
+
 router.post('/:id/stop', wrap((req, res) => {
   const r = engine.stop(req.params.id);
   log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户终止');
