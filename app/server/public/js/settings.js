@@ -615,6 +615,7 @@
       { path: 'upload.image_max_dim', label: '压缩后长边上限(px)', type: 'int' },
       { path: 'upload.image_quality', label: 'JPEG 质量(0~1)', type: 'float' },
       { path: 'upload.confirm_size_mb', label: '大文件确认阈值(MB)', type: 'int' },
+      { path: 'upload.paste_to_file_threshold_chars', label: '粘贴转文件阈值(字符,0=关)', type: 'int' },
     ] },
   ];
   function kvPlain(label, v) {

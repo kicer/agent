@@ -2,22 +2,24 @@
 'use strict';
   // ---------- 发送 ----------
   async function uploadFiles(sessionId, files) {
-    const fd = new FormData();
-    for (const f of files) fd.append('files', f.file, f.name);
-    // 大文件上传在慢速网络上可以远超普通请求超时：放宽到 120s
-    const r = await req('POST', '/api/sessions/' + sessionId + '/files', fd, true, 120000);
-    return (r.uploaded || []).map(u => ({ name: u.filename, size: u.size }));
+    const out = [];
+    // 后端 multer 单请求最多 10 个文件(limits 见 routes/files.js),超过就分批
+    for (let i = 0; i < files.length; i += 10) {
+      const fd = new FormData();
+      for (const f of files.slice(i, i + 10)) fd.append('files', f.file, f.name);
+      // 大文件上传在慢速网络上可以远超普通请求超时：放宽到 120s
+      const r = await req('POST', '/api/sessions/' + sessionId + '/files', fd, true, 120000);
+      out.push(...(r.uploaded || []));
+    }
+    return out.map(u => ({ name: u.filename, size: u.size }));
   }
 
   async function send() {
     const ta = $('msg-input');
     const content = ta.value.trim();
-    // 没有文字就不发（避免产生空消息）；上传文件告知行在发送时拼在正文前（见下）。
-    // 运行中也是这条规则：有字就发（后端 live 追投），没字时按钮本身是「停止」。
-    if (!content) {
-      if (state.attachments.length) toast('附件需随一条文字消息发送');
-      return;
-    }
+    // 没有文字就不发（避免产生空消息）；但只有附件时允许发送——粘贴长文本转成的 .txt 需要能单独发出。
+    // 运行中也是这条规则：有字就发（后端 live 追投），没字又没附件时按钮本身是「停止」。
+    if (!content && !state.attachments.length) return;
 
     const pending = state.attachments.slice();
     state.attachments = [];
@@ -33,17 +35,21 @@
       // 输入区上传卡片里成功入库的文件:正文前拼一行告知，让 AI 知道任务目录多了哪些文件
       const upNames = Array.from($('up-cards').querySelectorAll('.up-card[data-done="1"]'))
         .map(c => c.dataset.name).filter(Boolean);
-      const text = upNames.length
-        ? '用户上传了文件：' + upNames.join('、') + '\n\n' + content
+      // 输入区上传卡片 + 本条消息随附的附件（粘贴转文件等）都要告知；
+      // atts 用的是服务端返回的真实文件名（重名会自动加序号）。
+      const names = upNames.concat(atts.map(a => a.name));
+      const text = names.length
+        ? '用户上传了文件：' + names.join('、') + (content ? '\n\n' + content : '')
         : content;
       const body = { content: text, deepThink: !!state.deepThink };
       const sent = await req('POST', '/api/sessions/' + id + '/messages', body);
       clearUploadCards(); // 消息已发出(告知行已拼入正文),卡片使命完成清掉
 
       appendUserMsg(text, atts.map(a => a.name), sent && sent.message_id);
-      if (!state.sessionTitle && content) {
-        // 标题取用户原文，不带文件告知行
-        state.sessionTitle = content.length > 24 ? content.slice(0, 24) : content;
+      // 标题取用户原文，不带文件告知行；纯附件发送时退回粘贴文本的前缀
+      const seed = content || (pending[0] && pending[0].titleSeed) || '';
+      if (!state.sessionTitle && seed) {
+        state.sessionTitle = seed.length > 24 ? seed.slice(0, 24) : seed;
       }
       renderHeader();
       // 运行中插话：正文字流进行中已有一个气泡作「活着」的信号，不再挂打字占位
@@ -58,8 +64,8 @@
       if (content) {
         ta.value = content + (ta.value ? '\n' + ta.value : '');
         autosize();
-        updateSendBtn(); // 文字回填了：按钮回到「发送」（即使仍在生成中）
       }
+      updateSendBtn(); // 文字/附件都可能被还原：按当前状态刷新发送键（附件在时不能停在停止态）
       toast('发送失败:' + e.message);
     }
   }

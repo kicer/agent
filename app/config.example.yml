@@ -62,6 +62,7 @@ upload:
   image_max_dim: 2000                              # 压缩后长边上限（px）
   image_quality: 0.85                              # JPEG 质量
   confirm_size_mb: 10                              # 任意文件二次确认阈值（MB）
+  paste_to_file_threshold_chars: 2000              # 粘贴超长文本自动转 .txt 附件（字符数，0=关）
 
 skills:
   skills_root: ""                                  # 留空取 workspace_root 同级 skills 目录

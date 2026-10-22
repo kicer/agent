@@ -294,7 +294,8 @@
   // 运行中允许插话（后端 postUserMessage 返回 delivered:'live'，下一轮迭代会带上这条消息）。
   // 输入框按 trim 判空：纯空白等同于空（与 send() 的裁剪一致，不能因为一个空格就发不了消息）。
   function stopModeActive() {
-    return state.status === 'active' && !(($('msg-input') || {}).value || '').trim();
+    // 有附件时按钮保持「发送」：粘贴长文本转成的附件不应被当成停止操作
+    return state.status === 'active' && !(($('msg-input') || {}).value || '').trim() && !state.attachments.length;
   }
   function updateSendBtn() {
     const sb = $('send-btn');

@@ -675,7 +675,7 @@
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelectAll(); }
     });
   // ---------- 大图上传前压缩(同步 v1:阈值/参数由 /api/system/status 透出) ----------
-  const DEFAULT_UPLOAD_CFG = { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10 };
+  const DEFAULT_UPLOAD_CFG = { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10, paste_to_file_threshold_chars: 2000 };
   // 后端 multer 单文件硬限（routes/files.js limits.filesize），前端预检对齐它，超了直接拒掉不发起上传
   const UPLOAD_HARD_LIMIT = 50 * 1024 * 1024;
   let uploadCfgCache = null;
@@ -993,6 +993,60 @@
       if (picked.dirs) toast('暂不支持拖入文件夹' + (picked.files.length ? '，已忽略' : ''));
     });
   })();
+
+  // ---------- 粘贴超长文本自动转 .txt 附件 ----------
+  // 延迟到发送时上传:粘贴不建档、不落盘,chip 可随时撤掉;阈值由 upload 配置下发(0=关闭)。
+  let pasteThreshold = Number(DEFAULT_UPLOAD_CFG.paste_to_file_threshold_chars) || 2000;
+  getUploadCfg().then(function (cfg) {
+    const n = Number(cfg.paste_to_file_threshold_chars);
+    if (Number.isFinite(n) && n >= 0) pasteThreshold = Math.floor(n);
+  }).catch(function () { /* 取不到配置就用默认阈值 */ });
+  function pastedTextName() {
+    const d = new Date(), p = function (n) { return String(n).padStart(2, '0'); };
+    return 'pasted-text-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' +
+      p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) + '.txt';
+  }
+  function addAttachmentFiles(files, titleSeed) {
+    for (const f of files) {
+      // 同名同大小视为同一次粘贴的重复表示(剪贴板可能给多份)
+      if (state.attachments.some(a => a.name === f.name && a.file && a.file.size === f.size)) continue;
+      state.attachments.push({ file: f, name: f.name, size: f.size, titleSeed: titleSeed || '' });
+    }
+    renderAttachChips();
+    updateSendBtn();
+  }
+  ta.addEventListener('paste', e => {
+    if (!pasteThreshold || !e.clipboardData) return; // 0 = 关闭捕获,走浏览器默认粘贴
+    // clipboardData 只在事件回调内有效:文本与文件都必须同步取完
+    const text = e.clipboardData.getData('text/plain') || '';
+    const files = [];
+    const items = e.clipboardData.items ? Array.prototype.slice.call(e.clipboardData.items) : [];
+    for (const it of items) {
+      if (it.kind !== 'file') continue;
+      const f = it.getAsFile();
+      if (f) files.push(f);
+    }
+    // 部分浏览器(iOS)只给 files 不给 items
+    if (!items.length && e.clipboardData.files) {
+      Array.prototype.push.apply(files, Array.prototype.slice.call(e.clipboardData.files));
+    }
+    const trimmed = text.trim();
+    if (trimmed.length <= pasteThreshold) {
+      // 文本不长:保持默认可编辑粘贴;纯文件剪贴板则拦掉浏览器插入文件名的行为
+      if (files.length) {
+        if (!trimmed.length) e.preventDefault();
+        addAttachmentFiles(files);
+      }
+      return;
+    }
+    // 超阈值:输入框不再灌大段文本;原文(不 trim,保留首尾空白与行尾)包成 .txt
+    e.preventDefault();
+    addAttachmentFiles([new File([text], pastedTextName(), { type: 'text/plain' })], trimmed.slice(0, 24));
+    // 同时带文件时文本已保住内容,只补非图片文件(Word/PPT 里的附件);图片多为排版噪音,略过
+    const extra = files.filter(f => !/^image\//.test(f.type || ''));
+    if (extra.length) addAttachmentFiles(extra);
+    toast('长文本已转为附件，发送时一并上传');
+  });
 
 
   function renderAttachChips() {

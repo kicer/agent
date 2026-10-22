@@ -90,7 +90,8 @@ const DEFAULTS = {
   // fetch、read_file 回执正文距尾 ≥N 个 assistant 轮后换单行占位（DB/UI 不动，内容可再生：盘上重读/重抓）；0=关。
   agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000, auto_complete_ms: 1800000, trim_write_rounds: 1, trim_result_rounds: 2 },
   // 大图上传预处理（浏览器端 canvas 压缩，参数经 /api/system/status 下发前端）。
-  upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10 },
+  // paste_to_file_threshold_chars：粘贴文本超过该字符数时前端转成 .txt 附件，0 = 关闭。
+  upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10, paste_to_file_threshold_chars: 2000 },
   // 技能根目录：留空取 workspace_root 同级 skills（/workspace/tasks → /workspace/skills）。
   skills: { skills_root: '', timeout_ms: 120000 },
   // 长期记忆（日记，memory.js）：会话收口（下班）时一条几十字的第一人称碎片，一片一行入 memory_fragments，
