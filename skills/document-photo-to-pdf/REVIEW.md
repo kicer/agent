@@ -14,20 +14,21 @@ skills/document-photo-to-pdf/
   run.py                   ← 入口
   doc_deskew/              ← 检测/几何/出页/检验
     review_store.py        ← data.db 的 doc_review_* 表
-    review_page.py         ← 模板副本 + 缩略图发布
+    review_page.py         ← 模板链接 + 缩略图发布
   web/index.html           ← 审核页模板的单一事实源
 
 tasks/<session-id>/
   .app/doc-review/
-    index.html             ← 每次发布覆盖的模板副本（不含数据注入）
+    index.html             ← 指向 web/index.html 的符号链接（不含数据注入）
     <batch_id>/p1.jpg ...  ← 本批缩略图（长边 1200，JPEG）
   data.db                  ← doc_review_batch / doc_review_page / doc_review_job
   <output>.pdf
   <output>.state.json      ← state v2，供恢复自动/调试
 ```
 
-core 只托管会话 `.app/`，不托管 skill 目录，所以模板必须复制一份到会话；源仍只有
-`web/index.html` 一份，副本不是第二份源码。
+core 只托管会话 `.app/`，不托管 skill 目录，所以会话里要有一个入口文件；用符号链接而不是
+副本——源仍只有 `web/index.html` 一份，改模板即刻对所有会话生效。`/app` 静态托管会
+realpath，只放行落在会话目录或技能根目录内的链接（其余 404，防止链接把 config.yml 带出来）。
 
 ## 对 AI 隐藏的参数
 

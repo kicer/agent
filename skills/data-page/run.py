@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-# data-page 技能入口：把技能自带 templates/ 下的文件复制到会话任务目录的 .app/。
+# data-page 技能入口：把技能自带 templates/ 下的文件发布到会话任务目录的 .app/。
 # 目标目录固定为 <任务目录>/.app/（不带 dest 参数：manager 对绝对路径参数不做沙箱
 # 校验，开放 dest 等于开放任意目录写入；路径也已写死在文档流程里，可配置只会造成漂移）。
-# 复制内容：
-#   *.html / base.css → .app/   页面模板与共用样式（每次覆盖刷新）
-#   config-*.js       → .app/   配置骨架（仅缺失时补，AI 只改这些）
-# 复制语义按资产所有权分流：
-#   *.html / *.css → .app/  模板与共用样式——每次运行覆盖刷新（SKILL 契约禁止改这些文件，
-#                          覆盖无副作用；不覆盖则旧会话永远吃不到模板修复）。index.html 不在复制清单，永不碰。
+# 发布内容：
+#   *.html / base.css → .app/   页面模板与共用样式（符号链接，技能是唯一真源）
+#   config-*.js       → .app/   配置骨架（实体文件，仅缺失时补，AI 只改这些）
+# 发布语义按资产所有权分流：
+#   *.html / *.css → .app/  模板与共用样式——技能只读，链接后永远是最新版本；
+#                           SKILL 契约本来就禁止改这些文件，所以不必留副本。
 #   config-*.js    → .app/  配置骨架——仅缺失时补默认，不覆盖 AI 已写好的配置。
 # 纯 stdlib，无 requirements。
 # cwd 契约：生产模式下 cwd 即会话任务目录；本地直跑时 cwd 是技能目录——
@@ -17,6 +17,25 @@ import os
 import shutil
 import sys
 from pathlib import Path
+
+
+def link_asset(src, dst):
+    """模板/样式是技能的只读资产：用符号链接发布，永远跟随技能最新版本。
+
+    core 的 /app 静态托管只放行指向技能根目录的链接（其余 404），
+    所以这里必须链到技能的绝对路径。config-*.js 是每会话的数据，仍然复制。
+    """
+    src = str(Path(src).resolve())
+    if dst.is_symlink():
+        try:
+            if os.path.realpath(dst) == os.path.realpath(src):
+                return
+        except OSError:
+            pass
+        dst.unlink()
+    elif dst.exists():
+        dst.unlink()  # 旧会话的实体副本：删掉换成链接
+    os.symlink(src, str(dst))
 
 
 def main():
@@ -60,7 +79,7 @@ def main():
     # ── 模板/样式：无条件覆盖刷新；config：仅补缺 ────────────
     refreshed = []
     for f in assets:
-        shutil.copy2(f, app_dir / f.name)
+        link_asset(f, app_dir / f.name)
         refreshed.append(f.name)
     created, kept = [], []
     for f in cfgs:

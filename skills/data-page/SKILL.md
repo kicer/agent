@@ -31,14 +31,14 @@ visit_url: /app/{task_id}/
 
 ## 初始化
 
-调用 `skill {"op":"run","name":"data-page"}`，无需参数。它会把以下文件复制到 `.app/`：
+调用 `skill {"op":"run","name":"data-page"}`，无需参数。它会把以下文件发布到 `.app/`：
 
 - `table.html` / `dashboard.html` / `kanban.html` —— 三个数据页模板
 - `nav.html` —— 多页导航首页模板（静态卡片，无 config）
 - `base.css` —— 共用样式
 - `config-table.js` / `config-dashboard.js` / `config-kanban.js` —— 配置骨架
 
-重跑行为按资产所有权分流：`table/dashboard/kanban/nav.html` 与 `base.css` 每次**覆盖刷新**（模板修复自动到达旧会话；这些文件契约禁止修改，覆盖无副作用）；`config-*.js` 仅缺失时补默认骨架，不覆盖已写好的配置；`.app/index.html` 永不被碰。
+重跑行为按资产所有权分流：`table/dashboard/kanban/nav.html` 与 `base.css` 是指向技能的符号链接，技能更新立即生效（这些文件契约禁止修改）；`config-*.js` 仅缺失时补默认骨架，不覆盖已写好的配置；`.app/index.html` 永不被碰。
 
 ## 数据 API
 

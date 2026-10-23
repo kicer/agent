@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""审核页发布：模板副本 + 每批缩略图，落会话 .app/doc-review/。
+"""审核页发布：模板链接 + 每批缩略图，落会话 .app/doc-review/。
 
-模板的单一事实源在 skill 目录的 web/；会话里的 index.html 只是发布副本，
-不含任何数据注入。页面运行时通过 /api/db 读 doc_review_* 表，因此同一份
-HTML 可服务所有批次。core 只托管会话 .app/，不托管 skill 目录，这是必须
-复制一次的原因（不是第二份源码）。
+模板的单一事实源在 skill 目录的 web/；会话里的 index.html 只是指向它的符号链接，
+不含任何数据注入。core 的 /app 静态托管放行指向技能根目录的链接（其余位置 404），
+所以改一次模板就对所有会话生效，不用重新生成。页面运行时通过 /api/db 读 doc_review_*
+表，因此同一份 HTML 可服务所有批次。缩略图是每会话的数据，仍写真目录。
 """
 import os
 import shutil
@@ -17,6 +17,25 @@ THUMB_LONG = 1200
 THUMB_Q = 80
 
 
+def _link(src, dst):
+    """把技能里的静态文件以符号链接发布到会话目录。
+
+    旧版本是复制副本，模板改动到不了已有会话；改链接后技能就是唯一真源。
+    链接目标用绝对路径：executor 与 core 都把技能挂在同一位置，两边都能解析。
+    """
+    src = os.path.abspath(src)
+    if os.path.islink(dst):
+        try:
+            if os.path.realpath(dst) == os.path.realpath(src):
+                return
+        except OSError:
+            pass
+        os.unlink(dst)
+    elif os.path.exists(dst):
+        os.unlink(dst)  # 旧会话的实体副本：删掉换成链接
+    os.symlink(src, dst)
+
+
 def publish(session_root, batch_id, pages):
     """发布模板与缩略图。
 
@@ -27,7 +46,7 @@ def publish(session_root, batch_id, pages):
     for name in sorted(os.listdir(WEB_DIR)):
         src = os.path.join(WEB_DIR, name)
         if os.path.isfile(src):
-            shutil.copy2(src, os.path.join(app_dir, name))
+            _link(src, os.path.join(app_dir, name))
 
     thumb_dir = os.path.join(app_dir, batch_id)
     os.makedirs(thumb_dir, exist_ok=True)
