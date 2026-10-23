@@ -1,167 +1,188 @@
 ---
 name: document-photo-to-pdf
-description: 把手机拍摄的纸质文档照片拉正、去背景，按顺序合并为一个 PDF
-thinking: true
+description: 把手机拍摄的纸质文档照片逐页裁剪、拉正、判定方向，合并为一个 PDF；可选发布可拖拽角点的审核页
+input_schema:
+  type: object
+  properties:
+    images:
+      type: array
+      items: {type: string}
+      description: 图片路径，按合并顺序；新批次必填，传 batch_id 时可省略
+    output:
+      type: string
+      description: 输出 PDF 路径，默认 文档照片_校正.pdf；batch_id 模式忽略此参数，沿用批次原输出
+    paper:
+      type: string
+      description: a4/letter/16k/b5/数字宽高比/auto；默认 auto
+    orientation:
+      type: string
+      enum: [auto, none, portrait, landscape]
+      description: 方向策略；默认 auto（逐页按纸张宽高比判横竖）
+    enhance:
+      type: string
+      enum: [original, normal, strong, bw]
+      description: 调色档；默认 normal
+    dpi:
+      type: [string, integer]
+      description: 清晰度；standard(150)/high(300) 或 72~600 的数字
+    review:
+      type: string
+      enum: [off, always, auto]
+      description: 审核页策略；off（默认）不发布，always 总是发布，auto 只在有页需要人看时发布
+    batch_id:
+      type: string
+      description: 重生成用；从 data.db 读源图/输出/编辑，覆盖同名 PDF。忽略 images/output
+    edits:
+      type: [string, object]
+      description: review/1 修改对象或 JSON 路径；batch_id 模式不传时读 doc_review_job.edits
+    state:
+      type: string
+      description: 上一份 state.json 路径；可选，仅用于恢复自动角点/调试
 ---
 
 # 文档照片转 PDF
 
-手机拍的纸质材料 → 一个版正字清的 PDF。适用于合同、票据、证照、手写稿等多页纸质材料，纸张尺寸不限。
+手机拍的纸质材料 → 一个版正字清的 PDF。自动检测纸张四角、自动拉正，不读图、不传坐标。
+需要人工确认时，可以发布一个可拖拽角点的审核页，改完点「生成 PDF」直接覆盖重出。
 
-## 怎么跑
+## 两种用法
 
-本技能没有 `run` 入口，用 `terminal` 直接执行命令。脚本装在技能目录，而 terminal 的
-cwd 是会话任务目录——两者不是同一个目录，所以**脚本一律用绝对路径调用**，图片和
-`out/` 用任务目录里的相对路径：
+### 全自动（默认）
 
-```sh
-python3 /workspace/skills/document-photo-to-pdf/doc_deskew/pipeline.py <子命令> ...
+```json
+{"images": ["图1.jpg", "图2.jpg"], "output": "合同_校正.pdf"}
 ```
 
-## 铁律
+只出 PDF，不写 `.app/`、不碰 `data.db`。适合“直接出件、不用看”的场景。
 
-> 以下 8 条为硬约束，违反任一条即视为任务失败：立即停手、向用户说明，不得"先改完再说"。
+### 半自动（审核页）
 
-1. **先说再做。** 每次调脚本前用一句话说明这次干什么（要标注步骤编号）。
-2. **坐标只能靠眼睛读，禁止一切自建脚本。** 不另造任何纸张处理的辅助的代码，一次性脚本也不行。确实无法达成目的需要新能力＝先停下问用户，不许自己造。
-3. **不裁切、不放大、不逐角看。** 四个角在同一张网格图上一次读全，直接报 4 组数字。不为了"读准一点"造局部图、加刻度、逐个角反复看。
-4. **每张源图对应1网格图、1角标图。** 每轮读网格图 1 次 + 角标 1 次，看完就交付。
-   - **读之前先说清这次要确认什么。** 说不出目的就不读。"再看一眼确认一下"不算目的。
-   - **不为读而读。** 允许重读，但必须是被动的、有明确对象的：图没送达/像素没收到、要核对某个具体数字或某条边。没有新对象就直接用手上已有的数字。
-   - **只读这两类图。** 网格、角标。原图、局部放大图、成品图、自己另造的辅助图都不读。
-5. **一次成件，禁止试错。** 一条 `build` 出件 + 检验。一轮里每页最多跑 1 次 `build`；不调参、不重取角点、不换方法、不"先出一版看看"。不通过就报诊断，停下等确认。
-6. **只有用户明确说"再改"才允许修复。** 完整一轮 = `prepare` → `set`（每页一次）→ `build`（一次）→ 看角标 → 交付。这一轮内发现的任何偏差（框偏了、裁到内容、比例不对），一律只报诊断和坐标建议，**不自行改、不重跑、不补做**。用户在本轮交付后明确说"再改/重做"时才能动手，且还是只跑一轮，改完重新过角标关。
-7. **指标 ≠ 成品。** 校验只查"框内"像素，框漏掉的内容查不出来。角标图必须亲眼看。
-8. **违规即停。** 一旦意识到自己正在写脚本、造辅助图、二次 build 或擅自修复，立即停手，向用户说明，不带病交付。
-
-### 交付前自检（有一项为"是"就停手报告）
-
-- 本轮是否新建/修改过任何脚本或辅助图？
-- 本轮 `build` 是否跑超过 1 次？
-- 是否在用户没说过"再改"时自行调整过角点或重出件？
-- 每张图是否只读了网格、角标各 1 次？
-- 校验未过的项是否只报告、没自行修？
-
-## 流程
-
-### 1 · 出网格图，并输出候选的角点坐标
-
-```sh
-python3 /workspace/skills/document-photo-to-pdf/doc_deskew/pipeline.py prepare 图1.jpg 图2.jpg
+```json
+{"images": ["图1.jpg", "图2.jpg"], "review": "always"}
 ```
 
-输出 `out/N-网格-<名称>.png`（100px 红色主线带坐标刻度、50px 蓝色辅助线，两者同宽）。
-必须显式传入图片名，合并成PDF时即按此传入顺序。
+在出 PDF 的同时：
 
-网格图上会叠加一组**候选角点**：品红实心圆 = 候选角点。同时按文件名打印 markdown 表格（`图片｜左上｜右上｜右下｜左下`，单元格为 `x,y`），可直接对照读数。品红虚线是检出的边线，用来辅助判断线是否贴边。
+1. 把源图缩略图发布到会话 `.app/doc-review/<batch_id>/`；
+2. 把批次/页面/任务记录写进会话 `data.db` 的 `doc_review_*` 表；
+3. 返回 `review.url`（站内路径 `/app/<task_id>/doc-review/?b=<batch_id>`）。
 
-### 2 · 从网格图中读出角点，一张图一条命令
+用户拖角点、旋转、删页、调页序、改四项参数后，点页面右下角「生成 PDF」：
+页面把修改写进 `doc_review_job`，再调用通用执行接口
+`POST /api/sessions/<task_id>/skills/document-photo-to-pdf/run`（只传 `batch_id`），
+服务端按同一份 `run.py` 覆盖同名 PDF，页面自动刷新。**不需要复制 JSON，也不经过模型。**
 
-顺序固定：左上 → 右上 → 右下 → 左下（屏幕坐标，原点左上）。
+`review=auto` 是两者之间的桥：只有存在 `needs_attention` 的页（检测不到角点、方向存疑、
+覆盖率低等）才发布审核页；全部就绪时不发布。
 
-**要找的是纸张本身真实的四个角**——纸面这个四边形的 4 个顶点，**坐标的质量直接决定最终成品的质量！**。
+## 参数
 
-读数方法：
-1. 先找离目标点最近的红线（整百、带数字刻度）读基准值；
-2. 再识别目标点相对相邻蓝线（50px）的偏移；
-3. 把目的坐标复述成一句话，例如“右下：x 在 1000 红线右 52px，y 在 1700 红线下 22px → 1052,1722”。
-
-候选角点怎么用：
-- 图上品红圆就是候选值，可直接拿来作参照对照，省去从零找角点；
-- 但**必须逐角核一遍**：圆是否在纸角上、品红虚线是否全程贴着纸边（线跑偏比角点偏更容易看出来）；
-- 候选与自己的判读不一致时，以自己读图的值为准；
-
-读数要求：
-- 读之前先定好这一张要报的 4 组数字，看完立刻 `set` 落盘到 `out/corners.json`。
-- 角被遮挡：沿两条可见纸边延长交会出顶点。
-- 角出画面：顺两条边的趋势延长，坐标可为负或超界（脚本接受）。
-
-写入坐标：
-```sh
-python3 /workspace/skills/document-photo-to-pdf/doc_deskew/pipeline.py set 图1.jpg \
-  --quad "左上x,左上y;右上x,右上y;右下x,右下y;左下x,左下y"
-```
-- 一次只写一张图，脚本已强制拦截多图（防串页）。
-- 落盘 `out/corners.json`，同名键覆盖并打印旧值对比；`show` 可随时查看。
-- 报给用户的只能是 `--quad` 串或 4 组坐标数字，禁止"约 (140,390)、纸略倾斜"这类描述。
-
-### 3 · 一条命令出件
-
-```sh
-python3 /workspace/skills/document-photo-to-pdf/doc_deskew/pipeline.py build \
-  --out 文档照片_校正.pdf --paper a4 --force
-```
-
-内部依次：回画角标 → 角点几何校验 → 透视校正+按纸比例拉正+提亮 → 合并 PDF → PDF 渲染检验 → 打印汇总。
-
-参数：
-- `--paper`：标准纸必须传 —— `a4`(0.707)、`letter`(0.773)、`16k`(0.712)、`b5`(0.704)，或数字比例。票据、异形纸不确定就省略，保留原始比例。
-- `--force`：角点校验不过也出件（默认）。
-- 位置参数传图名：只出指定页，如 `build 图2.jpg --out 结果.pdf`（输出 PDF 只含这一页）。
-- `--dpi`：PDF 检验渲染 dpi，默认 100。
-
-### 4 · 看角标图（强制，一次）
-
-**角标图是决定图像处理质量的唯一标准！**
-
-读 `out/N-角标-*.png`（原图 + 同一套网格 + 四角标注），四个角在同一张图上核对：
-1. 绿线是否压在纸边交界？
-2. 纸张上内容是否全在绿线框内？
-3. 4个角标是否都在纸张实际的角上！
-
-**只看不改：** 发现问题只记进报告，记录修正前后角标坐标的表格、不重跑 `build`、不补造辅助图。
-
-| 页码 | 候选的角点坐标 | 实际使用的角点坐标 | 建议修正的角点坐标 |
-|---|---|---|---|
-| 1 | <prepare估算出坐标> | x1,y1;x2,y2;x3,y3;x4,y4 | <事后评估后的坐标> |
-
-## 判定与报告
-
-| 检查项 | 判据 | 不达标含义 |
+| 参数 | 必填 | 说明 |
 |---|---|---|
-| 页数 | 与源图数一致 | 合并出错 |
-| 纸面短边 | ≥ 533px @100dpi | 角点错或分辨率过低 |
-| 纸张比例 | 仅提示 | 传了 `--paper` 应≈1.00，偏差大说明角点有误 |
-| 边缘背景残留 | 边带亮度 ≥ 纸面 80% | 角点落在背景上，内收 3~5px |
-| 内容贴边 | 页边无成片文字级暗像素 | 内容被切，外扩 5px |
+| `images` | 新批次必填 | 图片路径，按传入顺序合并；相对路径按会话目录解析 |
+| `output` | 否 | 默认 `文档照片_校正.pdf`；`batch_id` 模式沿用批次原输出并覆盖 |
+| `paper` | 否 | 默认 `auto`：按同批中位比例统一版式，填满 A4 内容区；偏差超过 20% 的页保持原比例。整批都是 A4 时可传 `a4`；票据/异形纸保持 `auto` 或传数字比例（宽/高） |
+| `orientation` | 否 | 默认 `auto`：**逐页**按本页纸张宽高比定横竖，不看批次多数票。`none` 保持每页原方向；`portrait`/`landscape` 强制整批对齐 |
+| `enhance` | 否 | 调色档，默认 `normal`。`original` 原样不提亮；`strong` 加强；`bw` 黑白（保留灰阶，不二值化） |
+| `dpi` | 否 | `standard`(150) / `high`(300) / 72~600 的数字，默认 150 |
+| `review` | 否 | `off`（默认）/`always`/`auto`；传 `batch_id` 且不传 review 时按 `always` |
+| `batch_id` | 否 | 重生成：读 `data.db` 里的源图、输出、编辑，覆盖同名 PDF；忽略 `images`/`output` |
+| `edits` | 否 | `review/1` 对象或路径；`batch_id` 模式不传时读 `doc_review_job.edits` |
+| `state` | 否 | 上一份 `state.json` 路径；可选，只用于恢复自动角点/调试 |
 
-- **全部通过**：给产物路径、大小、页数、指标，加一句角标图上确认的结果。
-- **不达标**：只报诊断+ 建议，**不自行改、不重跑、不换方法**。用户明确说"再改"后，才改动后重跑一轮，然后交用户决策。
-- **用户没发话就交付**：即使只差 1px、即使一眼看出能更好，也不许动。报告里可写建议，手不能动。
+优先级：`edits.batch` > 显式参数 > 默认值。`edits` 里的角点会跳过检测，直接用给定坐标。
+
+## 看返回值
+
+stdout 是一个 JSON 对象，**先看 `ok`**：
+
+- `ok:true`：`output.path` 是 PDF；`summary` 可直接转述；`warnings` 非空时要一起告诉用户。
+- `ok:false`：不要重试，把 `error.message` 和 `error.hint` 转述给用户。
+
+**单页拍得不好不再等于失败**：检测不到角点、角点校验不过的页会用“画面内缩 3%”的兜底框
+照常出件，该页 `status` 为 `needs_corners`；原图打不开的页标记 `failed` 并跳过。只有一页都
+出不了时才返回 `ok:false`。
+
+成功示例（半自动）：
+
+```json
+{"ok":true,"summary":"3 页已生成；1 页需人工确认",
+ "output":{"path":"/.../合同_校正.pdf","pages":3},
+ "review":{"batch_id":"dr20261023-120000-a1b2","published":true,
+           "url":"/app/task-20261023-001/doc-review/?b=dr20261023-120000-a1b2",
+           "ready":2,"needs_attention":[{"index":2,"status":"needs_corners","reason":"detect_failed"}]},
+ "warnings":[]}
+```
+
+- `review.published=false` 时没有 `url`，不要给用户审核入口。
+- `review.url` 是站内路径：Web 里直接输出成 Markdown 链接即可；微信/外部端需要拼上站点
+  地址才能打开。审核页是拖拽页面，建议让用户在浏览器里用。
+- `review.ready` 是 `status=ready` 的页数；`needs_attention` 含 `review`、`needs_corners`、
+  `needs_orientation`、`render_failed`、`failed`。
+
+`warnings` 里常见的是：某页已旋转 90°、某页用兜底框出件、某页透视校正失败已重试、
+纸面短边偏低。这些表示“已出件但需确认”，按原话转述，不要自己判断“应该没事”。
+`checks.pages` 是逐页数值指标，用户追问时再展开，不必主动倒给用户。
+
+## 审核页与数据
+
+- 页面模板的单一事实源：`skills/document-photo-to-pdf/web/index.html`。
+- 运行时副本：会话 `.app/doc-review/index.html`（每次发布覆盖；不含任何数据注入）。
+- 缩略图：会话 `.app/doc-review/<batch_id>/p<idx>.jpg`（长边 1200，JPEG）。
+- 运行记录：会话 `data.db` 的 `doc_review_batch` / `doc_review_page` / `doc_review_job`。
+  页面通过通用 `/api/db/<task_id>/query` 读，技能自己写；core 不认识这些表。
+
+页面点「生成 PDF」的流程：
+
+1. 把当前修改写成 `doc_review_job.edits`（完整快照，状态 `queued`）；
+2. 调 `POST /api/sessions/<task_id>/skills/document-photo-to-pdf/run`，args 只传 `{"batch_id":"..."}`；
+3. 技能读 job → 应用 edits → 覆盖同名 PDF → 更新 batch/page/job；
+4. 页面重新读 `data.db`，刷新摘要、状态和 PDF 链接。
+
+`edits` 的结构（`review/1`）：
+
+```json
+{"schema":"review/1",
+ "batch":{"paper":"a4","enhance":"normal","dpi":"standard","orientation":"auto"},
+ "pages":[{"i":3,"c":[[0.03,0.05],[0.97,0.04],[0.96,0.95],[0.04,0.96]],"r":90}],
+ "order":[1,2,3],"deleted":[]}
+```
+
+- `i` 永远是**原始 images 的 1-based 下标**，不随页序变化；
+- `c` 是归一化 0~1，相对 exif_transpose 后的原图，顺序左上、右上、右下、左下；
+- `r` 是该页的**最终顺时针旋转**（0/90/180/270），覆盖自动方向判断；不传则用自动结果；
+- `pages` 只需要放与自动基线不同的页（人工角点/旋转）；未改的页由服务端重新检测/评级；
+- `order` 是出件页序，`deleted` 是删除的页；缺省按 images 原序。
+
+技能每次出件会在 PDF 同目录写 `<名字>.state.json`（schema `document-photo-to-pdf/2`）：
+`batch` 是本次四项参数，`pages[]` 记 `auto_corners`（原图像素）、`corners_norm`、
+`rotate`（自动基线）、`rotate_source`、`status`、`reason`。坐标一律归一化，换预览分辨率不会错位。
+
+审核页发布的旧批次只保留最近 5 个；更早的缩略图目录会随下一次新批次自动清理。
 
 ## 内容安全
 
-**禁止用生成式模型处理这类图片。** 生成模型是重绘而非变换，即使只做几何变换，也可能引入伪影或改写文字。本流程只做纯几何变换 + 全局等比提亮，文字信息保持原始像素。
+只做纯几何透视变换 + 全局等比提亮，不调用生成式模型，文字像素不会被重绘。
 
-## 命令速查
+## 拍摄要求（失败时这样建议用户）
 
-下表省略公共前缀 `python3 /workspace/skills/document-photo-to-pdf/doc_deskew/`。
+- 一次只拍一张纸，整张纸完整入画，四边各留 3%~5% 背景；
+- 桌面与纸张反差明显，避开强阴影和反光；
+- 同批材料尽量同方向拍摄；横竖混拍不会自动翻转，需要人确认方向。
 
-| 场景 | 命令 |
-|---|---|
-| 出网格图 | `pipeline.py prepare 图1.jpg 图2.jpg` |
-| 写角点（一张一次） | `pipeline.py set 图1.jpg --quad "x1,y1;x2,y2;x3,y3;x4,y4"` |
-| 查看已落盘 | `pipeline.py show` |
-| 出件 | `pipeline.py build --out 结果.pdf --paper a4` |
-| 只出指定页（PDF 只含该页） | `pipeline.py build 图2.jpg --out 结果.pdf` |
-| 复检已有 PDF（不重新出件） | `pipeline.py check 结果.pdf --expect-pages 2` |
+## 边界
 
-底层模块（与 `pipeline.py` 同目录，由它调用，日常不用直接执行）：
-
-| 模块 | 职责 |
-|---|---|
-| `grid.py` | 画带坐标的网格图 |
-| `auto_quad.py` | 算候选角点 |
-| `prepare.py` | 出网格图：叠候选角点与检出边线 |
-| `preview_quad.py` | 画角标图（叠网格） |
-| `verify_quad.py` | 角点几何校验 |
-| `homography.py` | 透视变换 + 提亮 |
-| `run.py` | 拉正 + 拼页（纯模块，无 CLI） |
-| `make_pdf.py` | 多页合成 PDF |
-| `check.py` | 成品 PDF 检验 |
-
-## 已知边界
-
-- 纸张出画面的部分无法还原，角点可外扩到画面外。
-- 不为凑标准比例拉坐标；比例偏离通常是取点不准或纸张非该规格。
-- 拍摄时四边各留 3%~5% 背景余量。
+- 纸张出画面的部分无法还原；角点可以外扩到画面外。
+- 只保证页面拉正，不保证文字朝上；自动方向只判 90°，180° 需要人在审核页旋转。
+- 检测不到角点的页用“画面内缩 3%”的兜底框出件，标 `needs_corners`，需人补角才是准确裁切。
+- 默认 `paper=auto` 会把同批页面统一到中位比例（偏差 20% 以内），因此各页尺寸与留白一致；
+  偏差更大的页按原比例出件。要严格 A4 用 `paper=a4`。
+- 票据等窄纸建议单独成批，避免与 A4 混批时留白显得很宽。
+- 低分辨率照片会被放大到统一版式，不会因原图像素少而变小；清晰度仍受原图限制。
+- 数字比例只改纸面比例，PDF 画布仍是 A4；换画布请用 a4/letter/16k/b5。
+- 支持 jpg/png/webp/bmp/tif；HEIC 需要额外依赖，当前不支持。
+- 低分辨率、边缘背景残留、内容贴边只在 `warnings`/`checks` 里给指标，不会自动修正。
+- 深色纸、彩色纸、纸张与桌面颜色接近时，自动检测可能不稳，建议换对比明显的背景重拍。
+- 单次建议不超过 20 页；页数更多或原图很大时可能触发技能 120s 超时，可分批处理或调高
+  `skills.timeout_ms`。
+- 一图只处理一张纸；同框多张纸只取最大的一张。

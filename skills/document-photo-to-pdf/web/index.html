@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>文档照片审核</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#0b0f17;color:#e8edf5;
+  font:14px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC",sans-serif;
+  overscroll-behavior:none}
+body{display:flex;flex-direction:column;height:100%;height:100dvh}
+
+.top{display:flex;align-items:center;gap:6px;flex:none;z-index:5;
+  padding:6px 10px;padding-top:calc(6px + env(safe-area-inset-top));
+  border-bottom:1px solid #1b2434;background:#0b0f17}
+.top .nav{width:36px;height:40px;font-size:20px;line-height:1;border:0;border-radius:9px;
+  background:#161f2e;color:#e8edf5;flex:none;padding:0}
+.top .nav:disabled{opacity:.25}
+.pager{min-width:48px;text-align:center;color:#9fb0c8;
+  font-variant-numeric:tabular-nums;flex:none}
+.pager b{color:#e8edf5;font-size:15px}
+.acts{margin-left:auto;display:flex;gap:4px;flex:none}
+.ico{height:40px;width:40px;padding:0;border:0;border-radius:9px;background:#161f2e;
+  color:#c3d0e2;display:flex;align-items:center;justify-content:center;flex:none;gap:7px}
+.ico:active{background:#22304a}
+.ico.pri{background:#1f6feb;color:#fff}
+.ico svg{width:20px;height:20px;display:block;flex:none}
+.lbl{display:none;font-size:13px;white-space:nowrap}
+
+/* 移动端翻页按钮：浮在图片左右两侧 */
+/* 图片下方底栏：‹ 文件名 ›  */
+.footbar{display:flex;align-items:center;gap:8px;flex:none;z-index:6;
+  padding:6px 10px 6px;padding-bottom:calc(6px + env(safe-area-inset-bottom));
+  border-top:1px solid #1b2434;background:#0b0f17}
+.footbar .pnav{width:44px;height:44px;padding:0;border:0;border-radius:10px;flex:none;
+  background:#161f2e;color:#e8edf5;font-size:22px;line-height:1;
+  display:flex;align-items:center;justify-content:center}
+.footbar .pnav:disabled{opacity:.25}
+.footname{flex:1;min-width:0;text-align:center;font-size:12px;color:#9fb0c8;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.stage{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;touch-action:none;
+  background:repeating-conic-gradient(#101724 0 25%,#0d1420 0 50%) 0 0/22px 22px}
+#photo{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.h{position:absolute;width:44px;height:44px;margin:0;touch-action:none;cursor:grab;
+  display:flex;align-items:center;justify-content:center;z-index:5}
+.h::after{content:"";width:16px;height:16px;border-radius:50%;
+  background:#4ea1ff;border:2px solid #fff;
+  box-shadow:0 0 0 1px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.5)}
+.h.on::after{background:#ffb020;transform:scale(1.15)}
+.h.pushed::before{content:"";position:absolute;width:22px;height:22px;border-radius:50%;
+  border:1px dashed rgba(78,161,255,.55)}
+#loupe{position:absolute;width:130px;height:130px;border-radius:50%;
+  border:2px solid #4ea1ff;box-shadow:0 6px 20px rgba(0,0,0,.6);display:none;
+  background:#000;pointer-events:none;left:0;top:0;z-index:6}
+/* 底栏在预览模式下也显示，所以底栏要跟 stage 一起隐藏/显示 */
+
+/* 移动端只显示一个窗口：默认原图，点左上角切到预览 */
+#prevwrap{display:none;flex:1 1 auto;min-height:0;flex-direction:column;
+  background:#0a0e16}
+.pv-hd{display:flex;align-items:center;gap:8px;padding:8px 12px 0;flex:none;
+  font-size:12px;color:#7d8ea6}
+#prevwrap .box{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+  padding:8px 12px 10px;overflow:hidden}
+#preview{display:block;max-width:100%;max-height:100%}
+
+@media (max-width:899.98px){
+  .top .nav{display:none}
+  body.view-prev .stage{display:none}
+  body.view-prev #prevwrap{display:flex}
+}
+
+.sheet{position:fixed;inset:0;background:rgba(4,7,12,.74);display:none;
+  align-items:flex-end;justify-content:center;z-index:20}
+.sheet.on{display:flex}
+.sheet .card{background:#111826;width:100%;max-width:520px;border-radius:16px 16px 0 0;
+  padding:16px 16px calc(14px + env(safe-area-inset-bottom));max-height:86vh;overflow:auto}
+.sheet .card h3{margin:0 0 6px;font-size:15px;font-weight:600}
+.sheet .card p{margin:0 0 10px;color:#8ea1ba;font-size:12px;line-height:1.5}
+.grp{margin:14px 0 0}
+.gl{font-size:12px;color:#8ea1ba;margin-bottom:6px}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1 1 0;min-width:62px;height:38px;border:1px solid #22304a;
+  border-radius:9px;background:#141d2b;color:#c3d0e2;font-size:13px;padding:0 6px}
+.seg button.on{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.sheet .row{display:flex;gap:8px;margin-top:16px}
+.sheet .row button{flex:1;height:44px;border:0;border-radius:10px;
+  background:#1b2536;color:#e8edf5;font-size:15px}
+.sheet .row button.pri{background:#1f6feb;color:#fff}
+.hint{color:#6f8098;font-size:11px;margin:12px 0 0}
+
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));
+  transform:translateX(-50%);background:rgba(24,34,50,.96);color:#e8edf5;
+  padding:9px 16px;border-radius:99px;font-size:13px;opacity:0;pointer-events:none;
+  transition:opacity .18s;z-index:40;max-width:86vw;text-align:center}
+#toast.on{opacity:1}
+
+/* 桌面：左原图、右预览，顶栏按钮带文字 */
+@media (min-width:900px){
+  body{display:grid;grid-template-columns:minmax(0,1fr) 432px;
+    grid-template-rows:auto minmax(0,1fr) auto;height:100dvh}
+  .top{grid-column:1/-1;grid-row:1}
+  .stage{grid-row:2;grid-column:1}
+  #prevwrap{grid-row:2/4;grid-column:2;border-left:1px solid #1b2434}
+  #view{display:none}
+  .footbar{grid-row:3;grid-column:1;border-top:1px solid #1b2434;padding-bottom:6px}
+  .footbar .pnav{display:none}
+  /* 桌面端顶栏已有翻页，底栏两侧占位保持文件名真正居中 */
+  .ico{width:auto;padding:0 14px}
+  .ico .lbl{display:inline}
+  /* 桌面端翻页在顶栏，底栏只留居中的文件名 */
+  .footname{font-size:13px;color:#b9c8dd}
+}
+
+/* 一键重生成：浮动主按钮。手机放在底栏上方，桌面放在预览区左侧，避免挤顶栏。 */
+.fab{position:fixed;right:14px;bottom:calc(64px + env(safe-area-inset-bottom));z-index:15;
+  height:48px;padding:0 18px;border:0;border-radius:24px;background:#1f6feb;color:#fff;
+  font-size:15px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.45);
+  display:flex;align-items:center;justify-content:center}
+.fab:active{background:#1a5fd0}
+.fab:disabled{opacity:.55}
+.fab .lbl{display:inline}
+@media (min-width:900px){.fab{right:456px;bottom:76px}}
+</style>
+</head>
+<body>
+<div class="top">
+  <button class="ico" id="view" title="切换原图 / 预览" aria-label="切换视图"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12S5.5 4.5 12 4.5 22.5 12 22.5 12 18.5 19.5 12 19.5 1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+  <button class="nav" id="navPrev" aria-label="上一页">&#8249;</button>
+  <div class="pager"><b id="cur">1</b> / <span id="total">1</span></div>
+  <button class="nav" id="navNext" aria-label="下一页">&#8250;</button>
+  <div class="acts">
+    <button class="ico" id="rot" title="旋转 90%" aria-label="旋转"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg><span class="lbl">旋转 90&#176;</span></button>
+    <button class="ico" id="reset" title="重置本页" aria-label="重置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-4"/></svg><span class="lbl">重置本页</span></button>
+    <button class="ico" id="gear" title="全局设置" aria-label="全局设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2.1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2.1" fill="currentColor" stroke="none"/><circle cx="9" cy="17" r="2.1" fill="currentColor" stroke="none"/></svg><span class="lbl">全局设置</span></button>
+  </div>
+</div>
+
+<div class="stage" id="stage">
+  <canvas id="photo"></canvas>
+  <div class="h" id="h0"></div>
+  <div class="h" id="h1"></div>
+  <div class="h" id="h2"></div>
+  <div class="h" id="h3"></div>
+  <canvas id="loupe"></canvas>
+</div>
+
+<div id="prevwrap">
+  <div class="pv-hd"><span>校正预览</span></div>
+  <div class="box" id="pbox"><canvas id="preview"></canvas></div>
+</div>
+
+<div class="footbar" id="footbar">
+  <button class="pnav" id="prev" aria-label="上一页">&#8249;</button>
+  <div class="footname" id="name"></div>
+  <button class="pnav" id="next" aria-label="下一页">&#8250;</button>
+</div>
+
+<div id="setSheet" class="sheet">
+  <div class="card">
+    <h3>全局设置</h3>
+    <p>这四项对整批生效，不影响单页角点。</p>
+    <div class="grp"><div class="gl">纸张</div>
+      <div class="seg" id="seg-paper">
+        <button data-v="a4">A4</button>
+        <button data-v="auto">原比例</button>
+        <button data-v="16k">16K</button>
+        <button data-v="b5">B5</button>
+      </div>
+    </div>
+    <div class="grp"><div class="gl">图像处理</div>
+      <div class="seg" id="seg-enhance">
+        <button data-v="original">原样</button>
+        <button data-v="normal">标准</button>
+        <button data-v="strong">加强</button>
+        <button data-v="bw">黑白</button>
+      </div>
+    </div>
+    <div class="grp"><div class="gl">清晰度</div>
+      <div class="seg" id="seg-dpi">
+        <button data-v="standard">标准 150dpi</button>
+        <button data-v="high">高清 300dpi</button>
+      </div>
+    </div>
+    <div class="grp"><div class="gl">方向</div>
+      <div class="seg" id="seg-orientation">
+        <button data-v="auto">自动</button>
+        <button data-v="portrait">全部竖</button>
+        <button data-v="landscape">全部横</button>
+      </div>
+    </div>
+    <div class="grp"><div class="gl">本页</div>
+      <div class="seg" id="seg-page">
+        <button id="moveUp">上移</button>
+        <button id="moveDown">下移</button>
+        <button id="delPage">删除/恢复</button>
+      </div>
+    </div>
+    <p id="summary" class="hint"></p>
+    <div class="row"><button id="pdf" class="pri">下载当前 PDF</button></div>
+    <div class="row"><button id="setClose" class="pri">完成</button></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<button id="apply" class="fab" title="应用修改并重新生成"><span class="lbl">生成 PDF</span></button>
+
+<script>
+"use strict";
+var TASK = (location.pathname.split("/").filter(Boolean)[1] || "");
+var BATCH = (new URLSearchParams(location.search).get("b") || "");
+
+var DPR = Math.min(2, window.devicePixelRatio || 1);
+var SAVE_KEY = "docreview/v2/" + (BATCH || "x");
+var HANDLES = [0,1,2,3].map(function(i){ return document.getElementById("h"+i); });
+var cv, ctx, loupe, drag = null;
+var V = {dw:0, dh:0, ox:0, oy:0};
+
+/* 全局四项：只影响出件参数，不影响角点。对应 params 里的 paper/enhance/dpi/orientation */
+var G = {paper:"auto", enhance:"normal", dpi:"standard", orientation:"auto"};
+var SEGS = [["seg-paper","paper"],["seg-enhance","enhance"],
+            ["seg-dpi","dpi"],["seg-orientation","orientation"]];
+var ICON_EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12S5.5 4.5 12 4.5 22.5 12 22.5 12 18.5 19.5 12 19.5 1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+var ICON_CROP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>';
+
+/* ---------------------------------------------------------------- 数据 */
+var S = {cur: 0, pages: [], batch: null, busy: false};
+
+function parseJSON(s, d) {
+  if (!s) return d;
+  try { return JSON.parse(s); } catch (e) { return d; }
+}
+
+function apiDb(sql, params) {
+  return fetch("/api/db/" + encodeURIComponent(TASK) + "/query", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({sql: sql, params: params || []})
+  }).then(function(r){
+    return r.json().then(function(j){
+      if (j && j.error) throw new Error(j.error);
+      return j;
+    });
+  });
+}
+
+function paintSummary() {
+  var b = S.batch || {};
+  var el = document.getElementById("summary");
+  if (el) el.textContent = b.summary || "";
+  var pdf = document.getElementById("pdf");
+  if (pdf) {
+    if (b.output) {
+      pdf.disabled = false;
+      pdf.dataset.url = "/api/sessions/" + encodeURIComponent(TASK) +
+        "/files/download?path=" + encodeURIComponent(b.output) +
+        "&v=" + encodeURIComponent(b.updated_at || Date.now());
+    } else {
+      pdf.disabled = true;
+      pdf.dataset.url = "";
+    }
+  }
+}
+
+function loadBatch() {
+  var sql = BATCH
+    ? "SELECT * FROM doc_review_batch WHERE id = ? LIMIT 1"
+    : "SELECT * FROM doc_review_batch ORDER BY created_at DESC, updated_at DESC LIMIT 1";
+  return apiDb(sql, BATCH ? [BATCH] : []).then(function(rows){
+    var b = rows && rows[0];
+    if (!b) throw new Error("没有可审核的批次");
+    BATCH = b.id;
+    S.batch = b;
+    SAVE_KEY = "docreview/v2/" + BATCH;
+    G.paper = b.paper || "auto";
+    G.enhance = b.enhance || "normal";
+    G.dpi = (b.dpi === "150" ? "standard" : b.dpi === "300" ? "high" : (b.dpi || "standard"));
+    G.orientation = b.orientation || "auto";
+    return apiDb("SELECT * FROM doc_review_page WHERE batch_id = ? ORDER BY sort, idx", [BATCH]);
+  }).then(function(rows){
+    S.pages = (rows || []).map(function(r){
+      var c = parseJSON(r.corners, null) || parseJSON(r.auto_corners_norm, null);
+      var base = parseJSON(r.auto_corners_norm, null) || c;
+      return {
+        i: r.idx,
+        name: (r.source || "").split("/").pop() || ("第 " + r.idx + " 页"),
+        w: r.w || 0,
+        h: r.h || 0,
+        img: r.thumb ? ("./" + r.thumb) : "",
+        c: c ? c.map(function(q){ return [q[0], q[1]]; }) : [[0,0],[1,0],[1,1],[0,1]],
+        base: base ? base.map(function(q){ return [q[0], q[1]]; }) : [[0,0],[1,0],[1,1],[0,1]],
+        r: r.rotate || 0,
+        r0: r.auto_rotate || 0,
+        status: r.status || "ready",
+        reason: r.reason || null,
+        deleted: !!r.deleted,
+        error: r.error || null,
+        im: null
+      };
+    });
+    if (!S.pages.length) throw new Error("批次没有页面");
+    if (!S.pages.some(function(p){ return !p.deleted; })) throw new Error("所有页面都被删除了");
+    S.cur = 0;
+    while (S.cur < S.pages.length && S.pages[S.cur].deleted) S.cur++;
+    if (S.cur >= S.pages.length) S.cur = 0;
+    paintSummary();
+    return S.pages;
+  });
+}
+
+function showEmpty(msg) {
+  var st = document.getElementById("stage");
+  if (st) {
+    st.innerHTML = "";
+    var d = document.createElement("div");
+    d.style.cssText = "padding:40px;text-align:center;color:#8a93a5;font-size:14px;line-height:1.7";
+    d.textContent = msg;
+    st.appendChild(d);
+  }
+  var foot = document.getElementById("name");
+  if (foot) foot.textContent = msg;
+}
+
+function loadSaved() {
+  try {
+    var raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    var d = JSON.parse(raw);
+    if (!d) return;
+    if (d.g) {
+      for (var k in G) { if (d.g[k] != null) G[k] = d.g[k]; }
+    }
+    if (!d.pages) return;
+    d.pages.forEach(function(item){
+      /* 按 index 找，不靠数组下标：删页/跳过页后 index 可能不连续 */
+      var p = null;
+      S.pages.forEach(function(x){ if (x.i === item.i) p = x; });
+      if (!p) return;
+      if (item.c && item.c.length === 4) p.c = item.c;
+      if (typeof item.r === "number") p.r = item.r;
+      if (typeof item.deleted === "boolean") p.deleted = item.deleted;
+    });
+    if (d.order && d.order.length) {
+      var by = {}, next = [];
+      S.pages.forEach(function(x){ by[x.i] = x; });
+      d.order.forEach(function(i){ if (by[i]) { next.push(by[i]); delete by[i]; } });
+      S.pages.forEach(function(x){ if (by[x.i]) next.push(x); });
+      if (next.length === S.pages.length) S.pages = next;
+    }
+  } catch (e) { /* 存坏了就当没存过 */ }
+}
+function save() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      pages: S.pages.map(function(p){ return {i:p.i, c:p.c, r:p.r, deleted:!!p.deleted}; }),
+      order: S.pages.map(function(p){ return p.i; }),
+      g: G
+    }));
+  } catch (e) {}
+}
+
+/* ---------------------------------------------------------------- 几何 */
+function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
+function toCanvas(q){ return [V.ox + q[0]*V.dw, V.oy + q[1]*V.dh]; }
+function dist(a, b){ return Math.hypot(a[0]-b[0], a[1]-b[1]); }
+function r4(v){ return Math.round(v*10000)/10000; }
+
+function rotateCw(q){
+  /* 与服务端 compose.rotate_quad_cw 一致：序列移一位 = 页面顺时针 90° */
+  return [q[3], q[0], q[1], q[2]];
+}
+
+/* ---------------------------------------------------------------- 绘原图 */
+function stageSize() {
+  var st = document.getElementById("stage");
+  return [st.clientWidth, st.clientHeight];
+}
+
+/* 把手半径 22px。图片四周至少留出这个量，否则纸边一旦贴到画面边缘，
+   把手就有一半在屏幕外——竖版纸放在竖屏里就是这种常态。 */
+var PAD_EDGE = 26;
+
+function layout() {
+  var sz = stageSize(), w = sz[0], h = sz[1];
+  if (!w || !h) { drawPreview(); return; }   /* stage 隐藏时（切到预览）尺寸为 0 */
+  cv = document.getElementById("photo");
+  cv.width = Math.max(1, Math.round(w*DPR));
+  cv.height = Math.max(1, Math.round(h*DPR));
+  cv.style.width = w+"px";
+  cv.style.height = h+"px";
+
+  ctx = cv.getContext("2d");
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  var p = S.pages[S.cur];
+  if (!p || p.deleted || !p.w || !p.h) { placeHandles(); drawPreview(); return; }
+  var s = Math.min((w - 2*PAD_EDGE)/p.w, (h - 2*PAD_EDGE)/p.h);
+  V.dw = p.w*s; V.dh = p.h*s;
+  V.ox = (w - V.dw)/2; V.oy = (h - V.dh)/2;
+
+  drawPhoto();
+  placeHandles();
+  drawPreview();
+}
+
+function drawPhoto() {
+  if (!ctx) return;
+  ctx = cv.getContext("2d");
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+
+  var p = S.pages[S.cur];
+  if (!p || p.deleted || !p.im || !p.w || !p.h) return;
+  if (p.im) ctx.drawImage(p.im, V.ox, V.oy, V.dw, V.dh);
+  else { /* 图还没解出来，先留空 */ }
+
+  var pts = p.c.map(toCanvas);
+  /* 四边形以外压暗：evenodd 让内圈变成洞 */
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(V.ox, V.oy, V.dw, V.dh);
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  ctx.lineTo(pts[3][0], pts[3][1]);
+  ctx.lineTo(pts[2][0], pts[2][1]);
+  ctx.lineTo(pts[1][0], pts[1][1]);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(6,10,17,.66)";
+  ctx.fill("evenodd");
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  ctx.lineTo(pts[1][0], pts[1][1]);
+  ctx.lineTo(pts[2][0], pts[2][1]);
+  ctx.lineTo(pts[3][0], pts[3][1]);
+  ctx.closePath();
+  ctx.strokeStyle = "#4ea1ff";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function placeHandles() {
+  var sz = stageSize(), w = sz[0], h = sz[1];
+  var R = 22;                       /* 把手半径，与服务端 CSS 的 44px 对应 */
+  var p = S.pages[S.cur];
+  if (!p || p.deleted || !p.w || !p.h) {
+    for (var k=0;k<HANDLES.length;k++) HANDLES[k].style.display = "none";
+    return;
+  }
+  for (var k2=0;k2<HANDLES.length;k2++) HANDLES[k2].style.display = "";
+  for (var i=0;i<4;i++) {
+    var q = toCanvas(p.c[i]);
+    var cx = q[0], cy = q[1];
+    /* 角点贴边时把手整体往内对齐，让整个圆留在屏幕内，且保持视觉可见 */
+    if (cx < R + 2) cx = R + 2;
+    if (cx > w - R - 2) cx = w - R - 2;
+    if (cy < R + 2) cy = R + 2;
+    if (cy > h - R - 2) cy = h - R - 2;
+    HANDLES[i].style.left = (cx-R)+"px";
+    HANDLES[i].style.top  = (cy-R)+"px";
+    /* 被推过的把手加个细边，提醒“圆圈位置不等于角点位置” */
+    var pushed = Math.abs(cx - q[0]) > 0.5 || Math.abs(cy - q[1]) > 0.5;
+    HANDLES[i].className = "h" + (pushed ? " pushed" : "");
+  }
+}
+
+/* ---------------------------------------------------------------- 放大镜 */
+function showLoupe(i, ev) {
+  var p = S.pages[S.cur];
+  if (!p || p.deleted || !p.im || !p.w || !p.h) return;
+  loupe = document.getElementById("loupe");
+  var R = 130;
+  loupe.width = R*DPR; loupe.height = R*DPR;
+  loupe.style.display = "block";
+  var g = loupe.getContext("2d");
+  g.setTransform(1,0,0,1,0,0);
+  g.fillStyle = "#000";
+  g.fillRect(0,0,loupe.width,loupe.height);
+  g.setTransform(DPR,0,0,DPR,0,0);
+
+  var cx = p.c[i][0]*p.w, cy = p.c[i][1]*p.h;
+  var span = 60;                      /* 取源图 60px 见方，放大到 130px */
+  g.drawImage(p.im, cx-span/2, cy-span/2, span, span, 0, 0, R, R);
+  g.strokeStyle = "rgba(255,77,79,.9)";
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(R/2-14,R/2); g.lineTo(R/2+14,R/2);
+  g.moveTo(R/2,R/2-14); g.lineTo(R/2,R/2+14);
+  g.stroke();
+
+  /* 摆在手指上方；上方放不下就翻到下方；下方也放不下则避开该边往侧边器 */
+  var sz = stageSize(), sw = sz[0], sh = sz[1];
+  var r = document.getElementById("stage").getBoundingClientRect();
+  var fx = ev.clientX - r.left, fy = ev.clientY - r.top;
+  var W = R, Hh = R;
+  var x = clamp(fx - W/2, 6, sw - W - 6);
+  var y = fy - Hh - 20;
+  if (y < 6) y = fy + 30;                          /* 上方不行 → 下方 */
+  if (y + Hh > sh - 6) {                           /* 下方也不行 → 左右两侧 */
+    y = clamp(fy - Hh/2, 6, sh - Hh - 6);
+    x = (fx + 40 + W <= sw - 6) ? fx + 40 : fx - 40 - W;
+    x = clamp(x, 6, sw - W - 6);
+  }
+  loupe.style.left = x+"px";
+  loupe.style.top = y+"px";
+}
+function hideLoupe(){ if (loupe) loupe.style.display = "none"; }
+
+/* ---------------------------------------------------------------- 透视预览 */
+function drawPreview() {
+  var p = S.pages[S.cur];
+  if (!p || p.deleted || !p.im || !p.w || !p.h) {
+    var empty = document.getElementById("preview");
+    if (empty) { empty.width = 1; empty.height = 1; }
+    return;
+  }
+  var out = document.getElementById("preview");
+  var box = out.parentElement;
+  var maxW = Math.max(120, box.clientWidth - 8);
+  var maxH = Math.max(80, box.clientHeight - 8);
+
+  /* 归一化 -> 缩略图像素，再按 r 旋转（与服务端同一套角点旋转规则） */
+  var q = p.c.map(function(v){ return [v[0]*p.w, v[1]*p.h]; });
+  var steps = ((p.r % 360) + 360) % 360 / 90;
+  for (var k=0;k<steps;k++) q = rotateCw(q);
+
+  var wsrc = (dist(q[0],q[1]) + dist(q[3],q[2])) / 2;
+  var hsrc = (dist(q[0],q[3]) + dist(q[1],q[2])) / 2;
+  var asp = Math.max(0.05, wsrc / Math.max(1e-6, hsrc));
+
+  var W = maxW, H = W/asp;
+  if (H > maxH) { H = maxH; W = H*asp; }
+  W = Math.max(20, Math.round(W)); H = Math.max(20, Math.round(H));
+
+  out.width = Math.round(W*DPR); out.height = Math.round(H*DPR);
+  out.style.width = W+"px"; out.style.height = H+"px";
+  warp(p.im, q, out, W, H, 16);
+}
+
+function warp(img, quad, out, W, H, N) {
+  var g = out.getContext("2d");
+  g.setTransform(DPR,0,0,DPR,0,0);
+  g.clearRect(0,0,W,H);
+  g.fillStyle = "#fff";
+  g.fillRect(0,0,W,H);
+  g.imageSmoothingEnabled = true;
+  if ("imageSmoothingQuality" in g) g.imageSmoothingQuality = "high";
+
+  /* 双线性取源点：把四边形划成 N×N 格，每格两三角形用仿射近似投影。
+     网格够细时与真正的单应变换肉眼无差，且不需要任何库。 */
+  function srcPt(u, v) {
+    var tl=quad[0], tr=quad[1], br=quad[2], bl=quad[3];
+    var tx = tl[0]+(tr[0]-tl[0])*u, ty = tl[1]+(tr[1]-tl[1])*u;
+    var bx = bl[0]+(br[0]-bl[0])*u, by = bl[1]+(br[1]-bl[1])*u;
+    return [tx+(bx-tx)*v, ty+(by-ty)*v];
+  }
+  function tri(s0,s1,s2, d0,d1,d2) {
+    var sx1=s1[0]-s0[0], sy1=s1[1]-s0[1], sx2=s2[0]-s0[0], sy2=s2[1]-s0[1];
+    var dx1=d1[0]-d0[0], dy1=d1[1]-d0[1], dx2=d2[0]-d0[0], dy2=d2[1]-d0[1];
+    var det = sx1*sy2 - sx2*sy1;
+    if (Math.abs(det) < 1e-9) return;
+    var a = (dx1*sy2 - dx2*sy1)/det;
+    var c = (-dx1*sx2 + dx2*sx1)/det;
+    var b = (dy1*sy2 - dy2*sy1)/det;
+    var d = (-dy1*sx2 + dy2*sx1)/det;
+    var e = d0[0] - (a*s0[0] + c*s0[1]);
+    var f = d0[1] - (b*s0[0] + d*s0[1]);
+    g.save();
+    g.beginPath();
+    g.moveTo(d0[0],d0[1]); g.lineTo(d1[0],d1[1]); g.lineTo(d2[0],d2[1]);
+    g.closePath();
+    g.clip();
+    g.setTransform(a*DPR, b*DPR, c*DPR, d*DPR, e*DPR, f*DPR);
+    g.drawImage(img, 0, 0);
+    g.restore();
+  }
+
+  for (var i=0;i<N;i++) {
+    for (var j=0;j<N;j++) {
+      var u0=i/N, u1=(i+1)/N, v0=j/N, v1=(j+1)/N;
+      var s00=srcPt(u0,v0), s10=srcPt(u1,v0), s11=srcPt(u1,v1), s01=srcPt(u0,v1);
+      var d00=[u0*W, v0*H], d10=[u1*W, v0*H], d11=[u1*W, v1*H], d01=[u0*W, v1*H];
+      tri(s00,s10,s11, d00,d10,d11);
+      tri(s00,s11,s01, d00,d11,d01);
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- 交互 */
+function bindDrag() {
+  var cvEl = document.getElementById("photo");
+  var HIT_R = 60;        /* 命中半径：手指不用精确摸到 44px 的圆 */
+
+  function toNorm(ev) {
+    var r = cvEl.getBoundingClientRect();
+    return [(ev.clientX - r.left - V.ox) / V.dw,
+            (ev.clientY - r.top - V.oy) / V.dh];
+  }
+
+  /* 角点优先于翻页按钮：两者可能撞在同一块屏幕上，角点是主操作 */
+  function hitHandle(ev) {
+    var p = S.pages[S.cur];
+    if (!p || p.deleted || !p.w || !p.h) return -1;
+    var r = cvEl.getBoundingClientRect();
+    var px = ev.clientX - r.left, py = ev.clientY - r.top;
+    var best = -1, bestD = HIT_R;
+    for (var i=0;i<4;i++) {
+      var q = toCanvas(p.c[i]);
+      var d = Math.hypot(q[0]-px, q[1]-py);
+      if (d <= bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function begin(i, ev) {
+    var p = S.pages[S.cur];
+    if (!p || p.deleted || !p.w || !p.h) return;
+    drag = {i: i, id: ev.pointerId};
+    HANDLES[i].classList.add("on");
+    showLoupe(i, ev);
+  }
+
+  function move(ev) {
+    if (!drag) return;
+    var p = S.pages[S.cur];
+    if (!p || p.deleted || !p.w || !p.h) return;
+    var n = toNorm(ev);
+    /* 允许拖出画面：纸被切掉一块时角点必须在画面外，服务端会外推填白 */
+    p.c[drag.i] = [clamp(n[0],-0.35,1.35), clamp(n[1],-0.35,1.35)];
+    drawPhoto();
+    placeHandles();
+    showLoupe(drag.i, ev);
+  }
+
+  function end() {
+    if (!drag) return;
+    var i = drag.i;
+    drag = null;
+    if (HANDLES[i]) HANDLES[i].classList.remove("on");
+    hideLoupe();
+    drawPreview();
+    save();
+  }
+
+  /* 1) 按下：优先判断是否落在某个角的命中半径内（不看把手元素位置） */
+  cvEl.addEventListener("pointerdown", function(ev){
+    var i = hitHandle(ev);
+    if (i < 0) return;
+    ev.preventDefault();
+    try { cvEl.setPointerCapture(ev.pointerId); } catch (e) {}
+    begin(i, ev);
+  }, {passive: false});
+
+  /* 2) 拖动：canvas 同路径 + document 兵底。setPointerCapture 在指针
+    跑出视口/被浏览器收走时可能丢事件，靠 document 这一层也不会卡住。 */
+  cvEl.addEventListener("pointermove", move);
+  document.addEventListener("pointermove", move);
+
+  /* 3) 收尾：pointerup/cancel 可能在任意元素上触发，统一挂 document */
+  document.addEventListener("pointerup", end);
+  document.addEventListener("pointercancel", end);
+
+  /* 四、保底：把手自身的按下（部分浏览器在 canvas 上层元素上不派 pointerdown） */
+  HANDLES.forEach(function(el, i){
+    el.addEventListener("pointerdown", function(ev){
+      if (drag) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      begin(i, ev);
+    }, {passive: false});
+  });
+}
+
+function paintChrome() {
+  if (!S.pages.length) return;
+  var p = S.pages[S.cur];
+  if (!p) return;
+  document.getElementById("cur").textContent = S.cur + 1;
+  document.getElementById("total").textContent = S.pages.length;
+  document.getElementById("name").textContent = p.name +
+    (p.deleted ? "（已标记删除）" : (!p.img ? "（图片不可读）" : ""));
+  document.getElementById("prev").disabled = (S.cur === 0);
+  document.getElementById("navPrev").disabled = (S.cur === 0);
+  document.getElementById("next").disabled = (S.cur === S.pages.length - 1);
+  document.getElementById("navNext").disabled = (S.cur === S.pages.length - 1);
+}
+
+function goto(idx) {
+  S.cur = clamp(idx, 0, S.pages.length - 1);
+  paintChrome();
+  layout();
+}
+
+function step(delta) {
+  goto(S.cur + delta);
+}
+
+/* ---------------------------------------------------------------- 导出 */
+function paintSeg() {
+  SEGS.forEach(function(g){
+    var el = document.getElementById(g[0]);
+    if (!el) return;
+    var bs = el.querySelectorAll("button");
+    for (var i=0;i<bs.length;i++) {
+      if (bs[i].getAttribute("data-v") === G[g[1]]) bs[i].classList.add("on");
+      else bs[i].classList.remove("on");
+    }
+  });
+}
+
+function collect() {
+  var out = {schema: "review/1", batch: {
+    paper: G.paper, enhance: G.enhance, dpi: G.dpi, orientation: G.orientation
+  }, pages: [], order: [], deleted: []};
+  /* batch 总是全量输出；pages 只放“与自动基线不同”的页（人工角点/旋转），
+     未改的页由服务端重新检测/评级——这样 fallback 页的状态不会被误升成 ready。 */
+  S.pages.forEach(function(p){
+    if (p.deleted) { out.deleted.push(p.i); return; }
+    out.order.push(p.i);
+    var moved = p.c.some(function(v, i){
+      return Math.abs(v[0]-p.base[i][0]) > 1e-4 || Math.abs(v[1]-p.base[i][1]) > 1e-4;
+    });
+    if (!moved && p.r === p.r0) return;
+    out.pages.push({i: p.i, c: p.c.map(function(v){ return [r4(v[0]), r4(v[1])]; }), r: p.r || 0});
+  });
+  return out;
+}
+
+function setBusy(on) {
+  S.busy = on;
+  var b = document.getElementById("apply");
+  if (!b) return;
+  b.disabled = on;
+  var l = b.querySelector(".lbl");
+  if (l) l.textContent = on ? "生成中…" : "生成";
+}
+
+function loadImages() {
+  var pending = 0;
+  S.pages.forEach(function(p){
+    p.im = null;
+    if (!p.img) return;
+    pending++;
+    var im = new Image();
+    im.onload = function(){
+      p.im = im;
+      pending--;
+      if (S.pages[S.cur] === p) { drawPhoto(); drawPreview(); }
+      if (pending === 0) { drawPhoto(); drawPreview(); }
+    };
+    im.onerror = function(){
+      pending--;
+      toast("第 " + p.i + " 页图片加载失败");
+    };
+    im.src = p.img;
+  });
+  if (pending === 0) { drawPhoto(); drawPreview(); }
+}
+
+function reloadAfterApply() {
+  return loadBatch().then(function(){
+    /* 服务端已经把应用后的角点写回 DB；清掉本地草稿，避免旧值盖回来 */
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+    S.cur = 0;
+    while (S.cur < S.pages.length && S.pages[S.cur].deleted) S.cur++;
+    if (S.cur >= S.pages.length) S.cur = 0;
+    loadImages();
+    paintChrome();
+    paintSeg();
+    layout();
+  });
+}
+
+function applyChanges() {
+  if (S.busy) return;
+  var edits = collect();
+  setBusy(true);
+  toast("已提交，正在重新生成…");
+  var ts = new Date().toISOString();
+  apiDb(
+    "INSERT INTO doc_review_job(batch_id,edits,status,message,requested_at,started_at,finished_at) " +
+    "VALUES (?,?,?,?,?,NULL,NULL) " +
+    "ON CONFLICT(batch_id) DO UPDATE SET edits=excluded.edits,status='queued',message=NULL," +
+    "requested_at=excluded.requested_at,started_at=NULL,finished_at=NULL",
+    [BATCH, JSON.stringify(edits), "queued", null, ts]
+  ).then(function(){
+    return fetch("/api/sessions/" + encodeURIComponent(TASK) +
+                 "/skills/document-photo-to-pdf/run", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({args: {batch_id: BATCH}})
+    });
+  }).then(function(r){
+    return r.json().then(function(j){ return {status: r.status, body: j}; });
+  }).then(function(x){
+    var j = x.body || {};
+    if (x.status >= 400 || j.ok === false) {
+      throw new Error(j.error || ("HTTP " + x.status));
+    }
+    var res = j.result || {};
+    if (res.ok === false) {
+      throw new Error((res.error && res.error.message) || res.summary || "生成失败");
+    }
+    return reloadAfterApply();
+  }).then(function(){
+    toast("已重新生成");
+  }).catch(function(e){
+    toast("生成失败：" + (e && e.message || e));
+  }).then(function(){
+    setBusy(false);
+  });
+}
+
+function movePage(delta) {
+  if (S.busy) return;
+  var p = S.pages[S.cur];
+  if (!p) return;
+  var j = S.cur + delta;
+  while (j >= 0 && j < S.pages.length && S.pages[j].deleted) j += delta;
+  if (j < 0 || j >= S.pages.length) return;
+  S.pages[S.cur] = S.pages[j];
+  S.pages[j] = p;
+  S.cur = j;
+  save();
+  paintChrome();
+  toast(delta < 0 ? "已上移" : "已下移");
+}
+
+function deletePage() {
+  if (S.busy) return;
+  var p = S.pages[S.cur];
+  if (!p) return;
+  p.deleted = !p.deleted;
+  save();
+  paintChrome();
+  layout();
+  toast(p.deleted ? "已标记删除（生成时跳过）；再点一次可恢复" : "已恢复本页");
+}
+
+function toast(msg) {
+  var t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("on");
+  setTimeout(function(){ t.classList.remove("on"); }, 1600);
+}
+
+
+/* ---------------------------------------------------------------- 启动 */
+function boot() {
+  document.getElementById("total").textContent = S.pages.length;
+  loadImages();
+
+  cv = document.getElementById("photo");
+  bindDrag();
+  paintChrome();
+  paintSeg();
+  layout();
+
+  /* --- 全局面板：四项作用于整批，写进 edits.json 的 batch --- */
+  document.getElementById("gear").onclick = function(){
+    paintSeg();
+    document.getElementById("setSheet").classList.add("on");
+  };
+  document.getElementById("setClose").onclick = function(){
+    document.getElementById("setSheet").classList.remove("on");
+    drawPreview();
+  };
+  document.getElementById("setSheet").onclick = function(e){
+    if (e.target === this) this.classList.remove("on");
+  };
+  SEGS.forEach(function(g){
+    document.getElementById(g[0]).onclick = function(e){
+      var t = e.target, b = null;
+      while (t && t !== this) {
+        if (t.getAttribute && t.getAttribute("data-v")) { b = t; break; }
+        t = t.parentNode;
+      }
+      if (!b) return;
+      G[g[1]] = b.getAttribute("data-v");
+      paintSeg(); save();
+    };
+  });
+
+  /* --- 移动端：原图 / 预览 二选一，按钮在左上角。桌面端两个都显示，按钮隐藏 --- */
+  var viewBtn = document.getElementById("view");
+  viewBtn.onclick = function(){
+    var on = document.body.classList.toggle("view-prev");
+    viewBtn.innerHTML = on ? ICON_CROP : ICON_EYE;
+    setTimeout(function(){ layout(); drawPreview(); }, 40);
+  };
+
+  document.getElementById("prev").onclick = function(){ step(-1); };
+  document.getElementById("next").onclick = function(){ step(1); };
+  document.getElementById("navPrev").onclick = function(){ step(-1); };
+  document.getElementById("navNext").onclick = function(){ step(1); };
+
+  document.getElementById("apply").onclick = applyChanges;
+  document.getElementById("moveUp").onclick = function(){ movePage(-1); };
+  document.getElementById("moveDown").onclick = function(){ movePage(1); };
+  document.getElementById("delPage").onclick = deletePage;
+  document.getElementById("pdf").onclick = function(){
+    var u = this.dataset.url;
+    if (u) window.location.href = u;
+  };
+
+  document.getElementById("rot").onclick = function(){
+    var p = S.pages[S.cur];
+    if (!p || p.deleted) return;
+    p.r = (p.r + 90) % 360;
+    drawPreview();
+    save();
+    toast("已转 " + p.r + "°");
+  };
+
+  document.getElementById("reset").onclick = function(){
+    var p = S.pages[S.cur];
+    if (!p || p.deleted) return;
+    p.c = p.base.map(function(v){ return [v[0], v[1]]; });
+    p.r = p.r0;
+    drawPhoto(); placeHandles(); drawPreview(); save();
+    toast("已恢复自动角点");
+  };
+
+  window.addEventListener("resize", function(){ layout(); });
+  window.addEventListener("orientationchange", function(){
+    setTimeout(layout, 220);
+  });
+  /* 兜底：首帧 stage 量到 0 时 layout 会直接返回，稍后再来一次 */
+  setTimeout(layout, 80);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+}
+
+function start() {
+  loadBatch().then(function(){
+    loadSaved();
+    boot();
+  }).catch(function(e){
+    showEmpty("加载审核批次失败：" + (e && e.message || e));
+  });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", start);
+} else {
+  start();
+}
+</script>
+</body>
+</html>
