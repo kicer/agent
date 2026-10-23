@@ -527,6 +527,8 @@
     btn.classList.remove('on');
     btn.title = '显示源码';
     btn.setAttribute('aria-label', '显示源码');
+    // 复制钮与 eye 同显隐：有源码才可复制
+    $('fs-copy-btn').classList.toggle('hidden', fsSrcText == null);
   }
   function toggleFsSrc() {
     if (fsSrcText == null) return;
@@ -541,8 +543,15 @@
     btn.setAttribute('aria-label', lbl);
   }
   $('fs-src-btn').addEventListener('click', toggleFsSrc);
+  // 复制源码：HTML/SVG/MD/代码通用，拿到的就是 eye 面板里那份文本
+  $('fs-copy-btn').addEventListener('click', async () => {
+    if (fsSrcText == null) return;
+    const ok = await copyText(fsSrcText);
+    toast(ok ? '已复制' : '复制失败');
+  });
 
   function openFullscreen(el, src) {
+    $('fs-viewer').classList.remove('fs-bar'); // 消息全屏沿用悬浮按钮，清掉文件预览的栏模式
     const body = $('fs-body');
     body.innerHTML = '';
     body.style.zoom = '';
@@ -566,6 +575,7 @@
   }
   function closeFullscreen() {
     setFsSource(null); // 顺手收起源码面板/隐藏 eye 钮,下轮打开不残留
+    $('fs-viewer').classList.remove('fs-bar');
     $('fs-viewer').classList.add('hidden');
     $('fs-viewer').dispatchEvent(new Event('fs:close'));
   }

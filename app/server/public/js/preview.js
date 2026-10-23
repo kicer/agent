@@ -107,12 +107,21 @@ function pvCloseDoc() {
 }
 
 // 移动端全屏承载：把节点塞进 #fs-viewer 并展开
-function pvOverlayShow(node) {
+// opts.bar    → 文件预览沉浸模式：顶部独立操作条，内容全宽占满剩余空间
+// opts.name   → 操作条左侧的文件名（仅 bar 模式可见）
+// opts.source → 源文本，交给 eye / 复制钮（未传则两者隐藏）
+function pvOverlayShow(node, opts) {
+  opts = opts || {};
+  const viewer = document.getElementById('fs-viewer');
   const body = document.getElementById('fs-body');
+  viewer.classList.toggle('fs-bar', !!opts.bar);
+  const nm = document.getElementById('fs-file-name');
+  nm.textContent = opts.name ? String(opts.name) : '';
+  nm.title = nm.textContent;
   body.innerHTML = ''; body.style.zoom = '';
-  if (typeof setFsSource === 'function') setFsSource(null);
+  if (typeof setFsSource === 'function') setFsSource(opts.source == null ? null : opts.source);
   body.appendChild(node);
-  document.getElementById('fs-viewer').classList.remove('hidden');
+  viewer.classList.remove('hidden');
 }
 
 // ---------- office：iframe 直挂预览网关(HEAD 预探顺便触发冷槽复活) ----------
@@ -128,7 +137,7 @@ async function pvOpenOffice(name, sizeText) {
     document.getElementById('pv-body').appendChild(load); // 开窗即刻可见，冷启动转圈等首帧
   } else {
     load = pvLoadingBox(); load.classList.add('inline');
-    pvOverlayShow(load);
+    pvOverlayShow(load, { bar: true, name: name });
     if (!pvState.mobilePush) { try { history.pushState({ pvOffice: 1 }, ''); pvState.mobilePush = true; } catch (_) {} }
   }
   let head = null;
@@ -179,7 +188,7 @@ async function openFilePreview(name, sizeText) {
       pvClearBody(); pvHeader(name, sizeText);
       document.getElementById('pv-body').appendChild(node);
       pvToolbar(tb || tbAll);
-    } else pvOverlayShow(node);
+    } else pvOverlayShow(node, { bar: true, name: name });
   };
   if (kind === 'none') {
     const low = String(name).toLowerCase();
@@ -312,7 +321,7 @@ async function pvTextNode(name, sizeText, r) {
   return holder;
 }
 
-// 移动端非 office：保持原全屏行为(#fs-viewer)
+// 移动端非 office：统一走 #fs-viewer 沉浸式（顶部操作条 + 全宽内容）
 async function pvRenderLegacy(name, r, my) {
   if (/\.html?$/i.test(name)) {
     const html = await r.text();
@@ -320,8 +329,7 @@ async function pvRenderLegacy(name, r, my) {
     iframe.className = 'fs-html-frame';
     iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
     iframe.srcdoc = rewriteHtmlDocSrcs(html, name);
-    pvOverlayShow(iframe);
-    setFsSource(html); // 源码钮可看页面原码
+    pvOverlayShow(iframe, { bar: true, name: name, source: html }); // 全宽沉浸，源码可看/可复制
     if (my !== pvSeq) return;
   } else if (/\.pdf$/i.test(name)) {
     const u = URL.createObjectURL(await r.blob());
@@ -331,7 +339,17 @@ async function pvRenderLegacy(name, r, my) {
     frame.className = 'fs-html-frame';
     frame.title = name;
     frame.src = u;
-    pvOverlayShow(frame);
+    pvOverlayShow(frame, { bar: true, name: name });
+  } else if (/\.svg$/i.test(name)) {
+    // SVG 当图片显示（<img> 不执行内嵌脚本），同时保留源码给 eye/复制钮
+    const text = await r.text();
+    const u = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml;charset=utf-8' }));
+    if (state.lastImgBlobUrl) { try { URL.revokeObjectURL(state.lastImgBlobUrl); } catch (_) {} }
+    state.lastImgBlobUrl = u;
+    const im = document.createElement('img');
+    im.className = 'fs-img-frame'; im.src = u; im.alt = String(name);
+    im.addEventListener('click', () => openImageViewer(u, String(name).split('/').pop()));
+    pvOverlayShow(im, { bar: true, name: name, source: text });
   } else if (PV_IMG.test(name)) {
     const u = URL.createObjectURL(await r.blob());
     if (state.lastImgBlobUrl) { try { URL.revokeObjectURL(state.lastImgBlobUrl); } catch (_) {} }
@@ -352,7 +370,7 @@ async function pvRenderLegacy(name, r, my) {
     wrap.className = 'msg other';
     wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';
     decorateCodePre(wrap);
-    openFullscreen(wrap.firstChild, text); // 文件原文供 eye 钮看源码
+    pvOverlayShow(wrap.firstChild, { bar: true, name: name, source: text }); // 全宽沉浸，eye/复制看原文
   }
 }
 

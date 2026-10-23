@@ -852,20 +852,57 @@ footer { position: relative; flex: none; padding: 8px 12px calc(10px + env(safe-
 /* ================= 全屏查看器(搬自 index;图片单点放大+缩放,消息双击放大) ================= */
 #img-viewer { position: fixed; inset: 0; z-index: 150; background: rgba(0,0,0,0.93); display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #img-viewer.hidden { display: none; }
-#img-viewer-img { max-width: 92vw; max-height: 88vh; touch-action: none; cursor: grab; user-select: none; -webkit-user-drag: none; }
+#img-viewer-img { max-width: 100vw; max-height: 88vh; touch-action: none; cursor: grab; user-select: none; -webkit-user-drag: none; }
 #fs-viewer { position: fixed; inset: 0; z-index: 130; background: rgba(8,10,20,0.88); padding: 40px 14px 24px; overflow: auto; /* 缩放后支持横纵滚动 */ }
 #fs-viewer.hidden { display: none; }
 .fs-panel { max-width: 860px; margin: 0 auto; background: var(--page); border-radius: 14px; padding: 18px 20px; font-size: 15.5px; }
-.fs-close {
-  position: fixed; top: 12px; right: 14px; z-index: 131; width: 34px; height: 34px;
-  border: none; border-radius: 50%; background: rgba(255,255,255,0.18); color: #fff;
+/* 顶部操作区：默认右上角悬浮（消息全屏用）；文件预览走 fs-bar 模式时独立成一行 */
+.fs-actions { position: fixed; top: calc(2px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 131; display: flex; align-items: center; gap: 8px; }
+.fs-name { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--ink); }
+.fs-btn {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border: none; border-radius: 50%;
+  background: rgba(0,0,0,0.42); color: #fff; box-shadow: 0 1px 5px rgba(0,0,0,0.22);
   font-size: 15px; line-height: 1; cursor: pointer;
 }
-/* 源码切换 eye 钮:与关闭钮同款,居其左;仅当前内容有源文本时显示(setFsSource 控显隐) */
-.fs-eye { right: 58px; display: flex; align-items: center; justify-content: center; }
-.fs-eye svg { width: 17px; height: 17px; }
-.fs-eye.on { background: rgba(255,255,255,0.85); color: #333; }
-/* 源码面板:与 #fs-body 互斥显示(toggleFsSrc 切换);不参与双指缩放逻辑 */
+.fs-btn svg { width: 17px; height: 17px; }
+.fs-btn.on { background: rgba(255,255,255,0.85); color: #333; }
+
+/* 文件预览沉浸模式：40px 操作条 + 全宽内容。内容从条下开始，不会叠在页面自己的顶部按钮上；
+   宽度一点不让（手机横向最贵），只牺牲一条操作栏的高度。 */
+#fs-viewer.fs-bar { display: flex; flex-direction: column; padding: 0; overflow: auto; background: var(--page); }
+#fs-viewer.fs-bar .fs-actions {
+  position: sticky; top: 0; z-index: 1;
+  flex: none; width: 100%;
+  height: calc(40px + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 10px 0 14px;
+  justify-content: flex-end; gap: 6px;
+  background: var(--page); border-bottom: 1px solid var(--border);
+}
+#fs-viewer.fs-bar .fs-name { display: block; flex: 1; }
+#fs-viewer.fs-bar .fs-btn { width: 32px; height: 32px; border-radius: 8px; background: transparent; color: var(--ink); box-shadow: none; }
+#fs-viewer.fs-bar .fs-btn:active { background: var(--surface); }
+#fs-viewer.fs-bar .fs-btn.on { background: var(--active); color: #fff; }
+#fs-viewer.fs-bar .fs-panel { flex: 1; min-height: 0; width: 100%; max-width: none; margin: 0; padding: 0; border-radius: 0; background: var(--page); }
+#fs-viewer.fs-bar #fs-body { position: relative; overflow: auto; }
+#fs-viewer.fs-bar #fs-body .fs-html-frame { height: 100%; min-height: 0; border-radius: 0; }
+/* 文本/源码直排：去掉气泡卡片的内外边距，只留 12px 阅读边距 */
+#fs-viewer.fs-bar #fs-body .bubble-ai,
+#fs-viewer.fs-bar #fs-body .bubble-user {
+  max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; background: var(--page);
+  padding: 14px 12px calc(28px + env(safe-area-inset-bottom, 0px)); font-size: 15.5px;
+}
+#fs-viewer.fs-bar #fs-src-pane { overflow: auto; }
+#fs-viewer.fs-bar #fs-src-code { max-height: none; border: 0; border-radius: 0; padding: 12px 14px calc(28px + env(safe-area-inset-bottom, 0px)); }
+#fs-viewer.fs-bar .fs-img-frame { max-width: 100%; max-height: 100%; border-radius: 0; margin: 0 auto; }
+.fs-close {
+  /* 顶到视口最上沿（避开刘海），不再压住预览面板顶部 */
+  position: fixed; top: calc(2px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 131; width: 34px; height: 34px;
+  border: none; border-radius: 50%; background: rgba(0,0,0,0.42); color: #fff;
+  box-shadow: 0 1px 5px rgba(0,0,0,0.22);
+  font-size: 15px; line-height: 1; cursor: pointer;
+}
+/* 源码面板：与 #fs-body 互斥显示(toggleFsSrc 切换)；bar 模式下占满操作条以下区域 */
 .fs-src-panel { padding: 14px 16px; }
 #fs-src-code {
   margin: 0; white-space: pre-wrap; word-break: break-word;

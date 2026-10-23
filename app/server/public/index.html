@@ -476,11 +476,20 @@
 
   <!-- 消息全屏查看器(双击气泡/工具卡打开;支持双指缩放) -->
   <div id="fs-viewer" class="hidden" onclick="if(event.target===this)closeFullscreen()">
-    <button class="fs-close" onclick="closeFullscreen()">✕</button>
-    <!-- 源码切换钮:仅当当前内容有源文本时显隐(toggleFsSrc 在渲染视图/源码面板间互切) -->
-    <button class="fs-close fs-eye hidden" id="fs-src-btn" title="显示源码" aria-label="显示源码">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-    </button>
+    <!-- 顶部操作区:文件预览(fs-bar 模式)时独立成一行,内容从行下开始,不遮挡页面自己的顶部按钮;
+         消息全屏时退化为右上角悬浮按钮簇。文件名仅栏模式显示。 -->
+    <div class="fs-actions">
+      <span class="fs-name" id="fs-file-name"></span>
+      <!-- 源码切换钮:仅当当前内容有源文本时显隐(toggleFsSrc 在渲染视图/源码面板间互切) -->
+      <button class="fs-btn hidden" id="fs-src-btn" title="显示源码" aria-label="显示源码">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+      </button>
+      <!-- 复制源码:显隐与 eye 一致(有源文本才出现);HTML/SVG/MD/代码通用 -->
+      <button class="fs-btn hidden" id="fs-copy-btn" title="复制源码" aria-label="复制源码">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+      </button>
+      <button class="fs-btn" onclick="closeFullscreen()" title="关闭" aria-label="关闭">✕</button>
+    </div>
     <div class="fs-panel" id="fs-body"></div>
     <div class="fs-panel fs-src-panel hidden" id="fs-src-pane"><pre id="fs-src-code"></pre></div>
   </div>
