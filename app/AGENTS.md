@@ -264,7 +264,7 @@ auth.router        ← /login /logout /api/login /api/login_restore /api/passwor
 auth.middleware    ← 其余请求需登录（cookie 优先，Basic 兜底）
 preview-proxy.earlyGuard
 express.static(public)
-/api/sessions ×3   ← sessions / messages / files
+/api/sessions ×4   ← sessions / messages / files / skill-run（通用执行面）
 /api/skills
 /api/config        ← requireAdmin
 /api/platforms

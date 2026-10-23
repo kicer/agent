@@ -67,6 +67,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/sessions', require('./routes/sessions'));
 app.use('/api/sessions', require('./routes/messages'));
 app.use('/api/sessions', require('./routes/files'));
+// 通用技能执行面（页面类技能用，不经模型）：POST /api/sessions/:id/skills/:name/run。
+// 与 /api/db 对称；执行核心仍复用 tools/skills.runSkill，core 不感知具体技能。
+app.use('/api/sessions', require('./routes/skill-run'));
 app.use('/api/skills', require('./routes/skills'));
 // 系统配置含全部用户（脱敏密码）与平台密钥，且可整份改写 YAML：仅管理员可访问。
 app.use('/api/config', auth.requireAdmin, require('./routes/config'));
