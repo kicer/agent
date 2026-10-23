@@ -29,9 +29,15 @@ body{display:flex;flex-direction:column;height:100%;height:100dvh}
 #back{font-size:16px}
 .aname{flex:1;min-width:0;text-align:left;font-size:13px;font-weight:600;color:#111827;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.top .nav{width:36px;height:40px;font-size:20px;line-height:1;border:0;border-radius:9px;
-  background:#161f2e;color:#e8edf5;flex:none;padding:0}
-.top .nav:disabled{opacity:.25}
+/* 桌面端翻页：浮在裁切图左右两侧（移动端用滑动/底栏箭头，所以默认隐藏） */
+.stage .pnav{position:absolute;top:50%;margin-top:-24px;z-index:7;display:none;
+  width:48px;height:48px;padding:0;border:0;border-radius:50%;
+  background:rgba(11,15,23,.66);color:#e8edf5;font-size:26px;line-height:1;
+  align-items:center;justify-content:center}
+.stage .pnav:hover{background:rgba(34,48,74,.92)}
+.stage .pnav:disabled{opacity:.22}
+.stage .pnav.l{left:14px}
+.stage .pnav.r{right:14px}
 /* 页码浮在图片右上角（裁切区 / 预览区共用），不占顶栏 */
 .pbadge{position:absolute;right:10px;top:10px;z-index:7;padding:2px 8px;border-radius:99px;
   background:rgba(4,7,12,.58);color:#c3d0e2;font-size:11px;line-height:1.5;
@@ -93,7 +99,6 @@ body{display:flex;flex-direction:column;height:100%;height:100dvh}
 .regen:disabled{opacity:.55}
 
 @media (max-width:899.98px){
-  .top .nav{display:none}
   body.view-prev .stage{display:none}
   body.view-prev #prevwrap{display:flex}
   /* 移动端只靠图标猜不出功能：图标在上、两字标签在下 */
@@ -139,15 +144,16 @@ body{display:flex;flex-direction:column;height:100%;height:100dvh}
   .actbar{grid-column:1/-1;grid-row:1}
   .top{grid-column:1/-1;grid-row:2}
   .stage{grid-row:3;grid-column:1}
-  #prevwrap{grid-row:3/5;grid-column:2;border-left:1px solid #1b2434}
+  /* 桌面端左右分栏同时看：左裁切、右预览，不需要切换 */
+  #prevwrap{display:flex;grid-row:3/5;grid-column:2;border-left:1px solid #1b2434}
+  .stage .pnav{display:flex}
   #view{display:none}
   #prevwrap .regen{display:none!important}
   .footbar{grid-row:4;grid-column:1;border-top:1px solid #1b2434;padding-bottom:6px}
   .footbar .pnav{display:none}
-  /* 桌面端顶栏已有翻页，底栏两侧占位保持文件名真正居中 */
+  /* 底栏两侧翻页按钮隐藏后，文件名仍居中 */
   .ico{width:auto;padding:0 14px}
   .ico .lbl{display:inline}
-  /* 桌面端翻页在顶栏，底栏只留居中的文件名 */
   .footname{font-size:13px;color:#b9c8dd}
 }
 </style>
@@ -163,8 +169,6 @@ body{display:flex;flex-direction:column;height:100%;height:100dvh}
 
 <div class="top">
   <button class="ico" id="view" title="切换视图" aria-label="切换视图"><span class="vi" id="viewIcon"></span><span class="lbl">切换</span></button>
-  <button class="nav" id="navPrev" aria-label="上一页">&#8249;</button>
-  <button class="nav" id="navNext" aria-label="下一页">&#8250;</button>
   <div class="acts">
     <button class="ico" id="rot" title="旋转 90°" aria-label="旋转 90 度"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg><span class="lbl">旋转</span></button>
     <button class="ico" id="reset" title="恢复自动角点" aria-label="重置本页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-4"/></svg><span class="lbl">重置</span></button>
@@ -175,6 +179,8 @@ body{display:flex;flex-direction:column;height:100%;height:100dvh}
 <div class="stage" id="stage">
   <div class="pbadge mtag">手动定位</div>
   <div class="pbadge" id="stagePage">1/1</div>
+  <button class="pnav l" id="navPrev" aria-label="上一页">&#8249;</button>
+  <button class="pnav r" id="navNext" aria-label="下一页">&#8250;</button>
   <canvas id="photo"></canvas>
   <div class="h" id="h0"></div>
   <div class="h" id="h1"></div>
