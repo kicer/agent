@@ -203,40 +203,45 @@ def inspect_pdf(pdf, expect_pages=None, dpi=None, params=None):
     # 折算，否则选 300dpi 会白白放宽、选 72dpi 会误报“分辨率不足”。
     render_dpi = float(p["render"]["dpi"])
     min_short = c["min_short"] * dpi / render_dpi
-    for i, path in enumerate(files, 1):
-        with Image.open(path) as im:
-            r = analyse(im, p)
-        pw, ph = r["paper_px"]
-        short = min(pw, ph)
-        short_ok = short >= min_short
-        border_ok = ((not r["border_bad"]) and
-                     all(v <= c["edge_dark_frac"]
-                         for v in r["edge_dark"].values()))
-        cut_ok = not r["cut"]
-        dev = (abs(r["paper_ratio"] - r["ratio"]) / r["ratio"]
-               if r["ratio"] else 0.0)
+    try:
+        for i, path in enumerate(files, 1):
+            with Image.open(path) as im:
+                r = analyse(im, p)
+            pw, ph = r["paper_px"]
+            short = min(pw, ph)
+            short_ok = short >= min_short
+            border_ok = ((not r["border_bad"]) and
+                         all(v <= c["edge_dark_frac"]
+                             for v in r["edge_dark"].values()))
+            cut_ok = not r["cut"]
+            dev = (abs(r["paper_ratio"] - r["ratio"]) / r["ratio"]
+                   if r["ratio"] else 0.0)
 
-        item = {
-            "index": i,
-            "paper_px": [int(pw), int(ph)],
-            "short_side_px": int(short),
-            "short_side_ok": bool(short_ok),
-            "paper_ratio": round(float(r["paper_ratio"]), 4),
-            "page_ratio": round(float(r["ratio"]), 4),
-            "ratio_dev_pct": round(float(dev * 100), 1),
-            "border_ok": bool(border_ok),
-            "cut_ok": bool(cut_ok),
-            "border": {k: round(float(v), 1) for k, v in r["border"].items()},
-            "edge_dark": {k: round(float(v), 3)
-                          for k, v in r["edge_dark"].items()},
-            "cut": [[k, round(float(v), 3)] for k, v in r["cut"]],
-            "box_fallback": bool(r["box_fallback"]),
-            "paper_luma": round(float(r["paper"]), 1),
-            "back_luma": round(float(r["back"]), 1),
-        }
-        out["pages"].append(item)
-        if not (short_ok and border_ok and cut_ok):
-            out["ok"] = False
+            item = {
+                "index": i,
+                "paper_px": [int(pw), int(ph)],
+                "short_side_px": int(short),
+                "short_side_ok": bool(short_ok),
+                "paper_ratio": round(float(r["paper_ratio"]), 4),
+                "page_ratio": round(float(r["ratio"]), 4),
+                "ratio_dev_pct": round(float(dev * 100), 1),
+                "border_ok": bool(border_ok),
+                "cut_ok": bool(cut_ok),
+                "border": {k: round(float(v), 1) for k, v in r["border"].items()},
+                "edge_dark": {k: round(float(v), 3)
+                              for k, v in r["edge_dark"].items()},
+                "cut": [[k, round(float(v), 3)] for k, v in r["cut"]],
+                "box_fallback": bool(r["box_fallback"]),
+                "paper_luma": round(float(r["paper"]), 1),
+                "back_luma": round(float(r["back"]), 1),
+            }
+            out["pages"].append(item)
+            if not (short_ok and border_ok and cut_ok):
+                out["ok"] = False
+    finally:
+        # 渲染图只是自检的中间产物：PPM 未压缩，100dpi 的 A4 一页约 3MB，
+        # 检验完立刻删（量已经记录在返回值里），不要留在会话目录占空间。
+        shutil.rmtree(outdir, ignore_errors=True)
     return out
 
 

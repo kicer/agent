@@ -95,16 +95,35 @@ requested_at TEXT, started_at TEXT, finished_at TEXT
 1. 页面从 `/app/<task_id>/doc-review/` 加载；无 `?b=` 时查 `doc_review_batch` 最新一行。
 2. 通过 `POST /api/db/<task_id>/query` 读 `doc_review_batch` / `doc_review_page`。
 3. 用户拖角/旋转/删页/排序/改四项参数，只改浏览器内状态并写 localStorage 草稿。
-4. 点「生成 PDF」：
+4. 点「重新生成 PDF」：
    - `INSERT ... ON CONFLICT` 写 `doc_review_job`（`status=queued`，`edits` 是完整快照）；
    - 调通用执行接口
      `POST /api/sessions/<task_id>/skills/document-photo-to-pdf/run`，body `{args:{batch_id}}`；
    - 技能读 job → 应用 edits → 覆盖同名 PDF → 更新 batch/page/job；
-   - 页面重新读 data.db，刷新摘要、状态、PDF 链接。
+   - 页面重新读 data.db，刷新警告、状态、PDF 链接。
 5. 全程不经过模型，也不需要用户复制 JSON。
 
 通用接口实现在 `app/server/routes/skill-run.js`：core 只做会话/并发/错误映射，执行仍走
 `tools/skills.runSkill`，不感知技能名或参数语义。
+
+## 页面交互约定
+
+- 顶部标题条（白底，参考 H5 全屏预览）：左侧 PDF 名，右侧下载 PDF，最右 X 返回会话。
+- 重新生成 PDF 不在顶栏：放在照片区底部（stage 与预览各一个，按当前视图显示；桌面只用
+  stage），仅在存在未保存修改时出现。
+- 底部只保留翻页和当前页名，不再放操作按钮。
+- 页码不占顶栏：`1/n` 浮在图片右上角（裁切区、预览区各一个，按当前视图显示）；
+  左上角常驻当前模式标签（裁切区「手动定位」、预览区「校正预览」）。
+  移动端一次只显示一个面板，看到哪个标签就是当前模式；视图按钮固定叫「切换」。
+  移动端顶栏按钮带文字而非只靠图标：视图按钮写“点下去会去哪”（当前在预览→手动定位，
+  在当前裁切→校正预览），另三个是旋转 / 重置 / 设置。
+- 裁切区/预览区支持左右滑动翻页：左滑下一页、右滑上一页；仅触摸/笔生效，拖角优先，
+  按钮点击不触发。
+- 是否 dirty 用 `collect()` 与加载时的基线 `S.savedEdits` 比较；拖角、旋转、删页/排序、
+  改四项参数都会触发。
+- 重新生成成功后重读 DB、清本地草稿、把新状态设为基线，按钮自动消失；失败则保留以便重试。
+- X 返回 `/?s=<task_id>`；独立页面里也适用。
+- 手机默认进校正预览，点左上角切到裁切。
 
 ## edits / 旋转语义
 
