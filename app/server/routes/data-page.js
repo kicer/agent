@@ -1,7 +1,9 @@
 // data-page 技能的服务端承载，两条通道（配套 skills/data-page/SKILL.md 的契约）：
 // 1. GET  /app/{task_id}/...      —— 静态托管任务目录的 .app/ 子树（index.html 兑底，不给列目录）；
 //                                    目录名刻意带点：任务文件面板默认隐藏（?hidden=1 才列）；
-//                                    只暴露 .app/ 而非整个任务目录，其余任务文件不从 URL 泄漏。
+//                                    只暴露 .app/ 而非整个任务目录，其余任务文件不从 URL 泄漏；
+//                                    允许符号链接（技能页面链回技能目录，不必每会话复制），
+//                                    但 realpath 必须落在会话目录或技能根目录内。
 // 2. POST /api/db/{task_id}/query —— 任务 data.db 的 SQL API（页面前端 fetch 调）：任意单语句，
 //                                    执行核心与 db 工具共用 runTaskSql（executor.js），语义单一事实源。
 // 认证：挂在 server.js 的 auth.middleware 之后——信任模型与 files 路由一致（登录 ≈ 运维，可跨会话）。
@@ -13,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const engine = require('../engine');
 const { resolveInTask, runTaskSql } = require('../tools/executor');
+const { skillsRoot } = require('../tools/skills');
 
 // 页面忘写 LIMIT 的服务端兜底：iterate 到量即停（不全量物化），超限报错引导分页。
 const API_MAX_ROWS = 2000;
@@ -21,6 +24,19 @@ const router = express.Router();
 
 function notFound(res, msg) {
   res.status(404).json({ error: msg });
+}
+
+// 符号链接白名单：技能页面不必每个会话复制一份，发布时链回技能目录（见各技能的 run.py）。
+// 链接只是字符串：executor 里看不到的目标也能被链上，而解析发生在 core 的命名空间
+// （例如 core 把 ./config.yml 挂在 /app/config.yml），所以 realpath 后必须落在
+// 「本会话目录」或「技能根目录」内，其余一律 404。
+function realInside(abs, roots) {
+  let real;
+  try { real = fs.realpathSync(abs); } catch (_) { return null; }
+  for (const root of roots) {
+    if (real === root || real.startsWith(root + path.sep)) return real;
+  }
+  return null;
 }
 
 // ---------- /app/{task_id}/...：任务 .app/ 子树静态托管（URL 路径与目录名解耦）----------
@@ -44,7 +60,15 @@ router.use('/app', (req, res) => {
       try { st = fs.statSync(abs); } catch (_) { return notFound(res, '页面不存在'); }
     }
     if (!st.isFile()) return notFound(res, '页面不存在');
-    res.sendFile(abs, err => {
+    const candidates = [engine.taskDirOf(sessionId)];
+    try { candidates.push(skillsRoot({ cfg: engine.getConfig() })); } catch (_) {}
+    const roots = [];
+    for (const dir of candidates) {
+      try { roots.push(fs.realpathSync(dir)); } catch (_) {}
+    }
+    const real = realInside(abs, roots);
+    if (!real) return notFound(res, '页面不存在');
+    res.sendFile(real, err => {
       if (err && !res.headersSent) notFound(res, '页面不存在');
     });
   } catch (err) {
