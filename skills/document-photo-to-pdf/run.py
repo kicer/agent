@@ -116,7 +116,7 @@ def write_state(path, data):
 def _review_mode(args):
     if args.get("batch_id") and "review" not in args:
         return "always"
-    v = args.get("review", "off")
+    v = args.get("review", "always")
     if isinstance(v, bool):
         return "always" if v else "off"
     s = str(v).strip().lower()
@@ -492,7 +492,7 @@ def process(args, t0):
 
         # ---------------- 批次方向
         aspects = [m["aspect"] for (_, _, m) in plan]
-        batch_orientation, orientation_source, median_aspect = \
+        batch_orientation, _, median_aspect = \
             compose.decide_orientation(aspects, orientation, P)
         dead = P["gate"]["aspect_deadband"]
         if batch_orientation in ("portrait", "landscape"):
@@ -721,45 +721,24 @@ def process(args, t0):
             if m.get("status") in ("review", "needs_corners", "needs_orientation",
                                    "render_failed", "failed"):
                 needs.append(m)
-        ready = sum(1 for m in pages if m.get("status") == "ready")
 
         # 发布审核页：always 总是发布；auto 只在有页需要人看时发布
         publish = review_mode == "always" or (review_mode == "auto" and bool(needs))
-        url = None
         thumbs = {}
         if publish and batch_id:
-            url, thumbs = review_page.publish(
+            _, thumbs = review_page.publish(
                 session_root, batch_id,
                 [{"idx": m["index"], "source_abs": m.get("source_abs")}
                  for m in pages
                  if not m.get("deleted") and m.get("source_abs")])
 
-        # ---------------- state v2 + 返回体
+        # ---------------- state v2
         order_all = sorted(pages, key=lambda m: (sort_map.get(m["index"], m["index"]),
                                                  m["index"]))
-        pages_out = []
         state_pages = []
         for m in order_all:
             src_rel = _rel(session_root, m.get("source_abs") or "")
-            applied = int(m.get("rotated_deg") or 0)
             auto_r = int(m.get("auto_rotate") or 0)
-            pages_out.append({
-                "index": m["index"],
-                "source": src_rel,
-                "source_size": m.get("source_size"),
-                "corners": m.get("corners"),
-                "corners_norm": m.get("corners_norm"),
-                "auto_corners": m.get("auto_corners"),
-                "auto_corners_norm": m.get("auto_corners_norm"),
-                "rotate": auto_r,
-                "applied_rotate": applied,
-                "status": m.get("status"),
-                "reason": m.get("reason"),
-                "warnings": m.get("warnings") or [],
-                "out_size": m.get("out_size"),
-                "page_orientation": m.get("page_orientation"),
-                "error": m.get("error"),
-            })
             state_pages.append({
                 "index": m["index"],
                 "source": src_rel,
@@ -782,60 +761,16 @@ def process(args, t0):
         if not state_ok:
             warnings.append("state 文件写入失败：%s" % state_path)
 
-        canvas_set = {tuple(c) for c in ordered_canvases}
-        canvas_px = list(next(iter(canvas_set))) if len(canvas_set) == 1 else None
-        batch = {
-            "paper": str(paper_input),
-            "orientation": "mixed" if orientation == "none" else batch_orientation,
-            "orientation_source": orientation_source,
-            "median_aspect": round(float(batch_median), 4),
-            "rotated_pages": [m["index"] for m in pages
-                              if int(m.get("rotated_deg") or 0) != 0],
-            "canvas_px": canvas_px,
-        }
-        if canvas_px:
-            margin = int(P["render"]["margin_px"])
-            batch["content_px"] = [int(canvas_px[0] - 2 * margin),
-                                   int(canvas_px[1] - 2 * margin)]
-
         if checks.get("ok") is False:
-            summary = "%d 页已生成；自检有未通过项，见 warnings" % len(ordered_pages)
+            summary = "%d 页已生成；自检有未通过项" % len(ordered_pages)
         elif needs:
-            summary = "%d 页已生成；%d 页需人工确认" % (len(ordered_pages), len(needs))
+            summary = "%d 页已生成；%d 页建议在审核页确认" % (
+                len(ordered_pages), len(needs))
         elif warnings:
-            summary = "%d 页已生成；%d 项提示，请查看 warnings" % (
+            summary = "%d 页已生成；%d 项提示，见审核页" % (
                 len(ordered_pages), len(warnings))
         else:
-            summary = "%d 页已生成；自检全部通过" % len(ordered_pages)
-
-        res = {
-            "schema": P["schema"],
-            "ok": True,
-            "summary": summary,
-            "output": {
-                "path": output,
-                "state": state_path,
-                "bytes": int(os.path.getsize(output)),
-                "pages": len(ordered_pages),
-                "dpi": int(P["render"]["dpi"]),
-            },
-            "batch": batch,
-            "pages": pages_out,
-            "checks": checks,
-            "warnings": warnings,
-            "elapsed_ms": int((time.time() - t0) * 1000),
-        }
-        if use_db:
-            res["review"] = {
-                "batch_id": batch_id,
-                "published": bool(publish),
-                "url": url,
-                "ready": ready,
-                "needs_attention": [
-                    {"index": m["index"], "status": m.get("status"),
-                     "reason": m.get("reason")} for m in needs
-                ],
-            }
+            summary = "%d 页已生成" % len(ordered_pages)
 
         # ---------------- 写 data.db
         if use_db:
@@ -880,13 +815,13 @@ def process(args, t0):
                 if old:
                     review_page.prune_dirs(session_root, kept)
 
-        # 重生成路径给模型的回执要短：页面从 data.db 读详情，模型只需摘要/状态
-        if batch_id_arg:
-            res["pages"] = [{"index": m["index"], "status": m.get("status"),
-                             "reason": m.get("reason")} for m in pages_out]
-            res.pop("checks", None)
-            res["compact"] = True
-        return res
+        # AI 侧只回三件事：是否成功、一句摘要、PDF 文件名。
+        # 完整访问地址由 core 的 visit_url 追加；pages/checks/批次 ID 都在 data.db/state 里。
+        return {
+            "ok": True,
+            "summary": summary,
+            "pdf": _rel(session_root, output),
+        }
 
     except Exception as e:
         _mark_error(conn, batch_id, e)
@@ -901,21 +836,11 @@ def process(args, t0):
 
 def finish_failure(pages, failures, output, state_path, t0):
     err = failures[0] if failures else _err("INTERNAL", "未知错误")
-    warnings = []
-    for m in pages:
-        warnings.extend(m.get("warnings", []))
-    res = {
-        "schema": P["schema"],
+    return {
         "ok": False,
         "summary": "失败：%s" % err.get("message", "未知错误"),
         "error": err,
-        "pages": pages,
-        "warnings": warnings,
-        "elapsed_ms": int((time.time() - t0) * 1000),
     }
-    if output:
-        res["output"] = {"path": output, "state": state_path}
-    return res
 
 
 # ---------------------------------------------------------------- 入口
@@ -941,13 +866,9 @@ def main():
         hint = ("检查参数后重试" if code == "BAD_ARGS"
                 else "可用 DOC_DESKEW_DEBUG=1 重跑查看堆栈")
         res = {
-            "schema": P["schema"],
             "ok": False,
             "summary": "失败：%s" % e,
             "error": _err(code, str(e), None, hint),
-            "pages": [],
-            "warnings": [],
-            "elapsed_ms": int((time.time() - t0) * 1000),
         }
         if os.environ.get("DOC_DESKEW_DEBUG"):
             res["logs"] = traceback.format_exc().splitlines()

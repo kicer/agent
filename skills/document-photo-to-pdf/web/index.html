@@ -90,6 +90,7 @@ body{display:flex;flex-direction:column;height:100%;height:100dvh}
   background:#1b2536;color:#e8edf5;font-size:15px}
 .sheet .row button.pri{background:#1f6feb;color:#fff}
 .hint{color:#6f8098;font-size:11px;margin:12px 0 0}
+#warnings div{margin-top:4px;line-height:1.45}
 
 #toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));
   transform:translateX(-50%);background:rgba(24,34,50,.96);color:#e8edf5;
@@ -199,6 +200,7 @@ body{display:flex;flex-direction:column;height:100%;height:100dvh}
       </div>
     </div>
     <p id="summary" class="hint"></p>
+    <div id="warnings" class="hint"></div>
     <div class="row"><button id="pdf" class="pri">下载当前 PDF</button></div>
     <div class="row"><button id="setClose" class="pri">完成</button></div>
   </div>
@@ -251,6 +253,21 @@ function paintSummary() {
   var b = S.batch || {};
   var el = document.getElementById("summary");
   if (el) el.textContent = b.summary || "";
+  var w = parseJSON(b.warnings, []);
+  var we = document.getElementById("warnings");
+  if (we) {
+    we.innerHTML = "";
+    (w || []).slice(0, 12).forEach(function(t){
+      var d = document.createElement("div");
+      d.textContent = "· " + t;
+      we.appendChild(d);
+    });
+    if (w && w.length > 12) {
+      var more = document.createElement("div");
+      more.textContent = "· 还有 " + (w.length - 12) + " 条";
+      we.appendChild(more);
+    }
+  }
   var pdf = document.getElementById("pdf");
   if (pdf) {
     if (b.output) {
@@ -680,10 +697,18 @@ function paintChrome() {
   if (!S.pages.length) return;
   var p = S.pages[S.cur];
   if (!p) return;
+  var badge = "";
+  if (p.deleted) badge = "已标记删除";
+  else if (p.status === "needs_corners") badge = "需补角";
+  else if (p.status === "needs_orientation") badge = "方向存疑";
+  else if (p.status === "review") badge = "建议确认";
+  else if (p.status === "render_failed") badge = "出页失败";
+  else if (p.status === "failed") badge = "图片不可读";
+  if (!badge && !p.img) badge = "图片不可读";
   document.getElementById("cur").textContent = S.cur + 1;
   document.getElementById("total").textContent = S.pages.length;
   document.getElementById("name").textContent = p.name +
-    (p.deleted ? "（已标记删除）" : (!p.img ? "（图片不可读）" : ""));
+    (badge ? "（" + badge + "）" : "");
   document.getElementById("prev").disabled = (S.cur === 0);
   document.getElementById("navPrev").disabled = (S.cur === 0);
   document.getElementById("next").disabled = (S.cur === S.pages.length - 1);
@@ -852,6 +877,9 @@ function toast(msg) {
 
 /* ---------------------------------------------------------------- 启动 */
 function boot() {
+  /* 手机上先看校正预览：打开链接第一眼就是成品效果；点左上角再切到裁切。 */
+  var mobile = window.matchMedia("(max-width:899.98px)").matches;
+  if (mobile) document.body.classList.add("view-prev");
   document.getElementById("total").textContent = S.pages.length;
   loadImages();
 
@@ -888,6 +916,7 @@ function boot() {
 
   /* --- 移动端：原图 / 预览 二选一，按钮在左上角。桌面端两个都显示，按钮隐藏 --- */
   var viewBtn = document.getElementById("view");
+  if (mobile) viewBtn.innerHTML = ICON_CROP;
   viewBtn.onclick = function(){
     var on = document.body.classList.toggle("view-prev");
     viewBtn.innerHTML = on ? ICON_CROP : ICON_EYE;
