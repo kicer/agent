@@ -110,6 +110,8 @@ requested_at TEXT, started_at TEXT, finished_at TEXT
 ## 页面交互约定
 
 - 顶部标题条（白底，参考 H5 全屏预览）：左侧 PDF 名，右侧下载 PDF，最右 X 返回会话。
+- 加载失败（无批次 / `data.db` 缺 `doc_review_batch` 表 / data.db 被删）只保留标题条：
+  X 仍可返回会话、下载置灰，编辑区与底栏隐藏。所以 X 的绑定在 `start()` 里，不能放 `boot()`。
 - 重新生成 PDF 不在顶栏：放在照片区底部（stage 与预览各一个，按当前视图显示；桌面只用
   stage），仅在存在未保存修改时出现。
 - 底部只保留翻页和当前页名，不再放操作按钮。

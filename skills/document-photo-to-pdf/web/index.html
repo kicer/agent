@@ -131,6 +131,9 @@ body{display:flex;flex-direction:column;height:100%;height:100dvh}
 .hint{color:#6f8098;font-size:11px;margin:12px 0 0}
 #warnings div{margin-top:4px;line-height:1.45}
 
+/* 空状态（无审核数据）：只剩白色标题条可用，编辑区/底栏不显示 */
+body.is-empty .top,body.is-empty .footbar,body.is-empty #prevwrap{display:none}
+
 #toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));
   transform:translateX(-50%);background:rgba(24,34,50,.96);color:#e8edf5;
   padding:9px 16px;border-radius:99px;font-size:13px;opacity:0;pointer-events:none;
@@ -356,16 +359,16 @@ function loadBatch() {
 }
 
 function showEmpty(msg) {
+  document.body.classList.add("is-empty");
   var st = document.getElementById("stage");
   if (st) {
     st.innerHTML = "";
     var d = document.createElement("div");
-    d.style.cssText = "padding:40px;text-align:center;color:#8a93a5;font-size:14px;line-height:1.7";
+    d.style.cssText = "padding:40px 28px;text-align:center;color:#8a93a5;font-size:14px;" +
+      "line-height:1.8;max-width:520px;margin:0 auto";
     d.textContent = msg;
     st.appendChild(d);
   }
-  var foot = document.getElementById("name");
-  if (foot) foot.textContent = msg;
 }
 
 function loadSaved() {
@@ -1012,10 +1015,6 @@ function boot() {
 
   var regens = document.querySelectorAll(".regen");
   for (var i = 0; i < regens.length; i++) regens[i].onclick = applyChanges;
-  document.getElementById("back").onclick = function(){
-    location.href = TASK ? ("/?s=" + encodeURIComponent(TASK)) : "/";
-  };
-  document.getElementById("pdf").onclick = downloadPdf;
 
   document.getElementById("rot").onclick = function(){
     if (S.busy) return;
@@ -1047,12 +1046,32 @@ function boot() {
   updateActions();
 }
 
+// 顶栏在任何加载结果下都要能用：返回会话的 X 在空状态/加载失败时也得生效，
+// 所以绑定放在 start() 里（boot 只在加载成功后跑）。
+function bindTop() {
+  var back = document.getElementById("back");
+  if (back) back.onclick = function(){
+    location.href = TASK ? ("/?s=" + encodeURIComponent(TASK)) : "/";
+  };
+  var pdf = document.getElementById("pdf");
+  if (pdf) { pdf.disabled = true; pdf.onclick = downloadPdf; }
+}
+
 function start() {
+  bindTop();
   loadBatch().then(function(){
     loadSaved();
     boot();
   }).catch(function(e){
-    showEmpty("加载审核批次失败：" + (e && e.message || e));
+    var m = String(e && e.message || e);
+    // visit_url 是通用地址：没跑过本技能的会话、data.db 被删的会话都可能被打开
+    if (/no such table/i.test(m)) {
+      m = "这个会话还没有审核数据：可能还没生成过 PDF，或 data.db 被删了。" +
+          "回到对话让 AI 重新生成一次。";
+    } else {
+      m = "加载审核批次失败：" + m;
+    }
+    showEmpty(m);
   });
 }
 
