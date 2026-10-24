@@ -18,6 +18,10 @@
 // model——一律由调用方随请求 header 带入，本容器不存任何平台密钥、也不认任何平台默认值。
 // 音频一律先经 ffmpeg 归一化成 16kHz 单声道 wav：WebView 录出来是 webm/opus，iOS 是 mp4/aac，
 // 上游只认 wav/mp3，归一化后两端都自由。
+//
+// 超长兜底：只有超过单次上限（默认 25s）才断开重发，切点尽量落在停顿上。
+// 套壳是流式的（客户端已按停顿切好，一次请求就是一句话），所以这里多数请求不会被切；
+// 真正用得上的是浏览器整段上传与 /mcp 转写已有长音频。
 
 import http from 'node:http';
 import { spawn } from 'node:child_process';
@@ -40,9 +44,24 @@ const HDR_BASE = 'x-asr-base-url';
 const HDR_MODEL = 'x-asr-model';
 // 单次上传上限。60s 的 AAC 约 240KB、16k wav 约 1.9MB，20MB 是给长音频留的余量。
 const MAX_BYTES = Math.max(1024 * 1024, Number(process.env.ASR_MAX_BYTES || 20 * 1024 * 1024));
-// 云端多数 ASR 单次只吃 ~30s：超长音频按这个秒数切片后逐段识别再拼接（0 = 不切）。
+// ── 超长兜底切分 ──────────────────────────────────────────────────────
+// 谁需要它：套壳是流式的（客户端已经按停顿切好，每次请求就是一句话），
+// 所以这里绝大多数请求都 ≤ 25s 直接一次送出去；真正用得上的只有
+// 「浏览器整段上传」和「/mcp 转写已有长音频」——它们可能一次给几分钟。
+// 切点尽量落在停顿上：硬切会把字劈成两半，而两段之间又没有上下文，接缝处的字就丢了。
+// 0.5s 是句子边界：换气/想词的停顿通常 0.3~0.8s，而 0.5s 以下是词内间隔。
+const PAUSE_SEC = Math.max(0.1, Number(process.env.ASR_PAUSE_SEC || 0.5));
+// 判定为「没人说话」的音量门限：正常语音约 -20dB，安静房间底噪 -60dB 以下。
+const SILENCE_DB = Number(process.env.ASR_SILENCE_DB || -35);
+// 单段最短：避免最后切出一个没法识别的碎片（并进前一段）。
+const MIN_SEG_SEC = Math.max(0, Number(process.env.ASR_MIN_SEG_SEC || 1));
+// 单段最长（≈ 上游单次能吃的大致上限）：超过它就必须断开。
 // 16k/16bit 单声道 wav 恒为 32000 B/s，所以用文件大小就能估时长，不用再起 ffprobe。
-const CHUNK_SEC = Math.max(0, Number(process.env.ASR_MAX_CHUNK_SEC || 25));
+const CHUNK_SEC = Math.max(1, Number(process.env.ASR_MAX_CHUNK_SEC || 25));
+// 切点搜索窗：只在「距上限还差这么多秒」的范围里找停顿。
+// 不从头找是为了每段都尽量接近 25s——否则开头一个 2s 的停顿也会被拿来切，
+// 段数无谓变多（请求开销远大于多切一刀的收益）。
+const CUT_LOOKBACK_SEC = Math.max(0, Number(process.env.ASR_CUT_LOOKBACK_SEC || 6));
 // 同时转写数：2 vCPU 上并发再高只会互相拖慢。
 const MAX_CONCURRENT = Math.max(1, Number(process.env.ASR_MAX_CONCURRENT || 2));
 
@@ -141,21 +160,83 @@ async function toWav(buf, ext) {
   }
 }
 
-// 按秒切片：只在超过 CHUNK_SEC 时做。切片用 -c copy，纯 PCM 无损。
-async function splitWav(wavPath, chunkSec) {
+// ── 停顿检测与切点规划 ─────────────────────────────────────────────────
+// 用 ffmpeg 的 silencedetect 找静音区间：容器里本来就有 ffmpeg，它的判定也处理过
+// 重采样/编码的各种边角，比自己扫 PCM 算 RMS 更省心（一次遍历，30s 音频约 50~150ms）。
+// 返回 [{start,end}]（秒）。末尾那段一直静到文件结束的不会有 silence_end，直接丢掉——
+// 尾巴不需要切。
+function parseSilences(stderr) {
+  const out = [];
+  let cur = null;
+  for (const line of String(stderr || '').split('\n')) {
+    const s = /silence_start:\s*(-?[\d.]+)/.exec(line);
+    if (s) { cur = { start: Number(s[1]), end: null }; out.push(cur); continue; }
+    const e = /silence_end:\s*(-?[\d.]+)/.exec(line);
+    if (e && cur) { cur.end = Number(e[1]); cur = null; }
+  }
+  return out.filter((p) => p.end != null && p.end > p.start && p.start >= 0);
+}
+
+async function detectPauses(wavPath) {
+  const r = await run(FFMPEG, [
+    '-hide_banner', '-nostats', '-i', wavPath,
+    '-af', 'silencedetect=noise=' + SILENCE_DB + 'dB:d=' + PAUSE_SEC,
+    '-f', 'null', '-',
+  ], 60000);
+  return parseSilences(r.stderr);
+}
+
+// 由「时长 + 静音区间」规划切点，返回 [0, c1, …, duration]。
+// 贪心：每次只在「还没超上限」的范围内挑一个切点，因此段数最少（≈ 时长/CHUNK_SEC）。
+// 只在最后 CUT_LOOKBACK_SEC 秒里找停顿；找不到就硬切到上限处。
+function planCuts(duration, pauses) {
+  const mids = pauses.map((p) => (p.start + p.end) / 2);
+  const cuts = [0];
+  let cur = 0;
+  while (duration - cur > CHUNK_SEC) {
+    const limit = cur + CHUNK_SEC;
+    const floor = Math.max(cur + MIN_SEG_SEC, limit - CUT_LOOKBACK_SEC);
+    let pick = 0;
+    for (const t of mids) {
+      if (t >= floor && t <= limit && t > pick) pick = t;   // 取窗口内最靠后的停顿中点
+    }
+    if (!pick) pick = limit;                                // 没有停顿：硬切
+    // 别切出一个短于 MIN_SEG_SEC 的尾巴（如 25.6s 不该切成 25 + 0.6）：对半分
+    if (duration - pick < MIN_SEG_SEC) pick = cur + (duration - cur) / 2;
+    cuts.push(pick);
+    cur = pick;
+  }
+  cuts.push(duration);
+  return cuts;
+}
+
+// 按规划好的切点切片。16k/单声道/s16le 的 PCM 用 -c copy 无损切（不重编码）。
+async function splitWav(wavPath, cuts) {
   const dir = path.dirname(wavPath);
   const base = path.basename(wavPath, '.wav');
-  const pattern = path.join(dir, base + '-part-%03d.wav');
-  await run(FFMPEG, [
-    '-hide_banner', '-loglevel', 'error', '-y',
-    '-i', wavPath,
-    '-f', 'segment', '-segment_time', String(chunkSec), '-c', 'copy',
-    pattern,
-  ], 60000);
-  const files = (await fs.readdir(dir))
-    .filter((f) => f.startsWith(base + '-part-') && f.endsWith('.wav'))
-    .sort();
-  return files.map((f) => path.join(dir, f));
+  const parts = [];
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const p = path.join(dir, base + '-part-' + String(i).padStart(3, '0') + '.wav');
+    await run(FFMPEG, [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-ss', String(cuts[i]), '-i', wavPath, '-t', String(cuts[i + 1] - cuts[i]),
+      '-c', 'copy', p,
+    ], 60000);
+    parts.push(p);
+  }
+  return parts;
+}
+
+// 拼接各段文本：中文直接相连；两侧都是西文字母/数字时补一个空格，
+// 否则英文句子被切开后会粘成 "helloworld"。
+function joinText(parts) {
+  let out = '';
+  for (const s of parts) {
+    if (!s) continue;
+    if (out && /[A-Za-z0-9]$/.test(out) && /^[A-Za-z0-9]/.test(s)) out += ' ';
+    out += s;
+  }
+  return out;
 }
 
 // ── 引擎 ──────────────────────────────────────────────────────────────────
@@ -211,8 +292,12 @@ async function runCloud(wavPath, up) {
   try { obj = JSON.parse(raw); } catch (_) { return raw.trim(); }
   const text = extractText(obj);
   if (!text) {
-    const err = new Error('上游返回为空：' + raw.slice(0, 300));
-    err.status = 502;
+    // 上游对「这段里没人声」会回 200 + 空 text（如 glm-asr 的 {duration,text:"",usage}）。
+    // 这是**正常结果**，不是故障：给 400 让上层只记一行 warn（5xx 才打堆栈），
+    // 前端按「没识别到」处理、页面侧单段失败也会被跳过。
+    const err = new Error('没有识别到语音内容（这段音频里没有可识别的人声）');
+    err.status = 400;
+    err.upstream = raw.slice(0, 300);
     throw err;
   }
   return text;
@@ -241,9 +326,21 @@ async function transcribeBuffer(buf, opts) {
     // 每次请求都打一行：原始字节 → 归一化时长。排查“上游说没声音”时第一眼看这个。
     log('info', '归一化：' + buf.length + 'B (' + ((opts && opts.ext) || '?') + ') → '
       + seconds.toFixed(1) + 's wav');
-    if (CHUNK_SEC > 0 && seconds > CHUNK_SEC * 1.2) {
-      parts.push(...await splitWav(wavPath, CHUNK_SEC));
-      log('info', '超长音频切成 ' + parts.length + ' 段');
+
+    // 只有超长才切：套壳是流式的，每次请求本来就是一�句话（1~5s），
+    // 这里直接一次送出去，不用白白跑一趟 silencedetect。
+    let cuts = [0, seconds];
+    if (seconds > CHUNK_SEC) {
+      const pauses = await detectPauses(wavPath).catch((e) => {
+        log('warn', '静音检测失败，按 ' + CHUNK_SEC + 's 硬切：' + String(e && e.message || e).slice(0, 160));
+        return [];
+      });
+      cuts = planCuts(seconds, pauses);
+      if (cuts.length > 2) {
+        parts.push(...await splitWav(wavPath, cuts));
+        log('info', '超长切成 ' + parts.length + ' 段，切点 '
+          + cuts.slice(1, -1).map((t) => t.toFixed(1) + 's').join(' / '));
+      }
     }
     if (!parts.length) {
       try {
@@ -259,15 +356,26 @@ async function transcribeBuffer(buf, opts) {
     }
 
     const out = [];
-    for (const p of parts) {
+    let firstErr = null;
+    for (let i = 0; i < parts.length; i++) {
+      const t0 = Date.now();
+      const range = cuts[i].toFixed(1) + '–' + cuts[i + 1].toFixed(1) + 's';
       // 每段独立识别；单段失败不连累其他段（长录音里偶发静音段常见）
       try {
-        out.push((await runCloud(p, up)).trim());
+        const text = (await runCloud(parts[i], up)).trim();
+        log('info', '  part ' + (i + 1) + '/' + parts.length + ' ' + range + ' → '
+          + text.length + ' 字 / ' + (Date.now() - t0) + 'ms');
+        out.push(text);
       } catch (e) {
-        log('warn', '切片识别失败（跳过）：' + String(e && e.message || e).slice(0, 200));
+        if (!firstErr) firstErr = e;
+        log('warn', '  part ' + (i + 1) + '/' + parts.length + ' ' + range
+          + ' 识别失败（跳过）：' + String(e && e.message || e).slice(0, 200));
       }
     }
-    return out.filter(Boolean).join('');
+    // 全部失败才报错：否则前端只会看到 200 + 空文本，分不清是「没说话」还是「上游挂了」。
+    // 部分失败保持静默降级（长录音里某一段坏了不该连坐）。
+    if (!out.length && firstErr) throw firstErr;
+    return joinText(out);
   } finally {
     await fs.rm(wavPath, { force: true }).catch(() => {});
     for (const p of parts) await fs.rm(p, { force: true }).catch(() => {});

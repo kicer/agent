@@ -74,9 +74,13 @@ curl -s -X POST http://mcp_asr:3000/transcribe \
 # → {"text":"打开今天的日报","ms":842,"model":"whisper-1"}
 ```
 
-- 上限 20MB；超过 `ASR_MAX_CHUNK_SEC`（默认 25s）的音频自动切片后逐段识别再拼接
-  （多数云端 ASR 单次只吃 ~30s）。
-- 同时最多 `ASR_MAX_CONCURRENT`（默认 2）个转写，超了回 429。
+- 上限 20MB。**只有超过 `ASR_MAX_CHUNK_SEC`（默认 25s）才切**：套壳是流式的，一次请求本就是一�句话，
+  直接一次送出去（不跑静音检测）；长音频（浏览器整段上传 / `/mcp`）才需要断开。
+- 切点尽量落在停顿上：只在距上限最后 `ASR_CUT_LOOKBACK_SEC`（默认 6s）的窗口里找静音区间中点，
+  挑不到才硬切——硬切会把字劈成两半，而两段之间没有上下文，接缝处的字就丢了。
+  段数因此最少（≈ 时长/25），不存在“切太碎”的退化。单段不短于 `ASR_MIN_SEG_SEC`（默认 1s）。
+- 单段失败不连坐：其余段照常返回（长录音里偶发静音段很常见）；**全部**段失败才报错。
+- 同时最多 `ASR_MAX_CONCURRENT`（默认 2）个转写请求，超了回 429。
 
 ## MCP 工具
 
@@ -100,10 +104,14 @@ mcp_servers:
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `ASR_MAX_BYTES` | 20971520 | 单次上传上限 |
-| `ASR_MAX_CHUNK_SEC` | `25` | 超长音频切片长度，`0` = 不切 |
+| `ASR_PAUSE_SEC` | `0.5` | 多长的静音算一个停顿（`silencedetect` 的 `d`，仅在需要切时用） |
+| `ASR_SILENCE_DB` | `-35` | 判定“没人说话”的音量门限（正常语音约 -20dB） |
+| `ASR_MIN_SEG_SEC` | `1` | 单段最短；避免切出识别不了的碎片 |
+| `ASR_MAX_CHUNK_SEC` | `25` | 单段最长；≤ 它就不切（一次请求） |
+| `ASR_CUT_LOOKBACK_SEC` | `6` | 切点搜索窗：只在距上限最后这几秒里找停顿 |
 | `ASR_MAX_CONCURRENT` | `2` | 并发转写数 |
 | `ASR_LOG_LEVEL` | `info` | debug / info / warn / error / none |
-| `FFMPEG_BIN` | `ffmpeg` | 归一化工具路径 |
+| `FFMPEG_BIN` | `ffmpeg` | 归一化 / 静音检测工具路径 |
 
 上游参数（key / base_url / model）**不是环境变量**，见上面「上游」一节。
 

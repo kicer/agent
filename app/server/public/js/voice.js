@@ -8,10 +8,11 @@
 //   · 松手：取消态 → 丢弃 + 轻提示；否则转写后**直接发送**
 //   · 发送键位置变成键盘按钮，点一下回文本模式并聚焦输入框（移动端弹键盘）
 //
-// 录音在客户端：套壳原生桥（http 页面也能用）或 HTTPS 下的 MediaRecorder；
-// 转写在服务端 mcp_asr（经 core 的 /api/asr 中转）。
-// 电平：浏览器用 AnalyserNode 算 RMS；套壳上报 onNativeVoiceAmp（原始 getMaxAmplitude）。
-// 归一化/门限/平滑全部在页面侧做，壳不做任何换算。
+// 录音在客户端，两条路：
+//   · 套壳原生桥（http 页面也能用）：壳把 16k/单声道 PCM 以 ~100ms 分片推给页面，页面自己判停顿、
+//     自己切段、逐段上传——**大部分识别在说话过程中就做完了**，松手只等最后一段。
+//   · 浏览器（需 HTTPS）：MediaRecorder 整段录，松手后整体上传（实时版下一阶段再做）。
+// 电平：两者都在页面侧算（套壳用 PCM 峰值，浏览器用 AnalyserNode 的 RMS），壳不做任何换算。
 //
 // 包在 IIFE 里：前端是共享全局作用域的经典脚本，顶层声明会和其他文件撞名。
 
@@ -30,9 +31,10 @@
   const webOk = !!(window.isSecureContext && navigator.mediaDevices
     && typeof navigator.mediaDevices.getUserMedia === 'function' && window.MediaRecorder);
 
-  const MAX_MS = 60000;        // 单次录音上限
+  const MAX_MS = 180000;       // 单次录音上限（流式上传后不再受 60s 限制）
   const MIN_MS = 500;          // 短于这个时长按误触处理，不上传
   const NO_RESULT_MS = 3000;   // 松开后壳迟迟不回音频（比如还在等权限）→ 复位
+  const FLUSH_MS = 60000;      // 松手后等尾段识别完的上限（超过就当失败）
   const BAR_COUNT = 45;        // 声波柱数（要足够宽，手指按住时两侧仍能看到）
 
   // 两端矮、中间高的包络：看起来像一段声波而不是一排等高柱子
@@ -59,11 +61,27 @@
   let recordStartAt = 0;
   let stopTimer = null;
   let hardTimer = null;
-  let watchdog = null;
   let rec = null;
   let stream = null;
   let chunks = [];
   let mime = '';
+
+  // 原生流式：壳推 PCM 分片，页面 VAD 断句后逐段上传
+  let pcmRate = 16000;         // 壳推上来的采样率（契约要求 16k）
+  let segChunks = [];          // 当前段的 PCM 分片（Int16Array）
+  let segLen = 0;              // 当前段总采样数
+  let silLen = 0;              // 段尾连续静音采样数
+  let textParts = [];          // 各段识别结果（按顺序）
+  let chain = Promise.resolve(); // 串行上传链：保证拼接顺序 = 说话顺序
+  let gen = 0;                 // 会话代号：取消/重录后迟到结果直接丢弃
+  let streamOn = false;        // 是否接受 PCM 分片
+  let flushTimer = null;
+
+  // VAD 参数（页面侧唯一一份：改完刷新页面即生效，不用重打 APK）
+  const VAD_SILENCE_DB = -42;     // 低于这个音量算“没人说话”（正常说话峰值约 -10~-30dB）
+  const VAD_PAUSE_SEC = 0.5;      // 连续静音这么久 → 断句（与壳无关）
+  const VAD_MIN_SPEECH_SEC = 0.3; // 一段短于这个 → 当噪声丢掉
+  const VAD_MAX_SEG_SEC = 25;     // 单段上限：连续说话没停顿就硬切（上游单次上限）
 
   // 电平与渲染
   let rafId = 0;
@@ -135,7 +153,7 @@
     }
 
     if (!animate) {
-      // 没有电平来源（壳没实现 onNativeVoiceAmp / AnalyserNode 不可用）：
+      // 没有电平来源（壳没推 PCM / AnalyserNode 不可用）：
       // 静默停在基线，不再空转（也绝不能假动）
       levelCur = 0;
       renderBars(0, false);
@@ -206,9 +224,9 @@
     pressing = false;
     pressY = 0;
     discard = false;
+    abortStream();
     if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
     if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
-    if (watchdog) { clearTimeout(watchdog); watchdog = null; }
     hold.classList.remove('recording');
     setHoldText('按住 说话');
     hideOverlay();
@@ -262,16 +280,16 @@
     showOverlay();
 
     if (native) {
-      // 原生侧即使要弹权限也先当「已开始」：松开时 stopVoice()，壳若还在等权限会忽略，
-      // 由 watchdog 兜底复位（只有首次授权那一次会遇到）。
+      // 原生侧即使要弹权限也先当「已开始」：页面已经开始收分片，壳真开录后会推数据。
+      // 首次授权那一次的分片要等用户点允许才会到，之前的静音不计入。
       phase = 'recording';
       recordStartAt = Date.now();
+      gen++;                 // 新会话：让上一轮迟到的结果全部失效
+      streamOn = true;
+      pcmRate = 16000;
+      clearSeg();
+      textParts = [];
       stopTimer = setTimeout(finishHold, MAX_MS);
-      hardTimer = setTimeout(function () {
-        try { if (native.cancelVoice) native.cancelVoice(); } catch (_) { /* 忽略 */ }
-        resetUI();
-        toast('录音超时');
-      }, MAX_MS + NO_RESULT_MS);
       try {
         native.startVoice();
       } catch (e) {
@@ -352,6 +370,16 @@
     stopMeter();
 
     if (native) {
+      // 松手：把不足一个停顿的尾巴发走，然后等所有段回来。
+      // 大部分段在说话过程中已经识别完了，这里通常只等最后一段。
+      if (discard) {
+        abortStream();
+        try { native.stopVoice(); } catch (_) { /* 已停 */ }
+        resetUI();
+        toast('说话时间太短');
+        return;
+      }
+      flushTail();
       try {
         native.stopVoice();
       } catch (e) {
@@ -359,12 +387,7 @@
         toast('结束录音失败：' + String((e && e.message) || e));
         return;
       }
-      // 壳若因为权限弹窗没有真正开录，stopVoice() 会被忽略、结果不会回来
-      watchdog = setTimeout(function () {
-        if (phase !== 'busy') return;
-        try { if (native.cancelVoice) native.cancelVoice(); } catch (_) { /* 忽略 */ }
-        resetUI();
-      }, NO_RESULT_MS);
+      waitFlush();
       return;
     }
 
@@ -383,6 +406,7 @@
     const r = rec;
     rec = null;
     chunks = [];
+    abortStream();      // 丢弃已发在途的结果，也不碰输入框
     if (r) { r.onstop = null; r.onerror = null; }
     releaseStream();
     resetUI();
@@ -479,42 +503,163 @@
   window.addEventListener('pagehide', cancelHold);
 
   // ---------- 原生桥回调（契约见 docs/voice-input.md） ----------
-  // 实时幅度：套壳每 ~100ms 上报一次 MediaRecorder.getMaxAmplitude() 的**原始值**（0~32767）。
-  // 换算、门限、平滑全部在页面侧做——规则只存在这一份，壳不要做任何数学。
-  function onNativeAmp(raw) {
-    if (!native) return;
-    const amp = Number(raw);
-    if (!isFinite(amp)) return;
-    lastRealLevelAt = Date.now();
-    if (amp <= 0) {
-      levelTarget = 0;
-    } else {
-      const db = 20 * Math.log10(Math.min(amp, 32767) / 32767);
-      levelTarget = dbToLevel(db);
-    }
-    startLoop(); // 静默态下循环已停，下一帧数据到了再启
+  // 壳每 ~100ms 推一片 16bit/单声道小端 PCM。采样率、分片大小、门限全部不在壳里算。
+  function b64ToI16(b64) {
+    const bin = atob(String(b64 || ''));
+    const n = bin.length >> 1;
+    const out = new Int16Array(n);
+    for (let i = 0; i < n; i++) out[i] = (bin.charCodeAt(i * 2 + 1) << 8) | bin.charCodeAt(i * 2);
+    return out;
   }
-  window.onNativeVoiceAmp = onNativeAmp;
-  window.onNativeVoiceLevel = onNativeAmp; // 旧名兼容：同样按原始幅度解释
 
-  window.onNativeVoiceResult = function (b64, mimeType) {
-    if (phase !== 'busy' && phase !== 'recording') return;
-    if (watchdog) { clearTimeout(watchdog); watchdog = null; }
-    if (discard) { discard = false; resetUI(); toast('说话时间太短'); return; }
-    try {
-      const bin = atob(String(b64 || ''));
-      const arr = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-      upload(new Blob([arr], { type: mimeType || 'audio/mp4' }));
-    } catch (_) {
-      resetUI();
-      toast('语音数据解析失败');
+  // 这一片 PCM 的峰值电平（dBFS）。用峰值而不是 RMS：与原先 getMaxAmplitude 的尺度一致。
+  function peakDb(arr) {
+    let peak = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i] < 0 ? -arr[i] : arr[i];
+      if (v > peak) peak = v;
+    }
+    return peak <= 0 ? -Infinity : 20 * Math.log10(peak / 32767);
+  }
+
+  function encodeWav(samples, rate) {
+    const b = new ArrayBuffer(44 + samples.length * 2);
+    const v = new DataView(b);
+    const str = function (off, s) { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); str(8, 'WAVE');
+    str(12, 'fmt '); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);            // PCM
+    v.setUint16(22, 1, true);            // mono
+    v.setUint32(24, rate, true);         // 采样率
+    v.setUint32(28, rate * 2, true);     // byte rate
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, samples.length * 2, true);
+    for (let i = 0, o = 44; i < samples.length; i++, o += 2) v.setInt16(o, samples[i], true);
+    return new Blob([b], { type: 'audio/wav' });
+  }
+
+  // 从当前段取前 n 个采样（拼成一段连续 PCM）
+  function takeSeg(n) {
+    const out = new Int16Array(n);
+    let off = 0;
+    for (const c of segChunks) {
+      if (off >= n) break;
+      const k = Math.min(c.length, n - off);
+      out.set(k === c.length ? c : c.subarray(0, k), off);
+      off += k;
+    }
+    return out;
+  }
+
+  function clearSeg() { segChunks = []; segLen = 0; silLen = 0; }
+
+  // 把当前段的前 n 个采样作为一段发出去（太短当噪声丢掉）。
+  // 注意：必须在 clearSeg() 之前调，takeSeg 要读 segChunks。
+  function emitSegment(n) {
+    if (n < pcmRate * VAD_MIN_SPEECH_SEC) return;
+    emit(encodeWav(takeSeg(n), pcmRate));
+  }
+
+  // 串行上传：一段没回来不发下一段（2 vCPU 上并发只会互相拖慢，而且顺序也没法保证）
+  function emit(blob) {
+    const my = gen;
+    chain = chain.then(function () {
+      if (my !== gen) return;   // 已取消/重录：不再发
+      return req('POST', '/api/asr/transcribe', blob, true, 120000)
+        .then(function (r) {
+          if (my !== gen) return;
+          const t = String((r && r.text) || '').replace(/\s+/g, ' ').trim();
+          if (t) textParts.push(t);
+        })
+        .catch(function () { /* 单段失败不连坐，其余段照常出字 */ });
+    });
+  }
+
+  // 拼接各段：中文直接相连；两侧都是西文字母/数字时补一个空格，
+  // 否则英文被切开后会粘成 "helloworld"。
+  function joinText(parts) {
+    let out = '';
+    for (const s of parts) {
+      if (!s) continue;
+      if (out && /[A-Za-z0-9]$/.test(out) && /^[A-Za-z0-9]/.test(s)) out += ' ';
+      out += s;
+    }
+    return out;
+  }
+
+  // 丢弃本轮的一切（段缓冲 + 已发在途结果）：取消 / 误触 / 超时都走这里
+  function abortStream() {
+    streamOn = false;
+    clearSeg();
+    textParts = [];
+    gen++;
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+  }
+
+  window.onNativeVoiceChunk = function (b64, rate) {
+    if (!native || !streamOn || phase !== 'recording') return;
+    const r = Number(rate);
+    if (r > 0 && r !== pcmRate) pcmRate = r;
+    const pcm = b64ToI16(b64);
+    if (!pcm.length) return;
+
+    // 电平：直接用这片 PCM 的峰值（替掉原来壳上报的 getMaxAmplitude）
+    const db = peakDb(pcm);
+    lastRealLevelAt = Date.now();
+    levelTarget = db === -Infinity ? 0 : dbToLevel(db);
+    startLoop();
+
+    segChunks.push(pcm);
+    segLen += pcm.length;
+    // 静音按「整片」判：壳一片约 100ms，足够分辨 0.5s 的停顿（再细也没意义）
+    silLen = db < VAD_SILENCE_DB ? silLen + pcm.length : 0;
+
+    if (silLen >= pcmRate * VAD_PAUSE_SEC) {
+      // 停顿够了 → 把静音之前的部分发走，静音本身丢掉（不浪费上游额度）
+      const tail = segLen - silLen;
+      emitSegment(tail);
+      clearSeg();
+    } else if (segLen >= pcmRate * VAD_MAX_SEG_SEC) {
+      // 一口气说了 25 秒没停顿：硬切（宁可切开也不能超上游上限）
+      emitSegment(segLen);
+      clearSeg();
     }
   };
 
+  // 松手/超时：把不足一个停顿的尾巴也发出去，然后等全部段回来。
+  // 必须剔掉尾巴上的静音：停顿那一下已经把缓冲清空了，之后累积的可能全是静音
+  //（用户停一会儿才松手），发出去只会换来一次「没有可识别语音」。
+  function flushTail() {
+    streamOn = false;
+    const speech = segLen - silLen;
+    if (speech > 0) emitSegment(speech);
+    clearSeg();
+  }
+
+  function waitFlush() {
+    const my = gen;
+    flushTimer = setTimeout(function () {
+      flushTimer = null;
+      if (my !== gen) return;
+      gen++; // 让迟到结果失效
+      resetUI();
+      toast('语音识别超时');
+    }, FLUSH_MS);
+    chain = chain.then(function () {
+      if (my !== gen) return;
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      const text = joinText(textParts);
+      // 先收遮罩再做后续：toast 固定在 bottom:96px，遮罩还在时弹出来会压住声波
+      resetUI();
+      if (!text) { toast('没有识别到内容'); return; }
+      ta.value = text;
+      send();
+    });
+  }
+
   window.onNativeVoiceState = function (s) {
     if (!native || s !== 'recording' || phase !== 'recording') return;
-    // 真正开录：60s 与「太短」判定从这一刻算（首次授权弹窗的时间不算）
+    // 真正开录：180s 与「太短」判定从这一刻算（首次授权弹窗的时间不算）
     recordStartAt = Date.now();
     if (stopTimer) clearTimeout(stopTimer);
     stopTimer = setTimeout(finishHold, MAX_MS);
@@ -523,6 +668,7 @@
 
   window.onNativeVoiceError = function (code, message) {
     if (phase === 'idle') return;
+    abortStream();
     resetUI();
     // 生命周期打断（切后台/换页）属预期，不弹提示
     if (code === 'cancelled' || code === 'canceled') return;

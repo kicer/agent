@@ -1,36 +1,33 @@
 # 语音输入：客户端录音契约
 
-链路是「按住说话 → 客户端录音 → `POST /api/asr/transcribe` → 转写结果**自动发送**」。
-服务端只收音频字节，不关心是谁录的。`public/js/voice.js` 按能力自己选录音方式：
+链路是「按住说话 → 壳持续推 PCM → 页面按停顿切段并逐段转写 → 松手后一次性写入输入框并**自动发送**」。
 
-| 页面环境 | 录音方式 | 说明 |
-|---|---|---|
-| Android 套壳 App（WebView） | **原生录音 + JS 桥** | WebView 没有 Web Speech API；http 页面也允许 `getUserMedia` 的替代路径 |
-| 浏览器 / PWA（HTTPS） | `MediaRecorder` | 标准 `getUserMedia`，不用改壳 |
-| 纯浏览器（`http://<IP>`） | 不可用 | 非安全上下文，浏览器拒绝开麦 |
+`public/js/voice.js` 按能力自己选录音方式：
 
-**发送键的四种状态**（`sessions.js` 的 `updateSendBtn` 决定）：
+| 页面环境 | 录音方式 | 实时断句 | 说明 |
+|---|---|---|---|
+| Android 套壳 App（WebView） | **原生 `AudioRecord` + JS 桥流式推 PCM** | ✅ | WebView 没有 Web Speech API；`http://` 页面也能用 |
+| 浏览器 / PWA（HTTPS） | `MediaRecorder` 整段录 | ❌（下一阶段） | 标准 `getUserMedia`，松手后整体上传 |
+| 纯浏览器（`http://<IP>`） | 不可用 | — | 非安全上下文，浏览器拒绝开麦 |
 
-| `data-state` | 什么时候 | 点击行为 |
-|---|---|---|
-| `stop` | 生成中且输入框为空 | 停止当前回合（优先级最高，不被语音入口顶掉） |
-| `voice` | 空闲、无文字无附件、且语音可用 | 进入语音模式 |
-| `keyboard` | 已在语音模式 | 回键盘模式，聚焦输入框（移动端弹键盘） |
-| `send` | 其余情况 | 发送 |
-
-「语音可用」= ①有录音能力（原生桥，或安全上下文下的 `MediaRecorder`）②`GET /api/asr/status`
-返回 `enabled !== false`。所以**套壳 App 里即使页面是 `http://`，只要桥注入成功，麦克风入口照样出现**；
-纯浏览器 `http://<IP>` 不会出现（非安全上下文，浏览器禁止开麦）。
-
-语音模式下输入框被 `#voice-hold` 取代（只有居中文字，无按钮外观）：按住后整块输入区被
-**全宽遮罩**盖住（`#voice-overlay`，向左右各扩到屏幕边缘），遮罩里是「实时电平声波 + 提示文案」。
-手指上滑进入文案区域 → 取消态（声波与文案变红，文案改为「松开取消」），滑回下方恢复；
-松手时取消态则**直接丢弃**（不弹 toast——它会盖住声波，取消本身已经有变色/文案反馈），否则转写并直接发送。
-松手后遮罩保持到识别结束，文案换成「正在识别…」。发送键变成键盘按钮。
+**为什么必须要流式**：录音只在松手后才上传的话，识别要等整段录完 + 整段识别，长语音尤其慢。
+流式之后，说话过程中的每个停顿都会立刻切段上传，**松手时通常只剩最后一段要等**。
 
 ---
 
-## 一、桥的契约
+## 一、交互与页面行为（壳只需要知道这些）
+
+1. 用户按住 `#voice-hold` → 页面调 `startVoice()`，同时把整块输入区换成全宽遮罩（实时声波 + 提示文案）。
+2. 壳开始推 PCM 分片；页面自己判停顿（连续静音 ≥0.5s）→ 立即 POST 该段 → 结果攒在内存里。
+3. 手指上滑进入文案区 = 取消态；松手时处于取消态则**整轮丢弃**（已上传段的结果也丢掉），输入框保持原样。
+4. 松手 → 页面把尾巴里**有声音的部分**发出去（纯静音的尾巴不发，否则只会换来一次「没有可识别人声」）
+   → 等所有段回来 → **一次性**写进输入框 → 自动发送。
+5. 识别结果**不会边识别边显示**：遮罩/发送键本来就盖住了输入框，渐进文本用户看不到，
+   所以统一在最后落到输入框里，用户拿到的是完整一句话。
+
+---
+
+## 二、桥的契约
 
 ### 1. 注入时机
 
@@ -49,69 +46,66 @@ webView.loadUrl(startUrl);
 
 ```js
 window.AgentNative = {
-  startVoice(),   // 开始录音；失败/拒绝通过 onNativeVoiceError 回报
-  stopVoice(),    // 结束录音；结果通过 onNativeVoiceResult 回传
+  startVoice(),   // 开始录音（可能先弹权限）；失败通过 onNativeVoiceError 回报
+  stopVoice(),    // 结束录音；**没有返回值**，页面自己等已发出的分段的识别结果
   cancelVoice()   // 放弃本次录音（无回调；页面自己已经把状态复位了）
 };
 ```
 
-**线程模型**：这三个方法都跑在 WebView 的 JavaBridge 子线程上，**不是主线程**。
-`MediaRecorder` 的所有调用必须收敛到主线程：方法入口先 `mainHandler.post(...)`，
-读临时文件 + Base64 才放回子线程。
-
 ### 3. 回调（页面定义，壳调用）
 
 ```js
-window.onNativeVoiceResult(base64, mime)   // mime 例：'audio/mp4'
-window.onNativeVoiceError(code, message)   // 见下方错误码表
-window.onNativeVoiceState('recording')     // 建议实现：真正开始录时调一次
-window.onNativeVoiceAmp(amp)               // 建议实现：原始幅度 0~32767，驱动遮罩里的声波
+window.onNativeVoiceChunk(base64Pcm, sampleRate)  // 必需：流式 PCM 分片
+window.onNativeVoiceState('recording')            // 建议：真正开始录时调一次
+window.onNativeVoiceError(code, message)          // 出错/被打断时调
 ```
 
-- `onNativeVoiceAmp(amp)`：壳只上报 `MediaRecorder.getMaxAmplitude()` 的**原始值**
-  （0~32767，主线程每 100ms 一次），**不要做任何换算**。dB 归一化、静音门限、快攻慢放平滑
-  全部在页面侧——浏览器（RMS）和壳（峰值）两条路的规则只存在一份。
-  旧名 `onNativeVoiceLevel` 仍作为别名接受（同样按原始幅度解释）。
-  不实现也能用：声波静默停在基线上（不空转、不假动）。
-  JS 侧还要自己做快攻慢放平滑，壳不需要平滑。
-- `onNativeVoiceState('recording')`：**按住说话的时长判定依赖它**。页面用这个回调重置
-  「60 秒上限」和「太短丢弃」的起点，避免首次授权弹窗的时间被算进录音。不实现也不会崩：
-  页面按点击时刻计时，代价是首次授权那一次会被当成「太短」丢弃（用户再按一次即可）。
-- 页面收到 `onNativeVoiceResult` 后会直接发送消息（不经过输入框、不可编辑）。
-- 所有回调都必须在**主线程**调 `webView.evaluateJavascript`。
-- 字符串一律用 `JSONObject.quote(...)` 拼，不要手写 `'` 转义——异常 message 里可能有
-  `\`、换行、U+2028，会把整段脚本打断。
+#### `onNativeVoiceChunk(base64Pcm, sampleRate)`
 
-### 4. 状态机与错误码
+- 内容：**裸 PCM**，`16bit 小端 / 单声道 / 16kHz`（小端是 `AudioRecord` 的原始字节序，直接转 Base64 即可）。
+- 节奏：约 **100ms 一片**（1600 采样 = 3200 字节，Base64 后约 4.3KB）。50~200ms 都可接受。
+- 壳**不做任何数学**：不判静音、不切段、不算音量。dB 归一化、静音门限、停顿判定、切段
+  全部在页面侧（`voice.js`），规则只存在一份。
+- 声波也是页面用这片 PCM 的峰值算的——**不再需要** `onNativeVoiceAmp` / `getMaxAmplitude`。
+- 页面已经复位（用户松手/取消）后再来的分片会被忽略，壳不用刻意等待。
 
-壳侧状态：`IDLE → (WAITING_PERMISSION) → RECORDING → ENCODING → IDLE`。
-`startVoice` 只在 `IDLE` 生效，`stopVoice` 只在 `RECORDING` 生效（其余静默忽略）。
+#### `onNativeVoiceState('recording')`
+
+**按住时长判定依赖它**：页面用这个回调重置「180 秒上限」与「太短丢弃」的起点，
+避免首次授权弹窗的时间被算进录音。不实现也不会崩，但首次授权那一次可能被当成「太短」丢掉。
+
+#### `onNativeVoiceError(code, message)`
 
 | code | 触发时机 | 页面表现 |
 |---|---|---|
-| `no_permission` | 用户拒绝 / 取消授权弹窗 | toast「需要麦克风权限」 |
-| `start_failed` | `prepare()` / `start()` 抛异常（含回退 MIC 后仍失败） | toast |
-| `too_short` | `stop()` 抛异常（录音 < ~1s） | toast「说话时间太短，请按住再说」，**不上传** |
-| `read_failed` | 读临时文件失败 | toast |
+| `no_permission` | 用户拒绝 / 取消授权弹窗 | toast「录音失败：…」 |
+| `start_failed` | `AudioRecord` 初始化/启动失败（含 16k 不支持） | toast |
+| `read_failed` | 采集线程读失败 | toast |
+| `forbidden` | 非白名单 URL / 应用不在前台 | toast |
 | `cancelled` | 生命周期打断（切后台 / 换页） | **静默复位，不弹提示** |
 | 其他未知 code | — | toast 里显示 `message`，没有就显示 code |
 
-**取消语义**：页面在 `stopVoice()` 之后会一直等结果（直到点击后 90 秒的硬超时），
-所以壳在生命周期里取消录音时**必须**回调 `onNativeVoiceError('cancelled','')`，
-否则按钮会卡在「录音中」。`cancelVoice()` 是页面主动发起的，壳不需要回报。
+**取消语义**：页面在 `stopVoice()` 之后只等自己发出的分段请求（不再等壳回音频），
+所以壳在生命周期里中断录音时**仍建议**回调 `onNativeVoiceError('cancelled','')`，
+让页面立刻收遮罩，不必干等。`cancelVoice()` 是页面主动发起的，壳不需要回报。
 
-### 5. 体积与时序
+### 4. 体积与时序
 
-- 16kHz / 32kbps / 单声道 AAC：60 秒 ≈ **240KB**，Base64 后 ≈ **320KB**。
-- `evaluateJavascript` 走 Binder，单次约 1MB 上限；320KB 安全，但**不要再延长单次时长**。
-  真要 2 分钟以上，改成按段回传或本地 HTTP 回传。
-- 松开后页面最多等 3 秒拿音频（等不到就复位，覆盖「壳还在等权限」的情况）；
-  拿到后上传+识别，正常 1~2 秒。
-- 按住时间 < 500ms 视为误触：页面直接丢弃，不上传；壳自己的 `too_short` 是第二道保险。
+- 每秒 32KB 原始 PCM（16k × 2 字节），Base64 后约 43KB/s；一片 100ms 约 4.3KB。
+  `evaluateJavascript` 走 Binder，单次约 1MB 上限，4.3KB 远低于上限。
+- 一次 60 秒的听写 = 约 600 次桥调用、2.6MB 字符串。Android WebView 完全吃得住，
+  但**不要**把分片缩到 20ms 以下（调用次数会翻 5 倍，收益为零）。
+- 页面侧开销：每片扫一遍峰值（1600 个 short），可忽略。
+
+### 5. 壳侧状态机
+
+`IDLE → (WAITING_PERMISSION) → RECORDING → IDLE`
+
+`startVoice` 只在 `IDLE` 生效，`stopVoice` / `cancelVoice` 在非 `RECORDING` 时静默忽略。
 
 ---
 
-## 二、Java 参考骨架（纯 Java / minSdk 21）
+## 三、Java 参考骨架（纯 Java / minSdk 21）
 
 只演示契约要求的部分；`UrlPolicy`、埋点、通知等按各自工程接。
 
@@ -121,32 +115,21 @@ window.onNativeVoiceAmp(amp)               // 建议实现：原始幅度 0~3276
 
 public final class VoiceBridge {
     private static final int REQ_MIC = 1001;
-    private static final long MAX_MS = 60_000;
+    private static final int RATE = 16000;        // 契约固定：16k / 单声道 / 16bit
+    private static final int CHUNK_MS = 100;      // 每 100ms 推一片
+    private static final long MAX_MS = 180_000;   // 页面也会自己停，这里是兜底
 
-    private enum State { IDLE, WAITING_PERMISSION, RECORDING, ENCODING }
+    private enum State { IDLE, WAITING_PERMISSION, RECORDING }
 
     private final Activity activity;
     private final WebView webView;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable autoStop = this::stopOnMain;
 
-    // 实时电平：每 100ms 读一次 getMaxAmplitude() 交给页面画声波
-    private static final long LEVEL_INTERVAL_MS = 100;
-    private final Runnable levelTick = this::tickLevel;
-
-    private void tickLevel() {
-        MediaRecorder r = recorder;
-        if (state != State.RECORDING || r == null) return;
-        int amp = 0;
-        try { amp = r.getMaxAmplitude(); } catch (Exception ignored) { }
-        // 原始幅度直接给页面：dB 归一化/门限/平滑全在 JS，壳不做任何数学
-        js("window.onNativeVoiceAmp && window.onNativeVoiceAmp(" + amp + ")");
-        main.postDelayed(levelTick, LEVEL_INTERVAL_MS);
-    }
-
     private State state = State.IDLE;
-    private MediaRecorder recorder;
-    private File file;
+    private AudioRecord record;
+    private Thread worker;
+    private volatile boolean running;
 
     public VoiceBridge(Activity activity, WebView webView) {
         this.activity = activity;
@@ -159,15 +142,13 @@ public final class VoiceBridge {
     @JavascriptInterface public void cancelVoice() { main.post(() -> cancelOnMain(true)); }
 
     // ---- 生命周期：由 Activity / WebViewClient 调用 ----
-    // 注意：只取消真正在录/在编码的状态。授权弹窗期间某些 ROM 会走 onPause，
-    // 那里如果一并取消，首次授权的两段式流程就断了。
+    // 只在真正录音时取消。授权弹窗期间某些 ROM 会走 onPause，
+    // 那里一并取消的话，首次授权的两段式流程就断了。
     public void onPause() {
-        main.post(() -> {
-            if (state == State.RECORDING || state == State.ENCODING) cancelOnMain(true);
-        });
+        main.post(() -> { if (state == State.RECORDING) cancelOnMain(true); });
     }
-    public void onDestroy()       { main.post(() -> cancelOnMain(false)); }
-    public void onPageChanged()   { main.post(() -> cancelOnMain(true)); }
+    public void onDestroy()     { main.post(() -> cancelOnMain(false)); }
+    public void onPageChanged() { main.post(() -> cancelOnMain(true)); }
 
     public void onRequestPermissionsResult(int requestCode, int[] grantResults) {
         if (requestCode != REQ_MIC) return;
@@ -177,7 +158,7 @@ public final class VoiceBridge {
             boolean ok = grantResults != null && grantResults.length > 0
                     && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             if (!ok) { fail("no_permission", "需要麦克风权限"); return; }
-            beginRecording(); // 授权后直接开录（体验优先，不要求用户再点一次）
+            beginRecording();   // 授权后直接开录，不让用户再点一次
         });
     }
 
@@ -198,105 +179,96 @@ public final class VoiceBridge {
         beginRecording();
     }
 
-    @SuppressLint("NewApi")
     private void beginRecording() {
+        int minBuf = AudioRecord.getMinBufferSize(
+                RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        if (minBuf <= 0) { fail("start_failed", "设备不支持 16kHz 录音"); return; }
+
         // VOICE_RECOGNITION 关掉 AGC/降噪，对 ASR 更友好；个别机型不支持则回退 MIC
+        final AudioRecord r = createRecord(minBuf);
+        if (r == null) { fail("start_failed", "无法开始录音"); return; }
+
+        record = r;
+        running = true;
+        state = State.RECORDING;
+        main.postDelayed(autoStop, MAX_MS);
+
+        final int samplesPerChunk = RATE * CHUNK_MS / 1000;   // 1600
+        worker = new Thread(() -> captureLoop(r, samplesPerChunk), "voice-capture");
+        worker.start();
+
+        // 让页面的 180s 从“真的开始录”算（授权弹窗的时间不算）
+        js("window.onNativeVoiceState && window.onNativeVoiceState('recording')");
+    }
+
+    private AudioRecord createRecord(int minBuf) {
         int[] sources = {MediaRecorder.AudioSource.VOICE_RECOGNITION,
                          MediaRecorder.AudioSource.MIC};
         for (int source : sources) {
-            File f = null;
-            MediaRecorder r = null;
             try {
-                f = File.createTempFile("voice", ".m4a", activity.getCacheDir());
-                r = Build.VERSION.SDK_INT >= 31
-                        ? new MediaRecorder(activity)   // 无参构造在 API 31 起废弃
-                        : new MediaRecorder();
-                r.setAudioSource(source);
-                r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-                r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-                r.setAudioSamplingRate(16000);
-                r.setAudioEncodingBitRate(32000);
-                r.setAudioChannels(1);
-                r.setOutputFile(f.getAbsolutePath());
-                r.prepare();
-                r.start();
-
-                recorder = r;
-                file = f;
-                state = State.RECORDING;
-                main.postDelayed(autoStop, MAX_MS);
-                main.postDelayed(levelTick, LEVEL_INTERVAL_MS);
-                // 让页面的 60s 从“真的开始录”算（授权弹窗的时间不算）
-                js("window.onNativeVoiceState && window.onNativeVoiceState('recording')");
-                // 不要再额外弹原生 Toast：页面遮罩已经给了全部反馈，弹窗会压住声波
-                return;
-            } catch (Exception e) {
-                // 局部变量释放：失败时 recorder 字段还没赋值，releaseQuietly() 管不到它
-                if (r != null) {
-                    try { r.stop(); } catch (Exception ignored) { }
-                    try { r.release(); } catch (Exception ignored) { }
-                }
-                delete(f);
-            }
+                AudioRecord t = new AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT, Math.max(minBuf * 2, 8192));
+                if (t.getState() == AudioRecord.STATE_INITIALIZED) return t;
+                t.release();
+            } catch (Exception ignored) { /* 换下一个 source */ }
         }
-        state = State.IDLE;
-        fail("start_failed", "无法开始录音");
+        return null;
+    }
+
+    /** 采集线程：阻塞 read → 小端字节 → Base64 → 推给页面。不判静音、不切段。 */
+    private void captureLoop(AudioRecord r, int samplesPerChunk) {
+        short[] pcm = new short[samplesPerChunk];
+        byte[] bytes = new byte[samplesPerChunk * 2];
+        try {
+            r.startRecording();
+            while (running) {
+                int n = r.read(pcm, 0, pcm.length);
+                if (n <= 0) continue;
+                for (int i = 0; i < n; i++) {
+                    bytes[i * 2]     = (byte) (pcm[i] & 0xff);
+                    bytes[i * 2 + 1] = (byte) ((pcm[i] >> 8) & 0xff);
+                }
+                String b64 = Base64.encodeToString(bytes, 0, n * 2, Base64.NO_WRAP);
+                // 字符串一律 JSONObject.quote，避免任何转义问题（Base64 本身安全，这里是统一规矩）
+                js("window.onNativeVoiceChunk(" + JSONObject.quote(b64) + "," + RATE + ")");
+            }
+        } catch (Exception e) {
+            if (running) fail("read_failed", "录音中断：" + e.getMessage());
+        } finally {
+            try { r.stop(); } catch (Exception ignored) { }
+            try { r.release(); } catch (Exception ignored) { }
+        }
     }
 
     private void stopOnMain() {
         if (state != State.RECORDING) return;
         main.removeCallbacks(autoStop);
-        main.removeCallbacks(levelTick);   // 停止上报电平
-        state = State.ENCODING;
-
-        MediaRecorder r = recorder;
-        File f = file;
-        recorder = null;
-        file = null;
-
-        boolean stopped = true;
-        try { r.stop(); } catch (RuntimeException e) { stopped = false; } // 太短会抛
-        try { r.release(); } catch (Exception ignored) { }
-
-        if (!stopped) {
-            delete(f);
-            state = State.IDLE;
-            fail("too_short", "没有录到声音");
-            return;
-        }
-        new Thread(() -> {
-            try {
-                byte[] bytes = readAll(f);
-                String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
-                delete(f);
-                main.post(() -> {
-                    state = State.IDLE;
-                    js("window.onNativeVoiceResult(" + JSONObject.quote(b64) + ",'audio/mp4')");
-                });
-            } catch (Exception e) {
-                delete(f);
-                main.post(() -> { state = State.IDLE; fail("read_failed", "读取录音失败"); });
-            }
-        }, "voice-encode").start();
+        stopCapture();
+        state = State.IDLE;
+        // 注意：这里不再回传音频，识别分段已经在录音过程中发完了
     }
 
-    /** notify=true：页面在等结果，必须回 cancelled 让它复位；onDestroy 时页面已走，不必回。 */
+    /** notify=true：页面在等收尾，回 cancelled 让它立刻收遮罩；onDestroy 时页面已走，不必回。 */
     private void cancelOnMain(boolean notify) {
         main.removeCallbacks(autoStop);
-        main.removeCallbacks(levelTick);
         boolean wasActive = state != State.IDLE;
-        releaseQuietly();
-        delete(file);
-        file = null;
+        stopCapture();
         state = State.IDLE;
         if (notify && wasActive) js("window.onNativeVoiceError('cancelled','')");
     }
 
-    private void releaseQuietly() {
-        if (recorder == null) return;
-        try { recorder.stop(); } catch (Exception ignored) { }
-        try { recorder.release(); } catch (Exception ignored) { }
-        recorder = null;
+    private void stopCapture() {
+        running = false;
+        AudioRecord r = record;
+        record = null;
+        if (r != null) {
+            // 打断阻塞中的 read()；stop/release 由采集线程的 finally 做，
+            // 避免跨线程操作同一个 AudioRecord
+            try { r.stop(); } catch (Exception ignored) { }
+        }
+        Thread w = worker;
+        worker = null;
+        if (w != null) w.interrupt();
     }
 
     private void fail(String code, String message) {
@@ -306,20 +278,6 @@ public final class VoiceBridge {
 
     private void js(String script) {
         webView.post(() -> webView.evaluateJavascript(script, null));
-    }
-
-    private static byte[] readAll(File f) throws Exception {
-        try (FileInputStream in = new FileInputStream(f);
-             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            return out.toByteArray();
-        }
-    }
-
-    private static void delete(File f) {
-        if (f != null) f.delete();
     }
 }
 ```
@@ -334,46 +292,61 @@ webView.addJavascriptInterface(new VoiceBridge(this, webView), "AgentNative");
     super.onRequestPermissionsResult(code, p, r);
     bridge.onRequestPermissionsResult(code, r);
 }
-@Override protected void onPause()     { bridge.onPause(); super.onPause(); }
-@Override protected void onDestroy()   { bridge.onDestroy(); super.onDestroy(); }
+@Override protected void onPause()   { bridge.onPause(); super.onPause(); }
+@Override protected void onDestroy() { bridge.onDestroy(); super.onDestroy(); }
 // WebViewClient.onPageStarted：URL 变了就 bridge.onPageChanged()
 ```
 
+**和上一版（MediaRecorder）的差别，别照抄旧代码**：
+
+- 不再有 `MediaRecorder`、临时文件、`onNativeVoiceResult`、`getMaxAmplitude`、60 秒自动停止。
+- `stopVoice()` 之后没有任何回传动作，页面会自己等已发出的分段请求。
+- 必须在**采集线程**里 `read()`，不能读在主线程；`AudioRecord` 的 stop/release 只由该线程的
+  `finally` 执行（主线程只调 `stop()` 打断阻塞）。
+- 个别设备 16k 不支持时：`getMinBufferSize` 会返回负数。此时要么回滚到 44.1k 并在壳里做
+  2 点平均降采样到 16k（多几十行），要么直接 `start_failed`。**不要**改推 44.1k 给页面——
+  页面只按 16k 估算时长与切段。
+
 ---
 
-## 三、壳侧必须同步的清单
+## 四、壳侧必须同步的清单
 
 | 项 | 内容 |
 |---|---|
 | `AndroidManifest.xml` | `<uses-permission android:name="android.permission.RECORD_AUDIO" />` |
 | `proguard-rules.pro` | 保留桥：`-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }`，并删掉「本项目未使用 addJavascriptInterface」的注释 |
-| README 安全表 | 从「不使用 JS 桥」改为「仅暴露语音桥：三个无参方法，无文件/存储读取能力」 |
+| README 安全表 | 「不使用 JS 桥」→「仅暴露语音桥：三个无参方法，无文件/存储读取能力」 |
 | README 权限行 | 「只有 INTERNET」→「INTERNET + RECORD_AUDIO」 |
-| 桥的防护 | `UrlPolicy.isAllowed(webView.getUrl())` + `activity.hasWindowFocus()` + 单实例状态机；建议再加一个原生 Toast 提示录音已开始（外部 CDN 脚本与页面同源，能调桥，但用户至少看得见） |
-| 页面导航 | `onPageStarted` 且 URL 变化时取消，避免 base64 打到新页面的回调上 |
+| 桥的防护 | `UrlPolicy.isAllowed(webView.getUrl())` + `activity.hasWindowFocus()` + 单实例状态机 |
+| 页面导航 | `onPageStarted` 且 URL 变化时取消；分片打到新页面会污染新一轮的缓冲 |
+| 录音上限 | 壳侧兜底 180s（页面也会在 180s 时主动 `stopVoice()`），不要做成 60s |
 
 > 触摸时间戳门槛（最近 N 秒内有触摸才允许录音）能进一步防静默录音，但会让无障碍操作不可用，
 > 不建议默认开。
 
 ---
 
-## 四、iOS（以后若有 WKWebView 壳）
+## 五、iOS（以后若有 WKWebView 壳）
 
-契约相同，换注入方式：
+契约相同，只是数据源换成 `AVAudioEngine` 的 tap（`installTapOnBus` 直接把
+`AVAudioPCMBuffer` 转成 16bit 小端 PCM，每 ~100ms 一次）：
 
 ```swift
 // 注入：WKUserScript(source: "window.AgentNative = {...}", injectionTime: .atDocumentStart, ...)
-// 录音：AVAudioRecorder（16kHz / 单声道 / m4a）
-// 回传：webView.evaluateJavaScript("window.onNativeVoiceResult('\(b64)','audio/mp4')")
+// 推流：webView.evaluateJavaScript("window.onNativeVoiceChunk('\(b64)',16000)")
+// 结束：stopVoice() 停 tap 即可，不需要回传文件
 ```
 
 `Info.plist` 需要 `NSMicrophoneUsageDescription`。
 
-## 五、服务端接口
+---
+
+## 六、服务端接口
 
 ```http
 POST /api/asr/transcribe
-Content-Type: audio/mp4        # 或 audio/webm / audio/wav / application/octet-stream
+Content-Type: audio/wav        # 套壳推的是 wav（页面自己加的 44 字节头）；
+                               # 浏览器仍可能是 audio/mp4 / audio/webm
 Cookie: <登录态>                # 与页面同一份 HttpOnly cookie
 
 <音频二进制>
@@ -384,13 +357,13 @@ Cookie: <登录态>                # 与页面同一份 HttpOnly cookie
 ```
 
 - 上限 20MB，超时 120s；识别失败返回 `{"error": "..."}`（前端直接 toast 出来）。
-- `GET /api/asr/status` → `{"enabled": true}`；未接线时 `{"enabled": false, "reason": "..."}`，
-  三种情况：core 的 `ASR_URL` 为空、`config.yml` 里没有启用的 `asr` 段、该段缺 `X-ASR-Base-Url`。
-- 上游（key / base_url / model）不在 `mcp_asr` 容器里：core 从 `config.yml` 的
-  `mcp_servers[name=asr].headers` 取出并随请求带给它（`Authorization` / `X-ASR-Base-Url` / `X-ASR-Model`），
-  所以换 ASR 平台只改 YAML + 重启 core。
+- 一次「按住说话」在套壳里会变成 **多次** 请求（每个停顿一次）。页面串行发送，保证拼接顺序。
+- 单段失败不影响其他段（页面侧吞掉单段错误，继续等下一段）；全部失败才提示。
+- 服务端只做**超长兜底**：一次请求超过 25s 才切，且切点尽量落在停顿处（套壳已经按停顿切好了，
+  这里多数请求根本不会触发切分）。参数见 `mcp/asr/README.md`。
+- `GET /api/asr/status` → `{"enabled": true}`；未接线时 `{"enabled": false, "reason": "..."}`。
 
-## 六、为什么不用浏览器的 Web Speech API
+## 七、为什么不用浏览器的 Web Speech API
 
 - Android WebView 没有实现 `SpeechRecognition`；iOS WKWebView 同样不可用（只有 Safari 有）。
 - 桌面 Chrome 的识别走 Google 服务，国内基本报 `network`。
