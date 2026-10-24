@@ -604,19 +604,30 @@
 
   // 图片全屏查看器:transform 缩放+平移。双指捻合缩放(1~6x)、放大后单指/鼠标拖动、双击切 2.5x。
   // 第 3 参 list([{src,alt}] 或 [src]) 传入「同组图片」时开启左右滑动切换；第 4 参 at 指定起始下标。
+  // 切图用双层 img 做真正的分页位移（旧图跟手滑出、新图同步滑入），并在开图时预取相邻图，
+  // 避免「松手→瞬移复位→闪白→图才下载出来」这三连卡顿。
   let openImageViewer, closeImageViewer;
   (function () {
     const viewer = document.getElementById('img-viewer');
     const img = document.getElementById('img-viewer-img');
+    // 第二层由脚本建（不写进 HTML）：旧版缓存的 HTML 里没有它也不会把查看器搞挂
+    const img2 = document.createElement('img');
+    img2.className = 'hidden'; img2.alt = '';
+    viewer.appendChild(img2);
     const count = document.getElementById('img-count');
+    let cur = img, other = img2; // cur=当前层；other=滑动时接替的层
     let scale = 1, tx = 0, ty = 0, mode = null;
     let sx = 0, sy = 0, stx = 0, sty = 0, pDist = 0, pScale = 1;
-    // gallery=当前组；gi=组内下标；wx/wy/wdx=横滑起点与实时水平位移
-    let gallery = [], gi = 0, wx = 0, wy = 0, wdx = 0;
+    // gallery=当前组；gi=组内下标；wx/wy/wdx=横滑起点与实时位移；dragDir/pending=本次拖动方向与待接替下标
+    let gallery = [], gi = 0, wx = 0, wy = 0, wdx = 0, dragDir = 0, pending = -1;
+    const preloads = new Map(); // src → Image：提前下载并解码，切图时不再等网络
+    let settleTimer = 0;
     const tdist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const W = () => window.innerWidth;
     function apply() {
-      img.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
-      img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
+      cur.style.transition = 'none'; // 缩放/拖动要跟手，不能被上一段滑动动画的过渡拖着走
+      cur.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
+      cur.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
     }
     function drawCount() {
       if (!count) return; // 旧版 HTML 缓存里没有计数节点时不报错
@@ -624,15 +635,62 @@
       count.textContent = on ? (gi + 1) + ' / ' + gallery.length : '';
       count.classList.toggle('hidden', !on);
     }
-    // 切到组内第 i 张：缩放/位移必须复位，否则会带着上一张的放大态看下一张
-    function showAt(i) {
-      if (!gallery.length) return;
-      gi = Math.max(0, Math.min(gallery.length - 1, i));
-      scale = 1; tx = ty = 0; mode = null;
-      img.style.transition = 'none';
+    // 预取相邻图：Image 对象常驻，解码结果留在内存里，滑过去就是现成的
+    function preload(src) {
+      if (!src || preloads.has(src) || /^(data|blob):/i.test(src)) return;
+      const im = new Image();
+      im.decoding = 'async';
+      im.src = src;
+      preloads.set(src, im);
+    }
+    function prefetchAround() {
+      [gi + 1, gi + 2, gi - 1].forEach(i => { if (gallery[i]) preload(gallery[i].src); });
+    }
+    // 把某层摆到「相对屏幕中心偏移 offset 像素」处（1x、无过渡）
+    function place(el, offset) {
+      el.style.transition = 'none';
+      el.style.transform = 'translate(' + offset + 'px,0) scale(1)';
+    }
+    function showLayer(el, item) {
+      el.src = item.src; el.alt = item.alt || '';
+      el.classList.remove('hidden');
+    }
+    // 动画收尾：旧层收起、两层归位（滑到一半又开始新手势时也靠它清场）
+    function finishSettle() {
+      clearTimeout(settleTimer); settleTimer = 0;
+      other.classList.add('hidden');
+      place(other, 0); place(cur, 0);
       apply();
-      img.src = gallery[gi].src; img.alt = gallery[gi].alt || '';
+      prefetchAround();
+    }
+    // 滑到第 i 张（dir=+1 从右侧进，-1 从左侧进）；已到边界就弹回
+    function slideTo(i, dir) {
+      if (settleTimer) finishSettle(); // 上一张还在动画里（连点方向键）：先收尾，避免接替层被瞬移
+      const t = Math.max(0, Math.min(gallery.length - 1, i));
+      if (t === gi) return settleBack(dir);
+      const from = cur, to = other;
+      if (pending !== t) { place(to, dir * W()); showLayer(to, gallery[t]); }
+      void to.offsetWidth; // 先把起点落位再加过渡，否则首帧会被合并成瞬移
+      const ease = 'transform .2s cubic-bezier(.22,.61,.36,1)';
+      from.style.transition = ease; to.style.transition = ease;
+      from.style.transform = 'translate(' + (-dir * W()) + 'px,0) scale(1)';
+      to.style.transform = 'translate(0,0) scale(1)';
+      cur = to; other = from;
+      gi = t; scale = 1; tx = ty = 0; dragDir = 0; pending = -1;
       drawCount();
+      settleTimer = setTimeout(finishSettle, 220);
+    }
+    // 没过阈值/到边界：当前层弹回原位，接替层退回屏幕外
+    function settleBack(dir) {
+      const ease = 'transform .2s ease-out';
+      cur.style.transition = ease;
+      cur.style.transform = 'translate(0,0) scale(1)';
+      if (dir && !other.classList.contains('hidden')) {
+        other.style.transition = ease;
+        other.style.transform = 'translate(' + dir * W() + 'px,0) scale(1)';
+      }
+      scale = 1; tx = ty = 0; dragDir = 0; pending = -1;
+      settleTimer = setTimeout(finishSettle, 220);
     }
     openImageViewer = function (src, alt, list, at) {
       const raw = Array.isArray(list) && list.length ? list : [{ src: src, alt: alt }];
@@ -640,69 +698,101 @@
       // 起始下标优先用调用方给的(文件面板那张是 blob URL，与组里的直链对不上)，否则按 src 匹配
       let i = typeof at === 'number' && at >= 0 ? at : gallery.findIndex(x => x.src === src);
       if (i < 0) i = 0;
-      showAt(i);
+      clearTimeout(settleTimer); settleTimer = 0;
+      cur = img; other = img2;
+      gi = i; scale = 1; tx = ty = 0; mode = null; dragDir = 0; pending = -1;
+      other.classList.add('hidden'); place(other, 0);
+      showLayer(cur, gallery[gi] || { src: src, alt: alt });
+      place(cur, 0); apply();
+      drawCount();
       viewer.classList.remove('hidden');
+      prefetchAround(); // 开图即把前后两张拉下来，滑的时候是现成的
     };
     closeImageViewer = function () {
       viewer.classList.add('hidden');
-      gallery = []; drawCount(); // 关窗即清组，别让任务目录的地址一直挂着
+      gallery = []; gi = 0; dragDir = 0; pending = -1;
+      preloads.clear(); // 断开引用，解码位图随之释放
+      drawCount();
     };
     // 点背景(非图片)关闭
     viewer.addEventListener('click', function (e) { if (e.target === viewer) closeImageViewer(); });
-    img.addEventListener('dblclick', function () {
-      scale = scale > 1 ? 1 : 2.5;
-      if (scale === 1) { tx = ty = 0; }
-      apply();
-    });
-    img.addEventListener('touchstart', function (e) {
-      img.style.transition = 'none'; // 跟手拖动：清掉上一次回弹的过渡
-      if (e.touches.length === 2) { mode = 'pinch'; pDist = tdist(e.touches) || 1; pScale = scale; }
-      else if (e.touches.length === 1 && scale > 1) { mode = 'pan'; sx = e.touches[0].clientX; sy = e.touches[0].clientY; stx = tx; sty = ty; }
-      else if (e.touches.length === 1 && gallery.length > 1) { mode = 'swipe'; wx = e.touches[0].clientX; wy = e.touches[0].clientY; wdx = 0; }
-      else mode = null;
-    }, { passive: true });
-    img.addEventListener('touchmove', function (e) {
-      if (mode === 'pinch' && e.touches.length >= 2) {
-        e.preventDefault();
-        scale = Math.min(6, Math.max(1, pScale * tdist(e.touches) / pDist));
+    // 两层都要绑：切图后当前层会换成另一张 img，事件不能只挂在第一层上
+    function bindLayer(el) {
+      el.addEventListener('dblclick', function () {
+        scale = scale > 1 ? 1 : 2.5;
         if (scale === 1) { tx = ty = 0; }
         apply();
-      } else if (mode === 'pan' && e.touches.length === 1) {
-        e.preventDefault();
-        tx = stx + e.touches[0].clientX - sx;
-        ty = sty + e.touches[0].clientY - sy;
-        apply();
-      } else if (mode === 'swipe' && e.touches.length === 1) {
-        const dx = e.touches[0].clientX - wx, dy = e.touches[0].clientY - wy;
-        // 只接管水平方向；竖直位移更大时不动图，留给以后的「下滑关闭」
-        if (Math.abs(dx) > Math.abs(dy)) { wdx = dx; tx = dx * 0.5; apply(); }
-      }
-    }, { passive: false });
-    img.addEventListener('touchend', function (e) {
-      if (mode === 'swipe') {
-        if (Math.abs(wdx) > 45) showAt(gi + (wdx < 0 ? 1 : -1)); // 左滑看下一张
-        else { img.style.transition = 'transform .16s ease-out'; tx = 0; apply(); } // 不够格：弹回原位
+      });
+      el.addEventListener('touchstart', function (e) {
+        if (settleTimer) finishSettle(); // 上一次滑动还没收尾：先清场再新手势
+        if (e.touches.length === 2) { mode = 'pinch'; pDist = tdist(e.touches) || 1; pScale = scale; }
+        else if (e.touches.length === 1 && scale > 1) { mode = 'pan'; sx = e.touches[0].clientX; sy = e.touches[0].clientY; stx = tx; sty = ty; }
+        else if (e.touches.length === 1 && gallery.length > 1) { mode = 'swipe'; wx = e.touches[0].clientX; wy = e.touches[0].clientY; wdx = 0; dragDir = 0; pending = -1; }
+        else mode = null;
+      }, { passive: true });
+      el.addEventListener('touchmove', function (e) {
+        if (mode === 'pinch' && e.touches.length >= 2) {
+          e.preventDefault();
+          scale = Math.min(6, Math.max(1, pScale * tdist(e.touches) / pDist));
+          if (scale === 1) { tx = ty = 0; }
+          apply();
+        } else if (mode === 'pan' && e.touches.length === 1) {
+          e.preventDefault();
+          tx = stx + e.touches[0].clientX - sx;
+          ty = sty + e.touches[0].clientY - sy;
+          apply();
+        } else if (mode === 'swipe' && e.touches.length === 1) {
+          const dx = e.touches[0].clientX - wx, dy = e.touches[0].clientY - wy;
+          if (Math.abs(dx) <= Math.abs(dy)) return; // 竖直为主：不接管
+          wdx = dx;
+          const dir = dx < 0 ? 1 : -1; // 左滑看下一张
+          if (dir !== dragDir) {
+            dragDir = dir;
+            const next = gallery[gi + dir];
+            // 方向一确定就把相邻图摆到另一侧待命（已预取，几乎是现成的），跟手滑进来
+            if (next) { pending = gi + dir; place(other, dir * W()); showLayer(other, next); }
+            else { pending = -1; other.classList.add('hidden'); } // 到头了：没有下一张，只做橡皮筋
+          }
+          const off = pending >= 0 ? dx : dx * 0.35;
+          cur.style.transition = 'none';
+          cur.style.transform = 'translate(' + off + 'px,0) scale(1)';
+          if (pending >= 0) {
+            other.style.transition = 'none';
+            other.style.transform = 'translate(' + (off + dragDir * W()) + 'px,0) scale(1)';
+          }
+        }
+      }, { passive: false });
+      el.addEventListener('touchend', function (e) {
+        if (mode === 'swipe') {
+          const dir = dragDir;
+          if (pending >= 0 && Math.abs(wdx) > 45) slideTo(pending, dir);
+          else settleBack(dir);
+          mode = null;
+          return;
+        }
+        if (e.touches.length < 2) { if (mode === 'pinch') mode = null; }
+        if (!e.touches.length) mode = null;
+      }, { passive: true });
+      el.addEventListener('touchcancel', function () {
+        if (mode === 'swipe') settleBack(dragDir);
         mode = null;
-        return;
-      }
-      if (e.touches.length < 2) { if (mode === 'pinch') mode = null; }
-      if (!e.touches.length) mode = null;
-    }, { passive: true });
-    img.addEventListener('touchcancel', function () { mode = null; }, { passive: true });
+      }, { passive: true });
+      // 桌面:放大后按住拖动平移
+      el.addEventListener('mousedown', function (e) {
+        if (scale <= 1) return;
+        e.preventDefault();
+        const x0 = e.clientX, y0 = e.clientY, tx0 = tx, ty0 = ty;
+        const mv = function (ev) { tx = tx0 + ev.clientX - x0; ty = ty0 + ev.clientY - y0; apply(); };
+        const up = function () { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+        window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+      });
+    }
+    bindLayer(img); bindLayer(img2);
     // 桌面没有滑动：组内多图时用 ←/→ 切换（单图不响应）
     document.addEventListener('keydown', function (e) {
       if (viewer.classList.contains('hidden') || gallery.length < 2) return;
-      if (e.key === 'ArrowLeft') showAt(gi - 1);
-      else if (e.key === 'ArrowRight') showAt(gi + 1);
-    });
-    // 桌面:放大后按住拖动平移
-    img.addEventListener('mousedown', function (e) {
-      if (scale <= 1) return;
-      e.preventDefault();
-      const x0 = e.clientX, y0 = e.clientY, tx0 = tx, ty0 = ty;
-      const mv = function (ev) { tx = tx0 + ev.clientX - x0; ty = ty0 + ev.clientY - y0; apply(); };
-      const up = function () { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
-      window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+      if (e.key === 'ArrowLeft') slideTo(gi - 1, -1);
+      else if (e.key === 'ArrowRight') slideTo(gi + 1, 1);
     });
   })();
 
