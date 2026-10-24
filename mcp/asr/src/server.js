@@ -14,7 +14,8 @@
 // tools/call 三种请求，手写这几十行 JSON-RPC 就够；本机内存只有 2G，省掉 SDK 与 express
 // 的常驻开销（本服务空载约 35MB）。
 //
-// 转写走上游的 OpenAI 兼容 /audio/transcriptions（默认智谱 glm-asr，换平台改 env 即可）。
+// 转写走上游的 OpenAI 兼容 /audio/transcriptions（任何平台都行）。上游三要素——key、base_url、
+// model——一律由调用方随请求 header 带入，本容器不存任何平台密钥、也不认任何平台默认值。
 // 音频一律先经 ffmpeg 归一化成 16kHz 单声道 wav：WebView 录出来是 webm/opus，iOS 是 mp4/aac，
 // 上游只认 wav/mp3，归一化后两端都自由。
 
@@ -25,13 +26,18 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-// ── 配置（全部走 env，不读 config.yml：本容器按仓库惯例只拿 env） ──────────────
+// ── 配置 ──────────────────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT || 3000);
 
-// 上游：任何 OpenAI 兼容的 /audio/transcriptions（智谱 glm-asr、OpenAI whisper-1 等）
-const API_BASE = String(process.env.ASR_API_BASE || 'https://open.bigmodel.cn/api/paas/v4').trim().replace(/\/+$/, '');
-const API_KEY = String(process.env.ASR_API_KEY || '').trim();
-const API_MODEL = String(process.env.ASR_MODEL || 'glm-asr').trim();
+// 上游参数逐请求带入（与 mcp/image_task 同构：密钥由调用方提供，服务端不保存）：
+//   Authorization: Bearer <key>      ← 免鉴权的自建服务可省
+//   X-ASR-Base-Url: https://.../v1
+//   X-ASR-Model: whisper-1
+// 为什么不留 env 兜底：两条来源会让「到底生效的是哪个 key」变成靠猜，而且密钥越少地方存越好
+//（容器 env 用 docker inspect 就能看，config.yml 至少还受登录态保护）。
+const HDR_AUTH = 'authorization';
+const HDR_BASE = 'x-asr-base-url';
+const HDR_MODEL = 'x-asr-model';
 // 单次上传上限。60s 的 AAC 约 240KB、16k wav 约 1.9MB，20MB 是给长音频留的余量。
 const MAX_BYTES = Math.max(1024 * 1024, Number(process.env.ASR_MAX_BYTES || 20 * 1024 * 1024));
 // 云端多数 ASR 单次只吃 ~30s：超长音频按这个秒数切片后逐段识别再拼接（0 = 不切）。
@@ -47,6 +53,27 @@ const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, none: 99 };
 function log(level, msg) {
   if ((LEVELS[level] || 20) < (LEVELS[LOG_LEVEL] == null ? 20 : LEVELS[LOG_LEVEL])) return;
   console.log('[asr ' + level + '] ' + msg);
+}
+
+// 从请求 header 取上游三要素。Authorization 允许写成裸 key（自动补 Bearer），
+// 省得用户还要记各平台前缀有没有写全。
+function upstreamOf(req) {
+  const h = (req && req.headers) || {};
+  const raw = String(h[HDR_AUTH] || '').trim();
+  return {
+    auth: raw ? (/^bearer\s/i.test(raw) ? raw : 'Bearer ' + raw) : '',
+    base: String(h[HDR_BASE] || '').trim().replace(/\/+$/, ''),
+    model: String(h[HDR_MODEL] || '').trim(),
+  };
+}
+
+// 缺参数直接 503：这是部署问题（config.yml 没配），不是用户输入问题——回 4xx 会让人以为音频坏了。
+function assertUpstream(up) {
+  const miss = !up.base ? 'X-ASR-Base-Url' : !up.model ? 'X-ASR-Model' : '';
+  if (!miss) return;
+  const e = new Error('语音识别未配置上游：config.yml 的 mcp_servers 里 asr 需要 headers.' + miss);
+  e.status = 503;
+  throw e;
 }
 
 // ── 子进程：统一超时 + 收 stdout/stderr ────────────────────────────────────
@@ -140,21 +167,17 @@ function extractText(obj) {
   return '';
 }
 
-async function runCloud(wavPath) {
-  if (!API_KEY) {
-    const e = new Error('语音识别未配置：容器环境变量 ASR_API_KEY 为空');
-    e.status = 503;
-    throw e;
-  }
+async function runCloud(wavPath, up) {
+  assertUpstream(up);
   const buf = await fs.readFile(wavPath);
   const form = new FormData();
-  form.append('model', API_MODEL);
+  form.append('model', up.model);
   form.append('file', new Blob([buf], { type: 'audio/wav' }), 'audio.wav');
   let res;
   try {
-    res = await fetch(API_BASE + '/audio/transcriptions', {
+    res = await fetch(up.base + '/audio/transcriptions', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + API_KEY },
+      headers: up.auth ? { Authorization: up.auth } : {},
       body: form,
       signal: AbortSignal.timeout(60000),
     });
@@ -208,6 +231,8 @@ async function wavLevel(wavPath) {
 
 // 转写一段音频缓冲：归一化 →（超长则切片）→ 逐段识别 → 拼接。
 async function transcribeBuffer(buf, opts) {
+  const up = (opts && opts.up) || {};
+  assertUpstream(up);
   const wavPath = await toWav(buf, opts && opts.ext);
   const parts = [];
   try {
@@ -222,7 +247,7 @@ async function transcribeBuffer(buf, opts) {
     }
     if (!parts.length) {
       try {
-        return (await runCloud(wavPath)).trim();
+        return (await runCloud(wavPath, up)).trim();
       } catch (e) {
         // 只在上游判定“没有语音”时量一遍音量（正常路径零开销）：
         // 静音是 -91dB，正常语音 -20dB 上下，一眼就能分清是设备没收到声还是文件坏了。
@@ -237,7 +262,7 @@ async function transcribeBuffer(buf, opts) {
     for (const p of parts) {
       // 每段独立识别；单段失败不连累其他段（长录音里偶发静音段常见）
       try {
-        out.push((await runCloud(p)).trim());
+        out.push((await runCloud(p, up)).trim());
       } catch (e) {
         log('warn', '切片识别失败（跳过）：' + String(e && e.message || e).slice(0, 200));
       }
@@ -301,15 +326,18 @@ async function handleTranscribe(req, res, url) {
   if (active >= MAX_CONCURRENT) {
     return json(res, 429, { error: '语音识别繁忙，请稍后再试' });
   }
+  // 先判配置再读 body：没配上游时不必白读 20MB
+  const up = upstreamOf(req);
+  assertUpstream(up);
   const buf = await readBody(req, MAX_BYTES);
   if (!buf.length) return json(res, 400, { error: '未收到音频数据' });
 
   active++;
   const t0 = Date.now();
   try {
-    const text = await transcribeBuffer(buf, { ext: extOf(req.headers['content-type']) });
+    const text = await transcribeBuffer(buf, { ext: extOf(req.headers['content-type']), up });
     log('info', 'transcribed ' + buf.length + 'B → ' + text.length + ' 字，' + (Date.now() - t0) + 'ms');
-    json(res, 200, { text, ms: Date.now() - t0, model: API_MODEL });
+    json(res, 200, { text, ms: Date.now() - t0, model: up.model });
   } finally {
     active--;
   }
@@ -375,7 +403,7 @@ async function handleMcp(req, res) {
     if (!urlStr) return ok({ isError: true, content: [{ type: 'text', text: '缺少 url 参数' }] });
     try {
       const { buf, ext } = await fetchAudio(urlStr);
-      const text = await transcribeBuffer(buf, { ext });
+      const text = await transcribeBuffer(buf, { ext, up: upstreamOf(req) });
       return ok({ content: [{ type: 'text', text }] });
     } catch (e) {
       return ok({ isError: true, content: [{ type: 'text', text: '转写失败：' + String(e && e.message || e) }] });
@@ -402,11 +430,8 @@ const server = http.createServer((req, res) => {
   };
 
   if (req.method === 'GET' && url.pathname === '/health') {
-    return json(res, 200, {
-      ok: true,
-      model: API_MODEL,
-      configured: !!API_KEY,
-    });
+    // 无状态服务：健康 = 进程活着。上游参数逐请求带入，没有全局「configured」可言。
+    return json(res, 200, { ok: true, service: 'asr' });
   }
   if (req.method === 'POST' && url.pathname === '/transcribe') return done(handleTranscribe(req, res, url));
   if (url.pathname === '/mcp') {
@@ -428,6 +453,5 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 server.listen(PORT, '0.0.0.0', () => {
-  log('info', 'listening on ' + PORT + '，model=' + API_MODEL + ' @ ' + API_BASE);
-  if (!API_KEY) log('warn', 'ASR_API_KEY 为空：/transcribe 会返回 503');
+  log('info', 'listening on ' + PORT + '（上游 key/base_url/model 由调用方随请求 header 带入）');
 });

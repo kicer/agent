@@ -83,8 +83,9 @@ flowchart TD
 ### 环境变量（接线全靠根 `.env` + compose）
 
 `AGENT_CONFIG`、`PORT`、`EXECUTOR_URL`、`EXECUTOR_TOKEN`、`WXBOT_URL`、`WXBOT_TOKEN`、
-`ASR_URL`、`ASR_API_KEY`、`VIRTUAL_HOST`、`PREVIEW_PROXIES`、`EXECUTOR_LOG_LEVEL`、`WXBOT_LOG_LEVEL`。
-密钥生成：`./scripts/init.sh`（幂等，重跑不掉登录态）。
+`ASR_URL`、`VIRTUAL_HOST`、`PREVIEW_PROXIES`、`EXECUTOR_LOG_LEVEL`、`WXBOT_LOG_LEVEL`、`ASR_LOG_LEVEL`。
+密钥生成：`./scripts/init.sh`（幂等，重跑不掉登录态）。语音识别的上游 key/base/model 不在 env，
+写在 `config.yml` 的 `mcp_servers[name=asr].headers`（容器不存平台密钥）。
 
 ## 三条主链路
 

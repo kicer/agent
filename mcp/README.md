@@ -35,6 +35,10 @@ mcp_servers:
   # 可选：语音转写（低频，建议 skill 模式，不占每轮工具表）
   - name: asr
     url: "http://mcp_asr:3000/mcp"
+    headers:
+      Authorization: Bearer <key>              # 免鉴权的自建服务可省
+      X-ASR-Base-Url: "https://<host>/v1"
+      X-ASR-Model: "whisper-1"
     mode: skill
 ```
 
@@ -47,8 +51,11 @@ mcp_servers:
 `image_task` 用对应上游（智谱或 OpenAI 兼容网关）的 token，上游地址与模型分别由
 `X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定。所以这两个服务不用配任何密钥。
 
-`asr` 是例外：输入框那条路（`agent-core` → `POST /transcribe`）不经过 MCP 调用，拿不到 header，
-所以它自己的上游密钥由容器 env `ASR_API_KEY` 提供（写在根 `.env`，已 gitignore，不挂给其他容器）。
+`asr` 同理：上游的 key / base_url / model 全部由调用方随请求 header 带入
+（`Authorization` / `X-ASR-Base-Url` / `X-ASR-Model`，agent 侧配在 `config.yml` 的
+`mcp_servers[name=asr].headers`）。输入框那条路（`agent-core` → `POST /transcribe`）不经过 MCP 调用，
+但 core 同样会从那段 `headers` 取值转发过去，所以两边只有一处配置。容器自己不存任何平台密钥，
+也不预设任何厂商——任何 OpenAI 兼容的 `/audio/transcriptions` 都能用。
 
 ### 调试端口
 
@@ -86,7 +93,7 @@ AI 把拿到的 URL 当 image_url 交给 video_task:3000/mcp
 | `mcp_web_search` | 无 | 服务端无鉴权，**永远不要映射出去**（会被白嫖搜索额度）；agent 走内网访问 |
 | `mcp_image_task` | 无 | token 由调用方自带，暴露后可被拿去消耗你的上游图片额度 |
 | `mcp_video_task` | 无 | 它需要的公开临时 URL 由 agent 侧集成的工具提供，自己不占端口 |
-| `mcp_asr` | 无 | `/mcp` 与 `/transcribe` 都无鉴权，只能由 core 经内网调用；它持有上游 ASR 密钥 |
+| `mcp_asr` | 无 | `/mcp` 与 `/transcribe` 都无鉴权，只能由 core 经内网调用；它不存密钥（上游参数随请求带入） |
 
 ## 单独调试
 

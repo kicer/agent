@@ -266,7 +266,7 @@ preview-proxy.earlyGuard
 express.static(public)
 /api/sessions ×4   ← sessions / messages / files / skill-run（通用执行面）
 /api/skills
-/api/asr           ← 语音识别代理：/transcribe 走登录态；ASR_URL 空则 503
+/api/asr           ← 语音识别代理：/transcribe 走登录态；ASR_URL 空或配置里无可用 asr 段则 503
 /api/config        ← requireAdmin
 /api/platforms
 /api/system        ← /restart 需 admin，其余登录即可

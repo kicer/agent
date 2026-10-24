@@ -84,10 +84,17 @@ auth:                                              # users 留空 = 不启用登
 # disable=不连接、不发现。旧字段 enable 已废弃；mode: silent 已移除（改用 skill），写进配置会启动报错。
 #
 # 语音识别（mcp/asr）建议用 skill：转写音频是低频能力，不必把 schema 塞进每轮请求。
+# 上游参数（key / base_url / model）由 core 随请求带给 mcp_asr，容器自己不存密钥，
+# 也不预设任何平台——任何 OpenAI 兼容的 /audio/transcriptions 都行。免鉴权的自建服务可省 Authorization。
 #   - name: asr
 #     url: "http://mcp_asr:3000/mcp"
+#     headers:
+#       Authorization: Bearer <key>
+#       X-ASR-Base-Url: "https://<host>/v1"
+#       X-ASR-Model: "whisper-1"
 #     mode: skill
-# 注意：输入框里的语音输入走的是 core 的 /api/asr（由 compose 的 ASR_URL 接线），不经这个工具，也不消耗 token。
+# 注意：输入框里的语音输入走的是 core 的 /api/asr（由 compose 的 ASR_URL 接线），也读这一段的 headers；
+# 不经工具、不消耗 token。mode: disable 或删掉这段 = 麦克风入口关闭。
 mcp_servers: []
 
 public_link:

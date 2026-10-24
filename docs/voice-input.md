@@ -380,11 +380,15 @@ Cookie: <登录态>                # 与页面同一份 HttpOnly cookie
 ```
 
 ```json
-{ "text": "打开今天的日报", "ms": 842, "model": "glm-asr" }
+{ "text": "打开今天的日报", "ms": 842, "model": "whisper-1" }
 ```
 
 - 上限 20MB，超时 120s；识别失败返回 `{"error": "..."}`（前端直接 toast 出来）。
-- `GET /api/asr/status` → `{"enabled": true}`：`ASR_URL` 没接线时为 `false`。
+- `GET /api/asr/status` → `{"enabled": true}`；未接线时 `{"enabled": false, "reason": "..."}`，
+  三种情况：core 的 `ASR_URL` 为空、`config.yml` 里没有启用的 `asr` 段、该段缺 `X-ASR-Base-Url`。
+- 上游（key / base_url / model）不在 `mcp_asr` 容器里：core 从 `config.yml` 的
+  `mcp_servers[name=asr].headers` 取出并随请求带给它（`Authorization` / `X-ASR-Base-Url` / `X-ASR-Model`），
+  所以换 ASR 平台只改 YAML + 重启 core。
 
 ## 六、为什么不用浏览器的 Web Speech API
 

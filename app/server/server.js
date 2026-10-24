@@ -72,7 +72,7 @@ app.use('/api/sessions', require('./routes/files'));
 app.use('/api/sessions', require('./routes/skill-run'));
 app.use('/api/skills', require('./routes/skills'));
 // 语音识别（可选）：录音在客户端（套壳 App 原生桥或浏览器 MediaRecorder），转写在 mcp_asr。
-// ASR_URL 为空时接口回 503，前端据此不显示麦克风按钮（见 routes/asr.js）。
+// ASR_URL 为空、或 config.yml 里没有启用的 asr 段时接口回 503，前端据此不显示麦克风按钮（见 routes/asr.js）。
 app.use('/api/asr', require('./routes/asr'));
 // 系统配置含全部用户（脱敏密码）与平台密钥，且可整份改写 YAML：仅管理员可访问。
 app.use('/api/config', auth.requireAdmin, require('./routes/config'));

@@ -60,9 +60,9 @@ PUBLIC_IP=1.2.3.4 \
 脚本会生成：
 
 - `.env`：`EXECUTOR_TOKEN`、`WXBOT_TOKEN`、`AGENT_PORT` 等部署变量。
-- `config.yml`：模型平台、登录账号、MCP 服务、公网前缀。
+- `config.yml`：模型平台、登录账号、`web_search`、公网前缀。
 
-`image_task` / `video_task` 两个 MCP 服务复用 `BIGMODEL_KEY`（智谱与 BigModel 是同一个 key）；未配置 `BIGMODEL_KEY` 时它们以 `mode: disable` 写入配置。
+脚本只自动启用**模型平台**与 `web_search`。`image_task` / `video_task` / `asr` 需要各自的上游 key，脚本不替它猜平台、也不复用模型平台的 key——它们以**注释模板**写进 `mcp_servers`（url 与 header 名已填好），填上 key 后取消注释并重启 core 即生效。
 
 `AUTH_USER` / `AUTH_PASSWORD` 不传时默认是 `admin` / `admin`，首次部署务必改掉。
 
@@ -95,24 +95,39 @@ http://<服务器 IP>:<AGENT_PORT>
 
 ### 4. 同栈 MCP 服务
 
-`init.sh` 默认把仓库内 `mcp/` 的服务写进 `config.yml`：
+`init.sh` 只自动启用 `web_search`；其余三个需要上游 key 的服务以**注释模板**写入（url 与 header 名已填好），填 key 后取消注释再重启 core 即生效：
 
 ```yaml
 mcp_servers:
   - name: web_search
     url: "http://mcp_web_search:3000/"
-  - name: image_task
-    url: "http://mcp_image_task:3000/mcp"
-  - name: video_task
-    url: "http://mcp_video_task:3000/mcp"
-  - name: asr
-    url: "http://mcp_asr:3000/mcp"
-    mode: skill
+
+  # - name: image_task
+  #   url: "http://mcp_image_task:3000/mcp"
+  #   headers:
+  #     Authorization: Bearer <upstream-api-key>
+  #     X-Image-Task-Base-Url: "zhipu"        # 或任意 OpenAI 兼容网关地址
+  #     X-Image-Task-Model: "CogView-4"
+  #   mode: skill
+  # - name: video_task
+  #   url: "http://mcp_video_task:3000/mcp"
+  #   headers:
+  #     Authorization: Bearer <zhipu-api-key>
+  #   mode: skill
+  # - name: asr
+  #   url: "http://mcp_asr:3000/mcp"
+  #   headers:
+  #     Authorization: Bearer <key>           # 免鉴权的自建服务可省
+  #     X-ASR-Base-Url: "https://<host>/v1"
+  #     X-ASR-Model: "whisper-1"
+  #   mode: skill
 ```
 
-`web_search` / `image_task` / `video_task` / `asr` 与 core 由同一个根 `docker-compose.yml` 启动，没有先后顺序，也不占宿主机端口。工具说明、header 覆盖项与调试方式见 [mcp/README.md](mcp/README.md)。
+`web_search` / `image_task` / `video_task` / `asr` 四个容器与 core 由同一个根 `docker-compose.yml` 启动（与是否写进配置无关），没有先后顺序，也不占宿主机端口。工具说明、header 覆盖项与调试方式见 [mcp/README.md](mcp/README.md)。
 
-语音输入（H5 输入框里说话）走的是另一条路：客户端录音 → `POST /api/asr/transcribe` → `mcp_asr` 的 `/transcribe`，**不经过模型、不消耗 token**，结果插入输入框可编辑。客户端录音契约（Android 套壳原生桥 / 浏览器 MediaRecorder）见 [docs/voice-input.md](docs/voice-input.md)；`ASR_URL` 置空即整体关闭。
+语音输入（H5 输入框里说话）走的是另一条路：客户端录音 → `POST /api/asr/transcribe` → `mcp_asr` 的 `/transcribe`，**不经过模型、不消耗 token**，结果插入输入框可编辑。客户端录音契约（Android 套壳原生桥 / 浏览器 MediaRecorder）见 [docs/voice-input.md](docs/voice-input.md)；`ASR_URL` 置空、或删掉 `asr` 那段，即整体关闭。
+
+`mcp_asr` 自己**不存任何平台密钥**：上游 key / base_url / model 都由 core 从这里那段 `asr.headers` 随请求带进去，换平台只改 YAML（不用重建镜像、不用动 `.env`），也不预设任何厂商。
 
 接入栈外的 MCP 服务：在设置页添加 `url` / `headers`，或在 `config.yml` 的 `mcp_servers` 追加一项。服务不可达时 core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。
 
@@ -245,7 +260,7 @@ platforms:
 | `EXECUTOR_URL` | `agent-executor` 地址；空则命令在 core 进程内本地执行，仅适合开发 |
 | `EXECUTOR_TOKEN` | core ↔ executor 的 Bearer token，两侧同值 |
 | `ASR_URL` | `mcp_asr` 地址（compose 为 `http://mcp_asr:3000`）；置空则语音输入关闭 |
-| `ASR_API_KEY` / `ASR_API_BASE` / `ASR_MODEL` | `mcp_asr` 的上游语音识别密钥与地址（默认智谱 `glm-asr`） |
+| `ASR_LOG_LEVEL` | `mcp_asr` 日志等级 |
 | `WXBOT_URL` | wxbot 地址；置空则微信功能整体关闭 |
 | `WXBOT_TOKEN` | core ↔ wxbot 的共享 token |
 | `VIRTUAL_HOST` | 设置后 `public_link.base_url` 强制取 `https://<第一个域名>` |
@@ -415,8 +430,8 @@ curl -s http://127.0.0.1:8090/api/health
 |---|---|
 | 启动时报 `network agent-mcp-net has active endpoints` | 旧的双仓库部署残留：先停旧的 mcp 仓库（`docker compose down`），再 `up` 本栈 |
 | 套壳 App 填了服务器地址仍连不上 | 先 `curl <地址>/api/health` 看是否返回 `service:agent-core`；再查 Android 9+ 默认禁止明文 HTTP（需 `usesCleartextTraffic`）与 https 自签证书 |
-| 麦克风按钮不显示 | `ASR_URL` 为空（未部署 `mcp_asr`）；或浏览器以 `http://<IP>` 访问且没有原生录音桥（非安全上下文开不了麦，见 `docs/voice-input.md`） |
-| 点麦克风提示「语音识别服务不可用」 | `mcp_asr` 未起来或 `ASR_API_KEY` 为空：`docker compose logs --tail=50 mcp_asr` |
+| 麦克风按钮不显示 | `ASR_URL` 为空（未部署 `mcp_asr`）；或 `config.yml` 的 `mcp_servers` 里没有启用的 `asr` 段 / 该段缺 `X-ASR-Base-Url`（`GET /api/asr/status` 会返回 `reason`）；或浏览器以 `http://<IP>` 访问且没有原生录音桥（非安全上下文开不了麦，见 `docs/voice-input.md`） |
+| 点麦克风提示「语音识别服务不可用」 | `mcp_asr` 未起来（`docker compose logs --tail=50 mcp_asr`）；或 `config.yml` 的 `asr.headers` 缺 `X-ASR-Base-Url` / `X-ASR-Model` |
 | `config.yml` 变成目录 | 启动前文件不存在，Docker 自动建了同名目录；停容器、删目录、放入配置文件 |
 | 没有可用模型 | `platforms` 为空或模型全部禁用；在设置页添加后重启 |
 | 创建会话报「无可用模型」 | 模型池为空，或指定模型所在平台没有 key |

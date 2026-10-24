@@ -212,7 +212,9 @@ services:
   # 同进程两个入口（见 mcp/asr/src/server.js 头注释）：
   #   POST /transcribe  ← agent-core 的 /api/asr 转发（输入框，低延迟、不经过模型）
   #   POST /mcp         ← 模型的 MCP 工具 transcribe_audio({url})（转写任务目录里的音频）
-  # 转写走上游 OpenAI 兼容的 /audio/transcriptions（默认智谱 glm-asr，换平台改 ASR_API_* 即可）。
+  # 本容器不存任何平台密钥：上游走 OpenAI 兼容的 /audio/transcriptions，key / base_url / model
+  # 全部由调用方随请求 header 带入（core 从 config.yml 的 mcp_servers 里 asr.headers 取）。
+  # 换 ASR 平台 → 改 config.yml 后重启 core，本服务不用动、也不用重建镜像。
   mcp_asr:
     build: ./mcp/asr
     container_name: mcp_asr
@@ -224,9 +226,6 @@ services:
       retries: 5
       start_period: 5s
     environment:
-      - ASR_API_KEY=${ASR_API_KEY:-}
-      - ASR_API_BASE=${ASR_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
-      - ASR_MODEL=${ASR_MODEL:-glm-asr}
       - ASR_LOG_LEVEL=${ASR_LOG_LEVEL:-info}
       - TZ=Asia/Shanghai
     networks:

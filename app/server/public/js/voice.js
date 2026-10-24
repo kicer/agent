@@ -544,10 +544,11 @@
     console.info('[voice] 语音入口未启用：没有 window.AgentNative，且当前不是安全上下文（需 HTTPS，或由套壳 App 注入原生桥）');
     return;
   }
-  // 服务端没接线（core 的 ASR_URL 为空）就不给入口；探测失败则照常启用
+  // 服务端没接线（core 的 ASR_URL 为空，或 config.yml 里没有可用的 asr 段）就不给入口；
+  // 探测失败则照常启用（不因一次探测失败就永久藏掉入口）。
   req('GET', '/api/asr/status').then(function (s) {
     if (s && s.enabled === false) {
-      console.info('[voice] 语音入口未启用：服务端未配置语音识别（agent-core 的 ASR_URL 为空）');
+      console.info('[voice] 语音入口未启用：' + ((s && s.reason) || '服务端未配置语音识别'));
       return;
     }
     available = true;
