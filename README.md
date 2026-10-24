@@ -125,6 +125,8 @@ mcp_servers:
 
 `web_search` / `image_task` / `video_task` / `asr` 四个容器与 core 由同一个根 `docker-compose.yml` 启动（与是否写进配置无关），没有先后顺序，也不占宿主机端口。工具说明、header 覆盖项与调试方式见 [mcp/README.md](mcp/README.md)。
 
+`ASR_URL`（在 `.env` 里覆盖）是 core 调用语音转写的基地址：默认指向内网 `mcp_asr`；把它改成外网地址就能把转写放到另一台机器上（那台要能接受 `Authorization` / `X-ASR-Base-Url` / `X-ASR-Model` 三个 header），写成空值则关闭语音输入。
+
 语音输入（H5 输入框里说话）走的是另一条路：客户端录音 → `POST /api/asr/transcribe` → `mcp_asr` 的 `/transcribe`，**不经过模型、不消耗 token**，结果插入输入框可编辑。客户端录音契约（Android 套壳原生桥 / 浏览器 MediaRecorder）见 [docs/voice-input.md](docs/voice-input.md)；`ASR_URL` 置空、或删掉 `asr` 那段，即整体关闭。
 
 `mcp_asr` 自己**不存任何平台密钥**：上游 key / base_url / model 都由 core 从这里那段 `asr.headers` 随请求带进去，换平台只改 YAML（不用重建镜像、不用动 `.env`），也不预设任何厂商。
@@ -259,7 +261,7 @@ platforms:
 | `PORT` | core 监听端口，容器内 `8090` |
 | `EXECUTOR_URL` | `agent-executor` 地址；空则命令在 core 进程内本地执行，仅适合开发 |
 | `EXECUTOR_TOKEN` | core ↔ executor 的 Bearer token，两侧同值 |
-| `ASR_URL` | `mcp_asr` 地址（compose 为 `http://mcp_asr:3000`）；置空则语音输入关闭 |
+| `ASR_URL` | core 拼接 `/transcribe` 的基地址（默认 `http://mcp_asr:3000`）。可填外网地址把 `mcp_asr` 放到另一台机器；写成空值则语音输入关闭 |
 | `ASR_LOG_LEVEL` | `mcp_asr` 日志等级 |
 | `WXBOT_URL` | wxbot 地址；置空则微信功能整体关闭 |
 | `WXBOT_TOKEN` | core ↔ wxbot 的共享 token |

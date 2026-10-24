@@ -24,8 +24,12 @@ services:
       # 微信接入
       - WXBOT_URL=http://agent-wxbot:8093
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
-      # 语音识别（可选）：mcp_asr 的内网地址。置空 = 不启用，前端不显示麦克风按钮。
-      - ASR_URL=http://mcp_asr:3000
+      # 语音识别（可选）：core 拼 /transcribe 的基地址。默认指内网 mcp_asr；
+      # 也可以填外网地址（例如 mcp_asr 跑在另一台机器上：http://<ip>:3000）。
+      # 注意：那台服务要能接受 Authorization / X-ASR-Base-Url / X-ASR-Model 三个 header，
+      # 且 core 能出网访问它（https 自签证书会因证书校验失败）。
+      # 想关掉语音输入：在 .env 里写 ASR_URL= （空值，照样不发默认值）或删掉 config.yml 的 asr 段。
+      - ASR_URL=${ASR_URL-http://mcp_asr:3000}
     networks:
       - agent-mcp-net
 
