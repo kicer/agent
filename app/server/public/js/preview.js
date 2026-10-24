@@ -143,9 +143,17 @@ async function pvOpenOffice(name, sizeText) {
   let head = null;
   try { head = await fetch(url, { method: 'HEAD' }); } catch (_) {}
   if (my !== pvSeq) return;
+  // 404 = 预览服务里没有这份文档。文件可能正被 AI 的写盘链路整体替换（rename 瞬间找不到），
+  // 探针给一次短重试再落占位卡——比让用户自己反复点刷新更接近「多刷几次就出来了」的实情。
+  if (head && head.status === 404) {
+    await new Promise((r) => setTimeout(r, 600));
+    if (my !== pvSeq) return;
+    try { head = await fetch(url, { method: 'HEAD' }); } catch (_) {}
+    if (my !== pvSeq) return;
+  }
   const missing = head && head.status === 404;
   if (missing) {
-    const node = pvInfoNode(name, sizeText, '预览服务中暂无这份文档 —— 只有 AI 在本任务中生成/编辑过的文档才能在线预览(较旧的文档可能已被自动清理)。');
+    const node = pvInfoNode(name, sizeText, '预览服务中暂无这份文档 —— 文件可能已被删除、改名，或不在本任务目录下。');
     if (desk) {
       // pvClearBody 会清掉 reload/url：占位卡仍要保留刷新/新窗口，否则按钮可见但点了没反应
       pvClearBody(); document.getElementById('pv-body').appendChild(node);

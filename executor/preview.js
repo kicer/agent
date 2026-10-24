@@ -36,6 +36,11 @@ const IDLE_MS = Number(process.env.OFFICE_IDLE_MS || 6 * 3600 * 1000);
 const RESPOND_TIMEOUT_MS = 15000; // 数据请求(资源/API/SSE)等待 watch 首响应包的时限；拒连/超时走自愈重试
 const NAV_TIMEOUT_MS = 5000; // 导航请求等就绪页面首响应：更短——失败立刻转中转页，不白屏干等
 const COOLDOWN_MS = 8000; // 启动失败拉黑该文件一段时间：中转页自动刷新不成 spawn 风暴（二进制缺失/坏文件早退）
+// 探针（HEAD）等「首帧可用」的上限：watch 冷启动 = 起进程 + 首次渲染，实测 2~6s（大文档更久）。
+// 等不到就照回 200，把后续交给导航侧的中转页 + 自愈，探针不无限挂着。
+const HEAD_WAIT_MS = 15000;
+// 导航请求连续超时多少次才判死重启：单次超时只是「还没渲染完」（见 route 里的注释）。
+const NAV_TIMEOUT_RETRIES = 3;
 const BIN = process.env.OFFICECLI_BIN || '/workspace/skills/office/bin/officecli';
 const TOKEN = String(process.env.EXECUTOR_TOKEN || '');
 const EXTS = new Set(['.docx', '.xlsx', '.pptx']);
@@ -164,10 +169,13 @@ async function spawnWatch(abs) {
   const page = pageOf(abs);
   let slot = -1;
   for (let i = 0; i < SLOTS; i++) if (!slots.has(i)) { slot = i; break; }
-  if (slot < 0) { // 槽满：优先踢「无活动连接且最久未用」；全开着页面才抢最冷的
+  if (slot < 0) { // 槽满：优先踢「就绪且无活动连接」里最久未用的；正在启动的槽最后才动
+    // （踢掉一个还没就绪的槽 = 白白浪费数秒冷启动，且会让等它的那一路请求失败并进冷却）
     const ent = [...slots.entries()];
+    const idleReady = ent.filter(([, s]) => !s.conns && s.ready);
     const idle = ent.filter(([, s]) => !s.conns);
-    slot = (idle.length ? idle : ent).sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0][0];
+    slot = (idleReady.length ? idleReady : (idle.length ? idle : ent))
+      .sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0][0];
     stop(slot); // 端口按代轮转，新 watch 不会落在被踢者的旧口上，无需等其回收
   }
   const wp = await allocPort();
@@ -293,6 +301,18 @@ function matchPage(rel) {
   return best;
 }
 
+// 探针预热：把槽位等到「就绪」（= 首帧渲染完成，portUp 探的就是页面本身），复用时直接返回。
+// 与并发请求共用同一次 startWatch（starting 去重）；任何失败/超时都静默——就绪与否不影响 200。
+async function warmSlot(rr) {
+  let timer;
+  try {
+    await Promise.race([
+      waitReady(rr),
+      new Promise((r) => { timer = setTimeout(r, HEAD_WAIT_MS); }),
+    ]);
+  } catch (_) {} finally { clearTimeout(timer); }
+}
+
 // 未命中兜底：请求路径本身就是存在的会话文档 → 回收/挤掉后就地复活；不行 = 维持 404。
 async function revive(rel) {
   const rr = (rel || '').replace(/\/+$/, '');
@@ -354,10 +374,12 @@ function tryForward(entry, req, res, innerPath, respondTimeoutMs) {
     res.once('close', release);
     res.once('finish', release);
     let started = false;
+    let upRes = null;
     const upstream = http.request(
       { host: '127.0.0.1', port: entry.port, path: encodeURI(inner) + search, method: req.method, headers: fwd },
       (up) => {
         started = true;
+        upRes = up;
         clearTimeout(watchdog);
         const h = Object.assign({}, up.headers);
         const isSSE = String(h['content-type'] || '').includes('text/event-stream');
@@ -385,8 +407,14 @@ function tryForward(entry, req, res, innerPath, respondTimeoutMs) {
     upstream.on('error', () => {
       clearTimeout(watchdog);
       release();
-      if (!started && !res.headersSent) reject(new Error('watch 不可达'));
-      else res.destroy();
+      if (!started && !res.headersSent) { reject(new Error('watch 不可达')); return; }
+      // 已开始回写后上游报错：不立刻销毁客户端响应。watch 会在响应其实已完整时断链
+      //（对 HEAD 必现，见 route 里的注释），Node 客户端的报错早于 'end' 一拍到达，直接
+      // destroy 会把马上要 flush 的响应打断。留一拍再判，真断裂照样收掉，不把半截响应当成功。
+      setTimeout(() => {
+        if (res.writableEnded) return;
+        try { res.destroy(); } catch (_) {}
+      }, upRes && upRes.complete ? 0 : 120);
     });
     req.pipe(upstream);
   });
@@ -517,7 +545,8 @@ function fail502(res) {
 }
 
 function notFound(res) {
-  res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+  // no-store：前端拿 HEAD 当探针，404 一旦被浏览器缓存，文件补上后还会继续显示「暂无文档」
+  res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
     .end('无匹配预览(文档不存在/不在会话目录下,或不是 .docx/.xlsx/.pptx)');
 }
 
@@ -534,6 +563,24 @@ async function route(req, res) {
   if (u === PREFIX + '/' || u.startsWith(PREFIX + '/')) {
     const rel = u.slice(PREFIX.length) || '/';
     const rr = rel.replace(/\/+$/, '');
+    // HEAD = 前端预览窗的「这份文档能不能预览」探针。文档在不在只在本地按文件系统回答，绝不上探 watch：
+    // 实测 watch(Kestrel) 对 HEAD 只发响应头(带 content-length)不发 body 就断链，Node 客户端抛
+    // HPE_CLOSED_CONNECTION；旧逻辑把它当上游故障 res.destroy()，同一文档十次 HEAD 里六七次变成
+    // 空响应/502。
+    // 但回 200 前要等槽位就绪（有上限）：冷启动的首次渲染很贵，旧实现由 HEAD 自己把这段等掉，
+    // iframe 一挂上就是渲染好的页面；若秒回 200，这段开销就落到随后 5s 时限的导航请求上，
+    // 慢文档会被判超时，表现为冷启动转圈很久。等不到也照回 200（见 HEAD_WAIT_MS）。
+    if (req.method === 'HEAD') {
+      let abs = null;
+      try { abs = guard(path.join(WORKSPACE, rr)); } catch (_) {}
+      if (abs) {
+        await warmSlot(rr);
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'content-length': '0' }).end();
+        return;
+      }
+      // 只有办公文档路径由本网关判定存在性；页面资源等其它 HEAD 仍走原转发逻辑
+      if (EXTS.has(path.extname(rr).toLowerCase())) return notFound(res);
+    }
     if (isNav(req)) {
       // 导航请求 = 用户正盯着这一刻：绝不为启动/自愈阻塞首字节。
       // 槽位不在或未就绪 → 中转页 + 后台热槽（startWatch 去重，在途就等它）；就绪槽位转发失败 → 同样中转页。
@@ -546,10 +593,20 @@ async function route(req, res) {
       if (fileChanged(m.entry)) { dropChanged(m.entry); startWatch(abs).catch(() => {}); return loading(res); }
       if (m.exact && !u.endsWith('/')) { res.writeHead(301, { location: (req.url || u) + '/' }).end(); return; } // 相对资源解析需要尾斜杠
       const cut = PREFIX.length + m.entry.pageDec.length; // 剥掉「前缀+页面路径」才是 watch 的内层路径
-      try { await tryForward(m.entry, req, res, u.length > cut ? u.slice(cut) : '/', NAV_TIMEOUT_MS); return; }
+      try { await tryForward(m.entry, req, res, u.length > cut ? u.slice(cut) : '/', NAV_TIMEOUT_MS); m.entry.navTimeouts = 0; return; }
       catch (e) {
-        retire(m.entry, String(e && e.message || e));
-        if (!res.headersSent) { startWatch(abs).catch(() => {}); return loading(res); }
+        const msg = String(e && e.message || e);
+        // 超时 ≠ 死：watch 可能只是首次渲染还没完（大文档 >5s）。一超时就摘掉会把在跑的渲染连坐杀掉，
+        // 中转页刷新后从头再来——用户看到的就是「冷启动一直转圈」。单次超时保留槽位，
+        // 连续 NAV_TIMEOUT_RETRIES 次（约 15s 无首字节）才判死重启，兼顶真卡死。
+        m.entry.navTimeouts = /超时/.test(msg) ? (m.entry.navTimeouts || 0) + 1 : NAV_TIMEOUT_RETRIES;
+        if (m.entry.navTimeouts < NAV_TIMEOUT_RETRIES) {
+          log(`slot 保留：导航超时第 ${m.entry.navTimeouts} 次（${msg}）`);
+        } else {
+          retire(m.entry, msg);
+          startWatch(abs).catch(() => {});
+        }
+        if (!res.headersSent) return loading(res);
         return;
       }
     }
