@@ -8,11 +8,12 @@
 //   · 松手：取消态 → 丢弃 + 轻提示；否则转写后**直接发送**
 //   · 发送键位置变成键盘按钮，点一下回文本模式并聚焦输入框（移动端弹键盘）
 //
-// 录音在客户端，两条路：
-//   · 套壳原生桥（http 页面也能用）：壳把 16k/单声道 PCM 以 ~100ms 分片推给页面，页面自己判停顿、
-//     自己切段、逐段上传——**大部分识别在说话过程中就做完了**，松手只等最后一段。
-//   · 浏览器（需 HTTPS）：MediaRecorder 整段录，松手后整体上传（实时版下一阶段再做）。
-// 电平：两者都在页面侧算（套壳用 PCM 峰值，浏览器用 AnalyserNode 的 RMS），壳不做任何换算。
+// 录音在客户端，两条路，下游是同一套：
+//   · 套壳原生桥（http 页面也能用）：壳把 16k/单声道 PCM 以 ~100ms 分片推给页面。
+//   · 浏览器（需 HTTPS）：AudioContext + ScriptProcessor 自己采 PCM，降采样到 16k 后约 20ms 一片。
+// 两条路都汇到 pushChunk()：判停顿、切段、逐段上传、最后合并发送，只有一份实现。
+// 于是大部分识别在说话过程中就做完了，松手通常只剩最后一段要等。
+// 电平在页面侧算（PCM 峰值），壳和浏览器都不做任何换算。
 //
 // 包在 IIFE 里：前端是共享全局作用域的经典脚本，顶层声明会和其他文件撞名。
 
@@ -29,12 +30,13 @@
   const native = (window.AgentNative && typeof window.AgentNative.startVoice === 'function')
     ? window.AgentNative : null;
   const webOk = !!(window.isSecureContext && navigator.mediaDevices
-    && typeof navigator.mediaDevices.getUserMedia === 'function' && window.MediaRecorder);
+    && typeof navigator.mediaDevices.getUserMedia === 'function'
+    && (window.AudioContext || window.webkitAudioContext));
 
   const MAX_MS = 180000;       // 单次录音上限（流式上传后不再受 60s 限制）
   const MIN_MS = 500;          // 短于这个时长按误触处理，不上传
-  const NO_RESULT_MS = 3000;   // 松开后壳迟迟不回音频（比如还在等权限）→ 复位
   const FLUSH_MS = 60000;      // 松手后等尾段识别完的上限（超过就当失败）
+  const OUT_RATE = 16000;      // 页面内部统一按 16k 处理：VAD 时长与段长上限都按它算
   const BAR_COUNT = 45;        // 声波柱数（要足够宽，手指按住时两侧仍能看到）
 
   // 两端矮、中间高的包络：看起来像一段声波而不是一排等高柱子
@@ -60,14 +62,16 @@
   let discard = false;         // 本次录音太短/已取消：结果到了也丢掉
   let recordStartAt = 0;
   let stopTimer = null;
-  let hardTimer = null;
-  let rec = null;
   let stream = null;
-  let chunks = [];
-  let mime = '';
+  // 浏览器采集：ScriptProcessor 直接给 Float32 PCM，这里降到 16k 后喂 pushChunk
+  let procNode = null;
+  let capRate = 0;             // AudioContext 的真实采样率（通常 44.1k/48k）
+  let dsAcc = 0;               // 降采样：当前输出周期内的样本和
+  let dsN = 0;
+  let dsPhase = 0;             // 小数相位，跨分片累计 → 长期不漂移
 
-  // 原生流式：壳推 PCM 分片，页面 VAD 断句后逐段上传
-  let pcmRate = 16000;         // 壳推上来的采样率（契约要求 16k）
+  // 流式：壳推的分片 / 浏览器自己采的分片，都在这里断句后逐段上传
+  let pcmRate = 16000;         // 当前流的采样率（契约要求 16k）
   let segChunks = [];          // 当前段的 PCM 分片（Int16Array）
   let segLen = 0;              // 当前段总采样数
   let silLen = 0;              // 段尾连续静音采样数
@@ -89,13 +93,11 @@
   let levelCur = 0;
   let lastRealLevelAt = 0;
   let audioCtx = null;
-  let analyser = null;
-  let audioBuf = null;
   let srcNode = null;
 
   function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
-  // 电平归一化的唯一实现：浏览器（RMS）和壳（峰值幅度）都在这里落到 0~1。
+  // 电平归一化的唯一实现：两条录音路径的 PCM 峰值都在这里落到 0~1。
   // 低于 -55dB 视为静音，-5dB 及以上视为满幅；要调灵敏度只改这两个常量。
   const LEVEL_FLOOR_DB = -55;
   const LEVEL_RANGE_DB = 50;
@@ -139,22 +141,9 @@
     rafId = 0;
     if (!overlay || overlay.classList.contains('hidden')) return;
 
-    let animate = false;
-    if (analyser && audioBuf) {
-      analyser.getFloatTimeDomainData(audioBuf);
-      let sum = 0;
-      for (let i = 0; i < audioBuf.length; i++) sum += audioBuf[i] * audioBuf[i];
-      const rms = Math.sqrt(sum / audioBuf.length);
-      const db = 20 * Math.log10(rms + 1e-7);      // 静音约 -140，正常说话 -35 ~ -12
-      levelTarget = dbToLevel(db);
-      animate = true;
-    } else if (Date.now() - lastRealLevelAt <= 300) {
-      animate = true; // 壳刚上报过电平
-    }
-
-    if (!animate) {
-      // 没有电平来源（壳没推 PCM / AnalyserNode 不可用）：
-      // 静默停在基线，不再空转（也绝不能假动）
+    // 电平只有一个来源：pushChunk() 每收到一片 PCM 就更新 levelTarget。
+    // 超过 300ms 没有新数据（授权还没给 / 已经停了）→ 静默停在基线，不假动。
+    if (Date.now() - lastRealLevelAt > 300) {
       levelCur = 0;
       renderBars(0, false);
       return;
@@ -166,23 +155,66 @@
     rafId = requestAnimationFrame(tickMeter);
   }
 
-  function attachAnalyser() {
-    if (!stream) return;
+  // iOS Safari 只允许在用户手势里真正启动 AudioContext；getUserMedia 之后那条异步链已经
+  // 脱离手势，那时才 new AudioContext 有可能一直 suspended（一点声音都采不到）。
+  // 所以在 pointerdown 里先把 ctx 建好并 resume，拿到麦克风后直接复用。
+  function primeAudioCtx() {
+    if (audioCtx) return true;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
     try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
       audioCtx = new AC();
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      audioBuf = new Float32Array(analyser.fftSize);
-      srcNode = audioCtx.createMediaStreamSource(stream);
-      srcNode.connect(analyser); // 不接 destination，不会回放
       if (audioCtx.state === 'suspended') audioCtx.resume();
-      startLoop(); // 之前可能在静默态停掉了循环
+      return true;
     } catch (_) {
-      analyser = null;
-      audioBuf = null;
+      audioCtx = null;
+      return false;
     }
+  }
+
+  // 浏览器：拿 PCM 只能靠 ScriptProcessor（已标废弃，但 Chrome/Safari/Firefox 都还在，
+  // 且不需要额外加载文件）。AudioWorklet 要 addModule，异步加载会吞掉开头几个字。
+  function startCapture() {
+    if (!stream || !primeAudioCtx()) return false;
+    try {
+      capRate = audioCtx.sampleRate || 48000;
+      dsAcc = 0; dsN = 0; dsPhase = 0;
+      srcNode = audioCtx.createMediaStreamSource(stream);
+      procNode = audioCtx.createScriptProcessor(1024, 1, 1);
+      procNode.onaudioprocess = function (ev) {
+        const pcm = downsampleTo16k(ev.inputBuffer.getChannelData(0));
+        if (pcm.length) pushChunk(pcm, OUT_RATE);
+      };
+      srcNode.connect(procNode);
+      // 必须接到 destination 才会被驱动；输出缓冲区不写，所以不会外放
+      procNode.connect(audioCtx.destination);
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      startLoop();
+      return true;
+    } catch (_) {
+      stopMeter(false);
+      return false;
+    }
+  }
+
+  // Float32（任意采样率）→ 16k Int16。按「输出周期内取均值」降采样：既是抽点也能压一点高频，
+  // 且 dsPhase 跨分片累计，长时间录不会整体越走越快/越慢（整数倍抽取会）。
+  function downsampleTo16k(input) {
+    const out = new Int16Array(Math.ceil(input.length * OUT_RATE / capRate) + 1);
+    let n = 0;
+    for (let i = 0; i < input.length; i++) {
+      dsAcc += input[i];
+      dsN++;
+      dsPhase += OUT_RATE;
+      if (dsPhase >= capRate) {
+        dsPhase -= capRate;
+        const v = Math.round((dsAcc / dsN) * 32767);
+        out[n++] = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
+        dsAcc = 0;
+        dsN = 0;
+      }
+    }
+    return n === out.length ? out : out.subarray(0, n);
   }
 
   function startMeter() {
@@ -195,9 +227,13 @@
 
   function stopMeter(flatten) {
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    if (procNode) {
+      try { procNode.disconnect(); } catch (_) { /* 已断 */ }
+      procNode.onaudioprocess = null;
+      procNode = null;
+    }
     if (srcNode) { try { srcNode.disconnect(); } catch (_) { /* 已断 */ } srcNode = null; }
-    analyser = null;
-    audioBuf = null;
+    // 采集节点也挂在这个 ctx 上：关掉它浏览器这边就彻底不再送 PCM 了
     if (audioCtx) { try { audioCtx.close(); } catch (_) { /* 已关 */ } audioCtx = null; }
     if (flatten !== false) {
       for (let i = 0; i < bars.length; i++) bars[i].style.transform = 'scaleY(.12)';
@@ -226,7 +262,6 @@
     discard = false;
     abortStream();
     if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
-    if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
     hold.classList.remove('recording');
     setHoldText('按住 说话');
     hideOverlay();
@@ -237,14 +272,6 @@
     if (!stream) return;
     try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) { /* 已关 */ }
     stream = null;
-  }
-
-  function pickMime() {
-    const list = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
-    for (let i = 0; i < list.length; i++) {
-      try { if (MediaRecorder.isTypeSupported(list[i])) return list[i]; } catch (_) { /* 忽略 */ }
-    }
-    return '';
   }
 
   // ---------- 模式切换 ----------
@@ -299,7 +326,9 @@
       return;
     }
 
-    phase = 'arming'; // 等 getUserMedia/MediaRecorder 起来
+    // 浏览器：先拿麦克风（可能要等用户授权），拿到后 startCapture 开始往里推 PCM
+    phase = 'arming';
+    primeAudioCtx(); // 必须在手势里建（见 primeAudioCtx 注释）
     startWeb();
   }
 
@@ -313,46 +342,23 @@
       return;
     }
     if (!pressing) { releaseStream(); resetUI(); return; } // 松开得比授权快
-    attachAnalyser(); // 声波接同一路 MediaStream
 
-    mime = pickMime();
-    try {
-      rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-    } catch (_) {
-      rec = new MediaRecorder(stream);
-      mime = rec.mimeType || '';
-    }
-    chunks = [];
-    rec.ondataavailable = function (ev) {
-      if (ev.data && ev.data.size) chunks.push(ev.data);
-    };
-    rec.onstop = function () {
-      const type = mime || 'audio/webm';
-      const blob = new Blob(chunks, { type: type });
-      chunks = [];
-      rec = null;
-      releaseStream();
-      if (discard) { discard = false; resetUI(); toast('说话时间太短'); return; }
-      upload(blob);
-    };
-    rec.onerror = function () {
-      releaseStream();
-      resetUI();
-      toast('录音出错');
-    };
-    try {
-      rec.start();
-    } catch (e) {
-      releaseStream();
-      resetUI();
-      toast('无法开始录音：' + String((e && e.message) || e));
-      return;
-    }
-
+    // 与套壳同一套状态，只是换成了「自己采 PCM」而不是「等壳推」
     phase = 'recording';
     recordStartAt = Date.now();
+    gen++;
+    pcmRate = OUT_RATE;
+    streamOn = true;
+    clearSeg();
+    textParts = [];
+    if (!startCapture()) {
+      streamOn = false;
+      releaseStream();
+      resetUI();
+      toast('无法开始录音：当前浏览器采不到音频');
+      return;
+    }
     stopTimer = setTimeout(finishHold, MAX_MS);
-    hardTimer = setTimeout(resetUI, MAX_MS + NO_RESULT_MS);
   }
 
   // 松手：结束录音（太短则丢弃）
@@ -369,17 +375,19 @@
     setOverlayMode(discard ? 'send' : 'busy');
     stopMeter();
 
+    if (discard) {
+      abortStream();
+      releaseStream();
+      nativeStop(false); // 只停采集，不用管壳知不知道“被丢弃”（页面已经不再收分片）
+      resetUI();
+      toast('说话时间太短');
+      return;
+    }
+
+    // 两条路收口完全一样：把不足一个停顿的尾巴发走（纯静音的尾巴不发），再等所有段回来。
+    // 大部分段在说话过程中已经识别完了，这里通常只等最后一段。
+    flushTail();
     if (native) {
-      // 松手：把不足一个停顿的尾巴发走，然后等所有段回来。
-      // 大部分段在说话过程中已经识别完了，这里通常只等最后一段。
-      if (discard) {
-        abortStream();
-        try { native.stopVoice(); } catch (_) { /* 已停 */ }
-        resetUI();
-        toast('说话时间太短');
-        return;
-      }
-      flushTail();
       try {
         native.stopVoice();
       } catch (e) {
@@ -387,53 +395,29 @@
         toast('结束录音失败：' + String((e && e.message) || e));
         return;
       }
-      waitFlush();
-      return;
+    } else {
+      releaseStream(); // 采集节点已经由上面的 stopMeter() 拆掉了
     }
+    waitFlush();
+  }
 
+  // 让壳停止采集：优先 cancelVoice（语义明确），壳没实现时退回 stopVoice——
+  // 否则麦克风会在壳侧一直开着（页面这边已经不再收分片了，但录音还在跑）。
+  function nativeStop(cancel) {
+    if (!native) return;
     try {
-      if (rec && rec.state !== 'inactive') rec.stop();
-      else { releaseStream(); resetUI(); }
-    } catch (_) {
-      releaseStream();
-      resetUI();
-    }
+      if (cancel && native.cancelVoice) native.cancelVoice();
+      else if (native.stopVoice) native.stopVoice();
+    } catch (_) { /* 已停 */ }
   }
 
   // 放弃本次录音（切模式 / 离开页面 / 上滑取消 / 壳回调 cancelled）
   function cancelHold() {
     if (phase === 'idle') return;
-    const r = rec;
-    rec = null;
-    chunks = [];
     abortStream();      // 丢弃已发在途的结果，也不碰输入框
-    if (r) { r.onstop = null; r.onerror = null; }
-    releaseStream();
+    releaseStream();    // 浏览器：停麦克风轨道（采集节点由 resetUI → stopMeter 拆）
+    nativeStop(true);
     resetUI();
-    try {
-      if (r && r.state !== 'inactive') r.stop();
-      else if (native && native.cancelVoice) native.cancelVoice();
-    } catch (_) { /* 已停 */ }
-  }
-
-  // ---------- 上传 + 自动发送 ----------
-  function upload(blob) {
-    if (!blob || !blob.size) { resetUI(); toast('没有录到声音'); return; }
-    phase = 'busy';
-    setOverlayMode('busy');
-    req('POST', '/api/asr/transcribe', blob, true, 120000)
-      .then(function (r) {
-        const text = String((r && r.text) || '').replace(/\s+/g, ' ').trim();
-        // 先收遮罩再做后续：toast 固定在 bottom:96px，遮罩还在时弹出来会压住声波
-        resetUI();
-        if (!text) { toast('没有识别到内容'); return; }
-        ta.value = text;
-        send();
-      })
-      .catch(function (e) {
-        resetUI();
-        toast('语音识别失败：' + String((e && e.message) || e));
-      });
   }
 
   // ---------- 按住 / 滑动 / 松开 ----------
@@ -502,8 +486,8 @@
   // 录音中离开页面：释放麦克风
   window.addEventListener('pagehide', cancelHold);
 
-  // ---------- 原生桥回调（契约见 docs/voice-input.md） ----------
-  // 壳每 ~100ms 推一片 16bit/单声道小端 PCM。采样率、分片大小、门限全部不在壳里算。
+  // ---------- PCM 处理（两条录音路径共用） ----------
+  // 壳每 ~100ms 推一片 16bit/单声道小端 PCM；浏览器自己采。采样率、分片大小、门限全部不在别处算。
   function b64ToI16(b64) {
     const bin = atob(String(b64 || ''));
     const n = bin.length >> 1;
@@ -596,14 +580,15 @@
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
   }
 
-  window.onNativeVoiceChunk = function (b64, rate) {
-    if (!native || !streamOn || phase !== 'recording') return;
+  // 一片 16bit 单声道 PCM：两条录音路径的唯一汇合点。
+  // 电平、静音判定、断句、上传全在页面侧；壳和浏览器都不做任何判断。
+  function pushChunk(pcm, rate) {
+    if (!streamOn || phase !== 'recording') return;
     const r = Number(rate);
     if (r > 0 && r !== pcmRate) pcmRate = r;
-    const pcm = b64ToI16(b64);
     if (!pcm.length) return;
 
-    // 电平：直接用这片 PCM 的峰值（替掉原来壳上报的 getMaxAmplitude）
+    // 电平：直接用这片 PCM 的峰值
     const db = peakDb(pcm);
     lastRealLevelAt = Date.now();
     levelTarget = db === -Infinity ? 0 : dbToLevel(db);
@@ -611,7 +596,7 @@
 
     segChunks.push(pcm);
     segLen += pcm.length;
-    // 静音按「整片」判：壳一片约 100ms，足够分辨 0.5s 的停顿（再细也没意义）
+    // 静音按「整片」判：一片约 20~100ms，足够分辨 0.5s 的停顿（再细也没意义）
     silLen = db < VAD_SILENCE_DB ? silLen + pcm.length : 0;
 
     if (silLen >= pcmRate * VAD_PAUSE_SEC) {
@@ -624,6 +609,12 @@
       emitSegment(segLen);
       clearSeg();
     }
+  }
+
+  // 壳每 ~100ms 推一片 16bit/单声道小端 PCM（契约见 docs/voice-input.md）
+  window.onNativeVoiceChunk = function (b64, rate) {
+    if (!native) return;
+    pushChunk(b64ToI16(b64), rate);
   };
 
   // 松手/超时：把不足一个停顿的尾巴也发出去，然后等全部段回来。
