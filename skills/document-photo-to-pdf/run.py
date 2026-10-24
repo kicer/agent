@@ -4,9 +4,9 @@
 
 两种用法共用一条出件内核：
   全自动：{"images": [...], "output": "..."}
-      只出 PDF，不碰 .app/、不写 data.db。
+      出 PDF，并把校正后的单页原图导出到 out/（不碰 .app/、不写 data.db）。
   半自动：{"images": [...], "review": "always|auto"}
-      出 PDF，并把审核页发布到 .app/doc-review/、运行记录写进 data.db。
+      出 PDF 和 out/ 页图，并把审核页发布到 .app/doc-review/、运行记录写进 data.db。
   重生成：{"batch_id": "dr..."}
       从 data.db 读上次的源图/输出/编辑，覆盖同名 PDF；args 带 edits 时以 edits
       为准，不带时读 doc_review_job.edits，再退化为当前页记录（按现在的角点再渲染）。
@@ -17,6 +17,7 @@ stdout 只输出一个 JSON 对象；进度、警告、异常都在字段里，�
 import io
 import json
 import os
+import re
 import statistics
 import sys
 import time
@@ -288,6 +289,26 @@ def _targets(args, batch_id):
     return output, root, None, None
 
 
+def _png_dir(cwd):
+    d = os.path.join(cwd, "out")
+    if os.path.exists(d) and not os.path.isdir(d):
+        raise ValueError("out 已存在且不是目录：%s" % d)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _clean_pngs(d, stem, keep):
+    """删掉本 PDF 前缀下编号大于本次出页数的旧页图；不动目录里其它文件。"""
+    pat = re.compile(r"^" + re.escape(stem) + r"-(\d+)\.png$")
+    for name in os.listdir(d):
+        m = pat.match(name)
+        if m and int(m.group(1)) > keep:
+            try:
+                os.remove(os.path.join(d, name))
+            except OSError:
+                pass
+
+
 def _mark_error(conn, batch_id, message):
     if not conn or not batch_id:
         return
@@ -490,6 +511,25 @@ def process(args, t0):
             _mark_error(conn, batch_id, res["summary"])
             return res
 
+        # 出件顺序先定下来：raw 页图按最终 PDF 页序编号（文件名与 PDF 同名）。
+        plan_by_idx = {m["index"]: (i, s, m) for (i, s, m) in plan}
+        ordered_idx = []
+        if ed and ed.get("order"):
+            for v in ed["order"]:
+                if v in plan_by_idx and v not in ordered_idx:
+                    ordered_idx.append(v)
+        for i in sorted(plan_by_idx):
+            if i not in ordered_idx:
+                ordered_idx.append(i)
+        plan = [plan_by_idx[i] for i in ordered_idx]
+
+        # raw 页图固定落会话根下的 out/；重生成页数变少时，成功后清掉多余编号。
+        png_dir = _png_dir(os.getcwd())
+        pdf_stem = os.path.splitext(os.path.basename(output))[0]
+        png_pad = max(2, len(str(len(plan))))
+        png_n = 0
+        png_paths = []
+
         # ---------------- 批次方向
         aspects = [m["aspect"] for (_, _, m) in plan]
         batch_orientation, _, median_aspect = \
@@ -585,7 +625,7 @@ def process(args, t0):
             try:
                 img = load_image(src)
                 try:
-                    page = compose.warp_page(img, out_corners, (tw, th), P)
+                    raw = compose.warp_raw(img, out_corners)
                 finally:
                     img.close()
             except Exception as e:
@@ -598,6 +638,29 @@ def process(args, t0):
                 meta["warnings"].append(err["message"])
                 out_meta[idx] = {"page": None, "canvas": None, "error": err}
                 continue
+
+            try:
+                page = compose.page_for_pdf(raw, (tw, th), P)
+            except Exception as e:
+                err = _err("INTERNAL",
+                           "第 %d 页生成 PDF 页面失败：%s" % (idx, e), idx,
+                           "重试；若持续出现请反馈")
+                meta["status"] = "render_failed"
+                meta["reason"] = "render_failed"
+                meta["error"] = err
+                meta["warnings"].append(err["message"])
+                out_meta[idx] = {"page": None, "canvas": None, "error": err}
+                continue
+
+            # raw 页图：自然尺寸、不调色、无白边。编号跟最终页序走。
+            png_n += 1
+            png_name = "%s-%0*d.png" % (pdf_stem, png_pad, png_n)
+            png_path = os.path.join(png_dir, png_name)
+            try:
+                raw.save(png_path, "PNG", compress_level=6)
+                png_paths.append(_rel(os.getcwd(), png_path))
+            except Exception as e:
+                meta["warnings"].append("第 %d 页原图导出失败：%s" % (idx, e))
 
             meta["out_size"] = [int(tw), int(th)]
             meta["canvas_size"] = [int(canvas[0]), int(canvas[1])]
@@ -639,15 +702,9 @@ def process(args, t0):
                     "方向与批次不一致，已旋转 %d°；文字方向需人工确认" % applied)
 
         # ---------------- 页序 / PDF
-        order = []
-        if ed and ed.get("order"):
-            for v in ed["order"]:
-                if v in out_meta and out_meta[v].get("page") is not None \
-                        and v not in order:
-                    order.append(v)
-        for idx in sorted(out_meta.keys()):
-            if out_meta[idx].get("page") is not None and idx not in order:
-                order.append(idx)
+        # plan 已按 ed.order + 源序号排好；只保留真正出页成功的。
+        order = [i for (i, _s, _m) in plan
+                 if out_meta.get(i, {}).get("page") is not None]
 
         ordered_pages = [out_meta[i]["page"] for i in order]
         ordered_canvases = [out_meta[i]["canvas"] for i in order]
@@ -666,6 +723,9 @@ def process(args, t0):
             res = finish_failure(pages, [err], output, state_path, t0)
             _mark_error(conn, batch_id, res["summary"])
             return res
+
+        # PDF 落盘成功后再清多余页图：失败时保留上一份，避免两边都不完整。
+        _clean_pngs(png_dir, pdf_stem, png_n)
 
         # ---------------- 检验
         try:
@@ -771,6 +831,8 @@ def process(args, t0):
                 len(ordered_pages), len(warnings))
         else:
             summary = "%d 页已生成" % len(ordered_pages)
+        if png_paths:
+            summary += "；原始页图见 out/"
 
         # ---------------- 写 data.db
         if use_db:
@@ -821,6 +883,7 @@ def process(args, t0):
             "ok": True,
             "summary": summary,
             "pdf": _rel(session_root, output),
+            "images": png_paths,
         }
 
     except Exception as e:

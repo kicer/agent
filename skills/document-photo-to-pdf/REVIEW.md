@@ -18,6 +18,7 @@ skills/document-photo-to-pdf/
   web/index.html           ← 审核页模板的单一事实源
 
 tasks/<session-id>/
+  out/                     ← 原始校正页图（PNG，自然尺寸，文件名与 PDF 同名）
   .app/doc-review/
     index.html             ← 指向 web/index.html 的符号链接（不含数据注入）
     <batch_id>/p1.jpg ...  ← 本批缩略图（长边 1200，JPEG）

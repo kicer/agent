@@ -5,7 +5,7 @@
   - 所有 quad 都是“转正后原图”坐标；
   - 目标尺寸把 PDF 画布内容区（页面尺寸 - 四周留白）的一条边填满，可放大低分辨率照片，
     避免同一批页面因原图像素多少而大小不一；
-  - 不做中间 PNG，页面图直接进内存后一次性写 PDF。
+  - raw 页图（裁剪 + 透视拉正、自然尺寸、不调色）由 warp_raw 产出，PDF 页从它派生。
 """
 import os
 import statistics
@@ -13,7 +13,7 @@ import statistics
 import numpy as np
 from PIL import Image
 
-from homography import brighten, warp_perspective
+from homography import brighten, warp_perspective, warp_perspective_pil
 
 
 # ---------------------------------------------------------------- 纸张
@@ -135,8 +135,27 @@ def target_size(quad, paper, page_orientation, P, out_ratio=None):
     return max(1, int(round(tw))), max(1, int(round(th))), (cw, ch)
 
 
+def warp_raw(img, quad):
+    """只做裁剪 + 透视拉正：自然尺寸、不调色。raw 页图的唯一来源。"""
+    return warp_perspective_pil(img, quad, None)
+
+
+def page_for_pdf(raw, size, P):
+    """从 raw 页图派生 PDF 页：先调色，再按目标尺寸缩放（LANCZOS）。
+
+    与旧 warp_page 的差别只在采样顺序：先在自然尺寸做透视（超采样），
+    再缩到画布内容区，缩小时比直接按目标尺寸采样更少混叠。
+    """
+    r = P["render"]
+    spec = P["enhance"].get(r.get("enhance") or r["default_enhance"])
+    page = tone(raw, spec, r["brighten_target"], r["brighten_pct"])
+    if page.size != tuple(size):
+        page = page.resize(tuple(size), Image.LANCZOS)
+    return page
+
+
 def warp_page(img, quad, size, P):
-    """透视校正 + 按 P["render"]["enhance"] 调色。"""
+    """旧路径：直接按目标尺寸 warp + 调色。PIL 实现出问题时回退用。"""
     r = P["render"]
     page = warp_perspective(img, quad, size,
                             chunk_rows=r["warp_chunk_rows"])

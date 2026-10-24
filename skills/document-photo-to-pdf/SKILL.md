@@ -1,6 +1,6 @@
 ---
 name: document-photo-to-pdf
-description: 纸质文档（合同/发票/证件/书页）的拍照或扫描件 → 校正后 PDF：自动找纸边、透视拉正、调色、多页合并，附审核页微调
+description: 纸质文档（合同/发票/证件/书页）拍照/扫描件校正后，导出合并后的 PDF 和 out/ 下的单页 PNG 原图（未调色未缩放）；自动找纸边、透视拉正、多页合并，附审核页微调
 visit_url: /app/{task_id}/doc-review/
 input_schema:
   type: object
@@ -25,12 +25,16 @@ input_schema:
 
 ## 返回值
 
-- `ok:true`：`summary` 一句话摘要，`pdf` 文件名；末尾附完整「访问地址」。把 PDF 和地址
-  一起给用户。
+- `ok:true`：`summary` 一句话摘要，`pdf` 文件名，`images` 是 `out/` 下的原图路径；
+  末尾附完整「访问地址」。把 PDF、地址和图片路径一起给用户。
 - `ok:false`：转述 `error.message` / `error.hint`，忽略访问地址。
 
+每次运行还会把校正后的单页原图（未调色、未缩放、无白边）导出到 `out/`，文件名与 PDF
+同名：`合同_校正.pdf` → `out/合同_校正-01.png`、`out/合同_校正-02.png`。不需要图片时
+忽略 `images` 即可。
+
 ```json
-{"ok":true,"summary":"3 页已生成；1 页建议在审核页确认","pdf":"合同_校正.pdf"}
+{"ok":true,"summary":"3 页已生成；1 页建议在审核页确认；原始页图见 out/","pdf":"合同_校正.pdf","images":["out/合同_校正-01.png","out/合同_校正-02.png","out/合同_校正-03.png"]}
 访问地址：https://agent.ai.foresh.com/app/task-20261023-001/doc-review/
 ```
 
@@ -50,3 +54,4 @@ input_schema:
 - 支持 jpg/png/webp/bmp/tif；HEIC 不支持。
 - 一图一纸；同框多纸只取最大。
 - 建议 ≤20 页；更多或 300dpi 可能超 120s，可分批。
+- `out/` 里的原图是自然尺寸（不缩放、不调色），页与页尺寸可能不同；PDF 仍按纸张/批次统一。
