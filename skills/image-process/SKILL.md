@@ -1,6 +1,6 @@
 ---
 name: image-process
-description: 图像处理（Pillow）。查看图片信息、格式转换、缩放、裁剪、压缩、文字水印、九宫格切片、多图拼图。仅做确定性图像处理，不做 AI 生成/修图
+description: 普通图片/截图的确定性编辑（Pillow）：查看信息、转格式、缩放、裁剪、压缩、加水印、九宫格切片、多图拼图
 input_schema:
   type: object
   properties:

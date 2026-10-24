@@ -1,6 +1,6 @@
 ---
 name: document-photo-to-pdf
-description: 把手机拍摄的纸质文档照片裁剪、拉正，合并为 PDF，并给出可预览/微调的审核页
+description: 纸质文档（合同/发票/证件/书页）的拍照或扫描件 → 校正后 PDF：自动找纸边、透视拉正、调色、多页合并，附审核页微调
 visit_url: /app/{task_id}/doc-review/
 input_schema:
   type: object

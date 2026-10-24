@@ -53,6 +53,7 @@ input_schema:
 output_schema:
   # 输出描述
 visit_url: /app/{task_id}/   # 可选：页面类技能的访问路径模板
+required: true               # 可选：清单行首标 **required**，提示该域不要手写等价实现
 thinking: true               # 可选：get 时自动开启本回合的深度思考
 ---
 ```
@@ -61,6 +62,7 @@ thinking: true               # 可选：get 时自动开启本回合的深度思
 - `description`：一句话描述技能功能，用于 `op=list` 的清单展示。
 - `thinking`：（可选）为 `true` 时，模型调用 `get` 会自动开启深度思考（合并模型的
   `thinking_params`），开启后保持，直到用户手动关闭；模型未配置思考参数时不生效。只影响模型回合，不影响脚本本身。
+- `required`：（可选）为 `true` 时，模型可见的技能清单里该行行首标 `**required**`，表示这个领域不要手写等价脚本（如 `office` / `x2pdf`）。纯提示，不做强制校验，也不会自动调用。
 - `input_schema`：输入参数的 JSON Schema 定义，用于参数校验和文档生成。
 - `output_schema`：输出结果的描述（可选）。
 - `visit_url`：（可选）页面类技能声明的访问路径模板，`{task_id}` 占位执行时替换为会话 id。`run` 成功后由 core（tools/executor.js）拼上 `public_link.base_url`，在输出末尾追加一行「访问地址：<完整 URL>」——技能进程跑在 executor 隔离视图里不知道公网地址，完整链接只能 core 补；AI 拿到相对路径会原样转给用户，而相对路径打不开。
