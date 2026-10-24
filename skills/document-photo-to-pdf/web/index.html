@@ -190,14 +190,14 @@ body.is-empty .top,body.is-empty .footbar,body.is-empty #prevwrap{display:none}
   <div class="h" id="h2"></div>
   <div class="h" id="h3"></div>
   <canvas id="loupe"></canvas>
-  <button class="regen" type="button" style="display:none">重新生成 PDF</button>
+  <button class="regen" type="button" style="display:none">重新生成</button>
 </div>
 
 <div id="prevwrap">
   <div class="pbadge mtag">校正预览</div>
   <div class="pbadge" id="pvPage">1/1</div>
   <div class="box" id="pbox"><canvas id="preview"></canvas></div>
-  <button class="regen" type="button" style="display:none">重新生成 PDF</button>
+  <button class="regen" type="button" style="display:none">重新生成</button>
 </div>
 
 <div class="footbar" id="footbar">
@@ -828,7 +828,7 @@ function setBusy(on) {
   var bs = document.querySelectorAll(".regen");
   for (var i = 0; i < bs.length; i++) {
     bs[i].disabled = on;
-    bs[i].textContent = on ? "生成中…" : "重新生成 PDF";
+    bs[i].textContent = on ? "生成中…" : "重新生成";
   }
 }
 
@@ -840,7 +840,7 @@ function updateActions() {
   var bs = document.querySelectorAll(".regen");
   for (var i = 0; i < bs.length; i++) {
     bs[i].style.display = dirty ? "inline-flex" : "none";
-    if (!S.busy) bs[i].textContent = "重新生成 PDF";
+    if (!S.busy) bs[i].textContent = "重新生成";
   }
 }
 

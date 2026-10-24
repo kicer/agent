@@ -1,6 +1,6 @@
 ---
 name: document-photo-to-pdf
-description: 纸质文档（合同/发票/证件/书页）拍照/扫描件校正后，导出合并后的 PDF 和 out/ 下的单页 PNG 原图（未调色未缩放）；自动找纸边、透视拉正、多页合并，附审核页微调
+description: 纸质文档（合同/发票/证件/书页）拍照/扫描件校正后，导出 PDF 和 out/ 下的单页 PNG 原图（未调色未缩放）；自动找纸边、透视拉正、多页合并，附审核页微调
 visit_url: /app/{task_id}/doc-review/
 input_schema:
   type: object
