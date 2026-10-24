@@ -79,9 +79,15 @@ auth:                                              # users 留空 = 不启用登
       role: admin                                  # admin=管理员（全部设置 + 用户管理）；user 或缺省=普通用户（仅账户页）
       # model: qwen-tp/qwen3.8-flash               # 选填：该用户新建会话时锁定的模型（内部键「平台名/模型id」）
 
-# MCP 服务列表（仓库自带的 mcp/ 三个服务，或栈外服务）：每项 {name?, url, headers?, mode?(默认 advertise), timeout_ms?, tools_allow?, tools_deny?}。
+# MCP 服务列表（仓库自带的 mcp/ 服务，或栈外服务）：每项 {name?, url, headers?, mode?(默认 advertise), timeout_ms?, tools_allow?, tools_deny?}。
 # mode 三态：advertise=工具下发给模型；skill=不下发，改为以技能形式暴露（get 返回原始 input_schema，run 转发）；
 # disable=不连接、不发现。旧字段 enable 已废弃；mode: silent 已移除（改用 skill），写进配置会启动报错。
+#
+# 语音识别（mcp/asr）建议用 skill：转写音频是低频能力，不必把 schema 塞进每轮请求。
+#   - name: asr
+#     url: "http://mcp_asr:3000/mcp"
+#     mode: skill
+# 注意：输入框里的语音输入走的是 core 的 /api/asr（由 compose 的 ASR_URL 接线），不经这个工具，也不消耗 token。
 mcp_servers: []
 
 public_link:

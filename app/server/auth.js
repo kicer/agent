@@ -73,7 +73,10 @@ function basicAuthUser(req, users) {
 // ---------- 免认证路径（登录页自身需要的资源） ----------
 const PUBLIC_EXACT = new Set(['/login', '/logout', '/api/login', '/api/logout', '/api/login_restore', '/api/health']);
 function isPublicPath(p) {
-  if (PUBLIC_EXACT.has(p)) return true;
+  // 尾斜杠容忍：客户端手动填服务器地址常多带一个 `/`（拼成 `/api/health/`），
+  // Express 路由本身能匹配，但这里若不规范化，中间件会先回 401——地址明明是对的却报未登录。
+  const norm = p.length > 1 ? p.replace(/\/+$/, '') : p;
+  if (PUBLIC_EXACT.has(norm)) return true;
   if (p.startsWith('/css/')) return true; // 登录页复用 style.css
   if (p === '/favicon.ico') return true;
   return false;

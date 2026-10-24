@@ -338,6 +338,7 @@ footer { position: relative; flex: none; padding: 8px 12px calc(10px + env(safe-
 }
 .up-card.done::after, .up-card.err::after { display: none; }
 .input-shell {
+  position: relative;   /* 按住说话的遮罩以它为定位基准 */
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -404,6 +405,76 @@ footer { position: relative; flex: none; padding: 8px 12px calc(10px + env(safe-
 }
 .plus-btn:active { background: #dde0e6; }
 .plus-btn.active { background: var(--active-soft); color: var(--active); } /* 文件面板展开时高亮 */
+/* 语音模式：输入框位置换成「按住 说话」——只有居中文字，不做出按钮外观 */
+#voice-hold {
+  position: relative;
+  height: 44px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; color: var(--ink); cursor: pointer;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  touch-action: none; transition: background .12s;
+}
+/* 按住区与下方操作栏之间的分隔线（用伪元素画，避开录音态底色的圆角） */
+#voice-hold::after {
+  content: '';
+  position: absolute; left: 0; right: 0; bottom: -1px;
+  height: 1px; background: var(--border);
+}
+/* 录音中给一个极浅底色作反馈（文字同时变成「松开 结束」） */
+#voice-hold.recording { background: var(--surface); }
+
+/* 录音期间：输入卡内容整体让位给遮罩（透明渐变不能把按钮/文字透出来） */
+body.voice-active .input-shell { border-color: transparent; box-shadow: none; }
+body.voice-active .input-shell > *:not(#voice-overlay) { visibility: hidden; }
+body.voice-active .attach-chips { visibility: hidden; }
+body.voice-active .scroll-bottom-btn { display: none; }
+
+/* 按住说话的遮罩：左右贴屏幕两边；底部一直铺到屏幕底（含 footer 的 10px 内边距与安全区），
+   向上多铺 72px 让渐变淡出。
+   声波中心对齐「按住 说话」那一行：padding-bottom 70px + 安全区 =
+   59（声波中心到输入卡底部）+ 11（遮罩底边向下外扩的 1px 边框 + 10px footer 内边距）。 */
+#voice-overlay {
+  position: absolute;
+  top: -72px;
+  bottom: calc(-11px - env(safe-area-inset-bottom, 0px));
+  left: -13px; right: -13px;
+  z-index: 6;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  gap: 20px;
+  padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  /* 极淡的蓝调，从下往上淡出（“几乎看不出来，仔细看才有一层”） */
+  background: linear-gradient(to top, rgba(57, 100, 254, .09), rgba(57, 100, 254, 0));
+  color: var(--active);
+  pointer-events: auto; touch-action: none;
+  transition: background .15s linear, color .15s linear;
+}
+/* 上滑取消态：整体换成极淡的红调，声波/文案同步变红 */
+#voice-overlay.cancel {
+  background: linear-gradient(to top, rgba(192, 57, 43, .09), rgba(192, 57, 43, 0));
+  color: #c0392b;
+}
+.vo-hint { font-size: 13px; line-height: 18px; color: var(--gray); letter-spacing: .2px; }
+.vo-wave { display: flex; align-items: center; justify-content: center; gap: 3px; height: 34px; max-width: 100%; }
+/* 柱子高度用 scaleY 而不是 height：只走合成层，不触发重排 */
+.vo-wave i {
+  display: block; width: 3px; height: 34px; border-radius: 2px;
+  background: currentColor;
+  transform: scaleY(.12); transform-origin: center;
+  transition: transform 70ms linear;
+}
+/* 上滑取消态：声波与文案统一转警示色 */
+#voice-overlay.cancel .vo-hint { color: #c0392b; }
+@media (prefers-reduced-motion: reduce) { .vo-wave i { transition: none; } }
+
+/* 发送键四态：发送 / 停止 / 语音 / 键盘。语音与键盘用中性底色，和蓝色「发送」区分开 */
+.send-btn > svg { display: none; }
+.send-btn[data-state="send"] .ic-send { display: block; }
+.send-btn[data-state="voice"] .ic-voice,
+.send-btn[data-state="keyboard"] .ic-kb { display: block; }
+.send-btn[data-state="voice"],
+.send-btn[data-state="keyboard"] { background: var(--surface); color: var(--ink); box-shadow: none; }
+.send-btn[data-state="voice"]:active,
+.send-btn[data-state="keyboard"]:active { background: #dde0e6; opacity: 1; }
 /* 发送按钮:蓝底白向上箭头 */
 .send-btn {
   flex: none; width: 36px; height: 36px; border-radius: 50%;

@@ -266,6 +266,7 @@ preview-proxy.earlyGuard
 express.static(public)
 /api/sessions ×4   ← sessions / messages / files / skill-run（通用执行面）
 /api/skills
+/api/asr           ← 语音识别代理：/transcribe 走登录态；ASR_URL 空则 503
 /api/config        ← requireAdmin
 /api/platforms
 /api/system        ← /restart 需 admin，其余登录即可
@@ -274,6 +275,8 @@ express.static(public)
 /api/memory
 /api/wechat
 /api/channel
+/api/health        ← 免认证探活：套壳 App / 运维脚本用它校验服务器地址
+                   （只认 200 + body.ok + service==='agent-core'）
 data-page          ← GET /app/:task_id/*、POST /api/db/:task_id/query
 preview-proxy.mount（末尾兜底）
 ```
@@ -281,13 +284,15 @@ preview-proxy.mount（末尾兜底）
 - 错误形状统一 `{ error: string }`，`err.status_code` 决定 HTTP 码。
 - 认证：HMAC 签名 HttpOnly cookie（`agent_token`），`Authorization: Basic` 兜底，
   `Authorization: Bearer` 仅用于 `/api/login_restore`。`auth.users` 为空 = 完全关闭认证。
+- 免认证路径集中在 `auth.js` 的 `PUBLIC_EXACT`（含 `/api/health`，且容忍尾斜杠）。
+  新增免登录接口必须加进去，否则会被中间件先拦成 401。
 - **单租户警告**：除管理员接口外不做资源级授权；按用户的会话列表隔离在查询层（`sessions.user`）。
 - 公网短链 `/p/<id>` 的信任模型：随机 ID + 服务端 TTL + 签发时 `realpath` 校验，不靠登录态。
 
 ## 前端（`server/public/`）
 
 - **无构建**：`index.html` 按顺序加载经典脚本，共享全局作用域：
-  `core.js → chat.js → sessions.js → stream.js → files.js → preview.js → settings.js`
+  `core.js → chat.js → sessions.js → stream.js → files.js → voice.js → preview.js → settings.js`
   （`settings.js` 必须最后，尾部有全局初始化）；`marked.min.js` 走 `vendor/`。
 - 新增 JS 文件必须同时改 `index.html` 的 `<script>` 顺序——没有 import/export，顺序就是依赖。
 - `sw.js`：HTML/JS/CSS 网络优先，图片/JSON 缓存优先。**改图片或 JSON 才需要升 `CACHE_VERSION`**；

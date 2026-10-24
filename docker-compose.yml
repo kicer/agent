@@ -24,6 +24,8 @@ services:
       # 微信接入
       - WXBOT_URL=http://agent-wxbot:8093
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
+      # 语音识别（可选）：mcp_asr 的内网地址。置空 = 不启用，前端不显示麦克风按钮。
+      - ASR_URL=http://mcp_asr:3000
     networks:
       - agent-mcp-net
 
@@ -203,6 +205,30 @@ services:
     # 调试用（默认关；这里映的是 MCP 端口，会暴露 /mcp，仅本机短时调试用）：
     # ports:
     #   - "${VIDEO_TASK_PORT:-8083}:3000"
+    networks:
+      - agent-mcp-net
+
+  # 语音识别：录音在客户端（套壳 App 原生桥 / 浏览器 MediaRecorder），转写在这里。
+  # 同进程两个入口（见 mcp/asr/src/server.js 头注释）：
+  #   POST /transcribe  ← agent-core 的 /api/asr 转发（输入框，低延迟、不经过模型）
+  #   POST /mcp         ← 模型的 MCP 工具 transcribe_audio({url})（转写任务目录里的音频）
+  # 转写走上游 OpenAI 兼容的 /audio/transcriptions（默认智谱 glm-asr，换平台改 ASR_API_* 即可）。
+  mcp_asr:
+    build: ./mcp/asr
+    container_name: mcp_asr
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    environment:
+      - ASR_API_KEY=${ASR_API_KEY:-}
+      - ASR_API_BASE=${ASR_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
+      - ASR_MODEL=${ASR_MODEL:-glm-asr}
+      - ASR_LOG_LEVEL=${ASR_LOG_LEVEL:-info}
+      - TZ=Asia/Shanghai
     networks:
       - agent-mcp-net
 

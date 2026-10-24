@@ -22,7 +22,7 @@
 | `app/server/public/` | 前端静态资源，经典脚本按序加载，共享全局作用域 | 无构建步骤 |
 | `executor/` | **agent-executor**：`/exec` 隔离命令执行 + Office 预览网关 | 零依赖 Node，独立容器 |
 | `wxbot/` | 微信 iLink 协议调制解调器（多实例） | 独立容器 `agent-wxbot` |
-| `mcp/` | 同栈 MCP 服务：`web_search` / `image_task` / `video_task` | 三个容器，仅内网 |
+| `mcp/` | 同栈 MCP 服务：`web_search` / `image_task` / `video_task` / `asr` | 四个容器，仅内网 |
 | `skills/` | 目录式技能（`SKILL.md` + `run.py`/`run.sh`） | 运行时挂载，`skills/deps` 为依赖层 |
 | `scripts/` | `init.sh` 生成 `.env` + `config.yml`；`init_host.sh` 裸机初始化 | 幂等 |
 | `docs/` | 专题文档：`tool-design.md`（工具接口规范）、`OFFICE.md` | — |
@@ -42,7 +42,7 @@ flowchart TD
     WXBOT -->|"回调 /wxhook/*（共享 Bearer token）"| CORE
     CORE["agent-core（8090，唯一对外端口）"]
     CORE --> EXEC["agent-executor（9000 exec / 3100 预览，仅内网）"]
-    CORE --> MCP["mcp_web_search / mcp_image_task / mcp_video_task（3000，仅内网）"]
+    CORE --> MCP["mcp_web_search / mcp_image_task / mcp_video_task / mcp_asr（3000，仅内网）"]
     CORE -->|"分段投递回复"| WXBOT
 ```
 
@@ -83,7 +83,7 @@ flowchart TD
 ### 环境变量（接线全靠根 `.env` + compose）
 
 `AGENT_CONFIG`、`PORT`、`EXECUTOR_URL`、`EXECUTOR_TOKEN`、`WXBOT_URL`、`WXBOT_TOKEN`、
-`VIRTUAL_HOST`、`PREVIEW_PROXIES`、`EXECUTOR_LOG_LEVEL`、`WXBOT_LOG_LEVEL`。
+`ASR_URL`、`ASR_API_KEY`、`VIRTUAL_HOST`、`PREVIEW_PROXIES`、`EXECUTOR_LOG_LEVEL`、`WXBOT_LOG_LEVEL`。
 密钥生成：`./scripts/init.sh`（幂等，重跑不掉登录态）。
 
 ## 三条主链路
@@ -187,6 +187,7 @@ curl -s http://127.0.0.1:8090/api/health
 | 改模型调度 / 绑定 | `app/server/engine.js` 的 `chooseKey` / `chooseModel` / `ensureBinding` |
 | 改上下文组装 / 省 token | `app/server/llm.js` 的 `buildMessages` / `trim*` |
 | 改微信投递 | `app/server/wechat.js`（业务）+ `app/server/routes/wechat.js`（HTTP/鉴权） |
+| 改语音输入 | `app/server/public/js/voice.js`（录音与插入）+ `app/server/routes/asr.js`（代理）+ `mcp/asr/`（转写）；客户端桥契约见 `docs/voice-input.md` |
 | 改隔离执行 | `executor/server.js`（先读顶部安全模型注释） |
 | 加同栈 MCP 服务 | `mcp/<name>/` + `docker-compose.yml` + `config.yml` 的 `mcp_servers` |
 | 加技能 | `skills/<name>/`（`SKILL.md` + `run.py`），见 `skills/README.md` |

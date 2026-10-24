@@ -71,6 +71,9 @@ app.use('/api/sessions', require('./routes/files'));
 // 与 /api/db 对称；执行核心仍复用 tools/skills.runSkill，core 不感知具体技能。
 app.use('/api/sessions', require('./routes/skill-run'));
 app.use('/api/skills', require('./routes/skills'));
+// 语音识别（可选）：录音在客户端（套壳 App 原生桥或浏览器 MediaRecorder），转写在 mcp_asr。
+// ASR_URL 为空时接口回 503，前端据此不显示麦克风按钮（见 routes/asr.js）。
+app.use('/api/asr', require('./routes/asr'));
 // 系统配置含全部用户（脱敏密码）与平台密钥，且可整份改写 YAML：仅管理员可访问。
 app.use('/api/config', auth.requireAdmin, require('./routes/config'));
 app.use('/api/platforms', require('./routes/platforms'));
@@ -145,7 +148,22 @@ app.get('/api/models', (req, res) => {
   res.json(rows);
 });
 
-app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
+// 探活 + 服务器地址校验（免认证，见 auth.js 的 PUBLIC_EXACT）。
+// 套壳 App / 运维脚本会手动填服务器地址，必须能判断“这个地址到底是不是本服务”：
+// 只认 HTTP 200 + body.ok===true + service==='agent-core'，不能只看状态码——
+// 填到别的站点、反代首页或劫持页同样可能回 200。
+// no-store：避免 WebView / 反向代理 / Service Worker 把旧响应当成“服务在线”。
+// auth_required 让客户端区分“连上了但没登录”和“地址填错了”。
+app.get('/api/health', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    ok: true,
+    service: 'agent-core',
+    api: 1, // 接口代际：未来出现不兼容改动时升，客户端据此提示升级
+    time: Date.now(),
+    auth_required: !!(cfg.auth && cfg.auth.users && cfg.auth.users.length),
+  });
+});
 
 const PORT = process.env.PORT || cfg.port;
 

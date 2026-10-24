@@ -10,12 +10,14 @@
 #
 # 输入（都可选）：
 #   BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY  模型平台 key，填几个启用几个（0~3 个）
-#                                           image_task / video_task 复用 BIGMODEL_KEY（智谱即 BigModel）；
-#                                           未配 BIGMODEL_KEY 时这两个服务写为 mode: disable
+#                                           image_task / video_task / asr 复用 BIGMODEL_KEY（智谱即 BigModel）；
+#                                           未配 BIGMODEL_KEY 时这三个服务写为 mode: disable
 #   AUTH_USER / AUTH_PASSWORD               登录账号（默认 admin / admin，请自行改掉）
 #   PUBLIC_IP / AGENT_PORT                  对外地址与端口，写进 public_link.base_url；
 #                                           PUBLIC_IP 不配置则自动探测公网 IP
 #   AUTH_SECRET / EXECUTOR_TOKEN / WXBOT_TOKEN  一般不用给：不给就自动生成并复用（见下）
+#   ASR_API_KEY                             语音识别（mcp_asr）的上游 key；不给则复用 BIGMODEL_KEY，
+#                                           已有 .env 里的值优先（语音输入只是可选能力，留空不影响主流程）
 #
 # 微信接入（wxbot 已合入根 compose，作为栈内服务）：本脚本只负责生成/复用根 .env 的 WXBOT_TOKEN；
 # wxbot 自身零配置文件（compose 注 env + 内置默认，同 executor 模式），无需任何同步动作。
@@ -51,6 +53,8 @@ EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-}"
 AUTH_SECRET="${AUTH_SECRET:-}"
 # 微信接入服务 token（core ↔ wxbot 双向共用，compose 两侧同值注入；wxbot 已并入仓库）
 WXBOT_TOKEN="${WXBOT_TOKEN:-}"
+# 语音识别（mcp_asr）的上游 key：独立于模型平台 key，但默认复用 BIGMODEL_KEY（智谱 glm-asr）
+ASR_API_KEY="${ASR_API_KEY:-}"
 
 log()  { echo -e "\n\033[1;32m===== $* =====\033[0m"; }
 info() { echo -e "\033[1;36m[INFO]\033[0m $*"; }
@@ -74,6 +78,8 @@ if [ -f "$ENV_FILE" ]; then
     EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(sed -n 's/^EXECUTOR_TOKEN=//p' "$ENV_FILE" | head -1)}"
     AUTH_SECRET="${AUTH_SECRET:-$(sed -n 's/^AUTH_SECRET=//p' "$ENV_FILE" | head -1)}"
     WXBOT_TOKEN="${WXBOT_TOKEN:-$(sed -n 's/^WXBOT_TOKEN=//p' "$ENV_FILE" | head -1)}"
+    # ASR_API_KEY 同理复用：手填的 key 不会被重跑抹掉
+    ASR_API_KEY="${ASR_API_KEY:-$(sed -n 's/^ASR_API_KEY=//p' "$ENV_FILE" | head -1)}"
     # AGENT_PORT 同理复用：避免不带参数重跑时把部署机自定义端口重置回 8090（显式传参优先）
     AGENT_PORT="${AGENT_PORT_INPUT:-$(sed -n 's/^AGENT_PORT=//p' "$ENV_FILE" | head -1)}"
     AGENT_PORT="${AGENT_PORT:-8090}"
@@ -81,19 +87,22 @@ fi
 EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(gen_hex 32)}"
 AUTH_SECRET="${AUTH_SECRET:-$(gen_hex 32)}"
 WXBOT_TOKEN="${WXBOT_TOKEN:-$(gen_hex 32)}"
+ASR_API_KEY="${ASR_API_KEY:-$BIGMODEL_KEY}"
 
 cat > "$ENV_FILE" <<EOF
 # 本文件由 scripts/init.sh 生成，勿手改（改配置请重新运行该脚本，或用环境变量覆盖）
 # EXECUTOR_TOKEN: core 与 executor 之间的调用鉴权（两侧同值，compose 注入）
 # AUTH_SECRET:    登录态签名密钥（写进 config.yml 的 auth.secret）
 # WXBOT_TOKEN:    core ↔ wxbot 微信接入服务 token（compose 注入两侧；wxbot 零配置文件，env 即全部接线）
+# ASR_API_KEY:    语音识别（mcp_asr）的上游 key，空 = 语音输入关闭；默认复用 BIGMODEL_KEY
 # AGENT_PORT:     agent-core 映射到宿主机的端口
 EXECUTOR_TOKEN=$EXECUTOR_TOKEN
 AUTH_SECRET=$AUTH_SECRET
 WXBOT_TOKEN=$WXBOT_TOKEN
+ASR_API_KEY=$ASR_API_KEY
 AGENT_PORT=$AGENT_PORT
 EOF
-info "EXECUTOR_TOKEN / AUTH_SECRET / WXBOT_TOKEN 已就位（沿用已有 .env 的值，没有则新生成）"
+info "EXECUTOR_TOKEN / AUTH_SECRET / WXBOT_TOKEN 已就位（沿用已有 .env 的值，没有则新生成）；ASR_API_KEY $([ -n "$ASR_API_KEY" ] && echo 已配置 || echo 为空（语音输入关闭）)"
 
 # --env-only：只刷密钥，绝不碰 config.yml（平台 key 不在 .env 里，重跑全量会清空已部署配置）
 if [ "${ENV_ONLY:-}" = "1" ]; then
@@ -229,6 +238,21 @@ EOF
 EOF
     fi
 
+    # 语音转写：key 在容器 env（ASR_API_KEY），不经 headers，所以单独按 ASR_API_KEY 判断
+    if [ -n "$ASR_API_KEY" ]; then
+        cat <<'EOF'
+  - name: asr
+    url: "http://mcp_asr:3000/mcp"
+    mode: skill            # 语音转写是低频能力，不下发到每轮工具表
+EOF
+    else
+        cat <<'EOF'
+  - name: asr
+    url: "http://mcp_asr:3000/mcp"
+    mode: disable          # 未配 ASR_API_KEY：不连接、不发现
+EOF
+    fi
+
     echo
     cat <<EOF
 # 给外部服务（如智谱）现签公网临时链接用；改地址后重跑本脚本
@@ -249,7 +273,8 @@ echo " 账号     : $AUTH_USER"
 echo " 密码     : $AUTH_PASSWORD"
 echo " 平台     : ${enabled_plats[*]:-（无）}"
 echo " 图像/视频: $([ -n "$BIGMODEL_KEY" ] && echo "image_task / video_task 已启用" || echo "未配置（mode: disable）")"
-echo " MCP 服务 : web_search / image_task / video_task（同栈，随 compose 启动）"
+echo " 语音输入 : $([ -n "$ASR_API_KEY" ] && echo "mcp_asr 已启用" || echo "未配置（ASR_API_KEY 为空）")"
+echo " MCP 服务 : web_search / image_task / video_task / asr（同栈，随 compose 启动）"
 echo " 微信接入 : WXBOT_TOKEN 已就位（compose 注入 core 与 wxbot 两侧；wxbot 无需配置文件）"
 echo "---------------------------------------------"
 log "完成 ✅"

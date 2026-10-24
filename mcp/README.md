@@ -1,12 +1,13 @@
 # MCP 服务集合
 
-三个 MCP（Model Context Protocol）服务，各占一个目录，由仓库根 `docker-compose.yml` 统一编排：
+四个 MCP（Model Context Protocol）服务，各占一个目录，由仓库根 `docker-compose.yml` 统一编排：
 
 | 目录 | 容器名 | 作用 | 容器内端口 | MCP 端点 |
 |---|---|---|---|---|
 | `web_search/` | `mcp_web_search` | 免费网页搜索（Parallel / Exa，无需 key） | `3000` | `POST /` |
 | `image_task/` | `mcp_image_task` | 图片生成 / 编辑（智谱原生或任意 OpenAI 兼容 `/images/generations`，单工具 op=create/get） | `3000` | `POST /mcp` |
 | `video_task/` | `mcp_video_task` | 智谱 CogVideo 视频生成（异步，单工具 op=create/get） | `3000` | `POST /mcp` |
+| `asr/` | `mcp_asr` | 语音转文字（上游 OpenAI 兼容 `/audio/transcriptions`），**额外带一个给输入框用的 `POST /transcribe`** | `3000` | `POST /mcp` |
 
 **这些服务一个宿主机端口都不占**——它们只挂在 `agent-mcp-net` 上，由 `agent-core` / `agent-executor`
 按容器名访问。所以整台服务器对外只需要开 agent-core 那一个端口（`AGENT_PORT`，默认 8090）。
@@ -31,16 +32,23 @@ mcp_servers:
     url: "http://mcp_image_task:3000/mcp"
   - name: video_task
     url: "http://mcp_video_task:3000/mcp"
+  # 可选：语音转写（低频，建议 skill 模式，不占每轮工具表）
+  - name: asr
+    url: "http://mcp_asr:3000/mcp"
+    mode: skill
 ```
 
-服务没起来时，core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。工具发现只在启动时做一次，失败后会自动按 2s / 20s / 1min 重试 3 次；三次都失败则需重启 core。三个服务都配了 `/health` 健康检查，`docker ps` 可直接看状态。
+服务没起来时，core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。工具发现只在启动时做一次，失败后会自动按 2s / 20s / 1min 重试 3 次；三次都失败则需重启 core。四个服务都配了 `/health` 健康检查，`docker ps` 可直接看状态。
 
 > 从旧的「agent + mcp 双仓库」部署升级：先在旧 mcp 仓库目录 `docker compose down`（只需一次，否则同名容器与网络会冲突），再 `up` 本栈。
 
 `image_task` / `video_task` 的 token **不由服务端保存**——每个请求从 `Authorization` header 读取
 （agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。`video_task` 用智谱 token；
 `image_task` 用对应上游（智谱或 OpenAI 兼容网关）的 token，上游地址与模型分别由
-`X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定。所以这里不用配任何密钥。
+`X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定。所以这两个服务不用配任何密钥。
+
+`asr` 是例外：输入框那条路（`agent-core` → `POST /transcribe`）不经过 MCP 调用，拿不到 header，
+所以它自己的上游密钥由容器 env `ASR_API_KEY` 提供（写在根 `.env`，已 gitignore，不挂给其他容器）。
 
 ### 调试端口
 
@@ -78,6 +86,7 @@ AI 把拿到的 URL 当 image_url 交给 video_task:3000/mcp
 | `mcp_web_search` | 无 | 服务端无鉴权，**永远不要映射出去**（会被白嫖搜索额度）；agent 走内网访问 |
 | `mcp_image_task` | 无 | token 由调用方自带，暴露后可被拿去消耗你的上游图片额度 |
 | `mcp_video_task` | 无 | 它需要的公开临时 URL 由 agent 侧集成的工具提供，自己不占端口 |
+| `mcp_asr` | 无 | `/mcp` 与 `/transcribe` 都无鉴权，只能由 core 经内网调用；它持有上游 ASR 密钥 |
 
 ## 单独调试
 

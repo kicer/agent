@@ -1,0 +1,10 @@
+{
+  "name": "mcp_asr",
+  "version": "1.0.0",
+  "description": "ASR service: POST /transcribe for the H5 composer, POST /mcp for the model (tool transcribe_audio). Zero dependencies.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  }
+}

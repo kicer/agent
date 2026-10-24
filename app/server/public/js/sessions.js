@@ -300,13 +300,26 @@
     // 有附件时按钮保持「发送」：粘贴长文本转成的附件不应被当成停止操作
     return state.status === 'active' && !(($('msg-input') || {}).value || '').trim() && !state.attachments.length;
   }
+  // 发送键四态：停止 / 键盘（语音模式）/ 语音（空输入且支持录音）/ 发送。
+  // 停止优先：生成中且输入框为空时，用户最可能想停止，不能被语音入口顶掉。
+  // 语音与键盘两态由 voice.js 暴露的 window.AgentVoice 提供（脚本加载顺序在 sessions 之后，
+  // 初始化阶段它还不存在，此处必须容错——那时按普通「发送」渲染即可）。
   function updateSendBtn() {
     const sb = $('send-btn');
     if (!sb) return;
-    const stop = stopModeActive();
-    sb.dataset.state = stop ? 'stop' : 'send';
-    sb.title = stop ? '停止生成' : '发送';
-    sb.setAttribute('aria-label', stop ? '停止生成' : '发送');
+    const v = window.AgentVoice;
+    const empty = !(($('msg-input') || {}).value || '').trim() && !state.attachments.length;
+    let mode;
+    if (stopModeActive()) mode = 'stop';
+    else if (v && v.isVoiceMode()) mode = 'keyboard';
+    else if (empty && v && v.isAvailable()) mode = 'voice';
+    else mode = 'send';
+    sb.dataset.state = mode;
+    const label = mode === 'stop' ? '停止生成'
+      : mode === 'keyboard' ? '切换到键盘输入'
+        : mode === 'voice' ? '语音输入' : '发送';
+    if (sb.title !== label) sb.title = label;
+    if (sb.getAttribute('aria-label') !== label) sb.setAttribute('aria-label', label);
   }
 
   function updateHeaderActions() {

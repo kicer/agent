@@ -1,6 +1,6 @@
 {
   "name": "agent-app",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "自用通用 Agent 系统：多模型调度 + 任务目录 + 工具调用 + H5 Web UI",
   "main": "server/server.js",
   "scripts": {

@@ -22,6 +22,7 @@
 | 上下文管理 | 手动压缩、按 token 阈值提示压缩、历史重放自动裁剪、会话标题自动生成 |
 | 定时任务 | 每会话最多一个 cron 任务；触发前清空模型可见历史，按计划执行并推送结果 |
 | 微信接入 | 扫码绑定个人微信，文本/图片/视频/文件进入同一套会话与命令体系 |
+| 语音输入 | 输入框为空时发送键变麦克风：点一下进入语音模式，输入框位置变成「按住 说话」，松开即转写并直接发送；发送键位置变键盘按钮可切回打字。套壳 App 走原生录音（http 页面也能用），浏览器走 MediaRecorder（需 HTTPS）；识别在 `mcp_asr`，不经过模型、不消耗 token |
 | 长期记忆 | 会话收口时生成第一人称工作日记；微信新会话注入最近几条，`recall` 可检索全部 |
 | 用户画像 | 记录称谓、行业、偏好，会话创建时冻结注入，跨会话生效 |
 | 技能 | 目录式技能（`SKILL.md` + `run.py`/`run.sh`），可在设置页管理 |
@@ -94,7 +95,7 @@ http://<服务器 IP>:<AGENT_PORT>
 
 ### 4. 同栈 MCP 服务
 
-`init.sh` 默认把仓库内 `mcp/` 的三个服务写进 `config.yml`：
+`init.sh` 默认把仓库内 `mcp/` 的服务写进 `config.yml`：
 
 ```yaml
 mcp_servers:
@@ -104,9 +105,14 @@ mcp_servers:
     url: "http://mcp_image_task:3000/mcp"
   - name: video_task
     url: "http://mcp_video_task:3000/mcp"
+  - name: asr
+    url: "http://mcp_asr:3000/mcp"
+    mode: skill
 ```
 
-`web_search` / `image_task` / `video_task` 与 core 由同一个根 `docker-compose.yml` 启动，没有先后顺序，也不占宿主机端口。工具说明、header 覆盖项与调试方式见 [mcp/README.md](mcp/README.md)。
+`web_search` / `image_task` / `video_task` / `asr` 与 core 由同一个根 `docker-compose.yml` 启动，没有先后顺序，也不占宿主机端口。工具说明、header 覆盖项与调试方式见 [mcp/README.md](mcp/README.md)。
+
+语音输入（H5 输入框里说话）走的是另一条路：客户端录音 → `POST /api/asr/transcribe` → `mcp_asr` 的 `/transcribe`，**不经过模型、不消耗 token**，结果插入输入框可编辑。客户端录音契约（Android 套壳原生桥 / 浏览器 MediaRecorder）见 [docs/voice-input.md](docs/voice-input.md)；`ASR_URL` 置空即整体关闭。
 
 接入栈外的 MCP 服务：在设置页添加 `url` / `headers`，或在 `config.yml` 的 `mcp_servers` 追加一项。服务不可达时 core 只在启动日志里告警，不影响 Web 主流程，但对应工具不会下发给模型。
 
@@ -120,7 +126,7 @@ mcp_servers:
 
 `skill` 用于「能力包在技能后面」的场景：工具照常发现并注册，只是不进模型的 tools 数组，改为以技能形式暴露——`{"op":"list"}` 能看到它，`{"op":"get","name":"<名>"}` 直接返回 MCP 原始的 `description` + `input_schema`，`{"op":"run","name":"<名>","args":{…}}` 转发给服务。不用在 `skills/` 里建目录。旧字段 `enable` 已废弃，`mode: silent` 已移除（启动会报错并提示改用 `skill`）。
 
-工具发现只在启动时做一次，因此发现失败后会自动按 **2s / 20s / 1min 重试 3 次**（覆盖 compose 并行拉起与宿主机重启后的容器乱序）；成功后工具在下一轮请求即可用，三次都失败则需重启 core。三个 MCP 服务都配了 `/health` 健康检查，`docker ps` 可直接看状态。
+工具发现只在启动时做一次，因此发现失败后会自动按 **2s / 20s / 1min 重试 3 次**（覆盖 compose 并行拉起与宿主机重启后的容器乱序）；成功后工具在下一轮请求即可用，三次都失败则需重启 core。四个 MCP 服务都配了 `/health` 健康检查，`docker ps` 可直接看状态。
 
 ---
 
@@ -238,6 +244,8 @@ platforms:
 | `PORT` | core 监听端口，容器内 `8090` |
 | `EXECUTOR_URL` | `agent-executor` 地址；空则命令在 core 进程内本地执行，仅适合开发 |
 | `EXECUTOR_TOKEN` | core ↔ executor 的 Bearer token，两侧同值 |
+| `ASR_URL` | `mcp_asr` 地址（compose 为 `http://mcp_asr:3000`）；置空则语音输入关闭 |
+| `ASR_API_KEY` / `ASR_API_BASE` / `ASR_MODEL` | `mcp_asr` 的上游语音识别密钥与地址（默认智谱 `glm-asr`） |
 | `WXBOT_URL` | wxbot 地址；置空则微信功能整体关闭 |
 | `WXBOT_TOKEN` | core ↔ wxbot 的共享 token |
 | `VIRTUAL_HOST` | 设置后 `public_link.base_url` 强制取 `https://<第一个域名>` |
@@ -389,7 +397,13 @@ docker compose logs -f agent-core
 docker compose logs -f agent-executor
 docker compose logs -f agent-wxbot
 curl -s http://127.0.0.1:8090/api/health
+# {"ok":true,"service":"agent-core","api":1,"time":...,"auth_required":true}
 ```
+
+- `GET /api/health` 是**唯一免登录接口**，供运维探活，也供套壳 App 校验用户手填的服务器地址。
+  客户端判定条件：HTTP 200 且 `ok === true` 且 `service === 'agent-core'`——**不要只看状态码**，
+  填错到别的站点或反代首页同样可能回 200。地址末尾的 `/` 可带可不带。
+  `auth_required` 用于区分「地址对了但没登录」与「地址错了」。
 
 - core 日志等级由 `config.yml` 的 `log_level` 控制，改完重启生效。
 - executor / wxbot 的日志等级由各自环境变量控制，`debug` 会打印完整交互。
@@ -400,6 +414,9 @@ curl -s http://127.0.0.1:8090/api/health
 | 现象 | 原因 / 处理 |
 |---|---|
 | 启动时报 `network agent-mcp-net has active endpoints` | 旧的双仓库部署残留：先停旧的 mcp 仓库（`docker compose down`），再 `up` 本栈 |
+| 套壳 App 填了服务器地址仍连不上 | 先 `curl <地址>/api/health` 看是否返回 `service:agent-core`；再查 Android 9+ 默认禁止明文 HTTP（需 `usesCleartextTraffic`）与 https 自签证书 |
+| 麦克风按钮不显示 | `ASR_URL` 为空（未部署 `mcp_asr`）；或浏览器以 `http://<IP>` 访问且没有原生录音桥（非安全上下文开不了麦，见 `docs/voice-input.md`） |
+| 点麦克风提示「语音识别服务不可用」 | `mcp_asr` 未起来或 `ASR_API_KEY` 为空：`docker compose logs --tail=50 mcp_asr` |
 | `config.yml` 变成目录 | 启动前文件不存在，Docker 自动建了同名目录；停容器、删目录、放入配置文件 |
 | 没有可用模型 | `platforms` 为空或模型全部禁用；在设置页添加后重启 |
 | 创建会话报「无可用模型」 | 模型池为空，或指定模型所在平台没有 key |

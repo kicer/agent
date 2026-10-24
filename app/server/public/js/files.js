@@ -30,11 +30,13 @@
       send();
     }
   });
-  // 发送键双职：生成中且输入框为空时变「停止」（白色方块），点击终止当前回合；
-  // 输入框有字时它仍是「发送」——运行中允许插话，直接发出去（后端 live 追投）。
+  // 发送键四职：语音 / 键盘（语音模式）/ 停止 / 发送，由 data-state 决定点击含义。
   // 400ms 内重复点击忽略：防双击重复 abort（服务端 status 事件回来前按钮仍是停止态）。
   let stopClickAt = 0;
   $('send-btn').addEventListener('click', () => {
+    const st = $('send-btn').dataset.state;
+    if (st === 'voice' && window.AgentVoice) { window.AgentVoice.enter(); return; }
+    if (st === 'keyboard' && window.AgentVoice) { window.AgentVoice.exit(true); return; }
     if (stopModeActive()) {
       if (Date.now() - stopClickAt < 400) return;
       stopClickAt = Date.now();
