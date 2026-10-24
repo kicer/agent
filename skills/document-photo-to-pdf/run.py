@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "doc_deskew"))
 
 from params import P          # noqa: E402
-from auto_quad import detect  # noqa: E402
+from auto_quad import detect, rect_quad  # noqa: E402
 from validate import validate # noqa: E402
 import compose                # noqa: E402
 import check                  # noqa: E402
@@ -485,8 +485,51 @@ def process(args, t0):
                     v = {"ok": False, "metrics": {},
                          "failures": ["校验异常：%s" % e], "warnings": []}
                 meta["validation"] = v
-                if not v["ok"]:
-                    # 检测到了但几何不可信：退回兜底框，交给人补角，而不是让整批失败。
+                if not v["ok"] and P["gate"].get("repair"):
+                    # 先试保守重拟合（最小外接矩形），而不是直接把整个四边形
+                    # 扔掉换成画面内缩兜底框。旧行为是“一票否决 + 全框替换”，
+                    # 一旦自动检测有一点偏差，人拿到手的就是整张照片。
+                    meta["detected_corners"] = [list(map(float, q))
+                                                for q in meta["corners"]]
+                    try:
+                        rq, rinfo = rect_quad(img, P)
+                    except Exception as e:
+                        rq, rinfo = [], {"error": str(e)}
+                    if rq:
+                        meta["corners"] = [[float(x), float(y)] for x, y in rq]
+                        meta["corners_norm"] = _norm(meta["corners"],
+                                                     meta["source_size"])
+                        meta["auto_corners"] = [list(map(float, q))
+                                                for q in meta["corners"]]
+                        meta["auto_corners_norm"] = meta["corners_norm"]
+                        try:
+                            v2 = validate(img, meta["corners"], P)
+                        except Exception as e:
+                            v2 = {"ok": False, "metrics": {},
+                                  "failures": ["校验异常：%s" % e],
+                                  "warnings": []}
+                        meta["validation"] = v2
+                        meta["repaired"] = "min_area_rect"
+                        meta["repair_info"] = {
+                            k: vv for k, vv in rinfo.items()
+                            if k in ("paper_frac", "mask_pick", "quad_source")}
+                        if v2["ok"]:
+                            meta["status"] = "ready"
+                            meta["reason"] = None
+                        else:
+                            meta["status"] = "review"
+                            meta["reason"] = "repaired_quad"
+                    else:
+                        meta["corners"] = _fallback_quad(meta["source_size"], P)
+                        meta["corners_norm"] = _norm(meta["corners"],
+                                                     meta["source_size"])
+                        meta["auto_corners"] = [list(map(float, q))
+                                                for q in meta["corners"]]
+                        meta["auto_corners_norm"] = meta["corners_norm"]
+                        meta["status"] = "needs_corners"
+                        meta["reason"] = "invalid_quad"
+                elif not v["ok"]:
+                    # repair 关掉时保持旧行为：检测到了但几何不可信，退回兜底框。
                     # auto_corners 也要跟着换成兜底框，否则“恢复自动”会把无效角点拖回来。
                     meta["detected_corners"] = meta["corners"]
                     meta["corners"] = _fallback_quad(meta["source_size"], P)

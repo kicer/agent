@@ -252,6 +252,9 @@ def largest_connected(mask_small):
     return out
 
 
+QUAD_INFO = {}
+
+
 # ---------------------------------------------------------------- 纸面掩膜
 
 def otsu_threshold(score):
@@ -274,39 +277,313 @@ def otsu_threshold(score):
     return float(centers[int(np.argmax(between))])
 
 
+def _mask_from_bright(bright, factor, d, ref_side=None):
+    """把“合格像素”图收敛成单张纸的掩膜（小尺寸）。
+
+    关键一步是开运算（erode→dilate）：布面高光、塑料袋反光这类细小高亮
+    块会被整块抹掉，而纸面（一块几百像素宽的大区域）毫发无损。旧实现只有
+    闭运算，高光点反而被“连”到纸上，把最小外接矩形撑得老远，这就是
+    rect_fill 只有 0.5、角点飞出去的根源。
+
+    ref_side 是原图短边：形态学核按它换算，保证不同 factor 下降采样后
+    用的是同一个“物理尺寸”的核，否则不同分辨率下的打分不可比。
+    """
+    bs = downsample_any(bright, factor)
+    if not bs.any():
+        return bs, 0.0
+    f = max(1, int(factor))
+    if ref_side is None:
+        ref_side = min(bs.shape) * f
+
+    def _k(div, minpx):
+        return _odd(max(minpx, int(max(minpx, ref_side // max(1, div)) / f)))
+
+    k_open = _k(d.get("paper_open_div", 90), d.get("paper_open_min", 5))
+    k_close = _k(d["paper_close_div"], d["paper_close_min"])
+    k_close2 = _k(d["paper_close2_div"], d["paper_close_min"])
+    k_close_max = max(k_close, k_close2)
+
+    # 掩膜收敛：开 → 闭 → 填洞 → 取最大连通域 → 填洞，共 4 次形态学。
+    # 不再重复开运算与第二次闭运算：闭运算幂等，且取最大连通域后已无细小
+    # 碎块，重复一遍结果不变、耗时翻倍（实测单候选 0.3s → 0.15s）。
+    m = opening(bs, k_open)          # 去细小高光与细桥
+    if not m.any():
+        m = bs
+    m = closing(m, k_close_max)
+    m = fill_holes(m)
+    m = largest_connected(m)
+    m = fill_holes(m)
+    return m, float(bs.mean())
+
+
+def convex_hull(pts):
+    """Andrew monotone chain 凸包，返回逆时针顶点（不含重复首点）。"""
+    p = np.asarray(pts, dtype=np.float64)
+    if len(p) < 3:
+        return None
+    order = np.lexsort((p[:, 1], p[:, 0]))
+    p = p[order]
+
+    def cross(o, a, b):
+        return ((a[0] - o[0]) * (b[1] - o[1])
+                - (a[1] - o[1]) * (b[0] - o[0]))
+
+    lower = []
+    for q in p:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], q) <= 0:
+            lower.pop()
+        lower.append(q)
+    upper = []
+    for q in p[::-1]:
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], q) <= 0:
+            upper.pop()
+        upper.append(q)
+    hull = lower[:-1] + upper[:-1]
+    return np.array(hull, dtype=np.float64) if len(hull) >= 3 else None
+
+
+def _poly_area(q):
+    """多边形面积（绝对值）。"""
+    q = np.asarray(q, dtype=np.float64)
+    x, y = q[:, 0], q[:, 1]
+    return float(abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))) / 2.0)
+
+
+def quad_iou(mask, quad, step=2):
+    """凸四边形与二值掩膜的交并比（粗网格采样，用于候选择优）。
+
+    为什么用它而不是“和矩形的夹角/位移上限”：真实拍摄的纸张是梯形，
+    左右两条边本来就该一个往里收、一个往外放，用“偏离矩形的位移”当门槛
+    会把整张梯形的透视关系判成错误，最后退回成一个平行四边形。
+    IoU 直接衡量“这个四边形是不是把纸面圈住了”，不预设形状。
+    """
+    m = np.asarray(mask, dtype=bool)
+    q = np.asarray(quad, dtype=np.float64)
+    if q.shape != (4, 2) or not np.isfinite(q).all():
+        return 0.0
+    area2 = 0.0
+    for i in range(4):
+        p0, p1 = q[i], q[(i + 1) % 4]
+        area2 += p0[0] * p1[1] - p1[0] * p0[1]
+    if area2 < 0:
+        q = q[::-1]
+    H, W = m.shape
+    st = max(1, int(step))
+    ys = np.arange(0, H, st)
+    xs = np.arange(0, W, st)
+    gx, gy = np.meshgrid(xs, ys)
+    inside = np.ones(gx.shape, dtype=bool)
+    for i in range(4):
+        p0, p1 = q[i], q[(i + 1) % 4]
+        cr = (p1[0] - p0[0]) * (gy - p0[1]) - (p1[1] - p0[1]) * (gx - p0[0])
+        inside &= (cr >= 0)
+    mm = m[::st, ::st]
+    h = min(mm.shape[0], inside.shape[0])
+    w = min(mm.shape[1], inside.shape[1])
+    mm = mm[:h, :w]
+    inside = inside[:h, :w]
+    inter = float((inside & mm).sum())
+    union = float((inside | mm).sum())
+    return inter / union if union > 0 else 0.0
+
+
+def min_area_rect(pts):
+    """旋转卡壳求点集的最小外接矩形，返回 4 个角点（未排序）。
+
+    旧实现用“四个方向的极值点”当锚点，纸张有圆角/掩膜有毛刺时四个极值
+    会挤到同一段弧上，相邻两边近似平行，求交得到病态角点（实测出现过
+    两角相距 9px、甚至跑到画面外）。最小外接矩形天然凸、天然有序。
+    """
+    hull = convex_hull(pts)
+    if hull is None:
+        return None
+    n = len(hull)
+    best = None
+    for i in range(n):
+        p0 = hull[i]
+        p1 = hull[(i + 1) % n]
+        e = p1 - p0
+        L = float(np.hypot(e[0], e[1]))
+        if L < 1e-9:
+            continue
+        u = e / L
+        v = np.array([-u[1], u[0]], dtype=np.float64)
+        pu = hull @ u
+        pv = hull @ v
+        u0, u1 = float(pu.min()), float(pu.max())
+        v0, v1 = float(pv.min()), float(pv.max())
+        area = (u1 - u0) * (v1 - v0)
+        if best is None or area < best[0]:
+            best = (area, u, v, u0, u1, v0, v1)
+    if best is None:
+        return None
+    _, u, v, u0, u1, v0, v1 = best
+    return np.array([u * u0 + v * v0, u * u1 + v * v0,
+                     u * u1 + v * v1, u * u0 + v * v1], dtype=np.float64)
+
+
+def order_quad(quad):
+    """把四个角点排成 左上→右上→右下→左下（屏幕坐标，y 向下）。"""
+    q = np.asarray(quad, dtype=np.float64)
+    c = q.mean(axis=0)
+    ang = np.arctan2(q[:, 1] - c[1], q[:, 0] - c[0])
+    q = q[np.argsort(ang)]
+    # 起点选最左上的那个
+    k = int(np.argmin(q[:, 0] + q[:, 1]))
+    q = np.roll(q, -k, axis=0)
+    # 屏幕坐标下顺时针，第二点应在前点右侧；否则反向重排
+    if q[1][0] - q[0][0] < 0 or q[2][1] - q[1][1] < 0:
+        q = q[::-1]
+        k = int(np.argmin(q[:, 0] + q[:, 1]))
+        q = np.roll(q, -k, axis=0)
+    return q
+
+
+def quad_ok(quad, min_area=1.0):
+    """四边形是否可用：凸 + 有面积 + 边长不退化。"""
+    q = np.asarray(quad, dtype=np.float64)
+    if q.shape != (4, 2) or not np.isfinite(q).all():
+        return False
+    a = _poly_area(q)
+    if a < min_area:
+        return False
+    for i in range(4):
+        if float(np.hypot(*(q[(i + 1) % 4] - q[i]))) < 2.0:
+            return False
+    sign = None
+    for i in range(4):
+        p0, p1, p2 = q[i], q[(i + 1) % 4], q[(i + 2) % 4]
+        cr = ((p1[0] - p0[0]) * (p2[1] - p1[1])
+              - (p1[1] - p0[1]) * (p2[0] - p1[0]))
+        s = 1 if cr > 0 else -1
+        if sign is None:
+            sign = s
+        elif s != sign:
+            return False
+    return True
+
+
+def _border_touch_frac(mask):
+    """掩膜贴画面四条边的最大覆盖率：纸不应贴边，贴边说明混进了背景。"""
+    if not mask.any():
+        return 1.0
+    return float(max(mask[0, :].mean(), mask[-1, :].mean(),
+                     mask[:, 0].mean(), mask[:, -1].mean()))
+
+
+def _mask_quality(m, d):
+    """给一个候选掩膜打分：越像“一整张塞在画面里的纸”分越高。
+
+    性能要点：只取掩膜边界像素并降采样后再做凸包。旧写法对全部非零像素
+    （~30 万）做纯 Python 的单调链凸包，单个候选要 3.4 s，六个候选就把
+    整页拖到 30 s 以上。边界点只有几千个，结果几乎不差。
+    """
+    w = d["mask_score"]
+    area = float(m.mean())
+    if area < d["mask_area_min"] or area > d["mask_area_max"]:
+        return None
+    ys, xs = np.nonzero(m)
+    if len(xs) < 32:
+        return None
+
+    pts = mask_boundary_points(m, {"detect": d})
+    if len(pts) < 32:
+        return None
+    cap = int(d.get("mask_quality_max_pts", 1500))
+    if len(pts) > cap:
+        pts = pts[::max(1, len(pts) // cap)]
+    pts = pts.astype(np.float64)
+
+    hull = convex_hull(pts)
+    if hull is None or len(hull) < 3:
+        return None
+    hull_area = _poly_area(hull)
+    if hull_area <= 1e-6:
+        return None
+    solidity = min(1.0, area * m.size / hull_area)
+    rect = min_area_rect(pts)
+    rect_fill = 0.0
+    if rect is not None:
+        ra = _poly_area(rect)
+        if ra > 1e-6:
+            rect_fill = min(1.0, area * m.size / ra)
+    aspect = float(xs.max() - xs.min() + 1) / max(1.0, float(ys.max() - ys.min() + 1))
+    asp_ok = (d["mask_aspect_min"] <= aspect <= d["mask_aspect_max"])
+    border = _border_touch_frac(m)
+    scoring = (w["solidity"] * solidity
+               + w["rect_fill"] * rect_fill
+               - w["border_touch"] * border
+               + (w["aspect"] if asp_ok else -w["aspect"]))
+    return {"score": float(scoring), "solidity": float(solidity),
+            "rect_fill": float(rect_fill), "area": float(area),
+            "aspect": float(aspect), "border": border}
+
+
 def paper_masks(arr, P):
-    """返回 (raw, eroded)。
+    """返回 (raw, eroded, info)。
 
     raw：未腐蚀的纸面掩膜，用于回退几何，避免角点内收。
     eroded：腐蚀后的掩膜，只用于限定边缘搜索环带。
+    info：选中的候选参数与打分（用于审核页/排查）。
+
+    相比旧实现：不再把一组固定阈值当真理（旧值没有用真实样张标定）。
+    这里跑一梯子候选，按“像不像一张纸”打分选最好的那个——关键是
+    solidity / 最小外接矩形填充率要高高、贴画面边缘要低低。
+    “白纸放在亮背景（蓝花布、塑料袋、白台面）上”这类场景下，旧阈值会把
+    背景并进纸面，掩膜一路贴到画面边缘，后续拟合出的“纸边”其实是照片边框。
     """
     d = P["detect"]
     H, W = arr.shape[:2]
     S, V = rgb_to_sv(arr)
     score = (V * (1.0 - S)).astype(np.float32)
-    th = max(otsu_threshold(score), d["paper_otsu_floor"])
-    bright = (score > th) & (V > d["paper_v_min"]) & (S < d["paper_s_max"])
-
+    base_th = float(otsu_threshold(score))
     factor = max(1, min(H, W) // d["paper_mask_factor_div"])
-    bs = downsample_any(bright, factor)
 
-    m = closing(bs, _odd(max(d["paper_close_min"],
-                             min(bs.shape) // d["paper_close_div"])))
-    m = fill_holes(m)
-    m = largest_connected(m)
-    m = closing(m, _odd(max(d["paper_close_min"],
-                            min(bs.shape) // d["paper_close2_div"])))
-    m = fill_holes(m)
+    best = None
+    tried = []
+    for cand in d["mask_ladder"]:
+        th = base_th * float(cand["o"])
+        bright = ((score > th) & (V > float(cand["v"]))
+                  & (S < float(cand["s"])))
+        fb = float(bright.mean())
+        if fb < d["mask_min_bright_frac"] or fb > d["mask_max_bright_frac"]:
+            tried.append({"cand": cand, "bright_frac": round(fb, 4),
+                          "skip": "bright_frac"})
+            continue
+        m, _ = _mask_from_bright(bright, factor, d, ref_side=min(H, W))
+        q = _mask_quality(m, d)
+        if q is None:
+            tried.append({"cand": cand, "bright_frac": round(fb, 4),
+                          "skip": "area"})
+            continue
+        q.update({"cand": cand, "bright_frac": round(fb, 4)})
+        tried.append({k: (round(v, 4) if isinstance(v, float) else v)
+                      for k, v in q.items()})
+        if best is None or q["score"] > best[0]["score"]:
+            best = (q, m)
 
-    raw_small = m
+    if best is None:
+        # 完全选不出来：退回旧的那组固定阈值，保证不做到“空掩膜”
+        th = max(base_th, d["paper_otsu_floor"])
+        bright = ((score > th) & (V > d["paper_v_min"])
+                  & (S < d["paper_s_max"]))
+        m, _ = _mask_from_bright(bright, factor, d, ref_side=min(H, W))
+        info = {"mask_pick": None, "mask_tried": tried[:6],
+                "mask_fallback_legacy": True}
+    else:
+        q, m = best
+        info = {"mask_pick": {k: (round(v, 4) if isinstance(v, float) else v)
+                              for k, v in q.items()},
+                "mask_tried": tried[:6],
+                "mask_fallback_legacy": False}
+
     eroded_small = erode(m, _odd(d["mask_erode_kernel"]))
-
     if factor > 1:
-        raw = upsample_nearest(raw_small, H, W)
+        raw = upsample_nearest(m, H, W)
         eroded = upsample_nearest(eroded_small, H, W)
     else:
-        raw, eroded = raw_small, eroded_small
-    return raw, eroded
+        raw, eroded = m, eroded_small
+    return raw, eroded, info
 
 
 # ---------------------------------------------------------------- 边缘图
@@ -411,28 +688,33 @@ def _side_line(p0, p1):
 
 
 def detect_quad_corners(paper_raw, points, P):
-    """从掩膜边界 + 边缘点估四角，返回 (corners, fallback_sides)。"""
+    """从掩膜边界 + 边缘点估四角，返回 (corners, fallback_sides)。
+
+    与旧实现的区别：初始四边形不再用“四个方向极值点”（遇圆角/毛刺会把
+    四个锚点挤到同一段弧上，导致相邻边近乎平行、角点飞出去），而是用
+    掩膜的最小外接矩形——它天然凸、天然有序，再在此基础上用真实边缘点
+    逐边收紧。最后再用 quad_ok() 看门，不合格就退回矩形本身。
+    """
     d = P["detect"]
     base = mask_boundary_points(paper_raw, P)
     if len(base) < 40:
         return [], [0, 1, 2, 3]
 
-    bx, by = base[:, 0], base[:, 1]
-    anchors = np.array([
-        base[int(np.argmin(bx + by))],   # 左上
-        base[int(np.argmax(bx - by))],   # 右上
-        base[int(np.argmax(bx + by))],   # 右下
-        base[int(np.argmin(bx - by))],   # 左下
-    ], dtype=np.float64)
+    rect = min_area_rect(base)
+    if rect is None:
+        return [], [0, 1, 2, 3]
+    anchors = order_quad(rect)
 
     init = [_side_line(anchors[i], anchors[(i + 1) % 4]) for i in range(4)]
 
     # 用整条掩膜边界重拟合每一边（排除两端，避开角点圆角）
     base_lines = []
+    side_ok = []
     for i in range(4):
         sl = init[i]
         if sl is None:
             base_lines.append(None)
+            side_ok.append(False)
             continue
         n, c, u, L = sl
         p0 = anchors[i]
@@ -441,11 +723,18 @@ def detect_quad_corners(paper_raw, points, P):
         m = d["boundary_side_margin"]
         sel = base[(dist <= d["group_tol_px"]) &
                    (proj >= L * m) & (proj <= L * (1.0 - m))]
-        if len(sel) >= 40:
+        # 支撑度：一条边上的边界点应当与边长成比例。点太少说明这条边在掩膜上
+        # 几乎没被“看到”（被背景吃掉、或被另一条边盖住），此时用这条线去和
+        # 邻边求交会把角点甩出去（实测出现过 300px），必须退回矩形边。
+        need = max(d["min_edge_points"],
+                   float(d.get("side_support_frac", 0.25)) * L)
+        ok = len(sel) >= need
+        if ok:
             n2, c2 = _robust_fit(sel, d["robust_px"])
             base_lines.append((n2, c2))
         else:
             base_lines.append((n, c))
+        side_ok.append(ok)
 
     final_lines = list(base_lines)
     fallback_sides = [0, 1, 2, 3]
@@ -476,7 +765,11 @@ def detect_quad_corners(paper_raw, points, P):
                 m = d["boundary_side_margin"]
                 proj = (sel - p0) @ u
                 sel = sel[(proj >= L * m) & (proj <= L * (1.0 - m))]
-            if len(sel) >= d["min_edge_points"]:
+            # 边缘点同样要求“支撑度”：点太少就保留上一步的线（掩膜拟合/矩形边）
+            need_e = max(d["min_edge_points"],
+                         float(d.get("side_support_frac", 0.25)) *
+                         (float(sl[3]) if sl is not None else 0.0))
+            if len(sel) >= need_e:
                 n2, c2 = _robust_fit(sel, d["robust_px"])
                 final_lines[i] = (n2, c2)
             else:
@@ -484,28 +777,62 @@ def detect_quad_corners(paper_raw, points, P):
 
     H, W = paper_raw.shape
     oob = d["corner_oob_frac"]
-    out = []
-    for i in range(4):
-        chosen = None
-        for lines in (final_lines, base_lines):
+
+    def _intersect_all(lines):
+        """四条直线两两求交得到四角；任一条缺失/越界就返回 None。"""
+        q = []
+        for i in range(4):
             l1, l2 = lines[i - 1], lines[i]
             if l1 is None or l2 is None:
-                continue
+                return None
             det = l1[0][0] * l2[0][1] - l2[0][0] * l1[0][1]
             if abs(det) < 1e-3:
-                continue
+                return None
             p = _intersect(l1[0], l1[1], l2[0], l2[1])
             if p is None:
-                continue
-            if (-oob * W <= p[0] <= (1.0 + oob) * W and
+                return None
+            if not (-oob * W <= p[0] <= (1.0 + oob) * W and
                     -oob * H <= p[1] <= (1.0 + oob) * H):
-                chosen = (float(p[0]), float(p[1]))
-                break
-        if chosen is None:
-            chosen = (float(anchors[i][0]), float(anchors[i][1]))
-            if i not in fallback_sides:
-                fallback_sides.append(i)
-        out.append(chosen)
+                return None
+            q.append([float(p[0]), float(p[1])])
+        return q
+
+    # 候选几何：矩形（保守）、掩膜边界拟合（贴合纸面）、边缘点拟合（贴合真实边缘）
+    candidates = [("rect", [list(map(float, p)) for p in anchors])]
+    q_mask = _intersect_all(base_lines)
+    if q_mask is not None:
+        candidates.append(("mask", q_mask))
+    q_edge = _intersect_all(final_lines)
+    if q_edge is not None:
+        candidates.append(("edge", q_edge))
+
+    min_area = 0.0005 * paper_raw.size
+    step = int(d.get("iou_step", 2))
+    best = None
+    scores = {}
+    for name, q in candidates:
+        qq = np.asarray(q, dtype=np.float64)
+        if not quad_ok(qq, min_area=min_area):
+            continue
+        iou = quad_iou(paper_raw, qq, step=step)
+        scores[name] = round(iou, 4)
+        if best is None or iou > best[0]:
+            best = (iou, q, name)
+
+    if best is None:
+        out = [tuple(map(float, p)) for p in anchors]
+        fallback_sides = [0, 1, 2, 3]
+    else:
+        out = [tuple(map(float, p)) for p in best[1]]
+        if best[2] == "rect":
+            fallback_sides = [0, 1, 2, 3]
+        elif best[2] == "mask":
+            pass          # 用掩膜边界拟合，fallback_sides 保留“没找到边缘点”的边
+        else:
+            fallback_sides = []
+    QUAD_INFO["scores"] = scores
+    QUAD_INFO["picked"] = None if best is None else best[2]
+    QUAD_INFO["iou"] = None if best is None else round(float(best[0]), 4)
 
     return out, sorted(set(fallback_sides))
 
@@ -562,7 +889,7 @@ def detect(img, P):
     arr = np.asarray(pil).astype(np.float32) / 255.0
     H, W = arr.shape[:2]
 
-    paper_raw, paper_eroded = paper_masks(arr, P)
+    paper_raw, paper_eroded, mask_info = paper_masks(arr, P)
     frac = float(paper_raw.sum()) / float(H * W)
 
     info = {
@@ -575,6 +902,7 @@ def detect(img, P):
         "fallback": True,
         "fallback_sides": [0, 1, 2, 3],
     }
+    info.update(mask_info)
 
     if frac < 0.005 or not paper_raw.any():
         return [], info
@@ -596,8 +924,25 @@ def detect(img, P):
     info["edge_pixels"] = int(cand.sum())
     info["fallback_sides"] = fallback_sides
     info["fallback"] = bool(fallback_sides)
+    info["quad_scores"] = dict(QUAD_INFO.get("scores") or {})
+    info["quad_picked"] = QUAD_INFO.get("picked")
+    info["quad_iou"] = QUAD_INFO.get("iou")
     if not corners:
         return [], info
+
+    if d.get("snap_enable", True):
+        snapped = snap_quad(arr, corners, P)
+        if quad_ok(np.asarray(snapped), min_area=1.0):
+            info["snapped"] = round(float(np.linalg.norm(
+                np.asarray(snapped) - np.asarray(corners), axis=1).max()), 2)
+            corners = snapped
+
+    if d.get("shrink_enable", True):
+        shrunk = shrink_to_mask(paper_raw, corners, P)
+        if quad_ok(np.asarray(shrunk), min_area=1.0):
+            info["shrunk"] = round(float(np.linalg.norm(
+                np.asarray(shrunk) - np.asarray(corners), axis=1).max()), 2)
+            corners = shrunk
 
     info["coverage"] = {
         k: float(v) for k, v in border_coverage_exact(
@@ -606,3 +951,196 @@ def detect(img, P):
     }
     src_pts = [(float(x / scale), float(y / scale)) for x, y in corners]
     return src_pts, info
+
+
+def rect_quad(img, P):
+    """只取纸面掩膜的最小外接矩形（不做边线收紧）。
+
+    用于“检测到了但校验不过”时的保守补救：矩形一定凸、一定有序，
+    比直接换成画面内缩兜底框贴近真实纸张。返回 (quad_原图坐标, info)。
+    """
+    d = P["detect"]
+    src_w, src_h = img.size
+    scale = min(1.0, d["max_side"] / float(max(src_w, src_h)))
+    if scale < 1.0:
+        pil = img.resize((int(round(src_w * scale)), int(round(src_h * scale))),
+                         Image.LANCZOS)
+    else:
+        pil = img
+    arr = np.asarray(pil).astype(np.float32) / 255.0
+    paper_raw, _, mask_info = paper_masks(arr, P)
+    base = mask_boundary_points(paper_raw, P)
+    info = dict(mask_info)
+    if len(base) < 40:
+        info["rect_fail"] = "boundary_too_few"
+        return [], info
+    rect = min_area_rect(base)
+    if rect is None:
+        info["rect_fail"] = "rect_none"
+        return [], info
+    q = order_quad(rect)
+    if not quad_ok(q, min_area=1.0):
+        info["rect_fail"] = "rect_degenerate"
+        return [], info
+    info["quad_source"] = "min_area_rect"
+    if d.get("snap_enable", True):
+        snapped = snap_quad(arr, q, P)
+        if quad_ok(np.asarray(snapped), min_area=1.0):
+            info["quad_source"] = "min_area_rect+snap"
+            q = np.asarray(snapped, dtype=np.float64)
+    if d.get("shrink_enable", True):
+        shrunk = shrink_to_mask(paper_raw, q, P)
+        if quad_ok(np.asarray(shrunk), min_area=1.0):
+            info["quad_source"] = str(info.get("quad_source")) + "+shrink"
+            q = np.asarray(shrunk, dtype=np.float64)
+    out = [[float(x / scale), float(y / scale)] for x, y in q]
+    return out, info
+
+
+def _snap_side(mag, p0, p1, band, th, n):
+    """沿一条边的法向找梯度最大处，返回拟合用的点集。"""
+    H, W = mag.shape
+    dv = np.asarray(p1, dtype=np.float64) - np.asarray(p0, dtype=np.float64)
+    L = float(np.hypot(dv[0], dv[1]))
+    if L < 4.0:
+        return None
+    u = dv / L
+    nv = np.array([-u[1], u[0]], dtype=np.float64)
+    pts = []
+    hits = 0
+    offs = np.arange(-band, band + 0.5, 1.0)
+    for t in np.linspace(0.10, 0.90, n):
+        base = np.asarray(p0, dtype=np.float64) + dv * t
+        best = (-1.0, 0.0)
+        for o in offs:
+            q = base + nv * o
+            xi, yi = int(round(q[0])), int(round(q[1]))
+            if 0 <= xi < W and 0 <= yi < H:
+                m = float(mag[yi, xi])
+                if m > best[0]:
+                    best = (m, o)
+        if best[0] >= th:
+            hits += 1
+            pts.append(base + nv * best[1])
+    if hits < max(12, int(0.45 * n)) or len(pts) < 12:
+        return None
+    return np.array(pts, dtype=np.float64)
+
+
+def snap_quad(arr, quad, P, rounds=2):
+    """把四边形的每条边吸附到真实图像边缘上。
+
+    矩形容器给的是“把纸装进去的最小框”，它容易在毛刺、反光处偏出去几十像素
+    （实测第 2 张上边偏 30px）。这里沿每条边的法向在 ±band 内找梯度极值，
+    稳健拟合出新边；只有拟合点数够、边仍合法时才采纳，否则保留原边。
+    """
+    d = P["detect"]
+    q = np.asarray(quad, dtype=np.float64)
+    if q.shape != (4, 2) or not quad_ok(q, min_area=1.0):
+        return [[float(x), float(y)] for x, y in q]
+    gray = luminance(arr)
+    sigma = max(1.0, gray.shape[0] / float(d["edge_sigma_div"]))
+    mag = sobel_magnitude(gaussian_blur_np(gray, sigma))
+
+    band = float(d.get("snap_band", 40))
+    th = float(d.get("snap_grad_min", 0.05))
+    n = int(d.get("snap_samples", 96))
+
+    cur = q.copy()
+    for r in range(max(1, int(rounds))):
+        lines = []
+        for i in range(4):
+            pts = _snap_side(mag, cur[i], cur[(i + 1) % 4], band, th, n)
+            if pts is not None and len(pts) >= 12:
+                try:
+                    nvec, c = _robust_fit(pts, d["robust_px"])
+                    lines.append((nvec, c))
+                    continue
+                except Exception:
+                    pass
+            sl = _side_line(cur[i], cur[(i + 1) % 4])
+            lines.append((sl[0], sl[1]) if sl is not None else None)
+        nxt = []
+        for i in range(4):
+            l1, l2 = lines[i - 1], lines[i]
+            if l1 is None or l2 is None:
+                nxt.append(cur[i])
+                continue
+            det = l1[0][0] * l2[0][1] - l2[0][0] * l1[0][1]
+            if abs(det) < 1e-3:
+                nxt.append(cur[i])
+                continue
+            p = _intersect(l1[0], l1[1], l2[0], l2[1])
+            nxt.append(np.asarray(p, dtype=np.float64) if p is not None
+                       else cur[i])
+        nxt = np.asarray(nxt, dtype=np.float64)
+        if not quad_ok(nxt, min_area=1.0):
+            break
+        # 吸附只允许小幅修正，避免越修越野
+        lim = float(d.get("snap_max_shift_frac", 0.05)) * float(min(mag.shape))
+        if float(np.linalg.norm(nxt - q, axis=1).max()) > lim:
+            break
+        cur = nxt
+        band = max(6.0, band * 0.4)
+    return [[float(x), float(y)] for x, y in cur]
+
+
+def shrink_to_mask(mask, quad, P):
+    """把每条边沿法向向纸内推到掩膜边界（中位数），去掉背景毛边。
+
+    最小外接矩形/边线拟合给出的框通常比纸面大 5~40px（阈值分割本身会
+    吃掉纸边一圈），裁出来四边就挂着背景。这里沿每条边的法向量“向内多远
+    才是纸”，取中位数后内推，既去毛边又不会被局部的凹陷带走。
+    只许向内、不许向外，且单边内推有上限，避免把正文切掉。
+    """
+    d = P["detect"]
+    m = np.asarray(mask, dtype=bool)
+    q = np.asarray(quad, dtype=np.float64)
+    if q.shape != (4, 2) or not m.any():
+        return quad
+    H, W = m.shape
+    ys, xs = np.nonzero(m)
+    cen = np.array([xs.mean(), ys.mean()], dtype=np.float64)
+    search = float(d.get("shrink_search", 80))
+    cap = float(d.get("shrink_max_frac", 0.05)) * float(min(H, W))
+    keep = float(d.get("shrink_keep_px", 1.5))
+
+    lines = []
+    for i in range(4):
+        p0, p1 = q[i], q[(i + 1) % 4]
+        dv = p1 - p0
+        L = float(np.hypot(dv[0], dv[1]))
+        if L < 4.0:
+            return quad
+        u = dv / L
+        nv = np.array([-u[1], u[0]], dtype=np.float64)
+        if float((cen - p0) @ nv) < 0:
+            nv = -nv                      # 指向纸内
+        offs = []
+        for t in np.linspace(0.12, 0.88, 64):
+            base = p0 + dv * t
+            hit = None
+            for o in np.arange(0.0, search, 1.0):
+                pt = base + nv * o
+                xi, yi = int(round(pt[0])), int(round(pt[1]))
+                if 0 <= xi < W and 0 <= yi < H and m[yi, xi]:
+                    hit = o
+                    break
+            offs.append(search if hit is None else hit)
+        off = float(np.median(offs)) - keep
+        off = max(0.0, min(cap, off))
+        c = float(nv @ p0) + off
+        lines.append((nv, c))
+
+    out = []
+    for i in range(4):
+        p = _intersect(lines[i - 1][0], lines[i - 1][1], lines[i][0], lines[i][1])
+        if p is None:
+            return quad
+        out.append([float(p[0]), float(p[1])])
+    out = np.asarray(out, dtype=np.float64)
+    if not quad_ok(out, min_area=1.0):
+        return quad
+    if _poly_area(out) >= _poly_area(q):
+        return quad
+    return out
