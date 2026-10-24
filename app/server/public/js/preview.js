@@ -35,6 +35,23 @@ function pvKind(name) {
   return 'none';
 }
 
+// 文件面板「当前目录」里的图片作为一组，供查看器左右滑动切换。
+// 同组直接用下载直链（<img> 不受 Content-Disposition: attachment 影响），不必逐张取 blob。
+// 依赖 files.js 的 filesNodeAt / filesCurDir / assetDownloadUrl（同为全局，加载顺序在前）。
+function pvImgGroup(name) {
+  try {
+    if (typeof filesNodeAt !== 'function') return null;
+    const node = filesNodeAt(typeof filesCurDir === 'string' ? filesCurDir : '');
+    if (!node) return null;
+    const paths = node.files.map(f => f.filename).filter(p => PV_IMG.test(p));
+    if (paths.length < 2) return null;
+    return {
+      list: paths.map(p => ({ src: assetDownloadUrl(p), alt: p.split('/').pop() })),
+      at: paths.indexOf(name),
+    };
+  } catch (_) { return null; }
+}
+
 // 刷新/新窗口两个钮对**所有**预览类型统一开放：
 //   refresh → pvState.reload（各类型都注入「按同一路径重开」，与地址条回车同一条路）
 //   popup   → pvState.url（office=预览网关；文本/HTML/图片/PDF=blob URL；不支持的类型=下载地址）
@@ -242,7 +259,8 @@ async function openFilePreview(name, sizeText) {
       newBlobUrl = u;
       const im = document.createElement('img');
       im.className = 'pv-img'; im.src = u; im.alt = String(name);
-      im.addEventListener('click', () => openImageViewer(u, String(name).split('/').pop()));
+      const g = pvImgGroup(name);
+      im.addEventListener('click', () => openImageViewer(u, String(name).split('/').pop(), g && g.list, g && g.at));
       node = im; tb = Object.assign({}, tbAll, { url: u });
     } else { // text/md/代码/json/csv
       node = await pvTextNode(name, sizeText, r);
@@ -362,7 +380,8 @@ async function pvRenderLegacy(name, r, my) {
     const u = URL.createObjectURL(await r.blob());
     if (state.lastImgBlobUrl) { try { URL.revokeObjectURL(state.lastImgBlobUrl); } catch (_) {} }
     state.lastImgBlobUrl = u;
-    openImageViewer(u, name);
+    const g = pvImgGroup(name);
+    openImageViewer(u, name, g && g.list, g && g.at);
   } else {
     const text = await r.text();
     let cls = 'bubble-ai', html;

@@ -440,10 +440,12 @@
     <div id="toast" class="hidden"></div>
   </div>
 
-  <!-- 图片全屏查看器(点击消息/工具卡中图片打开;双指缩放、放大后可拖动) -->
+  <!-- 图片全屏查看器(点击消息/工具卡中图片打开;双指缩放、放大后可拖动;同组多图可左右滑动切换) -->
   <div id="img-viewer" class="hidden">
     <button class="fs-close" onclick="closeImageViewer()">✕</button>
     <img id="img-viewer-img" alt="">
+    <!-- 组内页码(如 2 / 5):仅同组多图时显示 -->
+    <span id="img-count" class="hidden"></span>
   </div>
 
   <!-- ================= 文档预览右栏(桌面端≥960px；office/全部文档类型统一承载；移动端走全屏 #fs-viewer，本栏隐藏) -->

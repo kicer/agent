@@ -590,32 +590,63 @@
   });
 
   // 点击消息/工具卡里的图片 → 图片全屏查看器(#fs-viewer 里的克隆图也生效)
+  // 同一气泡/工具卡内的图作为一组，查看器里可左右滑动切换
   function imgViewerDelegate(e) {
     const im = e.target.closest('.bubble-ai img, .bubble-user img, .tool-card img');
-    if (im && im.src) openImageViewer(im.src, im.alt || '');
+    if (!im || !im.src) return;
+    const box = im.closest('.msg') || im.closest('.tool-card') || $('fs-body');
+    const list = Array.prototype.map.call(box.querySelectorAll('img'), x => ({ src: x.src, alt: x.alt || '' }))
+      .filter(x => x.src);
+    openImageViewer(im.src, im.alt || '', list);
   }
   $('chat-view').addEventListener('click', imgViewerDelegate);
   $('fs-viewer').addEventListener('click', imgViewerDelegate);
 
   // 图片全屏查看器:transform 缩放+平移。双指捻合缩放(1~6x)、放大后单指/鼠标拖动、双击切 2.5x。
+  // 第 3 参 list([{src,alt}] 或 [src]) 传入「同组图片」时开启左右滑动切换；第 4 参 at 指定起始下标。
   let openImageViewer, closeImageViewer;
   (function () {
     const viewer = document.getElementById('img-viewer');
     const img = document.getElementById('img-viewer-img');
+    const count = document.getElementById('img-count');
     let scale = 1, tx = 0, ty = 0, mode = null;
     let sx = 0, sy = 0, stx = 0, sty = 0, pDist = 0, pScale = 1;
+    // gallery=当前组；gi=组内下标；wx/wy/wdx=横滑起点与实时水平位移
+    let gallery = [], gi = 0, wx = 0, wy = 0, wdx = 0;
     const tdist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     function apply() {
       img.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
       img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
     }
-    openImageViewer = function (src, alt) {
+    function drawCount() {
+      if (!count) return; // 旧版 HTML 缓存里没有计数节点时不报错
+      const on = gallery.length > 1;
+      count.textContent = on ? (gi + 1) + ' / ' + gallery.length : '';
+      count.classList.toggle('hidden', !on);
+    }
+    // 切到组内第 i 张：缩放/位移必须复位，否则会带着上一张的放大态看下一张
+    function showAt(i) {
+      if (!gallery.length) return;
+      gi = Math.max(0, Math.min(gallery.length - 1, i));
       scale = 1; tx = ty = 0; mode = null;
+      img.style.transition = 'none';
       apply();
-      img.src = src; img.alt = alt || '';
+      img.src = gallery[gi].src; img.alt = gallery[gi].alt || '';
+      drawCount();
+    }
+    openImageViewer = function (src, alt, list, at) {
+      const raw = Array.isArray(list) && list.length ? list : [{ src: src, alt: alt }];
+      gallery = raw.map(x => (typeof x === 'string' ? { src: x, alt: '' } : x)).filter(x => x && x.src);
+      // 起始下标优先用调用方给的(文件面板那张是 blob URL，与组里的直链对不上)，否则按 src 匹配
+      let i = typeof at === 'number' && at >= 0 ? at : gallery.findIndex(x => x.src === src);
+      if (i < 0) i = 0;
+      showAt(i);
       viewer.classList.remove('hidden');
     };
-    closeImageViewer = function () { viewer.classList.add('hidden'); };
+    closeImageViewer = function () {
+      viewer.classList.add('hidden');
+      gallery = []; drawCount(); // 关窗即清组，别让任务目录的地址一直挂着
+    };
     // 点背景(非图片)关闭
     viewer.addEventListener('click', function (e) { if (e.target === viewer) closeImageViewer(); });
     img.addEventListener('dblclick', function () {
@@ -624,8 +655,10 @@
       apply();
     });
     img.addEventListener('touchstart', function (e) {
+      img.style.transition = 'none'; // 跟手拖动：清掉上一次回弹的过渡
       if (e.touches.length === 2) { mode = 'pinch'; pDist = tdist(e.touches) || 1; pScale = scale; }
       else if (e.touches.length === 1 && scale > 1) { mode = 'pan'; sx = e.touches[0].clientX; sy = e.touches[0].clientY; stx = tx; sty = ty; }
+      else if (e.touches.length === 1 && gallery.length > 1) { mode = 'swipe'; wx = e.touches[0].clientX; wy = e.touches[0].clientY; wdx = 0; }
       else mode = null;
     }, { passive: true });
     img.addEventListener('touchmove', function (e) {
@@ -639,10 +672,29 @@
         tx = stx + e.touches[0].clientX - sx;
         ty = sty + e.touches[0].clientY - sy;
         apply();
+      } else if (mode === 'swipe' && e.touches.length === 1) {
+        const dx = e.touches[0].clientX - wx, dy = e.touches[0].clientY - wy;
+        // 只接管水平方向；竖直位移更大时不动图，留给以后的「下滑关闭」
+        if (Math.abs(dx) > Math.abs(dy)) { wdx = dx; tx = dx * 0.5; apply(); }
       }
     }, { passive: false });
-    img.addEventListener('touchend', function (e) { if (e.touches.length < 2) { if (mode === 'pinch') mode = null; } if (!e.touches.length) mode = null; }, { passive: true });
+    img.addEventListener('touchend', function (e) {
+      if (mode === 'swipe') {
+        if (Math.abs(wdx) > 45) showAt(gi + (wdx < 0 ? 1 : -1)); // 左滑看下一张
+        else { img.style.transition = 'transform .16s ease-out'; tx = 0; apply(); } // 不够格：弹回原位
+        mode = null;
+        return;
+      }
+      if (e.touches.length < 2) { if (mode === 'pinch') mode = null; }
+      if (!e.touches.length) mode = null;
+    }, { passive: true });
     img.addEventListener('touchcancel', function () { mode = null; }, { passive: true });
+    // 桌面没有滑动：组内多图时用 ←/→ 切换（单图不响应）
+    document.addEventListener('keydown', function (e) {
+      if (viewer.classList.contains('hidden') || gallery.length < 2) return;
+      if (e.key === 'ArrowLeft') showAt(gi - 1);
+      else if (e.key === 'ArrowRight') showAt(gi + 1);
+    });
     // 桌面:放大后按住拖动平移
     img.addEventListener('mousedown', function (e) {
       if (scale <= 1) return;
