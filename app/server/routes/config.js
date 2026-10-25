@@ -156,13 +156,29 @@ function restorePasswords(submitted, orig) {
   }).join('\n');
 }
 
-// MCP header 值脱敏(等同密码):统一固定短掩码 *****(不泄露长度),原文编辑器与 effective 视图共用。
+// MCP header 值脱敏:只遮「像密钥的」,base-url / model 这类明文回显——
+// 设置页的引导表单要看得见当前值才能改。两条启发式任一命中即遮:
+// 名字(Authorization / X-*-Token / X-Api-Key …)、值(Bearer … / sk-…)。
+// 值那条是兜底:用户自定义的怪名字(X-Upstream-Auth: sk-xxx)也不会明文外显。
 // headers 行 = `headers:` 块内比它更深缩进的键值行(如 `      Authorization: Bearer sk-xxx`,引号可选)。
 // 局限:块标量(|/>)续行内容无法逐行识别,与 api_key/password 的行级掩码同一量级的取舍。
 const MCP_HEADER_MASK = '*****';
 const HEADERS_BLOCK_LINE = /^(\s*)headers:\s*(?:#.*)?$/;
 const MCP_HEADER_LINE = /^(\s*(?:-\s+)?[\w.-]+:\s*)(["']?)(.*)\2\s*$/;
-function maskHeaderValue(v) { return v ? MCP_HEADER_MASK : ''; }
+const SECRET_NAME_RE = /^(authorization|cookie)$|(?:^|[-_])(token|key|secret|password)(?:[-_]|$)/i;
+const SECRET_VALUE_RE = /^Bearer\s|^sk-[A-Za-z0-9_-]{16,}/i;
+function isSecretHeader(name, value) {
+  return SECRET_NAME_RE.test(String(name || '').trim()) ||
+    SECRET_VALUE_RE.test(String(value == null ? '' : value).trim());
+}
+function maskHeaderValue(name, v) {
+  if (!v) return '';
+  return isSecretHeader(name, v) ? MCP_HEADER_MASK : v;
+}
+// 从匹配行里取 header 名(去掉列表短横与结尾冒号),用于按键名遮罩/还原
+function headerNameOf(m) {
+  return String(m[1] || '').replace(/^\s*-\s*/, '').replace(/:\s*$/, '').trim();
+}
 // 遍历 headers 块内的键值行,fn(line, match) 返回替换后的行;块边界按缩进判定。
 function mapMcpHeaderLines(text, fn) {
   if (!text) return text;
@@ -182,21 +198,31 @@ function mapMcpHeaderLines(text, fn) {
 }
 function maskMcpHeaders(text) {
   return mapMcpHeaderLines(text, function (line, m) {
-    return m[1] + m[2] + maskHeaderValue(m[3]) + m[2];
+    return m[1] + m[2] + maskHeaderValue(headerNameOf(m), m[3]) + m[2];
   });
 }
-// 还原:提交原文中值恰为 ***** 的 header 行 = 用户未改动,按出现顺序从原文件取回原值;其他值原样保留。
+// 还原:提交原文里值恰为 ***** 的行 = 用户未改动,按键名从原文件取回真值。
+// 按键名而非出现顺序:只遮部分 header 后,按顺序还原会张冠李戴。
+// 键名在原文里找不到(改名/新增行却留着占位)直接报错,绝不把占位写进配置。
 function restoreMcpHeaders(submitted, orig) {
   if (!submitted) return submitted;
-  const origVals = [];
-  mapMcpHeaderLines(orig || '', function (line, m) { origVals.push(m[3]); return line; });
-  let i = 0;
+  const origVals = {};
+  mapMcpHeaderLines(orig || '', function (line, m) { origVals[headerNameOf(m)] = m[3]; return line; });
   return mapMcpHeaderLines(submitted, function (line, m) {
     if (m[3] !== MCP_HEADER_MASK) return line; // 用户改过,保留手输新值
-    const ov = i < origVals.length ? origVals[i] : '';
-    i++;
-    return m[1] + m[2] + ov + m[2];
+    const name = headerNameOf(m);
+    if (!(name in origVals)) throw new Error('Header「' + name + '」的值为脱敏占位且找不到原值,请填写真实值');
+    return m[1] + m[2] + origVals[name] + m[2];
   });
+}
+// 整文件编辑的还原链:掩码占位按原文件回填真值;还原不了属于用户输入问题,回 400
+function unmaskText(text, origText) {
+  try {
+    return restoreApiKeys(restorePasswords(restoreMcpHeaders(text, origText), origText), origText);
+  } catch (e) {
+    e.status_code = 400;
+    throw e;
+  }
 }
 // PATCH 细粒度编辑的 headers 还原:值=掩码占位时按键名找回原值(前端只持有脱敏视图,改不动真值)。
 // 找不到可还原的原值(新增服务/用户改了 header 名)则报错,绝不把占位符写进配置。
@@ -212,13 +238,22 @@ function restoreMaskedHeaderEdit(e, curCfg) {
   if (e.delete) return;
   const p = e.path;
   if (p[0] !== 'mcp_servers') return;
+  const origOf = (i) => (((curCfg || {}).mcp_servers || [])[Number(i)] || {}).headers || {};
   if (e.append) { // 新增服务没有“原值”可言,出现占位即拒绝
     if (e.value && e.value.headers) restoreHeaderMasks(e.value.headers, null);
     return;
   }
   if (p.length === 3 && p[2] === 'headers' && e.value && typeof e.value === 'object') {
-    const orig = (((curCfg || {}).mcp_servers || [])[Number(p[1])] || {}).headers || {};
-    restoreHeaderMasks(e.value, orig);
+    restoreHeaderMasks(e.value, origOf(p[1]));
+    return;
+  }
+  // 单个 header 的叶子写入(如 ['mcp_servers',0,'headers','Authorization'])同样要按键名还原;
+  // 漏了这一支会把 ***** 当真值写进 config.yml(前端引导表单不走这条路,但 API 可直达)。
+  if (p.length === 4 && p[2] === 'headers' && e.value === MCP_HEADER_MASK) {
+    const one = {};
+    one[p[3]] = MCP_HEADER_MASK;
+    restoreHeaderMasks(one, origOf(p[1]));
+    e.value = one[p[3]];
   }
 }
 
@@ -230,7 +265,7 @@ function maskEffective(cfg) {
   }));
   c.mcp_servers = (cfg.mcp_servers || []).map(s => {
     const headers = {};
-    for (const [k, v] of Object.entries(s.headers || {})) headers[k] = maskHeaderValue(v);
+    for (const [k, v] of Object.entries(s.headers || {})) headers[k] = maskHeaderValue(k, v);
     return Object.assign({}, s, { headers });
   });
   c.models = (cfg.models || []).map(m => Object.assign({}, m, { api_key: maskKey(m.api_key) }));
@@ -268,7 +303,7 @@ router.post('/validate', wrap((req, res) => {
   const text = req.body && req.body.text;
   if (typeof text !== 'string') return badRequest(res, new Error('body.text 必须是字符串'));
   const origText = readConfigText(cfgOf()) || '';
-  const restored = restoreApiKeys(restorePasswords(restoreMcpHeaders(text, origText), origText), origText);
+  const restored = unmaskText(text, origText);
   try {
     const next = loadConfigFromText(restored, '');
     res.json({ ok: true, changed: diffTop(cfgOf(), next) });
@@ -284,7 +319,7 @@ router.put('/', wrap((req, res) => {
   const text = req.body && req.body.text;
   if (typeof text !== 'string') return badRequest(res, new Error('body.text 必须是字符串'));
   const origText = readConfigText(cfg) || '';
-  const restored = restoreApiKeys(restorePasswords(restoreMcpHeaders(text, origText), origText), origText);
+  const restored = unmaskText(text, origText);
   let next;
   try { next = loadConfigFromText(restored, cfg.config_path); } catch (e) { return badRequest(res, e); }
   writeConfigText(cfg, restored);

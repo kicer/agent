@@ -1186,6 +1186,9 @@ label.icon-btn { cursor: pointer; }
 .model-card-state.busy { background: #fdecea; color: #b3382c; }
 .model-card-state.pending { background: #fff4dc; color: #a06a00; }
 .model-card-state.off { background: var(--surface); color: var(--gray); }
+/* MCP 页分段标题：内置服务 / 其它服务 */
+.mcp-sec-title { margin: 16px 4px 0; font-size: 12.5px; font-weight: 600; color: var(--gray); }
+.mcp-list > .mcp-sec-title:first-child { margin-top: 10px; }
 /* 禁用态卡片:背景转灰、名称/token 区淡化,开关保持正常亮度可点 */
 .model-card.off { background: #f5f6f8; }
 .model-card.off .model-card-name, .model-card.off .cfg-kv { opacity: 0.5; }
@@ -1204,6 +1207,8 @@ label.icon-btn { cursor: pointer; }
 /* 三段分区:平台字段 / Keys / 模型,用虚线分隔 + 留白,避免挤在一起 */
 .modal .mpe-sec { margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--border); }
 .modal .mpe-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink); }
+/* 标题右侧的说明（如内置服务的 desc）：跟 flex 靠右，去掉 .cfg-note 的上边距；min-width 让它在窄屏可折行 */
+.modal .mpe-sec-head .cfg-note { margin: 0; text-align: right; min-width: 0; font-weight: 400; }
 .modal .mpe-foot { margin-top: 18px; }
 .modal .mpe-sec-head .ghost-btn.sm { flex: none; padding: 4px 12px; font-size: 12.5px; border-radius: 8px; }
 .modal .mpe-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
@@ -1213,13 +1218,24 @@ label.icon-btn { cursor: pointer; }
 .modal .mpe-mcard { border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; margin-bottom: 8px; background: #fafbfd; }
 .modal .mpe-mcard .mpe-row { margin-bottom: 0; }
 .modal .mpe-cks { display: flex; align-items: center; gap: 16px; margin-top: 8px; }
-/* 超时(ms)与「启用」同排。数字框单独成类，不吃 .mpe-ck input 那套 15px 无边框样式（那是给 checkbox 的）；
-   选择器带 .modal 前缀是为了压过 .modal input{width:100%}，否则会被撑满整行。 */
-.modal .mpe-num { display: flex; align-items: center; gap: 5px; flex: none; font-size: 12.5px; color: var(--gray); }
-.modal .mpe-num input { width: 92px; padding: 5px 8px; margin: 0; font-size: 13px; border: 1px solid #dde1ea; border-radius: 8px; background: #fff; color: var(--ink); }
-.modal .mpe-num input:focus { border-color: var(--active); }
-/* MCP 的 mode 三态下拉：独立成行（弹窗内容宽仅 ~320px，与超时框同排会撑破），内层 select 用 .modal select 的全宽样式 */
-.modal .mpe-field { display: block; margin-top: 14px; font-size: 12.5px; color: var(--gray); }
+/* 单行设置项：左标签 / 右控件（与上面 header 那排同一种「一左一右」的节奏）
+   选择器带 .modal 前缀是为了压过 .modal input{width:100%}，否则输入框会撑满整行。 */
+.modal .mpe-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-size: 12.5px; color: var(--gray); }
+.modal .mpe-line:last-child { margin-bottom: 0; }
+.modal .mpe-line > span { flex: none; white-space: nowrap; }
+.modal .mpe-line input { flex: 1; min-width: 0; margin: 0; }
+.modal .mpe-line select { width: auto; min-width: 180px; margin: 0; }
+/* 预设字段：一行（可选带说明）作为一个整体留间距 */
+.modal .mpe-item { margin-bottom: 10px; }
+.modal .mpe-item:last-child { margin-bottom: 0; }
+.modal .mpe-item .mpe-line { margin-bottom: 0; }
+.modal .mpe-item .cfg-note { margin-top: 4px; }
+/* ms 作为输入框内的后缀：定位在框内右侧，pointer-events:none 保证点击穿给输入框 */
+.modal .mpe-unit { position: relative; flex: none; width: 118px; }
+.modal .mpe-unit input { width: 100%; margin: 0; padding: 8px 30px 8px 10px; }
+.modal .mpe-unit i { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-style: normal; font-size: 11.5px; color: var(--gray-light); pointer-events: none; }
+/* 预设模式下 name/url 是契约值（只读），压暗以区别于可编辑输入框 */
+.modal input[readonly] { background: #f1f3f7; color: var(--gray); }
 .modal .mpe-ck { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--gray); }
 .modal .mpe-ck input { width: 15px; height: 15px; padding: 0; margin: 0; border: none; background: none; accent-color: var(--active); cursor: pointer; }
 .modal .mpe-del { flex: none; border: none; background: none; margin: 0; padding: 2px 7px; cursor: pointer; color: var(--gray-light); font-size: 18px; line-height: 1.2; }
@@ -1260,6 +1276,10 @@ label.icon-btn { cursor: pointer; }
 .modal {
   background: var(--page); border-radius: 14px; padding: 20px; width: 84%; max-width: 360px;
   position: relative; max-height: 88%; overflow-y: auto;
+}
+/* 移动端：MCP 配置弹窗左右留白收紧——表单是「左标签 + 右输入」双列，84% 宽度下输入框太窄 */
+@media (max-width: 639px) {
+  #mcp-edit-modal .modal { width: calc(100% - 24px); padding: 18px 14px; }
 }
 .modal h3 { margin-bottom: 12px; font-size: 16px; }
 .modal input {

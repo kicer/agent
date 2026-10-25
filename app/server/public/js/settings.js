@@ -29,6 +29,7 @@
     expandedGroups: {}, balanceByGroup: {}, balanceRequested: {}, balanceTypes: [], // 平台编辑弹窗工作态见 pfEdit(模块级变量)
     // MCP 服务页:cfgMcp 缓存当前列表;改动待重启生效时置位,顶部常驻重启横幅
     cfgMcp: [], mcpPendingRestart: false,
+    presets: null,                      // 平台/MCP 预设(GET /api/config/presets),设置页各页共用
   };
   let setTok = 0;                     // 异步渲染防竞态令牌
 
@@ -1425,8 +1426,38 @@
   // mode 三态:advertise(默认,工具下发给模型) / skill(不下发,以技能形式暴露) / disable(不加载):
   // 默认值不写进文件——选 advertise 时删键,回落到 config.js 的缺省。
   // 运行配置(cg.effective.mcp_servers)即文件刚解析后的视图,按 pi 直接定位;重启后才会重新发现工具。
-  let mcpEdit = null; // 工作态:{ idx, headers:[{key, value, masked}] };idx=-1 为新增
+  // 预设取一次就缓存：取不到不报错，退化成纯自定义列表，不阻塞设置页
+  let presetsReq = null;
+  function loadPresets() {
+    if (SET.presets) return Promise.resolve(SET.presets);
+    if (!presetsReq) {
+      presetsReq = req('GET', '/api/config/presets').then(p => {
+        SET.presets = { platforms: (p && p.platforms) || [], mcp: (p && p.mcp) || [] };
+        return SET.presets;
+      }).catch(() => {
+        presetsReq = null; // 失败不缓存，下次进页再试
+        return { platforms: [], mcp: [] };
+      });
+    }
+    return presetsReq;
+  }
+  function presetMcpList() { return (SET.presets && SET.presets.mcp) || []; }
+
+  let mcpEdit = null; // 工作态:{ idx, preset, values:{header:值}, headers:[{key, value, masked}] };idx=-1 为新增
   const MCP_HEADER_MASK = '*****'; // 与后端 routes/config.js 的掩码保持一致
+  const MCP_MODE_LABELS = {
+    advertise: 'advertise（下发给模型）',
+    skill: 'skill（以技能形式暴露）',
+    disable: 'disable（不加载）',
+  };
+  // url 归一化:内置服务按 url 认亲(name 允许用户改),尾斜杠不算差异
+  function normUrl(u) { return String(u || '').trim().replace(/\/+$/, ''); }
+  function presetIdx(p) {
+    const url = normUrl(p.url);
+    let i = SET.cfgMcp.findIndex(s => normUrl(s.url) === url);
+    if (i < 0) i = SET.cfgMcp.findIndex(s => String(s.name || '') === p.key);
+    return i;
+  }
   async function setPageMcp(ctx) {
     setTitle('MCP 服务');
     setActions('<button class="icon-btn" title="添加 MCP 服务" onclick="mcpUI.add()">' +
@@ -1438,25 +1469,55 @@
     const box = $('mcp-list');
     if (!box || (ctx && !ctx())) return;
     try {
-      const cg = await req('GET', '/api/config');
-      if (ctx && !ctx()) return;
-      if (!$('mcp-list')) return;
+      const [cg] = await Promise.all([req('GET', '/api/config'), loadPresets()]);
+      if ((ctx && !ctx()) || !$('mcp-list')) return;
       SET.cfgMcp = (cg.effective && cg.effective.mcp_servers) || [];
-      if (!SET.cfgMcp.length) {
-        box.innerHTML = (SET.mcpPendingRestart
-          ? '<div class="restart-bar"><span>配置已写入，重启后生效</span><button class="primary-btn" onclick="sUI.restartNow()">重启服务</button></div>'
-          : '') + '<div class="empty-tip">尚未配置 MCP 服务，点右上角 + 添加。</div>';
-        return;
-      }
-      const banner = SET.mcpPendingRestart
+      const presets = presetMcpList();
+      // 内置服务已占用的条目不再列入「其它」，避免同一服务出两张卡
+      const taken = new Set(presets.map(presetIdx).filter(i => i >= 0));
+      const others = SET.cfgMcp.map((s, i) => ({ s, i })).filter(o => !taken.has(o.i));
+      let html = SET.mcpPendingRestart
         ? '<div class="restart-bar"><span>配置已写入，重启后生效</span><button class="primary-btn" onclick="sUI.restartNow()">重启服务</button></div>'
         : '';
-      box.innerHTML = banner + SET.cfgMcp.map(mcpCardHtml).join('') +
-        '<div class="empty-tip">点卡片编辑 MCP 服务。advertise 的工具启动时发现并追加到内置工具之后；skill 不下发，改为以技能形式暴露（skill 工具里 get 拿到原始 input_schema）。</div>';
+      if (presets.length) {
+        html += '<div class="mcp-sec-title">内置服务</div>' + presets.map(presetCardHtml).join('');
+      }
+      if (others.length) {
+        html += '<div class="mcp-sec-title">其它服务</div>' + others.map(o => mcpCardHtml(o.s, o.i)).join('');
+      }
+      if (!presets.length && !others.length) {
+        html += '<div class="empty-tip">尚未配置 MCP 服务，点右上角 + 添加。</div>';
+      }
+      $('mcp-list').innerHTML = html;
     } catch (e) {
       const b = $('mcp-list');
       if (b && (!ctx || ctx())) b.innerHTML = '<div class="empty-tip">加载失败:' + esc(e.message) + '</div>';
     }
+  }
+  // 内置服务卡:未配置→添加;已配置→显示当前值与状态,点击编辑。密钥类只显示「已配置」，不外显真值。
+  function presetCardHtml(p) {
+    const idx = presetIdx(p);
+    const s = idx >= 0 ? (SET.cfgMcp[idx] || {}) : null;
+    const mode = s ? (s.mode || 'advertise') : '';
+    const state = !s
+      ? '<span class="model-card-state off">未配置</span>'
+      : mode === 'disable'
+        ? '<span class="model-card-state off">已停用</span>'
+        : '<span class="model-card-state idle">已配置</span>';
+    const h = (s && s.headers) || {};
+    const kv = (p.fields || []).map(f => {
+      const v = h[f.header];
+      const txt = f.secret ? (v ? '已配置' : '--') : (v ? String(v) : '--');
+      return '<div class="cfg-kv"><label>' + esc(f.label || f.header) + '</label><b>' + esc(txt) + '</b></div>';
+    }).join('');
+    return '<div class="model-card' + (mode === 'disable' ? ' off' : '') + '"' +
+      ' onclick="mcpUI.' + (s ? 'editPreset' : 'addPreset') + '(\'' + att(p.key) + '\')">' +
+      '<div class="model-card-head">' +
+        '<span class="model-card-name">' + esc(p.label || p.key) + '</span>' +
+        state +
+      '</div>' +
+      '<div class="cfg-kv"><label>地址</label><b>' + esc(p.url) + '</b></div>' + kv +
+    '</div>';
   }
   // MCP 卡:头部 = 名称 + url + mode 状态;体内 = headers 键值列表。整卡点击进入编辑。
   function mcpCardHtml(s, pi) {
@@ -1467,8 +1528,12 @@
         ? '<span class="model-card-state idle">以技能暴露</span>'
         : '<span class="model-card-state idle">启用</span>';
     const entries = Object.entries(s.headers || {});
-    // header 值等同密码对待:后端 effective 已脱敏为固定短掩码,这里透传展示;若收到未脱敏原文也一律替换,不外显
-    const maskVal = (v) => { const str = String(v == null ? '' : v); if (!str) return '--'; return str.includes('*') ? esc(str) : MCP_HEADER_MASK; };
+    // 后端只对密钥类 header 脱敏（base-url/model 这类明文）；掩码值统一显示「已配置」，不露长度
+    const maskVal = (v) => {
+      const str = String(v == null ? '' : v);
+      if (!str) return '--';
+      return str === MCP_HEADER_MASK ? '已配置' : esc(str);
+    };
     const headersHtml = entries.length
       ? entries.map(([k, v]) => '<div class="cfg-kv"><label>' + esc(k) + '</label><b>' + maskVal(v) + '</b></div>').join('')
       : '<div class="cfg-kv"><label>(无)</label><b>--</b></div>';
@@ -1480,25 +1545,58 @@
       '</div>' + headersHtml +
     '</div>';
   }
-  // 弹窗打开：add 模式 (idx=-1) → 空工作态;edit 模式 → 从当前配置复制。
-  function openMcpEditor(idx) {
+  // 弹窗打开：add 模式 (idx=null) → 空工作态;edit 模式 → 从当前配置复制。
+  // presetKey 有值 = 内置服务模式：url/name/mode 是契约(只读)，表单由预设的 fields 生成。
+  function openMcpEditor(idx, presetKey) {
+    const preset = presetKey ? (presetMcpList().find(p => p.key === presetKey) || null) : null;
     const add = idx == null;
     const s = add ? {} : (SET.cfgMcp[idx] || {});
+    const curH = s.headers || {};
+    const fieldHeaders = new Set(((preset && preset.fields) || []).map(f => f.header));
     mcpEdit = {
       idx: add ? -1 : Number(idx),
+      preset: preset,
+      values: {},
+      // 预设字段走 values；这里只留「配置里有、预设未声明」的 header（手加的）——
+      // headers 是整体替换的，不带着它们保存一次就丢了。
+      headers: Object.keys(curH).filter(k => !fieldHeaders.has(k)).map(k => {
+        const v = String(curH[k]);
+        // 明文值直接回填（可原地改）；掩码值置空，placeholder 提示「留空保持不变」
+        return { key: k, value: v === MCP_HEADER_MASK ? '' : v, masked: v };
+      }),
+    };
+    if (preset) {
+      (preset.fields || []).forEach(f => {
+        // 明文项回填当前值(看得见才好改);密钥项只提示「已配置」，留空即保持原值
+        mcpEdit.values[f.header] = add
+          ? (f.secret ? '' : String(f.default || ''))
+          : (f.secret ? '' : String(curH[f.header] || ''));
+      });
+    } else if (add) {
       // headers 数组:每个 {key, value, masked} 为一条编辑行。已有行 value 置空、masked 存当前脱敏值仅做提示
       // (同平台 Key 的留空=保持原值);新行 masked=null,必须手输真值。空 key 行保存时丢弃。
-      headers: add
-        ? [{ key: '', value: '', masked: null }]
-        : Object.entries(s.headers || {}).map(([k, v]) => ({ key: k, value: '', masked: String(v) })),
-    };
-    $('mce-title').textContent = add ? '添加 MCP 服务' : '编辑 MCP 服务';
-    $('mce-name').value = add ? '' : (s.name || '');
-    $('mce-url').value = add ? '' : (s.url || '');
+      mcpEdit.headers = [{ key: '', value: '', masked: null }];
+    }
+    $('mce-title').textContent = (add ? '添加 ' : '编辑 ') + (preset ? preset.label : 'MCP 服务');
+    $('mce-name').value = preset ? preset.key : (add ? '' : (s.name || ''));
+    $('mce-url').value = preset ? preset.url : (add ? '' : (s.url || ''));
+    $('mce-name').readOnly = !!preset;
+    $('mce-url').readOnly = !!preset;
     // 运行配置里的 timeout_ms 已被 config.js 填上缺省值,所以这里显示的就是当前生效值(没配则为 60000)。
     $('mce-timeout').value = add || s.timeout_ms == null ? '' : String(s.timeout_ms);
-    $('mce-mode').value = add ? 'advertise' : (s.mode || 'advertise');
+    // 预设的 mode 是契约（asr / image_task 必须 skill 才不会把一堆转写/生成工具塞进每轮工具表），
+    // 只允许在「预设值 / disable」之间切；手改成别的值时按契约值显示，不凭空改写文件。
+    const curMode = add ? (preset ? (preset.mode || 'advertise') : 'advertise') : (s.mode || 'advertise');
+    const modes = preset ? [preset.mode || 'advertise', 'disable'] : ['advertise', 'skill', 'disable'];
+    $('mce-mode').innerHTML = modes.map(m => '<option value="' + att(m) + '">' + esc(MCP_MODE_LABELS[m] || m) + '</option>').join('');
+    $('mce-mode').value = modes.indexOf(curMode) >= 0 ? curMode : modes[0];
+    $('mce-preset-sec').classList.toggle('hidden', !preset);
+    $('mce-preset-desc').textContent = preset ? (preset.desc || '') : '';
+    // 预设已经覆盖该服务的全部 header，不再给「其它 header」入口；
+    // 配置里若还留着历史多余 header，仍原样带着（保存是整体替换，不带着就丢），只是不展示。
+    $('mce-headers-sec').classList.toggle('hidden', !!preset);
     $('mce-del-btn').classList.toggle('hidden', add);
+    renderPresetFields();
     renderMcpHeaders();
     $('mcp-edit-modal').classList.remove('hidden');
   }
@@ -1508,7 +1606,7 @@
     // 已有行:输入框置空,placeholder 提示当前脱敏值;留空=保持原值,输入新值=替换
     const ph = r.masked != null ? '当前: ' + r.masked + '（留空保持不变）' : '值';
     return '<div class="mpe-row">' +
-      '<input class="mpe-grow" type="text" placeholder="Header 名(如 Authorization)" value="' + esc(r.key) + '" oninput="mcpUI.setHeader(' + i + ',\'key\',this.value)">' +
+      '<input class="mpe-grow" type="text" placeholder="Header 字段" value="' + esc(r.key) + '" oninput="mcpUI.setHeader(' + i + ',\'key\',this.value)">' +
       '<input class="mpe-grow" type="text" placeholder="' + esc(ph) + '" value="' + esc(r.value) + '" oninput="mcpUI.setHeader(' + i + ',\'value\',this.value)">' +
       '<button class="mpe-del" title="删除此 header" onclick="mcpUI.delHeader(' + i + ')">×</button>' +
     '</div>';
@@ -1530,13 +1628,82 @@
     renderMcpHeaders();
   }
   function setMcpHeader(i, f, v) { if (mcpEdit && mcpEdit.headers[i]) mcpEdit.headers[i][f] = v; }
+  // 预设字段表单：label + 输入框 + 提示。密钥项只提示「已配置」，不回填真值（前端拿到的本来就是掩码）。
+  function renderPresetFields() {
+    if (!mcpEdit) return;
+    const box = $('mce-preset-fields');
+    if (!box) return;
+    const p = mcpEdit.preset;
+    if (!p) { box.innerHTML = ''; return; }
+    const curH = ((mcpEdit.idx >= 0 && SET.cfgMcp[mcpEdit.idx]) || {}).headers || {};
+    box.innerHTML = (p.fields || []).map(f => {
+      const isSet = !!curH[f.header];
+      const ph = f.secret && isSet ? '已配置，留空保持不变' : (f.placeholder || '');
+      const val = mcpEdit.values[f.header] || '';
+      // 左标签 / 右输入，与下方「单次调用超时 / 工具暴露」同一种单行排版。
+      // 必填不加 * 标记（会破坏对齐）——空着保存时按 label 点名报错。
+      return '<div class="mpe-item"><label class="mpe-line"><span>' + esc(f.label || f.header) + '</span>' +
+        '<input type="' + (f.secret ? 'password' : 'text') + '"' +
+        ' value="' + att(val) + '"' +
+        ' placeholder="' + att(ph) + '"' +
+        ' autocomplete="off" spellcheck="false"' +
+        ' oninput="mcpUI.setField(\'' + att(f.header) + '\',this.value)">' +
+      '</label>' + (f.hint ? '<div class="cfg-note">' + esc(f.hint) + '</div>' : '') + '</div>';
+    }).join('');
+  }
+  function setPresetField(header, v) {
+    if (mcpEdit && mcpEdit.values) mcpEdit.values[header] = v;
+  }
+  // 预设里的 prefix（如 Bearer ）只在用户没带过时才补，避开「Bearer Bearer sk-x」
+  function withPrefix(f, v) {
+    const p = String(f.prefix || '');
+    if (!p) return v;
+    const re = new RegExp('^' + p.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s', 'i');
+    return re.test(v) ? v : p + v;
+  }
+  // 与配置里的 headers 比较：key 顺序不同不算改动（避免无意义重写丢掉节点里的注释）
+  function sameHeaders(a, b) {
+    const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+    if (ka.length !== kb.length) return false;
+    return ka.every((k, i) => k === kb[i] && a[k] === b[kb[i]]);
+  }
+  // 自定义服务的 headers：空 key 行丢弃，已有行留空 = 发回掩码占位由后端按键名还原
+  function plainHeaders() {
+    const out = {};
+    for (const r of mcpEdit.headers) {
+      const k = String(r.key || '').trim();
+      if (!k) continue;
+      const v = String(r.value || '').trim();
+      out[k] = v || (r.masked != null ? r.masked : '');
+    }
+    return out;
+  }
+  // 预设模式的 headers：字段按声明顺序取 values，空的可选项不写（不给上游塞空 header），
+  // 必填项空着直接报错并点名 label；手加的 header 原样跟上（整体替换语义下不带就丢）。
+  function presetHeaders() {
+    const p = mcpEdit.preset;
+    const curH = ((mcpEdit.idx >= 0 && SET.cfgMcp[mcpEdit.idx]) || {}).headers || {};
+    const out = {};
+    for (const f of p.fields || []) {
+      const raw = String(mcpEdit.values[f.header] || '').trim();
+      if (raw) { out[f.header] = withPrefix(f, raw); continue; }
+      if (f.secret && curH[f.header]) { out[f.header] = MCP_HEADER_MASK; continue; }
+      if (f.required) throw new Error('请填写「' + (f.label || f.header) + '」');
+    }
+    for (const r of mcpEdit.headers) {
+      const k = String(r.key || '').trim();
+      if (!k || out[k] !== undefined) continue;
+      const v = String(r.value || '').trim();
+      out[k] = v || (r.masked != null ? r.masked : '');
+    }
+    return out;
+  }
   // 收集弹窗内的修改为批量 PATCH:服务端一次读文/写回/校验,原子生效。
   // headers 整体替换(简单可靠;键值对场景下增量 diff 收益小):空 key 行不写入。
   function buildMcpEdits() {
     if (!mcpEdit) return [];
     const edits = [];
-    const name = $('mce-name').value.trim();
-    const url = $('mce-url').value.trim();
+    const preset = mcpEdit.preset;
     const mode = $('mce-mode').value;
     // 超时:留空 = 不写入该项（沿用缺省 60s）。区间在 UI 先把一道,
     // 比写进 YAML 再被 config.js 静默夹掉好排查（两边上限保持 600000 一致）。
@@ -1547,6 +1714,10 @@
       if (!Number.isFinite(tmo) || tmo < 1000 || tmo > 600000) throw new Error('超时要填 1000 ~ 600000 毫秒（留空 = 默认 60s）');
       tmo = Math.round(tmo);
     }
+    // 内置服务的 name/url 是契约（表单只读），只有自定义服务才从输入框取
+    const name = preset ? preset.key : $('mce-name').value.trim();
+    const url = preset ? preset.url : $('mce-url').value.trim();
+    const headers = preset ? presetHeaders() : plainHeaders();
     const add = mcpEdit.idx < 0;
     if (add) {
       if (!url) throw new Error('请填写 url');
@@ -1554,19 +1725,15 @@
       if (name) obj.name = name;
       if (mode !== 'advertise') obj.mode = mode;
       if (tmo != null) obj.timeout_ms = tmo;
-      const headers = {};
-      for (const r of mcpEdit.headers) {
-        const k = String(r.key || '').trim();
-        const v = String(r.value || '').trim();
-        if (k) headers[k] = v;
-      }
       if (Object.keys(headers).length) obj.headers = headers;
       edits.push({ op: 'append', path: ['mcp_servers'], value: obj });
     } else {
       const cur = SET.cfgMcp[mcpEdit.idx] || {};
-      if (!url) throw new Error('请填写 url');
-      if (name !== (cur.name || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'name'], value: name });
-      if (url !== (cur.url || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'url'], value: url });
+      if (!preset) {
+        if (!url) throw new Error('请填写 url');
+        if (name !== (cur.name || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'name'], value: name });
+        if (url !== (cur.url || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'url'], value: url });
+      }
       // mode:默认值不写进文件(选 advertise 就删键)
       if ((cur.mode || 'advertise') !== mode) edits.push(mode === 'advertise'
         ? { path: ['mcp_servers', mcpEdit.idx, 'mode'], op: 'delete' }
@@ -1576,17 +1743,10 @@
       if (tmo !== curTmo) edits.push(tmo == null
         ? { path: ['mcp_servers', mcpEdit.idx, 'timeout_ms'], op: 'delete' }
         : { path: ['mcp_servers', mcpEdit.idx, 'timeout_ms'], value: tmo });
-      // headers 仅在内容变更时整体 setIn;避免无意义重写(顺序可能不同)
-      const newH = {};
-      for (const r of mcpEdit.headers) {
-        const k = String(r.key || '').trim();
-        // 已有行留空 = 保持原值:把脱敏占位原样发回,由后端按键名还原真值(前端不持有真值)
-        const v = String(r.value || '').trim() || (r.masked != null ? r.masked : '');
-        if (k) newH[k] = v;
+      // headers 仅在内容变更时整体 setIn;避免无意义重写(顺序或 key 顺序不同不算变更)
+      if (!sameHeaders(headers, cur.headers || {})) {
+        edits.push({ path: ['mcp_servers', mcpEdit.idx, 'headers'], value: headers });
       }
-      const curH = cur.headers || {};
-      const same = JSON.stringify(newH) === JSON.stringify(curH);
-      if (!same) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'headers'], value: newH });
     }
     return edits;
   }
@@ -1618,6 +1778,13 @@
   }
   window.mcpUI = {
     add: function () { openMcpEditor(null); },
+    addPreset: function (key) { openMcpEditor(null, key); },
+    editPreset: function (key) {
+      const p = presetMcpList().find(x => x.key === key);
+      const i = p ? presetIdx(p) : -1;
+      if (i >= 0) openMcpEditor(i, key);
+    },
+    setField: setPresetField,
     edit: openMcpEditor,
     close: closeMcpEditor,
     save: saveMcpEditor,

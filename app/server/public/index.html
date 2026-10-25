@@ -343,27 +343,33 @@
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         <h3 id="mce-title">编辑 MCP 服务</h3>
-        <input type="text" id="mce-name" placeholder="服务名(留空取 url 主机名首段)">
-        <input type="text" id="mce-url" placeholder="MCP 服务 JSON-RPC 端点(完整 URL)">
-        <div class="mpe-sec">
+        <input type="text" id="mce-name" placeholder="服务名">
+        <input type="text" id="mce-url" placeholder="MCP 服务 JSON-RPC URL">
+        <!-- 内置服务预设字段（url/name 只读，表单由预设生成） -->
+        <div class="mpe-sec hidden" id="mce-preset-sec">
+          <div class="mpe-sec-head"><span>配置参数</span><span class="cfg-note" id="mce-preset-desc"></span></div>
+          <div id="mce-preset-fields"></div>
+        </div>
+        <div class="mpe-sec" id="mce-headers-sec">
           <div class="mpe-sec-head"><span>请求头(headers)</span><button class="ghost-btn sm" onclick="mcpUI.addHeader()">添加 header</button></div>
           <div id="mce-headers"></div>
         </div>
-        <div class="mpe-cks" style="margin-top:14px">
-          <label class="mpe-num">单次调用超时<input type="number" id="mce-timeout" min="1000" max="600000" step="1000" placeholder="默认 60000">ms</label>
+        <div class="mpe-sec">
+          <label class="mpe-line"><span>单次调用超时</span>
+            <span class="mpe-unit"><input type="number" id="mce-timeout" min="1000" max="600000" step="1000" placeholder="60000"><i>ms</i></span>
+          </label>
+          <label class="mpe-line"><span>工具暴露</span>
+            <select id="mce-mode">
+              <option value="advertise">advertise（下发给模型）</option>
+              <option value="skill">skill（以技能形式暴露）</option>
+              <option value="disable">disable（不加载）</option>
+            </select>
+          </label>
         </div>
-        <label class="mpe-field">工具暴露
-          <select id="mce-mode">
-            <option value="advertise">advertise（下发给模型）</option>
-            <option value="skill">skill（以技能形式暴露）</option>
-            <option value="disable">disable（不加载）</option>
-          </select>
-        </label>
         <div class="btn-row mpe-foot">
           <button class="ghost-btn danger hidden" id="mce-del-btn" onclick="mcpUI.del()">删除服务</button>
           <button class="primary-btn" onclick="mcpUI.save()">保存</button>
         </div>
-        <div class="cfg-note">仅写入配置，点击「重启服务」后生效。</div>
       </div>
     </div>
 

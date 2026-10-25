@@ -99,7 +99,9 @@ http://<服务器 IP>:<AGENT_PORT>
 
 ### 4. 同栈 MCP 服务
 
-初始 `config.yml` 不包含任何 MCP 服务；四个服务都在设置页「MCP」添加（`web_search` 免费、无需 key）。手工写 YAML 的形状如下（`url` 与 header 名是固定的，容器不存密钥）：
+初始 `config.yml` 不包含任何 MCP 服务。设置页「MCP」会把四个同栈服务作为**内置服务卡片**列出来，
+点卡片 → 填表 → 保存即可（url 与 header 名由 `app/server/presets.json` 提供，不用记）。
+`web_search` 免费、无需 key；另外三个要填上游 key。手工写 YAML 的形状如下（容器不存密钥）：
 
 ```yaml
 mcp_servers:

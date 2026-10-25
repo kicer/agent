@@ -165,6 +165,7 @@ curl -s http://127.0.0.1:8090/api/health
 | 新增环境变量 | compose ↔ README「环境变量」 |
 | 发版号 | `app/package.json` 的 `version` ↔ `app/server/routes/system.js` 的 `VERSION` 字面量（两者不自动同步） |
 | 技能格式 | `skills/README.md` ↔ `app/server/tools/skills.js` 的解析 |
+| 同栈 MCP 的 url / header 名 | `app/server/presets.json` ↔ `mcp/<服务>/src`（设置页引导表单的字段来自前者，不会自动跟随后者） |
 | 对外 API | `app/server/routes/*` ↔ 前端 `app/server/public/js/*` ↔ README |
 
 ## 代码约定

@@ -50,24 +50,24 @@
     {
       "key": "image_task",
       "label": "图片生成",
-      "desc": "文生图 / 图生图，走任意 OpenAI 兼容的 /images/generations 与 /images/edits",
+      "desc": "文生图 / 图生图",
       "url": "http://mcp_image_task:3000/mcp",
       "mode": "skill",
       "fields": [
         {
           "header": "Authorization",
-          "label": "API Key",
+          "label": "鉴权",
           "secret": true,
           "prefix": "Bearer ",
           "required": true,
-          "placeholder": "上游的 API Key"
+          "placeholder": "API Key"
         },
         {
           "header": "X-Image-Task-Base-Url",
-          "label": "上游地址",
+          "label": "地址",
           "required": true,
           "placeholder": "https://<host>/v1",
-          "hint": "填到 /v1 即可，文生图自动补 /images/generations，图生图自动补 /images/edits"
+          "hint": "OpenAI 兼容 generations / edits"
         },
         {
           "header": "X-Image-Task-Model",
@@ -86,7 +86,7 @@
       "fields": [
         {
           "header": "Authorization",
-          "label": "API Key",
+          "label": "鉴权",
           "secret": true,
           "prefix": "Bearer ",
           "required": true,
@@ -95,38 +95,36 @@
         {
           "header": "X-Video-Task-Model",
           "label": "模型",
-          "default": "cogvideox-flash",
-          "hint": "留空 = cogvideox-flash"
+          "default": "cogvideox-flash"
         }
       ]
     },
     {
       "key": "asr",
       "label": "语音识别",
-      "desc": "输入框「按住说话」与模型的 transcribe_audio 共用",
+      "desc": "按住说话 / transcribe_audio",
       "url": "http://mcp_asr:3000/mcp",
       "mode": "skill",
       "fields": [
         {
           "header": "Authorization",
-          "label": "API Key",
+          "label": "鉴权",
           "secret": true,
           "prefix": "Bearer ",
-          "placeholder": "自建免鉴权服务可留空"
+          "placeholder": "支持自建免鉴权服务"
         },
         {
           "header": "X-ASR-Base-Url",
-          "label": "上游地址",
+          "label": "地址",
           "required": true,
           "placeholder": "https://<host>/v1",
-          "hint": "任意 OpenAI 兼容的 /audio/transcriptions"
+          "hint": "OpenAI 兼容的 /audio/transcriptions"
         },
         {
           "header": "X-ASR-Model",
           "label": "模型",
           "required": true,
-          "default": "whisper-1",
-          "placeholder": "whisper-1"
+          "placeholder": "上游的模型 id"
         }
       ]
     }
