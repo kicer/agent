@@ -110,7 +110,7 @@ mcp_servers:
   #   url: "http://mcp_image_task:3000/mcp"
   #   headers:
   #     Authorization: Bearer <upstream-api-key>
-  #     X-Image-Task-Base-Url: "https://open.bigmodel.cn/api/paas/v4"   # 任意 OpenAI 兼容的 /images/generations 上游
+  #     X-Image-Task-Base-Url: "https://open.bigmodel.cn/api/paas/v4"   # 任意 OpenAI 兼容的 images 上游（生成 /images/generations、编辑 /images/edits）
   #     X-Image-Task-Model: "CogView-4"
   #   mode: skill
   # - name: video_task

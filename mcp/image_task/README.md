@@ -3,8 +3,8 @@
 一个基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 的图片生成 / 编辑服务。
 对外只有一个工具 `image_task`，用 `op` 区分动作（`create` / `get`），异步任务契约与 `video_task` 一致。
 
-上游必须是 OpenAI 兼容的 `/images/generations` 端点（智谱 `https://open.bigmodel.cn/api/paas/v4`
-与各类网关走同一套协议）。`X-Image-Task-Base-Url` / `X-Image-Task-Model` / `Authorization`
+上游必须是 OpenAI 兼容的 images 端点：文生图走 `/images/generations`，图生图走 `/images/edits`
+（智谱、各类网关走同一套协议）。`X-Image-Task-Base-Url` / `X-Image-Task-Model` / `Authorization`
 三个 header 都必填，服务不存密钥、也不预设厂商或默认模型。
 
 - 协议：MCP **Streamable HTTP**（单端点 `/mcp`，支持 SSE 流）
@@ -75,8 +75,9 @@ docker exec mcp_image_task node -e "fetch('http://localhost:3000/health').then(r
 
 `image` 是模式开关：
 
-- 不传 → **文生图**；
-- 传一个公网 URL → **图生图 / 编辑**。
+- 不传 → **文生图**，请求 `POST <base>/images/generations`；
+- 传一个公网 URL → **图生图 / 编辑**，服务先把这张图拉下来，再以 multipart 上传到
+  `POST <base>/images/edits`。
 
 本地图片先用 `mint_public_link` 换成公网 URL，再传给 `image`。
 
@@ -119,20 +120,36 @@ URL 由上游签名下发，**带有效期**（通常 24h），需要长期保�
 | Header | 必填 | 说明 |
 |---|---|---|
 | `Authorization` | ✅ | `Bearer <key>`，原样作为上游 Bearer token |
-| `X-Image-Task-Base-Url` | ✅ | 上游 base URL（完整 `http(s)` 地址）；已给到 `/images/generations` 就直接用，否则自动补上 |
+| `X-Image-Task-Base-Url` | ✅ | 上游 base URL（完整 `http(s)` 地址，如 `https://<host>/v1`）；若已给到 `/images/generations` 或 `/images/edits` 会自动剥回 base，再按模式拼端点 |
 | `X-Image-Task-Model` | ✅ | 模型名原样透传 |
 
 地址与模型只由 header 决定，AI 看不到也填不了；换模型 = 改 header 后重启 core。
 
 ### 图生图
 
-传了 `image` 时，请求体带 `images: [url]`（数组形式）。是否支持由上游模型决定——不支持时
-上游会回 4xx，`op=get` 里以 `task_status: FAIL` 呈现。
+图生图**不能**走 `/images/generations`，必须走 `/images/edits`。服务会先把 `image` URL 下载成字节
+（独立 60s 超时，单图上限 20MB，响应需是 `image/*`，如 png / jpeg / webp / gif / bmp），再以 multipart 上传：
+
+```text
+POST <base>/images/edits
+Content-Type: multipart/form-data; boundary=...
+
+model=<header 里的模型>
+prompt=<prompt>
+image=@<下载到的参考图>   # 字段名 image，文件名按 MIME 补扩展名
+n=1
+response_format=url
+```
+
+选 multipart 而不是 JSON + base64 data URL：参考图已经在本地手里，直接当文件传可省掉 base64 的
+1/3 体积膨胀，也避开网关对超大 JSON 体的限制。
 
 ### 请求体
 
-固定 `{ model, prompt, n: 1, response_format: "url" }`，传图时追加 `images: [url]`。
-`size` / `quality` 一律不传，交给上游默认值。
+- 文生图：JSON `{ model, prompt, n: 1, response_format: "url" }` → `/images/generations`
+- 图生图：multipart（字段见上）→ `/images/edits`
+
+`size` / `quality` 一律不传，交给上游默认值。两种模式的成功响应都按 `data[0].url` 取图。
 
 ---
 
@@ -170,13 +187,15 @@ URL 由上游签名下发，**带有效期**（通常 24h），需要长期保�
 | 缺 `X-Image-Task-Base-Url` / 不是完整 http(s) URL | `200`（MCP 工具返回） | `isError: true`，提示填完整地址 |
 | 缺 `X-Image-Task-Model` | `200`（MCP 工具返回） | `isError: true`，提示补 header |
 | `image` 不是公网 http(s) URL | `200`（MCP 工具返回） | `isError: true`，提示只接受公网 URL，不接受文件上传 / base64 |
+| 参考图下载失败 / 超时（>60s）/ 超过 20MB / 不是图片 | `200`（MCP 工具返回） | 在 `op=get` 中以 `task_status: FAIL` 呈现，错误直述下载环节 |
 | `op=create` 缺 prompt / `op=get` 缺 task_id | `200`（MCP 工具返回） | `isError: true`，参数提示 |
 | `op=get` 查不到任务 | `200`（MCP 工具返回） | `isError: true`，提示 unknown task_id |
 | 上游 4xx/5xx | `200`（MCP 工具返回） | 在 `op=get` 中以 `task_status: FAIL` 呈现，正文含上游状态码和 body |
 | 上游只回 `b64_json` | `200`（MCP 工具返回） | `task_status: FAIL`，提示本服务只接受 URL |
 | 网络失败 / 超时（>180s） | `200`（MCP 工具返回） | `task_status: FAIL`，不会出现永久 PROCESSING 的僵尸任务 |
 
-> JSON 请求体上限保持 2MB：`image` 只接受 URL，不接收文件或 base64。
+> JSON 请求体上限保持 2MB：工具参数里的 `image` 只接受 URL，不接收文件或 base64。
+> 参考图由服务自己下载后以 multipart 转发给上游，不经过 MCP 请求体。
 
 ---
 
@@ -303,7 +322,8 @@ image_task/
   - token / 上游地址 / 模型在 `create` 那一刻从请求 header 捕获进闭包，后台完成前不再读取
 - **每 session 一个 transport + server**：通过 `Mcp-Session-Id` 复用
 - **模型 / 上游地址不入 schema**：只从 HTTP header 读取，AI 不可见
-- **`image` 单一开关**：不传 = 文生图，传一个公网 URL = 图生图；`image` 是单个字符串，只接受公网 `http(s)` URL
+- **`image` 单一开关**：不传 = 文生图（`/images/generations`），传一个公网 URL = 图生图
+  （下载后 multipart 上传 `/images/edits`）；`image` 是单个字符串，只接受公网 `http(s)` URL
 - **URL 提取**：只接受 `data[].url` 形式的 http(s) URL；上游若回 `b64_json` 则记 `FAIL` 并给出明确错误
 
 ---
@@ -320,10 +340,12 @@ A: 不需要重建 session，但 core 的 `mcp_servers[].headers` 是启动时�
 A: 当前上游契约只稳定支持单张；`image` 因此是单个 URL 字符串。
 
 **Q: 图生图报错？**
-A: 是否支持取决于上游模型；不支持时上游回 4xx，在 `op=get` 里以 `task_status: FAIL` 呈现。换一个支持 `images` 字段的模型即可。
+A: 图生图走 `/images/edits` + multipart（字段名 `image`）。若上游模型不支持编辑、或网关不认这种入参，
+上游会回 4xx，在 `op=get` 里以 `task_status: FAIL` 呈现。换一个支持 `/images/edits` 的模型即可。
 
 **Q: 本地图片怎么传？**
-A: 先调用 agent 内置的 `mint_public_link` 工具，把会话目录里的文件换成短期公网 URL，再传给 `image`。本服务不接受文件上传或 base64，上游服务器也无法访问你的本地路径。
+A: 先调用 agent 内置的 `mint_public_link` 工具，把会话目录里的文件换成短期公网 URL，再传给 `image`。
+本服务不接受文件上传或 base64（MCP 请求体不放图片字节），参考图由服务自己从这个 URL 拉取。
 
 **Q: 上游是同步接口，为什么对外做成异步？**
 A: 和 `video_task` 保持同一套任务型契约；同时避免一次生图把 core 的 `tools/call` 拖超时。

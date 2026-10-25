@@ -5,7 +5,7 @@
 | 目录 | 容器名 | 作用 | 容器内端口 | MCP 端点 |
 |---|---|---|---|---|
 | `web_search/` | `mcp_web_search` | 免费网页搜索（Parallel / Exa，无需 key） | `3000` | `POST /` |
-| `image_task/` | `mcp_image_task` | 图片生成 / 编辑（智谱原生或任意 OpenAI 兼容 `/images/generations`，单工具 op=create/get） | `3000` | `POST /mcp` |
+| `image_task/` | `mcp_image_task` | 图片生成 / 编辑（文生图走 `/images/generations`，图生图走 `/images/edits`，单工具 op=create/get） | `3000` | `POST /mcp` |
 | `video_task/` | `mcp_video_task` | 智谱 CogVideo 视频生成（异步，单工具 op=create/get） | `3000` | `POST /mcp` |
 | `asr/` | `mcp_asr` | 语音转文字（上游 OpenAI 兼容 `/audio/transcriptions`），**额外带一个给输入框用的 `POST /transcribe`** | `3000` | `POST /mcp` |
 
@@ -47,8 +47,9 @@ mcp_servers:
 
 `image_task` / `video_task` 的 token **不由服务端保存**——每个请求从 `Authorization` header 读取
 （agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。`video_task` 用智谱 token；
-`image_task` 走任意 OpenAI 兼容的 `/images/generations`，上游地址与模型分别由
-`X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定（两者都必填）。所以这两个服务不用配任何密钥。
+`image_task` 走任意 OpenAI 兼容的 images 上游：文生图 `/images/generations`、图生图 `/images/edits`，
+上游地址与模型分别由 `X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定（两者都必填）。
+所以这两个服务不用配任何密钥。
 
 `asr` 同理：上游的 key / base_url / model 全部由调用方随请求 header 带入
 （`Authorization` / `X-ASR-Base-Url` / `X-ASR-Model`，agent 侧配在 `config.yml` 的
