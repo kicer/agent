@@ -1,7 +1,7 @@
 {
   "name": "mcp_image_task",
   "version": "1.0.0",
-  "description": "MCP server for image generation and editing via Zhipu BigModel CogView or any OpenAI-compatible /images/generations endpoint (single tool image_task with op=create/get)",
+  "description": "MCP server for image generation and editing via any OpenAI-compatible /images/generations endpoint (single tool image_task with op=create/get)",
   "type": "module",
   "main": "src/mcp-server.js",
   "scripts": {

@@ -47,8 +47,8 @@ mcp_servers:
 
 `image_task` / `video_task` 的 token **不由服务端保存**——每个请求从 `Authorization` header 读取
 （agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。`video_task` 用智谱 token；
-`image_task` 用对应上游（智谱或 OpenAI 兼容网关）的 token，上游地址与模型分别由
-`X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定。所以这两个服务不用配任何密钥。
+`image_task` 走任意 OpenAI 兼容的 `/images/generations`，上游地址与模型分别由
+`X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定（两者都必填）。所以这两个服务不用配任何密钥。
 
 `asr` 同理：上游的 key / base_url / model 全部由调用方随请求 header 带入
 （`Authorization` / `X-ASR-Base-Url` / `X-ASR-Model`，agent 侧配在 `config.yml` 的

@@ -6,15 +6,9 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-// 上游地址既支持完整 URL，也支持别名。zhipu 走智谱原生协议（body 只有
-// model/prompt）；其余地址一律按 OpenAI 兼容的 /images/generations 协议
-// （body 加 n / response_format=url）。别名目前只保留 zhipu。
-const BASE_URL_ALIASES = {
-  zhipu: "https://open.bigmodel.cn/api/paas/v4",
-};
-// 只有智谱需要走原生请求体，其余主机一律按 OpenAI 兼容处理。
-const ZHIPU_HOST_SUFFIX = "bigmodel.cn";
-const DEFAULT_MODEL = "CogView-3-Flash";
+// 上游必须是 OpenAI 兼容的 /images/generations 端点：Base-Url / 模型 / 凭据全部由调用方
+// 随每个请求用 header 带入（X-Image-Task-Base-Url / X-Image-Task-Model / Authorization），
+// 服务自己不存、也不预设任何厂商。
 
 // 上游同步调用耗时上限（出图几十秒量级，留足余量）。
 // 超时后任务记为 FAIL，避免上游挂而不回时永远卡在 PROCESSING。
@@ -84,45 +78,32 @@ function pickModel(headers) {
   return pickHeaderString(headers, "x-image-task-model");
 }
 
-// 解析 Base-Url：别名优先，否则必须是 http(s) URL。
-// 返回 { provider, url }：url 是最终 POST 的完整地址。
+// 解析 Base-Url：必须是完整 http(s) URL。已经给到 /images/generations 就直接用，
+// 否则补在 base 后面。
 function resolveEndpoint(rawBase) {
-  const raw = String(rawBase || "zhipu").trim().replace(/\/+$/, "");
-  const alias = BASE_URL_ALIASES[raw.toLowerCase()];
-  const base = alias || raw;
-
-  let host;
-  try {
-    if (!/^https?:\/\//i.test(base)) throw new Error("not http(s)");
-    host = new URL(base).hostname.toLowerCase();
-  } catch {
+  const base = String(rawBase || "").trim().replace(/\/+$/, "");
+  if (!base) {
     throw new Error(
-      `Invalid X-Image-Task-Base-Url "${raw}": use an alias (${Object.keys(BASE_URL_ALIASES).join(", ")}) ` +
-      "or a full http(s) URL."
+      "Missing X-Image-Task-Base-Url: pass the upstream base URL (e.g. https://<host>/v1)."
     );
   }
-
-  // 已经给到 /images/generations 就直接用；否则补在 base 后面。
-  const url = /\/images\/generations$/i.test(base)
+  if (!/^https?:\/\//i.test(base)) {
+    throw new Error(
+      `Invalid X-Image-Task-Base-Url "${base}": must be a full http(s) URL.`
+    );
+  }
+  return /\/images\/generations$/i.test(base)
     ? base
     : base + "/images/generations";
-  const provider =
-    host === ZHIPU_HOST_SUFFIX || host.endsWith("." + ZHIPU_HOST_SUFFIX)
-      ? "zhipu"
-      : "openai";
-  return { provider, url };
 }
 
-// 模型只由 header 决定，AI 看不到也填不了。
-// zhipu 通道有默认模型；其他通道必须显式给 —— 否则会把 CogView 发到网关，
-// 换来的只是一个含义不明的 400。
-function resolveModel(headers, provider) {
+// 模型只由 header 决定，AI 看不到也填不了。不猜缺省值：猜错只会换来含义不明的 400。
+function resolveModel(headers) {
   const model = pickModel(headers);
-  if (model) return model;
-  if (provider === "zhipu") return DEFAULT_MODEL;
-  throw new Error(
-    "X-Image-Task-Model is required when X-Image-Task-Base-Url is not the zhipu alias."
-  );
+  if (!model) {
+    throw new Error("Missing X-Image-Task-Model: pass the upstream model name.");
+  }
+  return model;
 }
 
 // 一次解析出本次请求的上游、凭据、模型。
@@ -132,22 +113,21 @@ function resolveTarget(headers) {
   if (!token) {
     throw new Error('Missing Authorization: use "Authorization: Bearer <token>".');
   }
-  const { provider, url } = resolveEndpoint(pickBaseUrl(headers));
-  return { provider, url, token, model: resolveModel(headers, provider) };
+  return {
+    url: resolveEndpoint(pickBaseUrl(headers)),
+    token,
+    model: resolveModel(headers),
+  };
 }
 
-async function callImagesGenerations({ provider, url, token, model, prompt, image }) {
-  // 智谱原生只认 model/prompt；OpenAI 兼容通道固定单图，并要求返回 URL
-  // （b64_json 几十 MB，既塞不进任务表也没法给模型看）。尺寸/质量一律不传，
-  // 交给上游默认值 —— 各家（尤其 CogView）对尺寸的限制并不一致。
+async function callImagesGenerations({ url, token, model, prompt, image }) {
+  // 统一按 OpenAI 兼容协议：单图 + response_format=url（b64_json 几十 MB，既塞不进
+  // 任务表也没法给模型看）。尺寸/质量一律不传，交给上游默认值。
   // 传了 image 就是图生图；上游字段是数组，所以这里包一层。
-  const body =
-    provider === "zhipu"
-      ? { model, prompt }
-      : Object.assign(
-          { model, prompt, n: 1, response_format: "url" },
-          image ? { images: [image] } : null
-        );
+  const body = Object.assign(
+    { model, prompt, n: 1, response_format: "url" },
+    image ? { images: [image] } : null
+  );
   let resp;
   try {
     resp = await fetch(url, {
@@ -175,9 +155,8 @@ async function callImagesGenerations({ provider, url, token, model, prompt, imag
     data = { raw: text };
   }
   if (!resp.ok) {
-    const label = provider === "zhipu" ? "Zhipu" : "OpenAI-compatible";
     const err = new Error(
-      `${label} API error: ${resp.status} ${resp.statusText} - ${text}`
+      `Upstream API error: ${resp.status} ${resp.statusText} - ${text}`
     );
     err.status = resp.status;
     err.detail = data;
@@ -240,7 +219,6 @@ function pruneTasks() {
 // 后台跑同步上游调用，结果回写任务表（fire-and-forget，不 await）
 function runImageTask({ task, target, prompt, image }) {
   callImagesGenerations({
-    provider: target.provider,
     url: target.url,
     token: target.token,
     model: target.model,
@@ -318,26 +296,10 @@ async function handleCreate({ args, headers }) {
     };
   }
 
-  // 智谱原生接口不支持图生图；带 image 的请求只能走 OpenAI 兼容端点。
-  if (image && target.provider === "zhipu") {
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text",
-          text:
-            'Image editing is not supported by the configured model. ' +
-            'Remove "image" for text-to-image.',
-        },
-      ],
-    };
-  }
-
   pruneTasks();
   const taskId = randomUUID();
   const task = {
     status: "PROCESSING",
-    provider: target.provider,
     model: target.model,
     prompt,
     createdAt: Date.now(),
@@ -350,7 +312,6 @@ async function handleCreate({ args, headers }) {
   const mode = image ? "edit" : "text-to-image";
   const summary =
     `Model: ${target.model}\n` +
-    `Provider: ${target.provider}\n` +
     `Mode: ${mode}\n` +
     `task_id: ${taskId}\n` +
     `task_status: PROCESSING\n` +
@@ -411,7 +372,6 @@ async function handleGet({ args }) {
           text:
             `task_id: ${taskId}\n` +
             `model: ${task.model}\n` +
-            `provider: ${task.provider}\n` +
             `elapsed: ${elapsed}s\n` +
             `task_status: PROCESSING\n` +
             `\n` +
@@ -429,7 +389,6 @@ async function handleGet({ args }) {
           type: "text",
           text:
             `task_id: ${taskId}\n` +
-            `provider: ${task.provider}\n` +
             `elapsed: ${elapsedSeconds(task)}s\n` +
             `task_status: FAIL\n` +
             `error: ${task.error}`,
@@ -447,7 +406,6 @@ async function handleGet({ args }) {
   const summary =
     `task_id: ${taskId}\n` +
     `model: ${task.model}\n` +
-    `provider: ${task.provider}\n` +
     `elapsed: ${elapsedSeconds(task)}s\n` +
     `task_status: SUCCESS\n` +
     `${lines}`;
