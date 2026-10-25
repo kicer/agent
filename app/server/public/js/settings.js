@@ -1626,9 +1626,7 @@
   }
   async function setPageMcp(ctx) {
     setTitle('MCP 服务');
-    setActions('<button class="icon-btn" title="刷新连接状态" onclick="mcpUI.refresh()">' +
-      '<svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"></path><polyline points="21 3 21 9 15 9"></polyline></svg></button>' +
-      '<button class="icon-btn" title="添加 MCP 服务" onclick="mcpUI.add()">' +
+    setActions('<button class="icon-btn" title="添加 MCP 服务" onclick="mcpUI.add()">' +
       '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
     setBody('<div class="set-scroll" id="mcp-list"><div class="empty-tip">加载中…</div></div>');
     await loadMcpList(ctx);
@@ -1969,7 +1967,6 @@
   }
   window.mcpUI = {
     add: function () { openMcpEditor(null); },
-    refresh: function () { loadMcpList(); },
     addPreset: function (key) { openMcpEditor(null, key); },
     editPreset: function (key) {
       const p = presetMcpList().find(x => x.key === key);
