@@ -1229,7 +1229,7 @@ label.icon-btn { cursor: pointer; }
 .modal .mpe-item { margin-bottom: 10px; }
 .modal .mpe-item:last-child { margin-bottom: 0; }
 .modal .mpe-item .mpe-line { margin-bottom: 0; }
-.modal .mpe-item .cfg-note { margin-top: 4px; }
+.modal .mpe-item .cfg-note { margin-top: 4px; text-align: right; }
 /* ms 作为输入框内的后缀：定位在框内右侧，pointer-events:none 保证点击穿给输入框 */
 .modal .mpe-unit { position: relative; flex: none; width: 118px; }
 .modal .mpe-unit input { width: 100%; margin: 0; padding: 8px 30px 8px 10px; }

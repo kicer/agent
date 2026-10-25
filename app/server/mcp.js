@@ -20,6 +20,20 @@ const toolIndex = new Map();          // 发送名 -> { server, tool, def }（�
 let builtinNames = new Set();
 let PUBLIC_BASE = ''; // core 自身公网前缀（loadConfig 已归一：config.yml 优先，其次 PUBLIC_BASE_URL）；随每次请求 X-Public-Base 头下发
 
+// 每个服务的连接状态（启动发现 + 重试阶梯的实时结果），给设置页卡片上的「已连接 / 未连接」用。
+// 只反映运行态：改了 headers 没重启时仍是旧状态（页面顶部有「配置已写入，重启后生效」横幅兜底）。
+const statusMap = new Map();          // key = name|url|mode
+function statusKeyOf(s) {
+  return [s.name, String(s.url || '').replace(/\/+$/, ''), s.mode || 'advertise'].join('|');
+}
+function setStatus(s, patch) {
+  statusMap.set(statusKeyOf(s), Object.assign({
+    name: s.name, url: s.url, mode: s.mode || 'advertise',
+    ok: false, tools: 0, hidden: 0, disabled: false, error: '',
+  }, patch));
+}
+function statuses() { return Array.from(statusMap.values()); }
+
 // 发一次 JSON-RPC 请求，返回 { result, headers }（HTTP 非 2xx / error / 无法解析时抛异常）。
 // 某些 MCP 服务遵循 Streamable HTTP 规范会在 initialize 响应里返回 Mcp-Session-Id，
 // 之后所有非 initialize 请求都必须带上该 header，否则返回 400。我们把会话 id 缓存在 server.sessionId 里。
@@ -169,9 +183,16 @@ async function loadServer(s) {
       log.warn('mcp', s.name + ': 名单过滤后剩 0 个工具，请核对 tools_allow/tools_deny 与 ' +
         '服务端实际工具名（如 ' + all.slice(0, 3).map(t => t.name).join(', ') + ' …）');
     }
+    setStatus(s, { ok: true, tools: tools.length, hidden: hidden });
     return true;
   } catch (err) {
-    log.warn('mcp', s.name + ' 工具发现失败（' + (err && err.message || err) + '）');
+    // Node 的 fetch 只给一句 "fetch failed"，真正原因在 cause（code=ECONNREFUSED / ENOTFOUND，
+    // 或 message="bad port" 这类），设置页卡片的 title 要看这个才诊断得了
+    const cause = err && err.cause;
+    const detail = (cause && (cause.code || cause.message)) || '';
+    const msg = String((err && err.message) || err) + (detail ? '（' + detail + '）' : '');
+    log.warn('mcp', s.name + ' 工具发现失败（' + msg + '）');
+    setStatus(s, { error: msg });
     return false;
   }
 }
@@ -208,6 +229,7 @@ function retryFailed(failed) {
 async function init(cfg) {
   toolDefs = [];
   toolIndex.clear();
+  statusMap.clear();
   PUBLIC_BASE = (cfg && cfg.public_link && cfg.public_link.base_url) || '';
   try {
     for (const d of require('./tools/definitions.json')) {
@@ -221,6 +243,7 @@ async function init(cfg) {
     // mode: disable 时启动不加载该服务（不建工具表；配置保留，改回 advertise 重启后恢复）
     if (s.mode === 'disable') {
       log.info('mcp', s.name + ': mode=disable，跳过工具加载');
+      setStatus(s, { disabled: true });
       continue;
     }
     if (!(await loadServer(s))) failed.push(s);
@@ -295,4 +318,4 @@ async function notifyTool(name, args, timeoutMs, extraHeaders) {
   }
 }
 
-module.exports = { init, toolDefinitions, hasTool, skillTools, getSkillTool, callTool, notifyTool };
+module.exports = { init, toolDefinitions, hasTool, skillTools, getSkillTool, callTool, notifyTool, statuses };

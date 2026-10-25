@@ -29,6 +29,7 @@
     expandedGroups: {}, balanceByGroup: {}, balanceRequested: {}, balanceTypes: [], // 平台编辑弹窗工作态见 pfEdit(模块级变量)
     // MCP 服务页:cfgMcp 缓存当前列表;改动待重启生效时置位,顶部常驻重启横幅
     cfgMcp: [], mcpPendingRestart: false,
+    mcpStatus: null,                   // 运行态连接状态：key = name|url|mode（见 mcpStatusKey）；null = 没拿到，不显示标记
     presets: null,                      // 平台/MCP 预设(GET /api/config/presets),设置页各页共用
   };
   let setTok = 0;                     // 异步渲染防竞态令牌
@@ -1460,18 +1461,44 @@
   }
   async function setPageMcp(ctx) {
     setTitle('MCP 服务');
-    setActions('<button class="icon-btn" title="添加 MCP 服务" onclick="mcpUI.add()">' +
+    setActions('<button class="icon-btn" title="刷新连接状态" onclick="mcpUI.refresh()">' +
+      '<svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"></path><polyline points="21 3 21 9 15 9"></polyline></svg></button>' +
+      '<button class="icon-btn" title="添加 MCP 服务" onclick="mcpUI.add()">' +
       '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
     setBody('<div class="set-scroll" id="mcp-list"><div class="empty-tip">加载中…</div></div>');
     await loadMcpList(ctx);
+  }
+  // 连接状态的认亲键：name + url + mode（与后端 mcp.statusKeyOf 一致，url 去尾斜杠）
+  function mcpStatusKey(s) {
+    return [s.name, normUrl(s.url), s.mode || 'advertise'].join('|');
+  }
+  // 运行态连接标记：没有运行态记录 = 配置比进程新（刚加、改了 url/mode），需重启才生效；
+  // 整个状态接口没拿到（null）= 无从判断，宁可不显示也不要全部误报「待重启」。
+  function mcpConnChip(s) {
+    if (!SET.mcpStatus) return '';
+    const st = SET.mcpStatus.get(mcpStatusKey(s));
+    if (!st) return '<span class="model-card-state pending" title="配置已写入，重启后生效">待重启</span>';
+    if (st.disabled) return '<span class="model-card-state off">已停用</span>';
+    if (st.ok) {
+      const extra = st.hidden ? '，其中 ' + st.hidden + ' 个以技能暴露' : '';
+      return '<span class="model-card-state idle" title="发现 ' + (st.tools || 0) + ' 个工具' + extra + '">已连接</span>';
+    }
+    return '<span class="model-card-state busy" title="' + att(st.error || '连接失败') + '">未连接</span>';
   }
   async function loadMcpList(ctx) {
     const box = $('mcp-list');
     if (!box || (ctx && !ctx())) return;
     try {
-      const [cg] = await Promise.all([req('GET', '/api/config'), loadPresets()]);
+      const [cg, , st] = await Promise.all([
+        req('GET', '/api/config'),
+        loadPresets(),
+        // 状态接口失败不该挡住整个页面（老进程没有该路由 / 网络抖动）：拿不到就不显示连接标记
+        req('GET', '/api/config/mcp-status').catch(() => null),
+      ]);
       if ((ctx && !ctx()) || !$('mcp-list')) return;
       SET.cfgMcp = (cg.effective && cg.effective.mcp_servers) || [];
+      const statusList = st && Array.isArray(st.servers) ? st.servers : null;
+      SET.mcpStatus = statusList ? new Map(statusList.map(x => [mcpStatusKey(x), x])) : null;
       const presets = presetMcpList();
       // 内置服务已占用的条目不再列入「其它」，避免同一服务出两张卡
       const taken = new Set(presets.map(presetIdx).filter(i => i >= 0));
@@ -1499,11 +1526,11 @@
     const idx = presetIdx(p);
     const s = idx >= 0 ? (SET.cfgMcp[idx] || {}) : null;
     const mode = s ? (s.mode || 'advertise') : '';
+    // 标签用中性灰，颜色只表达连接状态（续=已连接 / 红=未连接 / 黄=待重启）
     const state = !s
       ? '<span class="model-card-state off">未配置</span>'
-      : mode === 'disable'
-        ? '<span class="model-card-state off">已停用</span>'
-        : '<span class="model-card-state idle">已配置</span>';
+      : '<span class="model-card-state off">已配置</span>' +
+        (mode === 'disable' ? '' : mcpConnChip(s));
     const h = (s && s.headers) || {};
     const kv = (p.fields || []).map(f => {
       const v = h[f.header];
@@ -1522,11 +1549,10 @@
   // MCP 卡:头部 = 名称 + url + mode 状态;体内 = headers 键值列表。整卡点击进入编辑。
   function mcpCardHtml(s, pi) {
     const mode = s.mode || 'advertise';
-    const stateHtml = mode === 'disable'
-      ? '<span class="model-card-state off">已禁用</span>'
-      : mode === 'skill'
-        ? '<span class="model-card-state idle">以技能暴露</span>'
-        : '<span class="model-card-state idle">启用</span>';
+    // 同样：模式文字保持中性，颜色留给连接状态
+    const stateHtml = '<span class="model-card-state off">' +
+      (mode === 'disable' ? '已禁用' : mode === 'skill' ? '以技能暴露' : '启用') + '</span>' +
+      (mode === 'disable' ? '' : mcpConnChip(s));
     const entries = Object.entries(s.headers || {});
     // 后端只对密钥类 header 脱敏（base-url/model 这类明文）；掩码值统一显示「已配置」，不露长度
     const maskVal = (v) => {
@@ -1778,6 +1804,7 @@
   }
   window.mcpUI = {
     add: function () { openMcpEditor(null); },
+    refresh: function () { loadMcpList(); },
     addPreset: function (key) { openMcpEditor(null, key); },
     editPreset: function (key) {
       const p = presetMcpList().find(x => x.key === key);

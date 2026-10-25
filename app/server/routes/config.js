@@ -5,6 +5,7 @@ const express = require('express');
 const engine = require('../engine');
 const { loadConfigFromText, readConfigText, applyEditsToText, writeConfigText } = require('../config');
 const balance = require('../balance');
+const mcp = require('../mcp');
 const log = require('../log');
 
 const router = express.Router();
@@ -296,6 +297,13 @@ router.get('/', wrap((req, res) => {
 
 // 预设模板（前端新增平台 / 添加内置 MCP 用）
 router.get('/presets', wrap((req, res) => { res.json(PRESETS); }));
+
+// MCP 运行态连接状态（设置页卡片上的「已连接 / 未连接」）：只读快照，
+// 来自 mcp.init 的工具发现结果（含重试阶梯的更新）。重启前改 header 不会反映出来
+// —— 那些情况由页面顶部的「配置已写入，重启后生效」横幅兜底。
+router.get('/mcp-status', wrap((req, res) => {
+  res.json({ servers: mcp.statuses() });
+}));
 
 // 干跑校验(编辑器保存前预检):body { text }
 // 还原脱敏后的 api_key/password 再校验,避免 diff 误报变更。
