@@ -11,12 +11,24 @@
   --drawer-bg: rgb(249, 250, 251);        /* 侧边栏底色(与页面白底区分;分组表头吸顶同色) */
   --border: #ececf1;
   --radius-lg: 24px;
+  /* 安全区与软键盘（成因与注入约定见 js/viewport.js 顶部注释）：
+     --sat / --sab 默认取 env()——iOS 独立 PWA 下有效；安卓 WebView 的 env() 只反映
+     屏幕挖孔(display cutout)，不含状态栏/导航栏高度，基本恒为 0，需由套壳 App 用
+     documentElement.style.setProperty 注入真实高度覆盖。
+     --kb 是键盘占用的高度，取两个来源的较大值：--kb-page 由 viewport.js 按 visualViewport
+     算（壳不注入时也能工作），--kb-native 由壳按 IME insets 注入（WebView 完全感知不到
+     键盘时只能走这条）。两个变量分开放，避免页面与壳互相覆盖同一个值。 */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --kb-page: 0px;
+  --kb-native: 0px;
+  --kb: max(var(--kb-page), var(--kb-native));
 }
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 /* 整站是视口锁定的 app shell:文档本身永不滚动,滚动只发生在内部容器
    (消息流 #chat-view / 抽屉列表 .drawer-list / 设置页 .set-scroll,均已 overflow-y:auto)。
    不写 overflow:hidden 时,桌面端只要有一行内容没收缩下(nowrap 胶囊/代码块/宽表格),
-   浏览器就给窗口加横向滚动条;横向条又吃掉一屏高度,而 #app 死守 height:100%,
+   浏览器就给窗口加横向滚动条;横向条又吃掉一屏高度,而 #app 死守视口高度,
    于是竖横向滚动条一起出现、缩窗口页面不动。 */
 html, body { height: 100%; overflow: hidden; }
 body {
@@ -37,7 +49,9 @@ input, textarea { font: inherit; color: inherit; border: 0; outline: none; backg
 
 /* ================= 应用骨架 ================= */
 #app {
-  height: 100%;
+  /* 减去 --kb：键盘弹起时整块 shell 收缩，footer 才会落在键盘上沿。
+     壳已正确 resize（adjustResize / resizes-content）时 --kb 恒为 0，不重复收缩。 */
+  height: calc(100% - var(--kb));
   max-width: 760px;
   margin: 0 auto;
   display: flex;
@@ -53,7 +67,8 @@ input, textarea { font: inherit; color: inherit; border: 0; outline: none; backg
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  /* 顶栏自己吃下状态栏高度（背景跟着铺上去，不留白条）；设置页顶栏同用 .header */
+  padding: calc(10px + var(--sat)) 12px 10px;
   min-height: 56px;
   background: var(--drawer-bg);
 }
@@ -280,7 +295,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tool-card .tool-time .act-del:hover { color: #c0392b; }
 
 /* ================= 底部输入区 ================= */
-footer { position: relative; flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--page); }
+footer { position: relative; flex: none; padding: 8px 12px calc(10px + var(--sab)); background: var(--page); }
 .attach-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .attach-chip {
   display: inline-flex; align-items: center; gap: 6px;
@@ -436,12 +451,12 @@ body.voice-active .scroll-bottom-btn { display: none; }
 #voice-overlay {
   position: absolute;
   top: -72px;
-  bottom: calc(-11px - env(safe-area-inset-bottom, 0px));
+  bottom: calc(-11px - var(--sab));
   left: -13px; right: -13px;
   z-index: 6;
   display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
   gap: 20px;
-  padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(70px + var(--sab));
   /* 底色必须是**不透明**的 var(--page)：早先只铺一层 9% 蓝渐变，遮罩伸进会话流的那一段
      会把底下的消息文字透出来，「松手传送」看着就成了半透明。
      顶层那 20px 由透明渐变到 --page 只是把上边缘与会话流接上，别把整块都做成渐变。 */
@@ -508,7 +523,7 @@ body.voice-active .scroll-bottom-btn { display: none; }
   border-radius: 16px 16px 0 0;
   box-shadow: 0 -6px 24px rgba(20, 30, 70, 0.16);
   transform: translateY(105%); transition: transform .25s ease; /* 收起时滑出屏幕 */
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: var(--sab);
   overflow: hidden;
 }
 .files-panel.open { transform: translateY(0); }
@@ -604,7 +619,7 @@ body.voice-active .scroll-bottom-btn { display: none; }
   padding: 10px 14px;
   border-top: 1px solid var(--border);
   background: var(--page);
-  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(10px + var(--sab));
 }
 .files-panel-count {
   font-size: 13px; color: var(--gray);
@@ -757,7 +772,9 @@ body.voice-active .scroll-bottom-btn { display: none; }
 }
 #scrim.show { opacity: 1; pointer-events: auto; }
 #drawer {
-  position: fixed; top: 0; bottom: 0; left: 0; z-index: 50;
+  /* 抽屉是 fixed 全屏层：顶部让出状态栏，底部随键盘收缩（搜索框输入时列表不被盖住） */
+  position: fixed; top: 0; bottom: var(--kb); left: 0; z-index: 50;
+  padding-top: var(--sat);
   width: min(78vw, 320px);
   background: var(--drawer-bg);
   display: flex; flex-direction: column;
@@ -848,7 +865,7 @@ body.voice-active .scroll-bottom-btn { display: none; }
 /* 底部用户区 */
 .drawer-user {
   flex: none; display: flex; align-items: center; gap: 10px;
-  padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  padding: 12px 14px calc(12px + var(--sab));
   border-top: 1px solid var(--border);
 }
 .avatar {
@@ -933,12 +950,12 @@ body.voice-active .scroll-bottom-btn { display: none; }
 /* 两层 img 绝对定位居中叠放：滑动切换时旧图滑出、新图同步滑入（见 js/stream.js 的 slideTo） */
 #img-viewer img { position: absolute; inset: 0; margin: auto; max-width: 100vw; max-height: 88vh; touch-action: none; cursor: grab; user-select: none; -webkit-user-drag: none; will-change: transform; }
 /* 组内页码：底部居中悬浮，不参与命中测试（点它等于点背景会关闭） */
-#img-count { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 151; padding: 3px 12px; border-radius: 999px; background: rgba(0,0,0,0.5); color: #fff; font-size: 12px; letter-spacing: .5px; pointer-events: none; }
+#img-count { position: fixed; left: 50%; bottom: calc(18px + var(--sab)); transform: translateX(-50%); z-index: 151; padding: 3px 12px; border-radius: 999px; background: rgba(0,0,0,0.5); color: #fff; font-size: 12px; letter-spacing: .5px; pointer-events: none; }
 #fs-viewer { position: fixed; inset: 0; z-index: 130; background: rgba(8,10,20,0.88); padding: 40px 14px 24px; overflow: auto; /* 缩放后支持横纵滚动 */ }
 #fs-viewer.hidden { display: none; }
 .fs-panel { max-width: 860px; margin: 0 auto; background: var(--page); border-radius: 14px; padding: 18px 20px; font-size: 15.5px; }
 /* 顶部操作区：默认右上角悬浮（消息全屏用）；文件预览走 fs-bar 模式时独立成一行 */
-.fs-actions { position: fixed; top: calc(2px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 131; display: flex; align-items: center; gap: 8px; }
+.fs-actions { position: fixed; top: calc(2px + var(--sat)); right: 14px; z-index: 131; display: flex; align-items: center; gap: 8px; }
 .fs-name { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--ink); }
 .fs-btn {
   flex: none; display: flex; align-items: center; justify-content: center;
@@ -955,8 +972,8 @@ body.voice-active .scroll-bottom-btn { display: none; }
 #fs-viewer.fs-bar .fs-actions {
   position: sticky; top: 0; z-index: 1;
   flex: none; width: 100%;
-  height: calc(40px + env(safe-area-inset-top, 0px));
-  padding: env(safe-area-inset-top, 0px) 10px 0 14px;
+  height: calc(40px + var(--sat));
+  padding: var(--sat) 10px 0 14px;
   justify-content: flex-end; gap: 6px;
   background: var(--page); border-bottom: 1px solid var(--border);
 }
@@ -971,14 +988,14 @@ body.voice-active .scroll-bottom-btn { display: none; }
 #fs-viewer.fs-bar #fs-body .bubble-ai,
 #fs-viewer.fs-bar #fs-body .bubble-user {
   max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; background: var(--page);
-  padding: 14px 12px calc(28px + env(safe-area-inset-bottom, 0px)); font-size: 15.5px;
+  padding: 14px 12px calc(28px + var(--sab)); font-size: 15.5px;
 }
 #fs-viewer.fs-bar #fs-src-pane { overflow: auto; }
-#fs-viewer.fs-bar #fs-src-code { max-height: none; border: 0; border-radius: 0; padding: 12px 14px calc(28px + env(safe-area-inset-bottom, 0px)); }
+#fs-viewer.fs-bar #fs-src-code { max-height: none; border: 0; border-radius: 0; padding: 12px 14px calc(28px + var(--sab)); }
 #fs-viewer.fs-bar .fs-img-frame { max-width: 100%; max-height: 100%; border-radius: 0; margin: 0 auto; }
 .fs-close {
   /* 顶到视口最上沿（避开刘海），不再压住预览面板顶部 */
-  position: fixed; top: calc(2px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 131; width: 34px; height: 34px;
+  position: fixed; top: calc(2px + var(--sat)); right: 14px; z-index: 131; width: 34px; height: 34px;
   border: none; border-radius: 50%; background: rgba(0,0,0,0.42); color: #fff;
   box-shadow: 0 1px 5px rgba(0,0,0,0.22);
   font-size: 15px; line-height: 1; cursor: pointer;
@@ -1028,7 +1045,7 @@ body.voice-active .scroll-bottom-btn { display: none; }
 .header-right .icon-btn:active, .header-right label.icon-btn:active { background: var(--surface); }
 label.icon-btn { cursor: pointer; }
 #set-body { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; }
-.set-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 12px calc(16px + env(safe-area-inset-bottom, 0px)); }
+.set-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 12px calc(16px + var(--sab)); }
 .empty-tip { color: var(--gray-light); text-align: center; padding: 18px; font-size: 13px; }
 
 /* ---------- 设置主页卡片 ---------- */
@@ -1261,7 +1278,7 @@ label.icon-btn { cursor: pointer; }
 /* ---------- 编辑器页(config.yml 原文 / 技能文件) ---------- */
 .set-editor {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  padding: 10px 12px calc(12px + var(--sab));
 }
 .set-editor textarea {
   flex: 1; width: 100%; resize: none; background: #fff; color: var(--ink);
@@ -1287,7 +1304,8 @@ label.icon-btn { cursor: pointer; }
 .btn-row { display: flex; gap: 10px; }
 .btn-row .primary-btn { flex: 1; }
 .modal-overlay {
-  position: fixed; inset: 0; background: rgba(20, 25, 50, 0.45);
+  /* bottom 让出键盘：弹窗内的输入框（定时任务提示词等）不被软键盘压住 */
+  position: fixed; inset: 0; bottom: var(--kb); background: rgba(20, 25, 50, 0.45);
   display: flex; align-items: center; justify-content: center; z-index: 100;
 }
 .modal {

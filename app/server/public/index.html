@@ -2,7 +2,10 @@
 <html lang="zh">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <!-- viewport-fit=cover：让 env(safe-area-inset-*) 生效（缺了它 iOS 上恒为 0）；
+       interactive-widget=resizes-content：键盘弹起时缩 layout viewport（新 Chromium 认；
+       不认的浏览器会忽略，由 js/viewport.js 的 --kb 兜底）。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Agent 任务台</title>
   <script src="/vendor/marked.min.js"></script>
   <meta name="theme-color" content="#3964FE">
@@ -525,6 +528,7 @@
     </div>
   </div>
 
+  <script src="/js/viewport.js"></script>
   <script src="/js/core.js"></script>
   <script src="/js/chat.js"></script>
   <script src="/js/sessions.js"></script>
@@ -537,12 +541,12 @@
   // 启动自愈:外部工具改前端文件是非原子写入,极端时机下浏览器可能拿到半截或重复拼接的 HTML
   // (脚本缺半 → 白屏裸首页;重复注入 → 每个文件报 duplicate variable 后 JS 全挂)。
   // 这里检测关键脚本数量与入口全局,不对就自动整页重载一次(sessionStorage 防循环)。
-  // 注意:js/ 脚本增减时需同步改这里的期望数 7。
+  // 注意:js/ 脚本增减时需同步改这里的期望数 9。
   (function () {
     var ok = false;
     try {
       var n = document.querySelectorAll('script[src^="/js/"]').length;
-      ok = n === 7 && typeof state !== 'undefined' &&
+      ok = n === 9 && typeof state !== 'undefined' &&
            typeof openFilePreview === 'function' && typeof restartNow === 'function';
     } catch (_) {}
     if (ok) { try { sessionStorage.removeItem('boot-heal'); } catch (_) {} return; }

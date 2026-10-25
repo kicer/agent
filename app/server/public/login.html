@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Agent 任务台 · 登录</title>
   <meta name="theme-color" content="#1e3c72">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -13,7 +13,8 @@
   <link rel="stylesheet" href="/css/style.css">
   <style>
     .login-wrap {
-      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      /* bottom 让出软键盘：表单垂直居中，键盘弹起时卡片跟着可见区域上移（--kb 见 js/viewport.js） */
+      position: fixed; inset: 0; bottom: var(--kb, 0px); display: flex; align-items: center; justify-content: center;
       background: linear-gradient(135deg, #1e3c72, #2a5299);
     }
     .login-card {
@@ -39,6 +40,7 @@
       <p class="login-error" id="login-error"></p>
     </form>
   </div>
+  <script src="/js/viewport.js"></script>
   <script>
     'use strict';
     const TOKEN_KEY = 'agent_token';
