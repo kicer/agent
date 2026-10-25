@@ -16,15 +16,44 @@ function wrap(fn) {
 }
 
 // 附件上传只写任务目录文件（见 routes/files.js），消息正文原样入库，不再拼接任何通知行。
+// delivery：
+//   live（默认，兼容旧调用方/微信）→ 立即入库；回合在跑时下一轮迭代自动带上
+//   queue → 回合在跑时进待投递队列（不落库），回合收尾后自动发出；不在跑则等价于 live
+// 「干预 / 立即发送」不走这里，而是对已在队列里的条目做升级（POST /pending/:qid）。
 router.post('/:id/messages', wrap((req, res) => {
   const content = String((req.body && req.body.content) || '').trim();
   if (!content) return res.status(400).json({ error: 'content 不能为空' });
   // deepThink：是否启用模型该「深度思考」参数（thinking_params 合并进上游请求体）
   const deepThink = !!(req.body && req.body.deepThink);
+  const delivery = String((req.body && req.body.delivery) || 'live');
+  if (delivery === 'queue') {
+    const r = engine.enqueueMessage(req.params.id, content, { deepThink });
+    log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户消息（' +
+      (r.queued ? '排队 ' + r.pending_id : r.delivered || '?') + '）：' +
+      content.slice(0, 60).replace(/\s+/g, ' '));
+    return res.json(r);
+  }
   const r = engine.postUserMessage(req.params.id, content, { deepThink });
   log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
       content.slice(0, 60).replace(/\s+/g, ' '));
   res.json(r);
+}));
+
+// 待投递队列：升级队首（干预 / 立即发送）。
+// 干预 = 等当前工具跑完/本条回复落库后插话；立即发送 = 杀进程 + abort 流，本回合收尾后立刻发。
+router.post('/:id/pending/:qid', wrap((req, res) => {
+  const action = String((req.body && req.body.action) || 'interject');
+  if (action !== 'interject' && action !== 'now') {
+    return res.status(400).json({ error: 'action 只能是 interject 或 now' });
+  }
+  const r = engine.promotePending(req.params.id, req.params.qid, action);
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 待投递消息 ' + req.params.qid + ' → ' + action);
+  res.json(r);
+}));
+
+// 取消一条待投递消息（条幅上的 ×）。
+router.delete('/:id/pending/:qid', wrap((req, res) => {
+  res.json(engine.cancelPending(req.params.id, req.params.qid));
 }));
 
 

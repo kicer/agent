@@ -157,10 +157,13 @@
     <!-- ================= 底部输入区 ================= -->
     <footer>
       <div class="attach-chips hidden" id="attach-chips"></div>
+      <!-- 待发送条幅：运行中发出的消息先排在这里（不立即入库），逐条一行。
+           默认等本轮结束自动发出；队首可「干预」（跑完当前这步就插话）或「立即发送」（中断本轮）。 -->
+      <div class="send-queue hidden" id="send-queue" aria-live="polite"></div>
       <div class="input-shell">
         <!-- 编辑已发送消息：覆盖式重发提示条（发送后丢弃该条及其后的历史） -->
         <div class="edit-bar hidden" id="edit-bar">
-          <span>正在编辑已发送的消息，发送后将丢弃其后的历史</span>
+          <span>编辑已发送消息：发送后将丢弃原历史信息</span>
           <button id="edit-cancel" type="button">取消</button>
         </div>
         <div class="up-cards hidden" id="up-cards" aria-label="已上传文件"></div>

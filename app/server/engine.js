@@ -16,6 +16,13 @@ const TOOL_DEFINITIONS = require('./tools/definitions.json');
 let cfg, db, bus;
 const runs = new Map(); // session_id -> {cancelled, procs:Set, abortController, looping:boolean}
 const titling = new Set(); // 正在生成标题的会话（防重入；标题落库后靠 title 非空自然不再触发）
+// 待投递消息队列：session_id -> [{id, content, deepThink, mode, created_at}]
+// 铁律：队列里的消息**绝不先落 messages 表**，只在「安全边界」写入并成为模型下一轮输入：
+//   ① 工具批次闭合（本批每个 tool_call_id 都有回执）；② 无 tool_calls 的回复已落库；
+//   ③ 回合 finalize（循环已退、没有在跑的工具）。
+// 原因：tool 回执必须紧跟带 tool_calls 的 assistant，user 行插进批次中间、或批次没闭合就收尾，
+// 都会让上游拒收整个请求（tool_call 配对）。进程内内存态（同 runs），重启即丢，不跨实例共享。
+const pendings = new Map();
 
 // ---------- 小工具 ----------
 const now = () => Date.now();
@@ -142,6 +149,8 @@ function emitStatus(sessionId) {
     session_id: sessionId,
     status: s.status,
     model_id: s.model_id,
+    // 待投递队列一并带上：前端把条幅当成服务端状态的回显，重连/换设备后自动对齐
+    pending: listPending(sessionId),
   });
 }
 
@@ -456,6 +465,46 @@ function killRunProcs(run) {
   run.procs.clear();
 }
 
+// 关闭当前工具批次：给「最后一条带 tool_calls 的 assistant」里还没有回执的调用补合成 tool 行。
+// 上游硬约束：assistant.tool_calls 必须逐个配 tool 消息，缺一条整个请求被拒（400）。
+// 触发点：取消（含「立即发送」硬中断）、干预跳过同批剩余调用、finalize 兜底（异常退出）。
+// 只在批次尾部补：若最后一条非 tool 行已经是 user（历史遗留脏数据、user 插在批次中间），
+// 补在后面会造成顺序错乱，交给 llm.buildMessages 的读侧配对过滤处理。
+// reason 是一句以冒号结尾的前缀，拼成模型能读懂的「为什么没执行」。
+function closeToolBatch(sessionId, reason) {
+  // 会话已被删除（用户在工具执行中删了会话）：不再往库里补行，否则留下无法归属的孤儿行。
+  if (!getSession(sessionId)) return 0;
+  // 只取最后一条非 tool 行 + 它之后的回执 id：走 idx_messages_session，不载全量历史
+  //（finalize 每回合都会调一次，长会话下 loadHistory 太贵）。
+  const last = db.prepare(
+    "SELECT id, role, tool_calls FROM messages WHERE session_id = ? AND role != 'tool' ORDER BY id DESC LIMIT 1"
+  ).get(sessionId);
+  if (!last || last.role !== 'assistant') return 0; // 最后一条非 tool 行不是 assistant：不是当前批次
+  if (!last.tool_calls) return 0;                  // 收尾回复：批次已经闭合
+  let calls = [];
+  try { calls = JSON.parse(last.tool_calls) || []; } catch (_) { return 0; }
+  if (!calls.length) return 0;
+  const got = new Set(
+    db.prepare(
+      "SELECT tool_call_id FROM messages WHERE session_id = ? AND role = 'tool' AND id > ? AND tool_call_id IS NOT NULL AND tool_call_id != ''"
+    ).all(sessionId, last.id).map(r => r.tool_call_id)
+  );
+  let n = 0;
+  for (const c of calls) {
+    if (!c || !c.id || got.has(c.id)) continue;
+    const name = (c.function && c.function.name) || '未知工具';
+    const text = 'Error: ' + reason + '本次调用未执行（' + name + '）。';
+    const msgId = saveMessage(sessionId, { role: 'tool', tool_call_id: c.id, name, content: text, is_error: true });
+    // 同步广播：前端工具卡不能停在「调用中」呼吸态
+    bus.emit(sessionId, 'tool_result', {
+      tool_call_id: c.id, name, content: text, is_error: true, msg_id: msgId,
+    });
+    n++;
+  }
+  if (n) log.info('tool', sessionId + ' 补齐 ' + n + ' 条未执行调用的合成回执（' + reason + '）');
+  return n;
+}
+
 // ---------- Agent 主循环 ----------
 async function runLoop(sessionId) {
   const run = getRun(sessionId, true);
@@ -481,22 +530,34 @@ function finalize(sessionId, run) {
   const s = getSession(sessionId);
   if (!s || s.status !== 'active') { runs.delete(sessionId); return; }
   const cancelled = run.cancelled;
+  // 兜底：回合结束时本批 tool_call 必须逐个有回执。取消/异常/进程被杀都可能留下半批，
+  // 缺的补一条「未执行」合成回执——这是「工具调用不匹配」的唯一根治点。
+  try { closeToolBatch(sessionId, cancelled ? (run.interruptReason || '用户已终止任务：') : '回合异常结束：'); }
+  catch (e) { log.warn('tool', sessionId + ' 关闭工具批次失败：' + (e && e.message || e)); }
   if (cancelled) {
     touch(sessionId, { status: 'cancelled', cancelled_at: now(), completed_at: null });
     runs.delete(sessionId);
     bus.emit(sessionId, 'done', { status: 'cancelled' });
     emitStatus(sessionId);
-    return;
+  } else {
+    // 正常结束：进入 held，绑定保持（key 非独占、无租约，不再自动到期）；用户追问直接复用模型，唯一出口是手动「断开」。
+    touch(sessionId, { status: 'held', held_at: now(), completed_at: null, cancelled_at: null });
+    runs.delete(sessionId);
+    bus.emit(sessionId, 'done', { status: 'held' });
+    emitStatus(sessionId);
+    maybeGenerateTitle(sessionId, s, run);
+    // 定时即下班：本回合创建过定时任务 → done 广播后收口（attachBus 监听已在 done 回调里同步捕获绑定入队投递，
+    // 此时删绑定不影响微信本次回复送达）。
+    if (run.taskWrap) taskClockOut(sessionId);
   }
-  // 正常结束：进入 held，绑定保持（key 非独占、无租约，不再自动到期）；用户追问直接复用模型，唯一出口是手动「断开」。
-  touch(sessionId, { status: 'held', held_at: now(), completed_at: null, cancelled_at: null });
-  runs.delete(sessionId);
-  bus.emit(sessionId, 'done', { status: 'held' });
-  emitStatus(sessionId);
-  maybeGenerateTitle(sessionId, s, run);
-  // 定时即下班：本回合创建过定时任务 → done 广播后收口（attachBus 监听已在 done 回调里同步捕获绑定入队投递，
-  // 此时删绑定不影响微信本次回复送达）。
-  if (run.taskWrap) taskClockOut(sessionId);
+  // 队首待投递消息：回合已收尾（循环已退、批次已闭合），这是排队模式唯一的安全出口。
+  // setImmediate 让 finalize 所在的 finally 先跑完（maybeAutoCompress 会读状态），再开新一轮。
+  if (headPending(sessionId)) {
+    setImmediate(() => {
+      try { deliverPendingHead(sessionId); }
+      catch (e) { log.warn('msg', sessionId + ' 待投递消息发送失败：' + (e && e.message || e)); }
+    });
+  }
 }
 
 // 自动生成标题：每回合结束（finalize 成功分支）过门槛才触发，fire-and-forget 不阻塞收尾。
@@ -736,6 +797,13 @@ async function runLoopInner(sessionId, run) {
             }
 
     if (!hasTools) {
+      // 「干预」升级过的待投递消息：本条回复已落库，正是安全边界——直接插话并继续同一回合
+      //（不用等 finalize 再开新一轮，模型能接着刚才的上下文改弦更张）。
+      const head = headPending(sessionId);
+      if (head && head.mode === 'interject') {
+        deliverPendingHead(sessionId);
+        continue;
+      }
       // 回合结束；但若期间用户又发了新消息（live 投递），继续下一轮而不是收尾
       if (!hasUserSince(sessionId, lastIncludedId)) break;
       continue;
@@ -743,8 +811,19 @@ async function runLoopInner(sessionId, run) {
 
     // 执行工具
     const vision = modelVision(session);
+    // 干预（整批还没开跑）：一个工具都不执行，整批补「未执行」回执后立刻插话。
+    // 顺序不能反：必须先闭合批次（写完全部 tool 回执）再写 user 行，否则 user 会夹在
+    // assistant.tool_calls 与 tool 回执之间，上游直接拒收。
+    const headBeforeBatch = headPending(sessionId);
+    if (headBeforeBatch && headBeforeBatch.mode === 'interject') {
+      closeToolBatch(sessionId, '用户已介入并要求中止：');
+      deliverPendingHead(sessionId);
+      iter++;
+      continue;
+    }
     // 标题门槛信号：本批参数预检通过并真实执行 = 会话在干实事（finalize 据此判是否立题，
-    // 见 maybeGenerateTitle）；errAck 批（参数畸形、下轮整轮对模型不可见）不算。
+    // 见 maybeGenerateTitle）；errAck 批（参数畸形、下轮整轮对模型不可见）不算，
+    // 被干预整批跳过（上面已 continue）也不计。
     if (!isErrAck) run.toolWorked = true;
     for (const tc of msgRow.tool_calls) {
       if (run.cancelled) break;
@@ -837,7 +916,18 @@ async function runLoopInner(sessionId, run) {
         image_url: imageRel ? '/api/sessions/' + encodeURIComponent(sessionId) + '/files/download?path=' + encodeURIComponent(imageRel) : undefined,
         msg_id: toolMsgId,
       });
+      // 干预（当前工具已跑完、回执已落库）：同批剩余调用不再执行，闭合批次后立刻插话。
+      // 不杀进程——这就是「干预」与「立即发送」的唯一区别。
+      const headAfterTool = headPending(sessionId);
+      if (headAfterTool && headAfterTool.mode === 'interject') {
+        closeToolBatch(sessionId, '用户已介入并要求中止：');
+        deliverPendingHead(sessionId);
+        break;
+      }
     }
+    // 取消（含「立即发送」硬中断）：本批还没跑到的调用补合成回执，否则库里留下
+    // 「有调用无回执」的孤儿行，下一轮请求必被上游拒收（本次顺手修掉的存量 bug）。
+    if (run.cancelled) closeToolBatch(sessionId, run.interruptReason || '用户已终止任务：');
     iter++;
   }
   if (iter >= maxIter && !run.cancelled) {
@@ -1058,6 +1148,132 @@ function createSession(title, preferModelId, assistantType, user) {
   return session;
 }
 
+// ---------- 待投递消息（排队 / 干预 / 立即发送） ----------
+// 三种模式的差别只在「何时写库」，写库之前一律躺在 pendings 里（见文件头注释的铁律）：
+//   queue      → 本轮 finalize 后投递（默认；浏览器关了也照发，因为队列在服务端）
+//   interject  → 当前工具批次闭合 / 本条回复落库后立即投递，同一回合内让模型看到
+//   now        → 硬中断（杀进程 + abort 流，本回合判 cancelled），收尾后立刻投递
+// 只允许升级队首：越过后面的消息先发会让对话顺序不可解释（前端也只有队首有这两个按钮）。
+function newPendingId() {
+  return 'q_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function publicPending(it) {
+  return { id: it.id, content: it.content, mode: it.mode, created_at: it.created_at };
+}
+
+function pendingList(sessionId) {
+  return pendings.get(sessionId) || [];
+}
+
+function headPending(sessionId) {
+  const list = pendings.get(sessionId);
+  return list && list.length ? list[0] : null;
+}
+
+function listPending(sessionId) {
+  return pendingList(sessionId).map(publicPending);
+}
+
+// 清空队列（用户点「停止」、删会话、清空会话）：逐条广播，前端条幅随之消失。
+function clearPendings(sessionId) {
+  const list = pendings.get(sessionId);
+  if (!list || !list.length) return 0;
+  pendings.delete(sessionId);
+  for (const it of list) bus.emit(sessionId, 'pending_removed', { id: it.id, reason: 'cancelled' });
+  log.info('msg', sessionId + ' 清空待投递消息 ' + list.length + ' 条');
+  return list.length;
+}
+
+// 入队。没有在跑的回合时，任何模式都等价于立即发送（队列只对运行中的回合有意义）。
+function enqueueMessage(sessionId, content, opts) {
+  const session = getSession(sessionId);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const text = String(content == null ? '' : content).trim();
+  if (!text) throw Object.assign(new Error('content 不能为空'), { status_code: 400 });
+  const run = runs.get(sessionId);
+  if (!run || !run.looping) {
+    const r = postUserMessage(sessionId, text, { deepThink: !!(opts && opts.deepThink) });
+    return { message_id: r.message_id, delivered: r.delivered, pending: [] };
+  }
+  const item = {
+    id: newPendingId(), content: text,
+    deepThink: !!(opts && opts.deepThink), mode: 'queue', created_at: now(),
+  };
+  const list = pendingList(sessionId).slice();
+  list.push(item);
+  pendings.set(sessionId, list);
+  bus.emit(sessionId, 'pending_added', publicPending(item));
+  log.info('msg', sessionId + ' 待投递消息入队（队列 ' + list.length + '）：' + text.slice(0, 60).replace(/\s+/g, ' '));
+  return { pending_id: item.id, queued: true, pending: list.map(publicPending) };
+}
+
+// 升级队首：interject（跑完当前这一步就插话） / now（立刻中断本轮）。
+// 回合已经结束（没在跑）时直接投递——用户点按钮时恰好收尾，不该把消息卡在队列里。
+function promotePending(sessionId, qid, action) {
+  const session = getSession(sessionId);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const list = pendingList(sessionId);
+  const idx = list.findIndex(x => x.id === qid);
+  if (idx < 0) throw Object.assign(new Error('待发送消息不存在'), { status_code: 404 });
+  if (idx !== 0) throw Object.assign(new Error('只能升级队首消息：前面的消息还没发出去'), { status_code: 409 });
+  const run = runs.get(sessionId);
+  if (!run || !run.looping) {
+    deliverPendingHead(sessionId);
+    return { ok: true, delivered: true, pending: listPending(sessionId) };
+  }
+  const item = list[0];
+  if (action === 'now') {
+    item.mode = 'now';
+    bus.emit(sessionId, 'pending_added', publicPending(item)); // 前端按 id upsert，按钮态跟着变
+    run.interruptReason = '用户选择立即发送：';
+    run.cancelled = true;
+    killRunProcs(run);
+    if (run.abortController) { try { run.abortController.abort(); } catch (_) {} }
+    log.info('msg', sessionId + ' 立即发送：中断当前回合，收尾后投递队首');
+  } else {
+    item.mode = 'interject';
+    bus.emit(sessionId, 'pending_added', publicPending(item));
+    log.info('msg', sessionId + ' 干预：等待当前工具/回复结束后插话');
+  }
+  return { ok: true, pending: listPending(sessionId) };
+}
+
+// 取消队列里的一条（条幅上的 ×）。任意一条都可删：删队首后剩下的自然顺延，顺序仍是 FIFO。
+function cancelPending(sessionId, qid) {
+  const session = getSession(sessionId);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const list = pendingList(sessionId);
+  const idx = list.findIndex(x => x.id === qid);
+  if (idx < 0) throw Object.assign(new Error('待发送消息不存在'), { status_code: 404 });
+  const next = list.slice();
+  next.splice(idx, 1);
+  if (next.length) pendings.set(sessionId, next); else pendings.delete(sessionId);
+  bus.emit(sessionId, 'pending_removed', { id: qid, reason: 'cancelled' });
+  log.info('msg', sessionId + ' 取消待投递消息 ' + qid);
+  return { ok: true, pending: next.map(publicPending) };
+}
+
+// 投递队首：写库 + 广播。调用方必须已保证处在安全边界（批次已闭合 / 回合已收尾）。
+// 落库走 postUserMessage：正在跑时它是 live 追加（下一轮迭代自动带上），没在跑时直接开新一轮。
+function deliverPendingHead(sessionId) {
+  const list = pendingList(sessionId);
+  if (!list.length) return null;
+  const item = list[0];
+  const next = list.slice(1);
+  if (next.length) pendings.set(sessionId, next); else pendings.delete(sessionId);
+  const r = postUserMessage(sessionId, item.content, { deepThink: item.deepThink });
+  const row = db.prepare('SELECT created_at FROM messages WHERE id = ?').get(r.message_id);
+  bus.emit(sessionId, 'pending_removed', { id: item.id, reason: 'delivered' });
+  // 排队期间前端不画这条消息（它还不是历史），落库这一刻才画
+  bus.emit(sessionId, 'user_message', {
+    id: r.message_id, content: item.content,
+    created_at: (row && row.created_at) || item.created_at, pending_id: item.id,
+  });
+  log.info('msg', sessionId + ' 待投递消息已送达（原模式 ' + item.mode + '，剩余 ' + next.length + ' 条）');
+  return r;
+}
+
 // 用户消息入口：不再排队——任意非 looping 状态都是「拿模型立即开跑」（delivered 恒 live）；
 // 绑定失效（配置改动后原模型被删/禁用）由 ensureBinding 自动改选，用户无感。
 // opts.deepThink: true 时启用模型该「深度思考」参数（记在会话 run 上，正在跑的回合下一轮迭代会取到最新值）。
@@ -1088,9 +1304,13 @@ function postUserMessage(sessionId, content, opts) {
 function stop(sessionId) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  // 「停止」= 全停：待投递队列一并作废。否则 finalize 会立刻把队首当成新回合发出去，
+  // 与用户按停止的意图相反（「立即发送」不走这里，它只中断当前回合、保留队首）。
+  clearPendings(sessionId);
   const run = runs.get(sessionId);
   if (run) {
     run.cancelled = true;
+    run.interruptReason = '用户已终止任务：';
     killRunProcs(run);
     if (run.abortController) { try { run.abortController.abort(); } catch (_) {} }
   }
@@ -1415,6 +1635,7 @@ function clearSessionMessages(sessionId) {
     if (run.abortController) { try { run.abortController.abort(); } catch (_) {} }
   }
   runs.delete(sessionId);
+  clearPendings(sessionId); // 历史清零：队列里的消息也没了着落，一并作废
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   wipeSessionTmp(sessionId);   // 会话级 /tmp 随清空一并抹掉（尽力而为，失败只记日志不阻断）
   autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
@@ -1523,6 +1744,10 @@ module.exports = {
   activeRuns,
   createSession,
   postUserMessage,
+  enqueueMessage,
+  promotePending,
+  cancelPending,
+  listPending,
   stop,
   releaseHold,
   renameSession,
@@ -1537,6 +1762,7 @@ module.exports = {
   loadHistory,
   checkToolArgs, // 参数预检/信封解包两个纯函数：导出供探针与回归验证（运行链路由 runLoopInner 内部调用）
   unwrapToolArgs,
+  closeToolBatch, // 批次闭合兜底：导出供回归验证（正常链路由 runLoopInner / finalize 调用）
   saveMessage,
   recordModelUsage,
   modelUsageStats,

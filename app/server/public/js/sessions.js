@@ -79,6 +79,8 @@
         state.sessionTitle = '';
         state.sessionType = 'secretary';
         state.pendingModel = '';
+        state.pending = [];
+        renderSendQueue();
         state.streamEl = null;
         state.streamText = '';
         state.toolCards = {};
@@ -190,6 +192,8 @@
       state.status = '';
       state.modelId = '';
       state.schedule = null; // 防详情返回前残留上一会话的任务状态
+      state.pending = []; // 同上：队列是会话级的，先清空，详情回来再回显
+      renderSendQueue();
       // 先从抽屉列表缓存取会话类型，让顶部 icon 立即正确；详情回来后由 renderDetail 纠正
       const cached = (state.sessions || []).find(x => x.id === id);
       state.sessionType = (cached && cached.assistant_type) || 'secretary';
@@ -249,6 +253,8 @@
     state.status = '';
     state.modelId = '';
     state.schedule = null;
+    state.pending = [];
+    renderSendQueue();
     state.pendingModel = '';
     state.attachments = [];
     if (typeof clearEditState === 'function') clearEditState();
@@ -548,13 +554,15 @@
   async function stopSession() {
     if (!state.sessionId) return;
     const held = state.status === 'held';
+    const queued = (state.pending || []).length;
     try {
       if (held) {
         await req('POST', '/api/sessions/' + state.sessionId + '/release');
         toast('已断开');
       } else {
         await req('POST', '/api/sessions/' + state.sessionId + '/stop');
-        toast('已发送终止指令');
+        // 「停止」是全停：服务端会把待投递队列一并作废，这里明确告知，不让消息静静消失
+        toast(queued ? '已终止，队列中 ' + queued + ' 条消息已取消' : '已发送终止指令');
       }
     } catch (e) { toast((held ? '断开失败:' : '终止失败:') + e.message); }
   }

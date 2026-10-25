@@ -208,6 +208,8 @@ router.get('/:id', wrap((req, res) => {
     files: listTaskFiles(taskDir),
     schedule,
     running: !!(engine.getRun(session.id) || {}).looping,
+    // 待投递队列（刷新/换设备后条幅能原样恢复）：只在服务端内存里，重启即空
+    pending: engine.listPending(session.id),
     has_more: hasMore, // 分页模式下：是否还有更早的历史
     oldest_id: messages.length ? messages[0].id : null, // 本页最早行 id，作为下一页 before 游标
   });

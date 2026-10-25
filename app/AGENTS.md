@@ -79,18 +79,48 @@ POST /api/sessions/:id/messages
       checkToolArgs：JSON 非法/缺必填 → 整条 assistant 标 type='errAck'
       saveMessage(assistant) + recordModelUsage
       压缩回合的收尾答复 → type='summary'，之前全部消息 → type='archived'
-      无 tool_calls → 若期间又有新 user 消息则继续，否则收尾
+      无 tool_calls → 待投递里有「干预」则投递并继续；否则若有新 user 消息继续，否则收尾
       有 tool_calls → 逐个 executeTool → saveMessage(tool) → emit tool_result
+                     （每步之后与整批之前各查一次「干预」，命中就先闭合批次再投递）
   → finalize
+      closeToolBatch（兜底：补齐本批未执行调用的合成回执）
       cancelled → status=cancelled
       正常     → status=held，emit done，maybeGenerateTitle，run.taskWrap → taskClockOut
+      收尾后若队列非空 → setImmediate 投递队首（排队模式的唯一出口）
   → maybeAutoCompress（回合彻底结束后才检查）
 ```
 
 **给前端的是 SSE 事件，不是响应体**。前端在 `GET /api/sessions/:id/stream` 上听：
 `status`、`assistant_delta`、`reasoning_delta`、`tool_call_start`、`tool_call_args`、
 `tool_call`、`tool_result`、`assistant_message`、`done`、`error`、`title`、`auto_compress`、
-`ui_card`，以及每 15s 的具名心跳 `ping`（注释帧不触发 JS 事件，所以用具名事件做前端看门狗）。
+`ui_card`、`pending_added`、`pending_removed`、`user_message`，以及每 15s 的具名心跳 `ping`
+（注释帧不触发 JS 事件，所以用具名事件做前端看门狗）。
+
+## 待投递消息（排队 / 干预 / 立即发送）
+
+回合正在跑时，Web 端发送不再「立即插话」，而是进**服务端队列**（`engine.js` 的 `pendings`，
+进程内内存态，同 `runs`，重启即丢）：输入框上方出现一行条幅，默认等本轮结束自动发出。
+
+| 模式 | 入口 | 行为 |
+|---|---|---|
+| `queue`（默认） | 运行中点发送 | 本轮 `finalize` 后作为新回合的第一条消息发出 |
+| `interject`（干预） | 条幅「干预」 | 当前工具跑完（或本条回复落库）后，闭合批次、就地插话，同一回合继续 |
+| `now`（立即发送） | 条幅「立即发送」 | 杀进程 + abort 流，本回合判 `cancelled`，收尾后立刻发 |
+
+**铁律：队列里的消息绝不先落 `messages` 表。** 只在安全边界写库——① 工具批次闭合
+（本批每个 `tool_call_id` 都有回执）；② 无 `tool_calls` 的回复已落库；③ 回合 finalize。
+否则 `user` 行会夹在 `assistant.tool_calls` 与 `tool` 回执之间，或批次没闭合就收尾，
+上游一律拒收整个请求。
+
+- `closeToolBatch(sessionId, reason)` 是配对兜底的唯一写入口：给最后一条带 `tool_calls` 的
+  assistant 里缺回执的调用补一条 `is_error=1` 的合成 tool 行（「用户介入/终止，本次调用未执行」）。
+  `finalize` 无条件调一次，取消路径与干预路径各调一次。
+- 读侧还有一层纯过滤（`llm.buildMessages` 的 `pairedByAssistant` / `emittedCallIds`）：只下发
+  「本批（紧邻的连续 tool 行）确有回执」的调用，孤儿回执也不下发。DB/UI 不动，专门兜历史脏数据。
+- `stop()`（用户点「停止」）**会清空队列**（全停语义）；「立即发送」不走 `stop`，只中断当前回合、保留队首。
+- 只允许升级**队首**（`promotePending` 对非队首回 409），避免「越过后面的消息先发」。
+- HTTP：`POST /messages` 的 `delivery:'queue'`；`POST /pending/:qid {action}`；`DELETE /pending/:qid`；
+  会话详情响应带 `pending`，`status` 事件也带 `pending`（前端把条幅当服务端状态的回显）。
 
 ## 会话状态机
 

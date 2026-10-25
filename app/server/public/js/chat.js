@@ -412,6 +412,8 @@
     state.status = (s && s.status) || '';
     state.modelId = (s && s.model_id) || ''; // 顶部动作区展示当前模型
     state.schedule = detail.schedule || null; // 定时任务数据（顶部动作区副标题）
+    state.pending = Array.isArray(detail.pending) ? detail.pending : []; // 待投递队列（服务端内存态回显）
+    renderSendQueue();
     renderHeader();
     updateHeaderActions();
 

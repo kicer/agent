@@ -19,7 +19,7 @@
     const content = ta.value.trim();
     const editingId = state.editingMsgId || 0;
     // 没有文字就不发（避免产生空消息）；但只有附件时允许发送——粘贴长文本转成的 .txt 需要能单独发出。
-    // 运行中也是这条规则：有字就发（后端 live 追投），没字又没附件时按钮本身是「停止」。
+    // 运行中也是这条规则：有字就发，没字又没附件时按钮本身是「停止」。
     if (!content && !state.attachments.length) return;
 
     const pending = state.attachments.slice();
@@ -43,7 +43,10 @@
       const text = names.length
         ? '用户上传了文件：' + names.join('、') + (content ? '\n\n' + content : '')
         : content;
-      const body = { content: text, deepThink: !!state.deepThink };
+      // 是否排队由**服务端**决定：Web 端一律交 delivery:'queue'，回合在跑就进队列，
+      // 没在跑就等价于立即发送（enqueueMessage 直接走 postUserMessage）。
+      // 不用 state.status 判断——SSE 状态可能过期，误判成 live 会把 user 行插进工具批次中间。
+      const body = { content: text, deepThink: !!state.deepThink, delivery: 'queue' };
       let sent;
       if (editingId) {
         // 覆盖式编辑：先撤掉本地该条及其后的渲染，再让服务端删除同范围历史并以新内容重开一轮
@@ -56,7 +59,15 @@
       }
       clearUploadCards(); // 消息已发出(告知行已拼入正文),卡片使命完成清掉
 
-      appendUserMsg(text, atts.map(a => a.name), sent && sent.message_id);
+      // 排队回执：条幅以服务端返回的队列为准（本端不画气泡，等真正落库的 user_message 再画）；
+      // 竞态下服务端发现回合已结束会直接送达（没有 queued 字段），那就照常当普通发送处理。
+      const queued = !!(sent && sent.queued);
+      if (queued) {
+        state.pending = sent.pending || [];
+        renderSendQueue();
+      } else {
+        appendUserMsg(text, atts.map(a => a.name), sent && sent.message_id);
+      }
       // 标题取用户原文，不带文件告知行；纯附件发送时退回粘贴文本的前缀
       const seed = content || (pending[0] && pending[0].titleSeed) || '';
       if (!state.sessionTitle && seed) {
@@ -65,7 +76,8 @@
       renderHeader();
       // 运行中插话：正文字流进行中已有一个气泡作「活着」的信号，不再挂打字占位
       //（刚挂上就会被下一个 delta 移除，只会闪一下）；工具间隙里补上占位反而有用。
-      if (!state.streaming) addTyping();
+      // 排队时本回合没有任何新动静，不挂占位。
+      if (!queued && !state.streaming) addTyping();
       loadSessionList();
     } catch (e) {
       // 发送失败:附件还原+草稿文本回填（发送前已清空输入框，挂起/失败不能让文字蒸发），
@@ -82,6 +94,56 @@
       toast('发送失败:' + e.message);
     }
   }
+
+  // ---------- 待发送条幅 ----------
+  // 队列本身在服务端（engine.pendings），关页面/换设备/重连都不丢；这里只负责画。
+  // 每条一行；只有队首有「干预 / 立即发送」，其余显示排队中（不能越过前一条先发）。
+  function renderSendQueue() {
+    const box = $('send-queue');
+    if (!box) return;
+    const list = state.pending || [];
+    box.classList.toggle('hidden', !list.length);
+    if (!list.length) { box.innerHTML = ''; return; }
+    box.innerHTML = list.map((it, i) => {
+      const busy = it.mode === 'interject' || it.mode === 'now';
+      const tag = it.mode === 'now' ? '<span class="sq-tag">正在中断…</span>'
+        : it.mode === 'interject' ? '<span class="sq-tag">等待当前步骤…</span>'
+          : (i === 0 ? '' : '<span class="sq-tag">排队中</span>');
+      const acts = (i === 0 && !busy)
+        ? '<button data-act="interject" title="当前工具调用结束后立即插话">干预</button>' +
+          '<button data-act="now" title="终止本轮工具调用并立即发送">立即发送</button>'
+        : '';
+      return '<div class="sq-item' + (busy ? ' sq-busy' : '') + '" data-qid="' + esc(it.id) + '">' +
+        '<span class="sq-text" title="' + esc(it.content) + '">' + esc(it.content) + '</span>' +
+        tag + acts +
+        '<button class="sq-x" data-act="cancel" title="取消这条">×</button></div>';
+    }).join('');
+  }
+
+  // 条幅按钮：× 取消；干预/立即发送升级队首（服务端只在安全边界真正投递）。
+  async function onSendQueueClick(e) {
+    const btn = e.target.closest('#send-queue button[data-act]');
+    if (!btn || !state.sessionId) return;
+    const item = btn.closest('.sq-item');
+    const qid = item && item.dataset.qid;
+    if (!qid) return;
+    const act = btn.dataset.act;
+    btn.disabled = true;
+    try {
+      const base = '/api/sessions/' + state.sessionId + '/pending/' + encodeURIComponent(qid);
+      const r = act === 'cancel' ? await req('DELETE', base) : await req('POST', base, { action: act });
+      if (r && Array.isArray(r.pending)) { state.pending = r.pending; renderSendQueue(); }
+      if (act === 'cancel') return;
+      if (r && r.delivered) return; // 回合已结束：服务端直接投递，等 user_message 画气泡
+      toast(act === 'now' ? '已请求中断，随后立即发送' : '已请求干预：当前步骤结束后插话');
+    } catch (err) {
+      toast('操作失败：' + err.message);
+      renderSendQueue();
+    }
+  }
+
+  const sendQueueBox = $('send-queue');
+  if (sendQueueBox) sendQueueBox.addEventListener('click', onSendQueueClick);
 
   // ---------- SSE 流 ----------
   // 助手消息流式容器：首个 delta 到达时创建，同时为思考面板预留挂载点
@@ -158,12 +220,15 @@
     state.lastSseAt = Date.now(); // 建连即重置静默计时
     // 任何具名事件都算连接存活：静默看门狗与回前台宽限共用（error 不列，原生连接错误也走 error）
     ['ping', 'status', 'assistant_delta', 'reasoning_delta', 'assistant_message', 'tool_call_start',
-      'tool_call_args', 'tool_call', 'tool_result', 'ui_card', 'auto_compress', 'done', 'title', 'think_auto']
+      'tool_call_args', 'tool_call', 'tool_result', 'ui_card', 'auto_compress', 'done', 'title', 'think_auto',
+      'pending_added', 'pending_removed', 'user_message']
       .forEach(function (n) { es.addEventListener(n, function () { markSseAlive(n); }); });
     es.addEventListener('status', ev => {
       const d = JSON.parse(ev.data);
       state.status = d.status;
       if (d.model_id) state.modelId = d.model_id;
+      // 待投递队列以服务端为准（重连/换标签页后条幅能自动回到真实状态）
+      if (Array.isArray(d.pending)) { state.pending = d.pending; renderSendQueue(); }
       renderHeader();
       updateHeaderActions();
       updateScrollBottomBtn(); // 状态切换同步右下角转圈(开始/结束干活)
@@ -348,8 +413,33 @@
     es.addEventListener('auto_compress', ev => {
       proposeAutoCompress(JSON.parse(ev.data));
     });
+    // 待发送条幅：新入队 / 升级（同 id upsert）
+    es.addEventListener('pending_added', ev => {
+      const d = JSON.parse(ev.data);
+      if (!d || !d.id) return;
+      const list = state.pending.slice();
+      const i = list.findIndex(x => x.id === d.id);
+      if (i >= 0) list[i] = d; else list.push(d);
+      state.pending = list;
+      renderSendQueue();
+    });
+    // 出队（已送达 / 被取消 / 停止时整体清空）
+    es.addEventListener('pending_removed', ev => {
+      const d = JSON.parse(ev.data);
+      state.pending = state.pending.filter(x => x.id !== (d && d.id));
+      renderSendQueue();
+    });
+    // 排队消息真正落库：这一刻它才成为历史，画进聊天区（排队期间不画）
+    es.addEventListener('user_message', ev => {
+      const d = JSON.parse(ev.data);
+      if (!d || !d.id || state.renderedSigs[d.id]) return; // 防重（重连补拉/多标签页）
+      appendUserMsg(d.content, null, d.id);
+      removeTyping();
+    });
     es.addEventListener('done', ev => {
       removeTyping(); // 本轮结束,占位亦终止(如模型报错无回复)
+      let doneStatus = '';
+      try { doneStatus = (JSON.parse(ev.data) || {}).status || ''; } catch (_) { /* 无 data 的连接层错误 */ }
       // 压缩回合异常结束的兜底（模型报错回合直接 break / 被终止 → 不会有带 is_summary 的最终消息）：
       // 复位等待状态并还原压缩按钮，历史保持原样不动。
       if (state.pendingSummary) {
@@ -364,10 +454,20 @@
       state.streamWrap = null;
       state.streamReasoning = '';
       state.streamThinkEl = null;
-      // 异常收尾兜底：把参数未流完的早卡就地回填收尾，避免占位态永远呼吸
+      // 异常收尾兜底：把参数未流完的早卡就地回填收尾，避免占位态永远呼吸。
+      // 被「立即发送/停止」硬中断时，这些调用根本没落库、不会再有回执，
+      // 结果区要明确写「已取消」，否则卡片永远停在「执行中…」。
       for (const sid of Object.keys(state.toolCallStreaming)) {
         const stg = state.toolCallStreaming[sid];
         finalizeToolCardArgs(sid, stg.name, stg.args);
+        const card = state.toolCards[sid];
+        const pre = card && card.querySelector('.tool-result');
+        if (pre && pre.textContent === '执行中…') {
+          card.classList.add('error');
+          const spin = card.querySelector('.spin');
+          if (spin) spin.textContent = '⏹';
+          pre.textContent = doneStatus === 'cancelled' ? '已取消（本轮被终止，未执行）' : '本轮已结束，未收到结果';
+        }
       }
       state.toolCards = {};
       state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置

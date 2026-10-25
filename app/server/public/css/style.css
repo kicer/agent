@@ -1616,6 +1616,27 @@ body.pv-resizing #pv-pane iframe { pointer-events: none; }
 }
 @keyframes drop-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 
+/* ================= 待发送条幅（运行中排队 / 干预 / 立即发送） ================= */
+/* 输入卡上方一行小条：正文单行省略 + 动作按钮。多条时逐条堆叠，每条仍是一行。
+   配色刻意与「编辑提示条」的蓝色区分：排队是“稍后执行”的提示态，不是输入态。 */
+.send-queue { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.sq-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 5px 5px 11px;
+  border-radius: 12px; background: #fff4dc; color: #a06a00; font-size: 12.5px;
+}
+.sq-item .sq-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sq-item .sq-tag { flex: none; font-size: 11.5px; opacity: .75; }
+.sq-item button {
+  flex: none; padding: 2px 9px; border-radius: 8px;
+  font-size: 12.5px; font-weight: 600; color: inherit; background: none; border: none;
+}
+.sq-item button:active { background: rgba(160, 106, 0, 0.12); }
+.sq-item button:disabled { opacity: .45; }
+.sq-item .sq-x { padding: 2px 7px; font-weight: 500; }
+/* 已升级为「干预/立即发送」但还没到边界：按钮置灰，显示“等待当前步骤” */
+.sq-item.sq-busy button:not(.sq-x) { opacity: .45; }
+
 /* ================= 编辑已发送消息提示条 ================= */
 /* 覆盖式重发：输入框内部的浅蓝提示条（嵌在 .input-shell 顶端，间距由 shell 的 gap 提供）。 */
 .edit-bar {

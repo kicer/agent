@@ -219,7 +219,33 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
   }
   // tool 回执按 tool_call_id 索引：给 errAck 行拼错误提示时取执行时挡下的原因
   const toolRowById = new Map();
-  for (const row of history) if (row.role === 'tool' && row.tool_call_id) toolRowById.set(row.tool_call_id, row);
+  // 只收「会下发」的回执：archived 行不进模型，不能拿它当配对凭据
+  //（否则 assistant 的调用被保留、回执却被跳过，上游照样拒收）。
+  for (const row of history) {
+    if (row.role !== 'tool' || !row.tool_call_id || row.type === 'archived') continue;
+    toolRowById.set(row.tool_call_id, row);
+  }
+  // 已下发的 tool_call id 集合：tool 行按它反查自己有没有「主」。
+  // 与下面的调用侧过滤合成「读侧配对兜底」：库里的孤儿行（旧版本中途终止留下的有调用无回执、
+  // 或历史被外部改动）一律不进请求——严格上游对配对是硬约束，缺一条整请求被拒。
+  // 只影响发给模型的那一份，DB 与 UI 完全不动。
+  const emittedCallIds = new Set();
+  // 预扫：每条带 tool_calls 的 assistant「紧跟着它的那批回执」里真实存在的 call id。
+  // 只往下扫连续的 tool 行，遇到 user/assistant 就停——上游要求 tool 回执紧跟在
+  // 带 tool_calls 的 assistant 后面，中间夹任何消息（旧版 live 追投就可能把 user 插进来）
+  // 都会让整批非法。所以不能拿「全库里有这条回执」当配对凭据。
+  const pairedByAssistant = new Map(); // assistant 行 id -> Set(call_id)
+  for (let i = 0; i < history.length; i++) {
+    const r = history[i];
+    if (r.role !== 'assistant' || !r.tool_calls) continue;
+    const ids = new Set();
+    for (let j = i + 1; j < history.length && history[j].role === 'tool'; j++) {
+      // archived 回执不进模型，不能当作「已答复」凭据（否则调用被保留、回执被跳过）
+      if (history[j].type === 'archived') continue;
+      if (history[j].tool_call_id) ids.add(history[j].tool_call_id);
+    }
+    pairedByAssistant.set(r.id, ids);
+  }
   // 「已消费」分界 = 最后一条**写过文本**的 assistant 行（不要求无 tool_calls）：
   // 描述写在 content 里 + 继续调工具，就是模型真看到图的证据（见文件头注释的循环复盘）。
   // errAck / archived 不发模型，不算回复：它们之前的图不算被消费。
@@ -293,8 +319,20 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
       // reasoning_ack_field 改名注入后此键必被剥除，不会泄往上游）。
       if (row.reasoning) m.__reasoning = row.reasoning;
       if (row.tool_calls) {
-        m.tool_calls = JSON.parse(row.tool_calls);
-        if (trimActive && TRIM.writeRounds > 0) trimWriteCalls(m.tool_calls, roundsAfter.get(row.id) || 0);
+        let calls = [];
+        try { calls = JSON.parse(row.tool_calls) || []; } catch (_) { calls = []; }
+        // 配对兜底（读侧）：只下发本批确有回执的调用。旧版本中途终止、外部工具异常、
+        // user 行插进批次中间，都会留下无法配对的调用，严格上游会拒收整个请求。
+        const pairedIds = pairedByAssistant.get(row.id) || new Set();
+        const paired = calls.filter(c => c && c.id && pairedIds.has(c.id));
+        if (!paired.length) {
+          // 整轮调用都没回执：纯工具轮整行不发；带正文的保留为普通文本回复
+          if (!String(m.content || '').trim()) return;
+        } else {
+          m.tool_calls = paired;
+          for (const c of paired) emittedCallIds.add(c.id);
+          if (trimActive && TRIM.writeRounds > 0) trimWriteCalls(m.tool_calls, roundsAfter.get(row.id) || 0);
+        }
       }
       if (!m.content) delete m.content;
       messages.push(m);
@@ -302,6 +340,8 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
     }
     // errAck 轮的 tool 回执：随该轮一起丢弃，避免无主 tool 消息
     if (row.role === 'tool' && dropToolCallIds.has(row.tool_call_id)) return;
+    // 孤儿 tool 回执（调用行被过滤/存档/errAck 丢弃）：单独下发必被上游拒收，直接跳过
+    if (row.role === 'tool' && !emittedCallIds.has(row.tool_call_id)) return;
     // tool/user 行：含图哨兵 JSON 还原为内容块（解析结果按行 id 缓存）；已消费的图只留文字描述 + 标记
     const blocks = cachedDecodeBlocks(session, row);
     let content = row.content || '';

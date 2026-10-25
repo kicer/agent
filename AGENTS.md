@@ -111,7 +111,7 @@ flowchart TD
 
 ## 全局约束（改之前先读）
 
-1. **单实例、单进程内存态**。`engine.js` 的 `runs`/`titling`、`wechat.js` 的回合投递状态与实例缓存、
+1. **单实例、单进程内存态**。`engine.js` 的 `runs`/`titling`/`pendings`（待投递消息队列）、`wechat.js` 的回合投递状态与实例缓存、
    `publicFiles` 的短链表、`download-token` 的随机密钥都在进程内——重启即清空，多实例不共享。
    （微信投递游标 `last_msg_id` 例外，它是落库的。）不要引入需要跨进程一致性的设计。
 2. **配置冷加载**。`config.js` 的 `DEFAULTS` 在启动时 deep-merge 并校验；改 `config.yml` 后必须
