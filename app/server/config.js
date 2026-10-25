@@ -440,18 +440,76 @@ function readConfigText(cfg) {
 // 单项编辑:[{path:[...], value}] 或 [{path:[...], delete:true}] 或 [{path:[...], value, append:true}]。
 // 用 YAML Document 写回,保留注释与排版;路径段为纯数字时按数组下标处理(如 ["platforms",0,"keys",1,"models",0])。
 // append:向目标数组追加一项(新增平台/Key/模型用);目标不存在时创建新数组。
+//
+// 写回时的版式处理(只作用于本次编辑写入的节点,文件其它部分原样保留):
+// · 值带冒号(如模型 id "global:hy-image-3.5")强制双引号——裸写的 plain 标量换个解析器、
+//   或落进 flow 集合里就容易被当成分隔符;纯 URL 例外(裸写无歧义)。
+// · extra_params / thinking_params 这类小参数表用 flow 风格({k: v})写成一行,否则嵌套几层
+//   展开成十几行,读起来又乱又占版面。
+// · 追加整项时连同所在数组一起转 block:flow 数组里塞 block 映射会输出成残句(platforms: 后直接跟键)。
+const FLOW_PARAM_KEYS = new Set(['extra_params', 'thinking_params']);
+
+function needsQuoteStr(v) {
+  return typeof v === 'string' && v.includes(':') && !/^\w+:\/\/\S+$/.test(v);
+}
+
+function styleWrittenNode(node, forceBlock) {
+  if (!node || typeof node !== 'object') return;
+  if (YAML.isScalar(node)) {
+    if (needsQuoteStr(node.value)) node.type = 'QUOTE_DOUBLE';
+    return;
+  }
+  if (YAML.isMap(node)) {
+    if (forceBlock) node.flow = false;
+    for (const pair of node.items) {
+      const key = pair.key && pair.key.value;
+      const child = pair.value;
+      // 参数表保持 flow;内部值不再强制 block(不然 {k: {…}} 里的嵌套表会被抖开)
+      if (FLOW_PARAM_KEYS.has(String(key)) && child && typeof child === 'object' && !YAML.isScalar(child)) {
+        child.flow = true;
+        styleWrittenNode(child, false);
+      } else {
+        styleWrittenNode(child, forceBlock);
+      }
+    }
+  } else if (YAML.isSeq(node)) {
+    if (forceBlock) node.flow = false;
+    for (const item of node.items) styleWrittenNode(item, forceBlock);
+  }
+}
+
+function styledNode(doc, value, forceBlock) {
+  const node = doc.createNode(value);
+  if (forceBlock && node && typeof node === 'object' && !YAML.isScalar(node)) node.flow = false;
+  styleWrittenNode(node, forceBlock);
+  return node;
+}
+
 function applyEditsToText(text, edits) {
   const doc = YAML.parseDocument(text || '');
   for (const e of edits || []) {
     if (!e || !Array.isArray(e.path) || !e.path.length) throw new Error('配置项 path 必须是非空数组');
     const docPath = e.path.map(s => (typeof s === 'string' && /^\d+$/.test(s)) ? Number(s) : s);
-    if (e.delete) doc.deleteIn(docPath);
-    else if (e.append) {
+    if (e.delete) { doc.deleteIn(docPath); continue; }
+    if (e.append) {
+      const item = styledNode(doc, e.value, true);
       const target = doc.getIn(docPath, true);
-      if (target && typeof target.add === 'function') target.add(e.value);
-      else if (target === null || target === undefined) doc.setIn(docPath, [e.value]);
-      else throw new Error('配置项 ' + docPath.join('.') + ' 不是数组，无法追加');
-    } else doc.setIn(docPath, e.value);
+      if (target && typeof target.add === 'function') {
+        target.flow = false; // 与 block 化的新项保持一致,否则父数组仍是 flow
+        target.add(item);
+      } else if (target === null || target === undefined) {
+        const seq = doc.createNode([]);
+        seq.flow = false;
+        seq.add(item);
+        doc.setIn(docPath, seq);
+      } else throw new Error('配置项 ' + docPath.join('.') + ' 不是数组，无法追加');
+      continue;
+    }
+    const node = styledNode(doc, e.value, false);
+    // 直接写参数键(整对象 set)时也要 flow
+    if (FLOW_PARAM_KEYS.has(String(docPath[docPath.length - 1])) &&
+      node && typeof node === 'object' && !YAML.isScalar(node)) node.flow = true;
+    doc.setIn(docPath, node);
   }
   return doc.toString();
 }
