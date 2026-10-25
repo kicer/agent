@@ -24,7 +24,7 @@
 | `wxbot/` | 微信 iLink 协议调制解调器（多实例） | 独立容器 `agent-wxbot` |
 | `mcp/` | 同栈 MCP 服务：`web_search` / `image_task` / `video_task` / `asr` | 四个容器，仅内网 |
 | `skills/` | 目录式技能（`SKILL.md` + `run.py`/`run.sh`） | 运行时挂载，`skills/deps` 为依赖层 |
-| `scripts/` | `init.sh` 生成 `.env` + `config.yml`；`init_host.sh` 裸机初始化 | 幂等 |
+| `scripts/` | `init.sh` 生成 `.env` + 首次创建 `config.yml`（仅初始管理员）；`init_host.sh` 裸机初始化 | 幂等，**不覆盖已有配置** |
 | `docs/` | 专题文档：`tool-design.md`（工具接口规范）、`OFFICE.md` | — |
 | `tasks/` | **运行时数据**：每个会话一个工作目录 | gitignore |
 | `data/` | **运行时数据**：SQLite `.agent.db`、`prompt.txt` 调试产物 | gitignore |
@@ -60,7 +60,7 @@ flowchart TD
 | `agent-core` | 8090 | 宿主机映射，**唯一对外** |
 | `agent-executor` | 9000（exec）、3100（预览网关） | 仅 `expose`，内网 |
 | `agent-wxbot` | 8093 | 仅内网 |
-| `mcp_*` | 3000 | 仅内网；compose 里注释掉的 `ports` 仅供本机调试 |
+| `mcp_*` | 3000 | 仅内网 |
 
 ### 数据持久化（bind mount）
 
@@ -83,8 +83,9 @@ flowchart TD
 ### 环境变量（接线全靠根 `.env` + compose）
 
 `AGENT_CONFIG`、`PORT`、`EXECUTOR_URL`、`EXECUTOR_TOKEN`、`WXBOT_URL`、`WXBOT_TOKEN`、
-`ASR_URL`、`VIRTUAL_HOST`、`PREVIEW_PROXIES`、`EXECUTOR_LOG_LEVEL`、`WXBOT_LOG_LEVEL`、`ASR_LOG_LEVEL`。
-密钥生成：`./scripts/init.sh`（幂等，重跑不掉登录态）。语音识别的上游 key/base/model 不在 env，
+`PUBLIC_BASE_URL`、`ASR_URL`、`PREVIEW_PROXIES`、`EXECUTOR_LOG_LEVEL`、`WXBOT_LOG_LEVEL`、`ASR_LOG_LEVEL`。
+密钥生成：`./scripts/init.sh`（幂等，重跑不掉登录态；**从不覆盖已有 config.yml**，只在其缺失时创建
+最小骨架）。语音识别的上游 key/base/model 不在 env，
 写在 `config.yml` 的 `mcp_servers[name=asr].headers`（容器不存平台密钥）。
 
 ## 三条主链路
@@ -161,7 +162,7 @@ curl -s http://127.0.0.1:8090/api/health
 | 配置默认值 | `app/server/config.js` 的 `DEFAULTS` ↔ `app/config.example.yml` |
 | 内置工具 | `app/server/tools/definitions.json` ↔ `app/AGENTS.md` / README 工具表 ↔ `docs/tool-design.md` 规范 |
 | 新增服务 / 端口 / 卷 | `docker-compose.yml` ↔ `README.md` 的部署与安全章节 |
-| 新增环境变量 | `.env.example` ↔ compose ↔ README「环境变量」 |
+| 新增环境变量 | compose ↔ README「环境变量」 |
 | 发版号 | `app/package.json` 的 `version` ↔ `app/server/routes/system.js` 的 `VERSION` 字面量（两者不自动同步） |
 | 技能格式 | `skills/README.md` ↔ `app/server/tools/skills.js` 的解析 |
 | 对外 API | `app/server/routes/*` ↔ 前端 `app/server/public/js/*` ↔ README |

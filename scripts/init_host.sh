@@ -359,8 +359,7 @@ print_next_steps() {
 
 备注：
 - 上面若提示需要重启（内核/核心库更新），建议先 reboot，再执行第 ③ 步
-- init.sh 可重复执行：.env 里的密钥复用，config.yml 会先备份为 .bak.<时间戳>
-- 只刷新密钥、不动配置：./scripts/init.sh --env-only
+- init.sh 可重复执行：已有的 .env 与 config.yml 都不会被覆盖
 EOF
 }
 

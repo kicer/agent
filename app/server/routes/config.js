@@ -261,8 +261,9 @@ function normEdit(e) {
 }
 router.patch('/', wrap((req, res) => {
   const cfg = cfgOf();
-  const text = readConfigText(cfg);
-  if (text === null) return sendErr(res, Object.assign(new Error('配置文件不存在:' + (cfg.config_path || '(未知路径)')), { status_code: 409 }));
+  // 文件缺失（或曾被 Docker 误建成空目录）不阻塞：以空文档继续，写入时由 writeConfigText 创建。
+  // 前提是父目录可写（容器里 /app 可写）；否则 fs.writeFileSync 会报错并在下面回 500。
+  const text = readConfigText(cfg) || '';
   const body = req.body || {};
   let edits;
   try {

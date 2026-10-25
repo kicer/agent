@@ -18,7 +18,7 @@ const CALL_TIMEOUT_MS = 60000;
 let toolDefs = [];                    // OpenAI function 格式（所有 MCP 工具）
 const toolIndex = new Map();          // 发送名 -> { server, tool, def }（服务配置 + 原始工具名 + 原始契约）
 let builtinNames = new Set();
-let PUBLIC_BASE = ''; // core 自身公网前缀（loadConfig 已归一：VIRTUAL_HOST 优先 config.yml）；随每次请求 X-Public-Base 头下发
+let PUBLIC_BASE = ''; // core 自身公网前缀（loadConfig 已归一：config.yml 优先，其次 PUBLIC_BASE_URL）；随每次请求 X-Public-Base 头下发
 
 // 发一次 JSON-RPC 请求，返回 { result, headers }（HTTP 非 2xx / error / 无法解析时抛异常）。
 // 某些 MCP 服务遵循 Streamable HTTP 规范会在 initialize 响应里返回 Mcp-Session-Id，

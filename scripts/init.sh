@@ -1,268 +1,136 @@
 #!/bin/bash
-# init.sh — 生成 .env 与 config.yml。
+# init.sh — 首次部署准备：生成 .env、探测公网地址、创建初始管理员。幂等。
 #
-# 只读环境变量，不依赖任何外部文件；**全部可选**，什么都不给也能直接跑。
+#   ./scripts/init.sh                    # 已有 .env / config.yml 均不覆盖
 #
-# 用法：
-#   ./scripts/init.sh                                     # 全用默认值（无模型、admin/admin）
-#   BIGMODEL_KEY=xxx AUTH_USER=me ./scripts/init.sh       # 给几个变量就行
-#   ./scripts/init.sh --env-only                          # 只刷新 .env 密钥（幂等，不碰 config.yml）
-#
-# 输入（都可选）：
-#   BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY  模型平台 key，填几个启用几个（0~3 个）
-#   AUTH_USER / AUTH_PASSWORD               登录账号（默认 admin / admin，请自行改掉）
-#   PUBLIC_IP / AGENT_PORT                  对外地址与端口，写进 public_link.base_url；
-#                                           PUBLIC_IP 不配置则自动探测公网 IP
-#   AUTH_SECRET / EXECUTOR_TOKEN / WXBOT_TOKEN  一般不用给：不给就自动生成并复用（见下）
-#
-# 本脚本只自动写「模型平台 + web_search」。image_task / video_task / asr 需要上游 key，
-# 一律以**注释模板**写进 mcp_servers（含默认 url 与 header 名），取消注释并填好 key 即生效——
-# 不替用户猜平台、也不复用任何模型平台 key。
-#
-# 微信接入（wxbot 已合入根 compose，作为栈内服务）：本脚本只负责生成/复用根 .env 的 WXBOT_TOKEN；
-# wxbot 自身零配置文件（compose 注 env + 内置默认，同 executor 模式），无需任何同步动作。
-#
-# config.yml 只写 deploy 相关的段：platforms / auth / mcp_servers / public_link；
-# 其余配置项一律走 server/config.js 的 DEFAULTS（完整清单见 app/config.example.yml）。
-#
-# ⚠️ config.yml 是本脚本的生成物，不要手改（每次生成前会把旧的备份为 config.yml.bak.<时间戳>）。
+# 可选变量：PUBLIC_IP、AGENT_PORT、AUTH_USER / AUTH_PASSWORD（默认 admin / admin）、
+#          EXECUTOR_TOKEN / WXBOT_TOKEN / AUTH_SECRET（不给则生成并复用）。
 set -euo pipefail
 
-# ============================================================
-# 路径与默认值
-# ============================================================
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 
-# 支持 --env-only 参数：只刷 .env 密钥（幂等，绝不碰 config.yml）
-if [ "${1:-}" = "--env-only" ]; then ENV_ONLY=1; fi
-
-CONFIG_YML="$REPO_DIR/config.yml"
 ENV_FILE="$REPO_DIR/.env"
+CONFIG_YML="$REPO_DIR/config.yml"
 
-BIGMODEL_KEY="${BIGMODEL_KEY:-}"
-DEEPSEEK_KEY="${DEEPSEEK_KEY:-}"
-QWEN_KEY="${QWEN_KEY:-}"
+PUBLIC_IP="${PUBLIC_IP:-}"
+PORT_INPUT="${AGENT_PORT:-}"
 AUTH_USER="${AUTH_USER:-admin}"
 AUTH_PASSWORD="${AUTH_PASSWORD:-admin}"
-PUBLIC_IP="${PUBLIC_IP:-}"
-# 记住用户是否显式给了端口（下面 .env 复用逻辑不能踩掉显式传参）
-AGENT_PORT_INPUT="${AGENT_PORT:-}"
-AGENT_PORT="${AGENT_PORT_INPUT:-8090}"
-EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-}"
-AUTH_SECRET="${AUTH_SECRET:-}"
-# 微信接入服务 token（core ↔ wxbot 双向共用，compose 两侧同值注入；wxbot 已并入仓库）
-WXBOT_TOKEN="${WXBOT_TOKEN:-}"
 
-log()  { echo -e "\n\033[1;32m===== $* =====\033[0m"; }
-info() { echo -e "\033[1;36m[INFO]\033[0m $*"; }
-warn() { echo -e "\n\033[1;33m[WARN]\033[0m $*"; }
+info()  { echo -e "\033[1;36m[INFO]\033[0m $*"; }
+warn()  { echo -e "\n\033[1;33m[WARN]\033[0m $*"; }
+title() { echo -e "\n\033[1;32m===== $* =====\033[0m"; }
 
-gen_hex() {  # $1 = 字节数（默认 32）
-    local n="${1:-32}"
+gen_hex() {
     if command -v openssl >/dev/null 2>&1; then
-        openssl rand -hex "$n"
+        openssl rand -hex 32
     else
-        head -c "$n" /dev/urandom | od -An -tx1 | tr -d ' \n'
+        head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
     fi
 }
 
-# ============================================================
-# 1. 生成 .env（密钥只生成一次，之后复用 → 重跑不掉登录态、不改 executor token）
-# ============================================================
-log "生成 $ENV_FILE"
-
-if [ -f "$ENV_FILE" ]; then
-    EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(sed -n 's/^EXECUTOR_TOKEN=//p' "$ENV_FILE" | head -1)}"
-    AUTH_SECRET="${AUTH_SECRET:-$(sed -n 's/^AUTH_SECRET=//p' "$ENV_FILE" | head -1)}"
-    WXBOT_TOKEN="${WXBOT_TOKEN:-$(sed -n 's/^WXBOT_TOKEN=//p' "$ENV_FILE" | head -1)}"
-    # AGENT_PORT 同理复用：避免不带参数重跑时把部署机自定义端口重置回 8090（显式传参优先）
-    AGENT_PORT="${AGENT_PORT_INPUT:-$(sed -n 's/^AGENT_PORT=//p' "$ENV_FILE" | head -1)}"
-    AGENT_PORT="${AGENT_PORT:-8090}"
-fi
-EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(gen_hex 32)}"
-AUTH_SECRET="${AUTH_SECRET:-$(gen_hex 32)}"
-WXBOT_TOKEN="${WXBOT_TOKEN:-$(gen_hex 32)}"
-
-cat > "$ENV_FILE" <<EOF
-# 本文件由 scripts/init.sh 生成，勿手改（改配置请重新运行该脚本，或用环境变量覆盖）
-# EXECUTOR_TOKEN: core 与 executor 之间的调用鉴权（两侧同值，compose 注入）
-# AUTH_SECRET:    登录态签名密钥（写进 config.yml 的 auth.secret）
-# WXBOT_TOKEN:    core ↔ wxbot 微信接入服务 token（compose 注入两侧；wxbot 零配置文件，env 即全部接线）
-# AGENT_PORT:     agent-core 映射到宿主机的端口
-# 注意：语音识别（mcp_asr）的上游 key/base_url/model 不在本文件，写在 config.yml 的 asr.headers（容器自己不存密钥）
-EXECUTOR_TOKEN=$EXECUTOR_TOKEN
-AUTH_SECRET=$AUTH_SECRET
-WXBOT_TOKEN=$WXBOT_TOKEN
-AGENT_PORT=$AGENT_PORT
-EOF
-info "EXECUTOR_TOKEN / AUTH_SECRET / WXBOT_TOKEN 已就位（沿用已有 .env 的值，没有则新生成）"
-
-# --env-only：只刷密钥，绝不碰 config.yml（平台 key 不在 .env 里，重跑全量会清空已部署配置）
-if [ "${ENV_ONLY:-}" = "1" ]; then
-    log "完成 ✅（--env-only：未改动 config.yml）"
-    exit 0
-fi
-
-# PUBLIC_IP 兜底：只有没给时才去探测（探测不到只告警，不影响启动，只是图生视频用不了）
-if [ -z "$PUBLIC_IP" ]; then
-    for u in https://ifconfig.me https://api.ipify.org; do
-        if command -v curl >/dev/null 2>&1; then
-            PUBLIC_IP="$(curl -fsS --max-time 5 "$u" 2>/dev/null || true)"
-            [ -n "$PUBLIC_IP" ] && break
-        fi
-    done
-fi
-if [ -z "$PUBLIC_IP" ]; then
-    warn "没给 PUBLIC_IP 也探测不到：public_link 不生效（需要外部服务来取文件的场景用不了）。"
-    warn "设置后重跑即可： PUBLIC_IP=<公网IP> $0"
-fi
-
-# ============================================================
-# 2. 生成 config.yml（只写 platforms / auth / mcp_servers / public_link）
-# ============================================================
-log "生成 $CONFIG_YML"
-
-if [ -f "$CONFIG_YML" ]; then
-    cp "$CONFIG_YML" "$CONFIG_YML.bak.$(date +%s)"
-    info "旧 config.yml 已备份为 config.yml.bak.<时间戳>"
-fi
-
-# 单个平台骨架（url / 模型 / 参数固定，只有 key 来自变量）
-emit_platform() {
-    case "$1" in
-        bigmodel)
-            cat <<EOF
-  - name: bigmodel
-    url: https://open.bigmodel.cn/api/paas/v4
-    keys:
-      - api_key: "$2"
-    models:
-      - id: glm-5.3-flash
-        vision: true
-        extra_params: { reasoning_effort: "low", tool_stream: true }
-        thinking_params: { reasoning_effort: "max" }
-EOF
-            ;;
-        deepseek)
-            cat <<EOF
-  - name: deepseek
-    url: https://api.deepseek.com
-    keys:
-      - api_key: "$2"
-    models:
-      - id: deepseek-flash
-        vision: true
-        extra_params: { thinking: { type: "disabled" } }
-        thinking_params: { thinking: { type: "enabled" }, reasoning_effort: "max" }
-EOF
-            ;;
-        qwen)
-            cat <<EOF
-  - name: qwen
-    url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    keys:
-      - api_key: "$2"
-    models:
-      - id: qwen3.8-flash
-        vision: true
-        extra_params: { enable_thinking: false }
-        thinking_params: { enable_thinking: true, reasoning_effort: "xhigh" }
-EOF
-            ;;
-    esac
+env_get() {
+    [ -f "$ENV_FILE" ] || return 0
+    awk -F= -v k="$1" '$1==k { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE" || true
 }
 
-enabled_plats=()
-if [ -n "$BIGMODEL_KEY" ]; then enabled_plats+=("bigmodel"); fi
-if [ -n "$DEEPSEEK_KEY" ]; then enabled_plats+=("deepseek"); fi
-if [ -n "$QWEN_KEY" ];     then enabled_plats+=("qwen"); fi
+yaml_q() {
+    local s="${1//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '"%s"' "$s"
+}
+
+detect_public_ip() {
+    command -v curl >/dev/null 2>&1 || return 0
+    local u ip
+    for u in https://ifconfig.me https://api.ipify.org; do
+        ip="$(curl -fsS --max-time 5 "$u" 2>/dev/null || true)"
+        if [ -n "$ip" ]; then printf '%s' "$ip"; return 0; fi
+    done
+}
+
+# ---------- .env ----------
+title "生成 $ENV_FILE"
+
+EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(env_get EXECUTOR_TOKEN)}"
+WXBOT_TOKEN="${WXBOT_TOKEN:-$(env_get WXBOT_TOKEN)}"
+AUTH_SECRET="${AUTH_SECRET:-$(env_get AUTH_SECRET)}"
+AGENT_PORT="${PORT_INPUT:-$(env_get AGENT_PORT)}"
+AGENT_PORT="${AGENT_PORT:-8090}"
+OLD_URL="$(env_get PUBLIC_BASE_URL)"
+
+EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(gen_hex)}"
+WXBOT_TOKEN="${WXBOT_TOKEN:-$(gen_hex)}"
+AUTH_SECRET="${AUTH_SECRET:-$(gen_hex)}"
+
+if [ -n "$PUBLIC_IP" ]; then
+    PUBLIC_BASE_URL="http://$PUBLIC_IP:$AGENT_PORT"
+elif [ -n "$OLD_URL" ]; then
+    # 显式改端口时只换端口，保留原协议与主机
+    if [ -n "$PORT_INPUT" ]; then
+        PUBLIC_BASE_URL="$(printf '%s' "$OLD_URL" | sed -E "s#^(https?://[^/:]+)(:[0-9]+)?#\1:$AGENT_PORT#")"
+    else
+        PUBLIC_BASE_URL="$OLD_URL"
+    fi
+else
+    DETECTED_IP="$(detect_public_ip)"
+    PUBLIC_BASE_URL="${DETECTED_IP:+http://$DETECTED_IP:$AGENT_PORT}"
+    if [ -z "$PUBLIC_BASE_URL" ]; then
+        warn "未探测到公网 IP，PUBLIC_BASE_URL 留空（可设 PUBLIC_IP 后重跑）"
+    fi
+fi
+
+EXTRAS=""
+if [ -f "$ENV_FILE" ]; then
+    EXTRAS="$(awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/ &&
+        $1 !~ /^(EXECUTOR_TOKEN|WXBOT_TOKEN|AUTH_SECRET|AGENT_PORT|PUBLIC_BASE_URL)$/ { print }' \
+        "$ENV_FILE" || true)"
+fi
 
 {
-    echo "# 本文件由 scripts/init.sh 生成，请勿手改！"
-    echo "# 只含 deploy 相关段（platforms / auth / mcp_servers / public_link），其余走 server/config.js 默认值。"
-    echo "# 生成时间: $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "# 已启用平台: ${enabled_plats[*]:-（无）}"
-    echo
-
-    if [ "${#enabled_plats[@]}" -eq 0 ]; then
-        echo "platforms: []    # 没有配置平台 key（BIGMODEL_KEY / DEEPSEEK_KEY / QWEN_KEY）"
-    else
-        echo "platforms:"
-        if [ -n "$BIGMODEL_KEY" ]; then emit_platform bigmodel "$BIGMODEL_KEY"; fi
-        if [ -n "$DEEPSEEK_KEY" ]; then emit_platform deepseek "$DEEPSEEK_KEY"; fi
-        if [ -n "$QWEN_KEY" ];     then emit_platform qwen "$QWEN_KEY"; fi
+    echo "# 由 scripts/init.sh 生成；重跑复用已有密钥，并保留其它变量。"
+    echo "EXECUTOR_TOKEN=$EXECUTOR_TOKEN"
+    echo "WXBOT_TOKEN=$WXBOT_TOKEN"
+    echo "AUTH_SECRET=$AUTH_SECRET"
+    echo "AGENT_PORT=$AGENT_PORT"
+    echo "PUBLIC_BASE_URL=$PUBLIC_BASE_URL"
+    if [ -n "$EXTRAS" ]; then
+        echo
+        printf '%s\n' "$EXTRAS"
     fi
-    echo
+} > "$ENV_FILE"
 
-    cat <<EOF
+info "EXECUTOR_TOKEN / WXBOT_TOKEN / AUTH_SECRET 已就位"
+
+# ---------- config.yml（只写初始管理员）----------
+title "检查 $CONFIG_YML"
+
+if [ -d "$CONFIG_YML" ]; then
+    rmdir "$CONFIG_YML" 2>/dev/null || { warn "config.yml 是非空目录，请先处理：$CONFIG_YML"; exit 1; }
+    info "已删除被误建的空目录"
+fi
+
+CREATED=0
+if [ -f "$CONFIG_YML" ]; then
+    info "已存在，跳过"
+else
+    cat > "$CONFIG_YML" <<EOF
 auth:
-  secret: "$AUTH_SECRET"
+  secret: $(yaml_q "$AUTH_SECRET")
   users:
-    - user: $AUTH_USER
-      password: "$AUTH_PASSWORD"
-      role: admin    # 初始账号为管理员；其余用户的增删/角色/默认模型在前端「设置→用户」里配
-
-mcp_servers:
-  - name: web_search
-    url: "http://mcp_web_search:3000/"
+    - user: $(yaml_q "$AUTH_USER")
+      password: $(yaml_q "$AUTH_PASSWORD")
+      role: admin
 EOF
+    info "已创建，初始管理员 $AUTH_USER"
+    CREATED=1
+fi
 
-    # 另外三个服务需要上游 key，默认整段注释掉：脚本不替用户选平台，也不复用模型平台 key。
-    # 取消注释 + 填 key 后重启 core 即生效（mode: skill = 不下发到每轮工具表，按技能形式暴露）。
-    cat <<'EOF'
-
-  # 以下三项默认注释：填好上游 key 再取消注释（重启 core 生效）
-  #
-  # 图片生成 / 编辑。X-Image-Task-Base-Url 填 zhipu 走智谱原生通道，
-  # 填网关地址（如 https://<host>/v1）走任意 OpenAI 兼容的 /images/generations。
-  # - name: image_task
-  #   url: "http://mcp_image_task:3000/mcp"
-  #   headers:
-  #     Authorization: Bearer <upstream-api-key>
-  #     X-Image-Task-Base-Url: "zhipu"
-  #     X-Image-Task-Model: "CogView-4"
-  #   mode: skill
-  #
-  # 视频生成（智谱 BigModel 异步接口）。模型可选，默认 cogvideox-flash；
-  # 要换模型再加一行 X-Video-Task-Model（取值见 mcp/video_task/README.md）。
-  # - name: video_task
-  #   url: "http://mcp_video_task:3000/mcp"
-  #   headers:
-  #     Authorization: Bearer <zhipu-api-key>
-  #   mode: skill
-  #
-  # 语音转写（输入框「按住说话」与模型的 transcribe_audio 共用这一段）。
-  # 任何 OpenAI 兼容的 /audio/transcriptions 都行，容器自己不存密钥；免鉴权的自建服务可省 Authorization。
-  # - name: asr
-  #   url: "http://mcp_asr:3000/mcp"
-  #   headers:
-  #     Authorization: Bearer <key>
-  #     X-ASR-Base-Url: "https://<host>/v1"
-  #     X-ASR-Model: "whisper-1"
-  #   mode: skill
-EOF
-
-    echo
-    cat <<EOF
-# 给外部服务（如智谱）现签公网临时链接用；改地址后重跑本脚本
-public_link:
-  base_url: "${PUBLIC_IP:+http://$PUBLIC_IP:$AGENT_PORT}"
-EOF
-} > "$CONFIG_YML"
-
-info "平台: ${enabled_plats[*]:-无}；MCP: web_search 已启用，image_task / video_task / asr 为注释模板（填 key 后取消注释）"
-
-# ============================================================
-# 3. 汇总
-# ============================================================
-log "汇总"
-echo "---------------------------------------------"
-echo " 访问地址 : http://${PUBLIC_IP:-<公网IP>}:${AGENT_PORT}"
-echo " 账号     : $AUTH_USER"
-echo " 密码     : $AUTH_PASSWORD"
-echo " 平台     : ${enabled_plats[*]:-（无）}"
-echo " MCP 服务 : web_search 已启用；image_task / video_task / asr 以注释模板写入（填 key 后取消注释）"
-echo " 微信接入 : WXBOT_TOKEN 已就位（compose 注入 core 与 wxbot 两侧；wxbot 无需配置文件）"
-echo "---------------------------------------------"
-log "完成 ✅"
+# ---------- 汇总 ----------
+title "汇总"
+echo " 访问地址 : ${PUBLIC_BASE_URL:-（未设置）}"
+if [ "$CREATED" = "1" ]; then
+    echo " 初始账号 : $AUTH_USER${AUTH_PASSWORD:+ / }$([ "$AUTH_PASSWORD" = "admin" ] && echo 'admin（登录后请修改）' || echo '<AUTH_PASSWORD 传入值>')"
+fi
+echo " 下一步   : docker compose up -d --build"

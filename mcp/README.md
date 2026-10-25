@@ -11,7 +11,6 @@
 
 **这些服务一个宿主机端口都不占**——它们只挂在 `agent-mcp-net` 上，由 `agent-core` / `agent-executor`
 按容器名访问。所以整台服务器对外只需要开 agent-core 那一个端口（`AGENT_PORT`，默认 8090）。
-（要从宿主机 curl 调试时，把根 `docker-compose.yml` 里对应服务注释掉的 `ports` 两行打开。）
 
 ## 部署
 
@@ -59,13 +58,8 @@ mcp_servers:
 
 ### 调试端口
 
-写在仓库顶层 `.env` 里即可（不写就用默认值；开了端口记得调试完注释回去）：
-
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `WEB_SEARCH_PORT` | `8081` | 只在临时打开 web_search 调试端口时用 |
-| `IMAGE_TASK_PORT` | `8082` | 只在临时打开 image_task 调试端口时用 |
-| `VIDEO_TASK_PORT` | `8083` | 只在临时打开 video_task 调试端口（MCP 口，仅本机短时调试）时用 |
+本栈默认不给 MCP 服务映射宿主机端口（它们只在 `agent-mcp-net` 内网可达）。要从宿主机直连，
+自行在 `docker-compose.yml` 给对应服务加 `ports` 即可。
 
 ## 图片是怎么到智谱手上的（只有 video_task 关心）
 

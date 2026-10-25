@@ -41,38 +41,34 @@
 
 Debian 12 裸机可以先跑 `scripts/init_host.sh`（幂等，可重复执行，也可单独拷到服务器上跑）：它会配好 Swap、Docker、国内镜像加速与基础 shell 环境；`REGION=oversea` 切海外源。跑完会打印后续的 `init.sh` 与部署步骤。
 
-### 1. 生成配置
+### 1. 初始化（只做部署接线）
 
 在仓库根目录执行：
 
 ```bash
-BIGMODEL_KEY=xxx \
-DEEPSEEK_KEY=yyy \
-QWEN_KEY=zzz \
-AUTH_USER=admin \
-AUTH_PASSWORD='换一个强密码' \
-PUBLIC_IP=1.2.3.4 \
 ./scripts/init.sh
 ```
 
-三个模型 Key 都可选，填几个启用几个。`PUBLIC_IP` 也可选：**不配置时会自动探测公网 IP**（探测失败则 `public_link` 为空，外部服务取图功能不可用）。
+它只做三件事，**幂等**，随便重跑：
 
-脚本会生成：
+1. 生成 `.env` 里的 `EXECUTOR_TOKEN` / `WXBOT_TOKEN` / `AUTH_SECRET`（已有值原样复用，重跑不会掉登录态，也不会换掉 executor 的 token）。
+2. 探测公网 IP 并写成 `PUBLIC_BASE_URL`（外部服务靠它回取会话文件，图生视频需要）。知道地址就直接给：
+   ```bash
+   PUBLIC_IP=1.2.3.4 ./scripts/init.sh
+   ```
+3. 确保 `config.yml` 存在：**不存在时**才创建，内容只有初始管理员 `admin` / `admin`。已有文件**绝不改写**。
 
-- `.env`：`EXECUTOR_TOKEN`、`WXBOT_TOKEN`、`AGENT_PORT` 等部署变量。
-- `config.yml`：模型平台、登录账号、`web_search`、公网前缀。
+脚本不再生成模型平台 / MCP / 语音这些配置——它们全部在前端「设置」里完成，写的就是同一个 `config.yml`。所以重跑脚本永远不会清掉你配好的东西（旧版脚本会覆盖，这是本次的行为变化）。
 
-脚本只自动启用**模型平台**与 `web_search`。`image_task` / `video_task` / `asr` 需要各自的上游 key，脚本不替它猜平台、也不复用模型平台的 key——它们以**注释模板**写进 `mcp_servers`（url 与 header 名已填好），填上 key 后取消注释并重启 core 即生效。
+- 想换初始管理员：仅在**首次创建**时生效，`AUTH_USER=me AUTH_PASSWORD='强密码' ./scripts/init.sh`。
+- `config.yml` 被 Docker 误建成了空目录（源文件缺失时才会这样）：脚本会自动删掉并重建；目录非空则报错让你手工处理。
 
-`AUTH_USER` / `AUTH_PASSWORD` 不传时默认是 `admin` / `admin`，首次部署务必改掉。
-
-`.env` 里的密钥会复用，重新执行不会让登录态失效；旧的 `config.yml` 会先备份为 `config.yml.bak.<时间戳>`。
-
-注意：`config.yml` 每次都会按本次环境变量重新生成，平台 Key 不保存在 `.env` 里。已经部署过的实例请用设置页改配置，或带上原有变量重跑；只想刷新密钥时用 `./scripts/init.sh --env-only`。
+没有 `config.yml` 也能启动：`platforms` 为空、`auth` 为空即“无模型 + 不启用登录”，登录后从设置页补齐即可（保存后点「重启服务」生效）。
 
 ### 2. 启动
 
 ```bash
+# 迁移：把旧版根目录的 config.yml 原样留着即可，init.sh 不会动它
 docker compose up -d --build
 docker compose logs -f agent-core
 ```
@@ -81,7 +77,7 @@ docker compose logs -f agent-core
 
 首次启动还会运行一次性的 `agent-executor-init`，把技能依赖安装到 `./skills/deps`，随后自动退出，属正常现象。
 
-### 3. 访问
+### 3. 访问与首次配置
 
 浏览器打开：
 
@@ -89,13 +85,21 @@ docker compose logs -f agent-core
 http://<服务器 IP>:<AGENT_PORT>
 ```
 
-使用 `init.sh` 里的账号登录。默认端口 `8090`，可用 `.env` 的 `AGENT_PORT` 修改。
+首次用 `admin` / `admin` 登录（**登录后立刻在「设置 → 账户」改密码**）。默认端口 `8090`，可用 `.env` 的 `AGENT_PORT` 修改。
 
-对外只需要放行这一个端口。`agent-executor`、`wxbot` 和 MCP 服务都只在 Docker 内网，不映射到宿主机。
+登录后去「设置」补齐三块，保存后点页面顶部的「重启服务」：
+
+| 设置页 | 配什么 |
+|---|---|
+| 模型 | 平台地址 + API Key + 模型 id（`extra_params` / `thinking_params` / profile 等在「高级」里） |
+| MCP | `image_task` / `video_task` / `asr` 需上游 key；`web_search` 免费，地址 `http://mcp_web_search:3000/` |
+| 用户 | 其余账号、角色、默认模型；改密码在「账户」 |
+
+对外只需要放行 core 这一个端口。`agent-executor`、`wxbot` 和 MCP 服务都只在 Docker 内网，不映射到宿主机。
 
 ### 4. 同栈 MCP 服务
 
-`init.sh` 只自动启用 `web_search`；其余三个需要上游 key 的服务以**注释模板**写入（url 与 header 名已填好），填 key 后取消注释再重启 core 即生效：
+初始 `config.yml` 不包含任何 MCP 服务；四个服务都在设置页「MCP」添加（`web_search` 免费、无需 key）。手工写 YAML 的形状如下（`url` 与 header 名是固定的，容器不存密钥）：
 
 ```yaml
 mcp_servers:
@@ -125,9 +129,9 @@ mcp_servers:
 
 `web_search` / `image_task` / `video_task` / `asr` 四个容器与 core 由同一个根 `docker-compose.yml` 启动（与是否写进配置无关），没有先后顺序，也不占宿主机端口。工具说明、header 覆盖项与调试方式见 [mcp/README.md](mcp/README.md)。
 
-`ASR_URL`（在 `.env` 里覆盖）是 core 调用语音转写的基地址：默认指向内网 `mcp_asr`；把它改成外网地址就能把转写放到另一台机器上（那台要能接受 `Authorization` / `X-ASR-Base-Url` / `X-ASR-Model` 三个 header），写成空值则关闭语音输入。
+`ASR_URL`（`docker-compose.yml` 里固定为 `http://mcp_asr:3000`）是 core 调用语音转写的基地址；把 `mcp_asr` 放到另一台机器时改这一行即可（那台要能接受 `Authorization` / `X-ASR-Base-Url` / `X-ASR-Model` 三个 header）。
 
-语音输入（H5 输入框里说话）走的是另一条路：客户端录音 → `POST /api/asr/transcribe` → `mcp_asr` 的 `/transcribe`，**不经过模型、不消耗 token**，结果插入输入框可编辑。客户端录音契约（Android 套壳原生桥 / 浏览器 MediaRecorder）见 [docs/voice-input.md](docs/voice-input.md)；`ASR_URL` 置空、或删掉 `asr` 那段，即整体关闭。
+语音输入（H5 输入框里说话）走的是另一条路：客户端录音 → `POST /api/asr/transcribe` → `mcp_asr` 的 `/transcribe`，**不经过模型、不消耗 token**，结果插入输入框可编辑。客户端录音契约（Android 套壳原生桥 / 浏览器 MediaRecorder）见 [docs/voice-input.md](docs/voice-input.md)；删掉 `config.yml` 里的 `asr` 段即整体关闭。
 
 `mcp_asr` 自己**不存任何平台密钥**：上游 key / base_url / model 都由 core 从这里那段 `asr.headers` 随请求带进去，换平台只改 YAML（不用重建镜像、不用动 `.env`），也不预设任何厂商。
 
@@ -261,14 +265,13 @@ platforms:
 | `PORT` | core 监听端口，容器内 `8090` |
 | `EXECUTOR_URL` | `agent-executor` 地址；空则命令在 core 进程内本地执行，仅适合开发 |
 | `EXECUTOR_TOKEN` | core ↔ executor 的 Bearer token，两侧同值 |
-| `ASR_URL` | core 拼接 `/transcribe` 的基地址（默认 `http://mcp_asr:3000`）。可填外网地址把 `mcp_asr` 放到另一台机器；写成空值则语音输入关闭 |
+| `ASR_URL` | core 拼接 `/transcribe` 的基地址，compose 里固定 `http://mcp_asr:3000`（把 `mcp_asr` 放别处时改那一行） |
 | `ASR_LOG_LEVEL` | `mcp_asr` 日志等级 |
 | `WXBOT_URL` | wxbot 地址；置空则微信功能整体关闭 |
 | `WXBOT_TOKEN` | core ↔ wxbot 的共享 token |
-| `VIRTUAL_HOST` | 设置后 `public_link.base_url` 强制取 `https://<第一个域名>` |
+| `PUBLIC_BASE_URL` | 对外的完整地址（如 `http://1.2.3.4:8090`），作为 `public_link` 的默认值；设置页填过则以设置页为准 |
 | `PREVIEW_PROXIES` | 覆盖内置预览反代注册表（JSON 数组） |
 | `EXECUTOR_LOG_LEVEL` / `WXBOT_LOG_LEVEL` | 两个附属服务的日志等级 |
-| `WEB_SEARCH_PORT` / `IMAGE_TASK_PORT` / `VIDEO_TASK_PORT` | 仅调试：临时把对应 MCP 服务映射到宿主机端口（默认注释掉） |
 
 `config.yml` 与 `.env` 都含密钥，已在 `.gitignore` 中。不要提交，也不要挂给不需要它的容器。
 
@@ -371,7 +374,7 @@ proxy_buffering off;
 proxy_read_timeout 3600s;
 ```
 
-若设置了 `VIRTUAL_HOST`，公网链接前缀会自动变成 `https://<域名>`；仓库默认 compose 里带有 `VIRTUAL_HOST=agent.ai.foresh.com`，不接反向代理时应删除或改成自己的域名。
+公网链接前缀取 `config.yml` 的 `public_link.base_url`（设置页「服务 → 公网地址」）；没填时用 `.env` 的 `PUBLIC_BASE_URL`（`init.sh` 会自动探测写入）。前置了反向代理 + HTTPS 的部署，直接把它填成域名即可。
 
 ---
 
@@ -432,9 +435,9 @@ curl -s http://127.0.0.1:8090/api/health
 |---|---|
 | 启动时报 `network agent-mcp-net has active endpoints` | 旧的双仓库部署残留：先停旧的 mcp 仓库（`docker compose down`），再 `up` 本栈 |
 | 套壳 App 填了服务器地址仍连不上 | 先 `curl <地址>/api/health` 看是否返回 `service:agent-core`；再查 Android 9+ 默认禁止明文 HTTP（需 `usesCleartextTraffic`）与 https 自签证书 |
-| 麦克风按钮不显示 | `ASR_URL` 为空（未部署 `mcp_asr`）；或 `config.yml` 的 `mcp_servers` 里没有启用的 `asr` 段 / 该段缺 `X-ASR-Base-Url`（`GET /api/asr/status` 会返回 `reason`）；或浏览器以 `http://<IP>` 访问且没有原生录音桥（非安全上下文开不了麦，见 `docs/voice-input.md`） |
+| 麦克风按钮不显示 | `config.yml` 的 `mcp_servers` 里没有启用的 `asr` 段 / 该段缺 `X-ASR-Base-Url`（`GET /api/asr/status` 会返回 `reason`）；或浏览器以 `http://<IP>` 访问且没有原生录音桥（非安全上下文开不了麦，见 `docs/voice-input.md`） |
 | 点麦克风提示「语音识别服务不可用」 | `mcp_asr` 未起来（`docker compose logs --tail=50 mcp_asr`）；或 `config.yml` 的 `asr.headers` 缺 `X-ASR-Base-Url` / `X-ASR-Model` |
-| `config.yml` 变成目录 | 启动前文件不存在，Docker 自动建了同名目录；停容器、删目录、放入配置文件 |
+| `config.yml` 变成目录 | 启动前文件不存在，Docker 自动建了同名目录；重跑 `./scripts/init.sh` 会自动删除空目录并重建（非空目录需先备份再手工删除） |
 | 没有可用模型 | `platforms` 为空或模型全部禁用；在设置页添加后重启 |
 | 创建会话报「无可用模型」 | 模型池为空，或指定模型所在平台没有 key |
 | 技能依赖缺失 | 重新 `docker compose up -d --build agent-executor`；或检查 `skills/deps` |

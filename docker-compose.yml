@@ -4,8 +4,7 @@ services:
     container_name: agent-core
     restart: unless-stopped
     ports:
-      # 无 nginx-proxy：直接把容器 8090 映射到宿主机端口，用 http://<服务器IP>:<AGENT_PORT> 访问。
-      # 改端口：在仓库顶层 .env 里设 AGENT_PORT（默认 8090）。
+      # 直接把容器 8090 映射到宿主机端口，用 http://<服务器IP>:<AGENT_PORT> 访问。
       - "${AGENT_PORT:-8090}:8090"
     volumes:
       - ./tasks:/workspace/tasks        # 持久化：任务目录
@@ -20,16 +19,15 @@ services:
       - EXECUTOR_URL=http://agent-executor:9000
       # 调用鉴权 token：两侧同一值。从 .env 读取（已 gitignore），不再硬编码进仓库；
       # 未设置则 compose 直接报错，避免静默无鉴权。生成：openssl rand -hex 32
-      - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - see .env.example}
+      - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - run scripts/init.sh}
       # 微信接入
       - WXBOT_URL=http://agent-wxbot:8093
       - WXBOT_TOKEN=${WXBOT_TOKEN:?WXBOT_TOKEN not set - run scripts/init.sh}
-      # 语音识别（可选）：core 拼 /transcribe 的基地址。默认指内网 mcp_asr；
-      # 也可以填外网地址（例如 mcp_asr 跑在另一台机器上：http://<ip>:3000）。
-      # 注意：那台服务要能接受 Authorization / X-ASR-Base-Url / X-ASR-Model 三个 header，
-      # 且 core 能出网访问它（https 自签证书会因证书校验失败）。
-      # 想关掉语音输入：在 .env 里写 ASR_URL= （空值，照样不发默认值）或删掉 config.yml 的 asr 段。
-      - ASR_URL=${ASR_URL-http://mcp_asr:3000}
+      # 语音识别（可选）：core 拼 /transcribe 的基地址，固定指向栈内 mcp_asr。
+      - ASR_URL=http://mcp_asr:3000
+      # 对外地址：public_link 的默认值（scripts/init.sh 探测公网 IP 后写进 .env）。
+      # 设置页里填过 public_link.base_url 时以设置页为准。
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
     networks:
       - agent-mcp-net
 
@@ -85,8 +83,8 @@ services:
       - ./skills:/workspace/skills:ro   # 技能目录：所有任务/会话共享同一份技能
     environment:
       - PORT=9000
-      # 与 agent-core 侧同一值，从 .env 读取（见 .env.example）：
-      - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - see .env.example}
+      # 与 agent-core 侧同一值，从根 .env 读取（scripts/init.sh 生成）：
+      - EXECUTOR_TOKEN=${EXECUTOR_TOKEN:?EXECUTOR_TOKEN not set - run scripts/init.sh}
       # 日志等级：debug|info|warn|error|none（默认 info）；
       # debug 会把与 core 的完整交互打印出来（请求、/exec 请求体、每条 SSE 帧、JSON 响应）：
       - EXECUTOR_LOG_LEVEL=info
@@ -174,9 +172,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    # 调试用（默认关）：
-    # ports:
-    #   - "${WEB_SEARCH_PORT:-8081}:3000"
     networks:
       - agent-mcp-net
 
@@ -190,9 +185,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    # 调试用（默认关）：
-    # ports:
-    #   - "${IMAGE_TASK_PORT:-8082}:3000"
     networks:
       - agent-mcp-net
 
@@ -206,9 +198,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    # 调试用（默认关；这里映的是 MCP 端口，会暴露 /mcp，仅本机短时调试用）：
-    # ports:
-    #   - "${VIDEO_TASK_PORT:-8083}:3000"
     networks:
       - agent-mcp-net
 
@@ -236,7 +225,7 @@ services:
       - agent-mcp-net
 
 networks:
-  # 全部服务共用一个网络；由本仓库创建（固定名字，避免被加上 compose 项目名前缀）。
+  # 全部服务共用一个网络；由本仓库创建
   #   - core 与 executor 靠它按容器名访问 MCP 服务（如 http://mcp_web_search:3000/）
   #   - 外部服务取参考图走的是 core 对外的 GET /p/<id>（见 public_link）：AI 调内置工具
   #     mint_public_link 在 core 进程内现签短链，不需要 executor 反查 core 的额外端口

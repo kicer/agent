@@ -23,8 +23,7 @@ docker compose up -d --build mcp_video_task
 ```
 
 服务容器名 `mcp_video_task`，**默认不占宿主机端口**：由 agent 走 `agent-mcp-net` 按容器名访问
-（`http://mcp_video_task:3000/mcp`）。需要从宿主机 curl 调试时，去仓库根 `docker-compose.yml`
-把 `mcp_video_task` 注释掉的 `ports` 两行打开（映的是 MCP 端口 3000，仅本机短时调试用）。
+（`http://mcp_video_task:3000/mcp`）。要从宿主机 curl 调试，自行给该服务加 `ports` 映射。
 
 ```bash
 # 容器内健康检查（无需占端口）
@@ -53,7 +52,7 @@ docker exec mcp_video_task node -e "fetch('http://localhost:3000/health').then(r
 }
 ```
 
-> 上面 `url` 里的端口 `8083` 需要先把 compose 里注释的 `ports` 打开（默认不占宿主端口）。
+> 上面的 `localhost:8083` 只是示例：本栈默认不给 MCP 服务映射宿主端口，要直连需自行加 `ports`。
 
 > **重要**：客户端必须在 **每一个 HTTP 请求**（`initialize` / `notifications/initialized` / `tools/call`）都带上 `Authorization` header。
 

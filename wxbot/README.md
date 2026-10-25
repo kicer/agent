@@ -50,7 +50,7 @@ agent-core 的 `wechat_bindings` 表；扫码二维码呈现在 agent-core 的 W
 ## 部署
 
 ```sh
-./scripts/init.sh --env-only          # 生成/复用根 .env 的 WXBOT_TOKEN（幂等，不碰 config.yml）
+./scripts/init.sh                     # 生成/复用根 .env 的 WXBOT_TOKEN（幂等）
 docker compose up -d --build agent-wxbot    # 首次构建镜像（npm 源可 --build-arg NPM_REGISTRY= 换）
 docker compose up -d agent-core       # core 带 WXBOT_URL/WXBOT_TOKEN 重建（compose 检测到 env 变化自动 recreate）
 ```

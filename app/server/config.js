@@ -126,7 +126,7 @@ const DEFAULTS = {
   // mode 三态：advertise=工具下发给模型；skill=不下发，改为以技能形式暴露（get 返回原始
   // input_schema，run 直接转发）；disable=不加载。
   mcp_servers: [],
-  // 公网临时链接：base_url 非空才启用 mint_public_link；容器配 VIRTUAL_HOST 时以它为准。
+  // 公网临时链接：base_url 非空才启用 mint_public_link（config.yml 优先，其次 env PUBLIC_BASE_URL）。
   public_link: { base_url: '', ttl_ms: 1800000 },
 };
 
@@ -383,16 +383,14 @@ function parseAndValidate(rawText, configPath) {
 // 公网链接宁可短不可长（“永久公开”正是这套机制要避免的东西）。
 //
 // 对外前缀的取值优先级：
-//   1) 容器 env 的 VIRTUAL_HOST 非空 → https://<第一个域名>
-//      （nginx-proxy 的写法，逗号分隔多域名时取第一个）。只要配了域名 + HTTPS 这一层，
-//      返回给外部服务（video_task 取参考图）的链接就必须走域名，所以 env 优先；
-//      反之 config.yml 里那个 init 脚本生成的 http://<IP>:8090 会把这个开关盖住。
-//      协议写死 https：前置了 nginx-proxy 一定是 HTTPS（证书由 acme-companion 签）。
-//   2) 否则用 config.yml 的 public_link.base_url（纯 IP:端口部署，init 脚本写 http://<IP>:8090）。
+//   1) config.yml 的 public_link.base_url（设置页「公网地址」手填的值，以它为准）。
+//   2) env PUBLIC_BASE_URL（scripts/init.sh 探测公网 IP 后写进 .env 的部署地址）。
+//      它只是默认值：页面里填过 1) 之后就归 1) 管，避免“重跑部署脚本”和“UI 手改”互相打架。
 function normalizePublicLink(cfg) {
   const pl = cfg.public_link || {};
-  const vhost = String(process.env.VIRTUAL_HOST || '').split(',')[0].trim();
-  const baseUrl = vhost ? 'https://' + vhost : pl.base_url;
+  const fromCfg = String(pl.base_url == null ? '' : pl.base_url).trim();
+  const fromEnv = String(process.env.PUBLIC_BASE_URL || '').trim();
+  const baseUrl = fromCfg || fromEnv;
   cfg.public_link = {
     base_url: String(baseUrl || '').trim().replace(/\/+$/, ''),
     ttl_ms: Math.min(Math.max(Number(pl.ttl_ms) || 1800000, 60 * 1000), 24 * 3600 * 1000),
@@ -405,7 +403,22 @@ function normalizePublicLink(cfg) {
 
 function loadConfig(configPath) {
   const p = configPath || process.env.AGENT_CONFIG || path.join(__dirname, '..', 'config.yml');
-  const text = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+  // 目录按“文件不存在”处理：Docker 在 bind mount 的源文件缺失时会建一个同名**空目录**，
+  // 直接 readFileSync 会 EISDIR 崩在启动阶段——那时用户看不到任何可操作的报错。
+  // 空文件/缺失都是合法状态：platforms 为空、auth 为空（= 未启用登录），全部配置可稍后在前端完成。
+  let text = '';
+  let isDir = false;
+  try {
+    const st = fs.statSync(p);
+    if (st.isFile()) text = fs.readFileSync(p, 'utf8');
+    else isDir = true;
+  } catch (_) { /* 不存在 */ }
+  if (isDir) {
+    log.warn('config', 'config.yml 是目录（Docker 在挂载源文件缺失时会自动建同名目录，容器内无法当文件写）：' + p +
+      '；请在宿主机上删掉该空目录后重跑 scripts/init.sh');
+  } else if (!text.trim()) {
+    log.warn('config', 'config.yml 缺失或为空（' + p + '）：当前无模型、无登录鉴权；可在前端「设置」里补齐配置（保存后重启生效）');
+  }
   return parseAndValidate(text, p);
 }
 
@@ -418,7 +431,9 @@ function loadConfigFromText(text, configPath) {
 // 读当前配置文件原文(保留注释);文件不存在返回 null。
 function readConfigText(cfg) {
   const p = cfg && cfg.config_path;
-  if (!p || !fs.existsSync(p)) return null;
+  if (!p) return null;
+  // 目录（Docker 误建）与缺失一视同仁按“不存在”返回，交给调用方决定新建还是报错。
+  try { if (!fs.statSync(p).isFile()) return null; } catch (_) { return null; }
   return fs.readFileSync(p, 'utf8');
 }
 

@@ -25,8 +25,8 @@ cd /root/workspace/tools/agent
 docker compose up -d --build mcp_image_task
 ```
 
-服务容器名 `mcp_image_task`。要从宿主机 curl 调试，把根 `docker-compose.yml` 里
-`mcp_image_task` 注释掉的 `ports` 两行打开（默认 8082），调试完记得注释回去。
+服务容器名 `mcp_image_task`，**默认不占宿主机端口**，由 agent 走 `agent-mcp-net` 按容器名访问。
+要从宿主机 curl 调试，自行给该服务加 `ports` 映射。
 
 ```bash
 # 不占端口的健康检查
