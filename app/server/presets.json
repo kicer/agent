@@ -1,0 +1,134 @@
+{
+  "platforms": [
+    {
+      "key": "bigmodel",
+      "label": "智谱 BigModel",
+      "url": "https://open.bigmodel.cn/api/paas/v4",
+      "type": "bigmodel",
+      "model_hint": "glm-5.3-flash",
+      "model_defaults": {
+        "vision": true,
+        "extra_params": { "reasoning_effort": "low", "tool_stream": true },
+        "thinking_params": { "reasoning_effort": "max" }
+      }
+    },
+    {
+      "key": "deepseek",
+      "label": "DeepSeek",
+      "url": "https://api.deepseek.com",
+      "type": "deepseek",
+      "model_hint": "deepseek-flash",
+      "model_defaults": {
+        "vision": true,
+        "extra_params": { "thinking": { "type": "disabled" } },
+        "thinking_params": { "thinking": { "type": "enabled" }, "reasoning_effort": "max" },
+        "reasoning_ack_field": "reasoning_content"
+      }
+    },
+    {
+      "key": "qwen",
+      "label": "通义千问",
+      "url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "type": "qwen",
+      "model_hint": "qwen3.8-flash",
+      "model_defaults": {
+        "vision": true,
+        "extra_params": { "enable_thinking": false },
+        "thinking_params": { "enable_thinking": true, "reasoning_effort": "xhigh" }
+      }
+    }
+  ],
+  "mcp": [
+    {
+      "key": "web_search",
+      "label": "网页搜索",
+      "desc": "栈内搜索服务，无需密钥",
+      "url": "http://mcp_web_search:3000/",
+      "mode": "advertise",
+      "fields": []
+    },
+    {
+      "key": "image_task",
+      "label": "图片生成",
+      "desc": "文生图 / 图生图，走任意 OpenAI 兼容的 /images/generations 与 /images/edits",
+      "url": "http://mcp_image_task:3000/mcp",
+      "mode": "skill",
+      "fields": [
+        {
+          "header": "Authorization",
+          "label": "API Key",
+          "secret": true,
+          "prefix": "Bearer ",
+          "required": true,
+          "placeholder": "上游的 API Key"
+        },
+        {
+          "header": "X-Image-Task-Base-Url",
+          "label": "上游地址",
+          "required": true,
+          "placeholder": "https://<host>/v1",
+          "hint": "填到 /v1 即可，文生图自动补 /images/generations，图生图自动补 /images/edits"
+        },
+        {
+          "header": "X-Image-Task-Model",
+          "label": "模型",
+          "required": true,
+          "placeholder": "上游的模型 id"
+        }
+      ]
+    },
+    {
+      "key": "video_task",
+      "label": "视频生成",
+      "desc": "智谱 BigModel 异步视频接口",
+      "url": "http://mcp_video_task:3000/mcp",
+      "mode": "skill",
+      "fields": [
+        {
+          "header": "Authorization",
+          "label": "API Key",
+          "secret": true,
+          "prefix": "Bearer ",
+          "required": true,
+          "placeholder": "智谱 API Key"
+        },
+        {
+          "header": "X-Video-Task-Model",
+          "label": "模型",
+          "default": "cogvideox-flash",
+          "hint": "留空 = cogvideox-flash"
+        }
+      ]
+    },
+    {
+      "key": "asr",
+      "label": "语音识别",
+      "desc": "输入框「按住说话」与模型的 transcribe_audio 共用",
+      "url": "http://mcp_asr:3000/mcp",
+      "mode": "skill",
+      "fields": [
+        {
+          "header": "Authorization",
+          "label": "API Key",
+          "secret": true,
+          "prefix": "Bearer ",
+          "placeholder": "自建免鉴权服务可留空"
+        },
+        {
+          "header": "X-ASR-Base-Url",
+          "label": "上游地址",
+          "required": true,
+          "placeholder": "https://<host>/v1",
+          "hint": "任意 OpenAI 兼容的 /audio/transcriptions"
+        },
+        {
+          "header": "X-ASR-Model",
+          "label": "模型",
+          "required": true,
+          "default": "whisper-1",
+          "placeholder": "whisper-1"
+        }
+      ]
+    }
+  ]
+}

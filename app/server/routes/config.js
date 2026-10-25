@@ -9,6 +9,50 @@ const log = require('../log');
 
 const router = express.Router();
 
+// 平台 / MCP 预设：设置页「新增平台」「添加内置 MCP」的模板来源（纯静态，无密钥）。
+// 文件写坏时降级为空预设：通用表单仍可用，不影响其它功能。
+const MCP_MODES = ['advertise', 'skill', 'disable'];
+function checkPresetList(list, kind, bad) {
+  const seen = new Set();
+  (list || []).forEach((x, i) => {
+    const at = kind + '[' + i + ']';
+    if (!x || typeof x !== 'object') { bad.push(at + ' 必须是对象'); return; }
+    if (!x.key || !x.url) { bad.push(at + ' 缺 key/url'); return; }
+    if (seen.has(x.key)) { bad.push(at + ' key 重复：' + x.key); return; }
+    seen.add(x.key);
+    if (kind === 'platforms') {
+      if (!x.type) bad.push(at + ' 缺 type');
+      if (x.model_defaults != null && typeof x.model_defaults !== 'object') {
+        bad.push(at + '.model_defaults 必须是对象');
+      }
+      return;
+    }
+    if (x.mode != null && MCP_MODES.indexOf(x.mode) < 0) {
+      bad.push(at + '.mode 只能是 ' + MCP_MODES.join(' / '));
+    }
+    if (x.fields != null && !Array.isArray(x.fields)) { bad.push(at + '.fields 必须是数组'); return; }
+    (x.fields || []).forEach((f, fi) => {
+      if (!f || !f.header) bad.push(at + '.fields[' + fi + '] 缺 header');
+    });
+  });
+}
+
+function loadPresets() {
+  const p = require('../presets.json') || {};
+  const bad = [];
+  checkPresetList(p.platforms, 'platforms', bad);
+  checkPresetList(p.mcp, 'mcp', bad);
+  if (bad.length) throw new Error(bad.join('；'));
+  return { platforms: p.platforms || [], mcp: p.mcp || [] };
+}
+
+let PRESETS = { platforms: [], mcp: [] };
+try {
+  PRESETS = loadPresets();
+} catch (e) {
+  log.warn('config', 'presets.json 无效，设置页将没有预设：' + String((e && e.message) || e));
+}
+
 function sendErr(res, err) {
   const code = err && err.status_code || 500;
   res.status(code).json({ error: String(err && err.message || err) });
@@ -214,6 +258,9 @@ router.get('/', wrap((req, res) => {
   // balance_types:已接入余额查询的平台类型,前端据此决定是否展示余额行
   res.json({ config_path: cfg.config_path || '', exists: text !== null, text: shown, effective: eff, balance_types: balance.types() });
 }));
+
+// 预设模板（前端新增平台 / 添加内置 MCP 用）
+router.get('/presets', wrap((req, res) => { res.json(PRESETS); }));
 
 // 干跑校验(编辑器保存前预检):body { text }
 // 还原脱敏后的 api_key/password 再校验,避免 diff 误报变更。

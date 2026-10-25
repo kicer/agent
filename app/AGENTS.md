@@ -39,6 +39,7 @@ AGENT_CONFIG=./config.yml node server/server.js
 |---|---|
 | `server/server.js` | 装配、路由挂载、`/api/models`、`/api/health`、prompt dump、优雅退出 |
 | `server/config.js` | YAML 加载/校验/默认值；`platforms` 展开成 `cfg.models`；配置文本改写（设置页） |
+| `server/presets.json` | 平台与同栈 MCP 的固定契约（url / type / header 名），设置页新增时的模板来源；改服务地址改这里 |
 | `server/db.js` | 建表、索引、幂等迁移；纯 SQL 数据层，不放业务 |
 | `server/engine.js` | **核心**：会话状态机、模型池调度、Agent 主循环、压缩、标题、日记收口、消息增删 |
 | `server/llm.js` | 消息组装、system prompt 拼接、上游流式调用、占位裁剪、多模态块编解码 |
