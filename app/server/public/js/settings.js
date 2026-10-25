@@ -27,6 +27,7 @@
     pendingEnable: {},              // 已写盘但重启前 effective 仍是旧值的 enable 覆盖(id → bool),防卡片回弹
     deletedModels: {},              // 已从 config.yml 删除、重启前后端仍会返回的模型(id → true):前端隐藏防回弹
     expandedGroups: {}, balanceByGroup: {}, balanceRequested: {}, balanceTypes: [], // 平台编辑弹窗工作态见 pfEdit(模块级变量)
+    modelProfileNames: [],          // profile 下拉选项(顶层 model_profiles 的 key)
     // MCP 服务页:cfgMcp 缓存当前列表;改动待重启生效时置位,顶部常驻重启横幅
     cfgMcp: [], mcpPendingRestart: false,
     mcpStatus: null,                   // 运行态连接状态：key = name|url|mode（见 mcpStatusKey）；null = 没拿到，不显示标记
@@ -1188,13 +1189,15 @@
     const el = $('model-cards');
     if (!el || (ctx && !ctx())) return;
     try {
-      const [rt, cg] = await Promise.all([req('GET', '/api/models'), req('GET', '/api/config')]);
+      const [rt, cg] = await Promise.all([req('GET', '/api/models'), req('GET', '/api/config'), loadPresets()]);
       if (ctx && !ctx()) return;
       if (!$('model-cards')) return; // 异步期间已离开本页
       SET.runtimeById = {};
       for (const m of rt || []) SET.runtimeById[m.id] = m;
       SET.cfgPlatforms = (cg.effective && cg.effective.platforms) || [];
       SET.cfgModels = (cg.effective && cg.effective.models) || [];
+      // 平台编辑器里的 profile 下拉只有名字有意义，不缓存整份 prompt
+      SET.modelProfileNames = Object.keys((cg.effective && cg.effective.model_profiles) || {});
       // 已删除/已改名旧 id 的标记清理:配置(live)与运行池都已无此 id 才清——重启前池里残留时须保留标记,
       // 否则会话页选择弹窗(读 /api/models 运行池)会重新列出已不可用的模型。
       const liveIds = new Set(SET.cfgModels.map(m => m.id));
@@ -1250,22 +1253,104 @@
     for (const m of SET.cfgModels) if (m.platform_index === pi && !seen.has(m.id)) { seen.add(m.id); models.push(m); }
     return models;
   }
+  // 参数对象 → 弹窗里的 JSON 文本。空对象留空（placeholder 提示），避免每张卡都挂一对 {}
+  function pfJsonText(o) {
+    return o && typeof o === 'object' && Object.keys(o).length ? JSON.stringify(o) : '';
+  }
+  // 预设的模型参数缺省:抽成函数因为「选预设」和「加模型行」两处都要套
+  function applyModelDefaults(r, preset) {
+    const d = (preset && preset.model_defaults) || {};
+    r.extra_params = pfJsonText(d.extra_params);
+    r.thinking_params = pfJsonText(d.thinking_params);
+    r.reasoning_ack_field = d.reasoning_ack_field || '';
+    r.profile = d.profile || '';
+  }
+  // 该行的高级参数是否还是「空/上一个预设的缺省」:是才允许被新预设覆盖,不动用户手填的内容
+  function pfUsesDefaults(r, preset) {
+    const d = (preset && preset.model_defaults) || {};
+    return String(r.extra_params || '') === pfJsonText(d.extra_params) &&
+      String(r.thinking_params || '') === pfJsonText(d.thinking_params) &&
+      String(r.reasoning_ack_field || '') === String(d.reasoning_ack_field || '') &&
+      String(r.profile || '') === String(d.profile || '');
+  }
+  function pfNewModel() {
+    const r = { ref: null, id: '', vision: true, enable: true, display_name: '', profile: '',
+      extra_params: '', thinking_params: '', reasoning_ack_field: '', adv: false };
+    if (pfEdit) applyModelDefaults(r, pfEdit.preset);
+    return r;
+  }
   function openModelEditor(pi) {
     const add = pi == null;
     const p = add ? {} : (SET.cfgPlatforms[pi] || {});
     pfEdit = {
       idx: add ? -1 : Number(pi),
-      // 已有 Key:输入框置空(留空=保持原值),masked 存脱敏值仅做 placeholder 提示;绝不把脱敏值回写文件
+      preset: null,
+      // 已有 Key:输入框置空(留空=保持原值),masked 存脱敏仅做 placeholder 提示;绝不把脱敏值回写文件
       keys: add ? [] : (p.keys || []).map((k, ki) => ({ ref: ki, api_key: '', masked: k.api_key || '' })),
-      models: add ? [] : platformModels(pi).map(m => ({ ref: m.model_index, id: m.mid || m.id, vision: !!m.vision, enable: m.enable !== false })),
+      models: add ? [] : platformModels(pi).map(m => ({
+        ref: m.model_index,
+        id: m.mid || m.id,
+        vision: !!m.vision,
+        enable: m.enable !== false,
+        // 显示名缺省就是 id（config.js 归一化过）:相同时留空，弹窗里不重复展示
+        display_name: m.display_name && m.display_name !== (m.mid || m.id) ? m.display_name : '',
+        profile: m.profile || '',
+        extra_params: pfJsonText(m.extra_params),
+        thinking_params: pfJsonText(m.thinking_params),
+        reasoning_ack_field: m.reasoning_ack_field || '',
+        adv: false,
+      })),
     };
     $('mpe-title').textContent = add ? '新增平台' : '编辑平台';
     $('mpe-name').value = add ? '' : (p.name || '');
     $('mpe-url').value = add ? '' : (p.url || '');
-    if (add) { pfEdit.keys.push({ ref: null, api_key: '' }); pfEdit.models.push({ ref: null, id: '', vision: true, enable: true }); }
+    if (add) { pfEdit.keys.push({ ref: null, api_key: '' }); pfEdit.models.push(pfNewModel()); }
     $('mpe-del-btn').classList.toggle('hidden', add);
+    renderPfPresets();
     renderPfRows();
     $('model-edit-modal').classList.remove('hidden');
+  }
+  // 新增平台时的平台预设：点一下填好 url / 平台名，模型行带上该平台的参数缺省
+  function renderPfPresets() {
+    const box = $('mpe-presets');
+    if (!box) return;
+    const list = (SET.presets && SET.presets.platforms) || [];
+    const show = !!pfEdit && pfEdit.idx < 0 && list.length > 0;
+    box.classList.toggle('hidden', !show);
+    if (!show) { box.innerHTML = ''; return; }
+    const cur = pfEdit.preset ? pfEdit.preset.key : '';
+    box.innerHTML = list.map(p =>
+      '<button type="button" class="mpe-chip' + (cur === p.key ? ' on' : '') + '" onclick="sUI.mPreset(\'' + att(p.key) + '\')">' + esc(p.label || p.key) + '</button>'
+    ).join('') +
+      '<button type="button" class="mpe-chip' + (cur ? '' : ' on') + '" onclick="sUI.mPreset(\'\')">自定义</button>';
+  }
+  function applyPfPreset(key) {
+    if (!pfEdit || pfEdit.idx >= 0) return;
+    // 已经是自定义：不重复清空用户正在手填的内容
+    if (!key && !pfEdit.preset) return;
+    const list = (SET.presets && SET.presets.platforms) || [];
+    const preset = key ? (list.find(x => x.key === key) || null) : null;
+    const prev = pfEdit.preset;
+    pfEdit.preset = preset;
+    if (preset) {
+      $('mpe-url').value = preset.url || '';
+      // 名称只在不覆盖手输时跟随预设（空 / 还等于上一个预设名）
+      const nm = $('mpe-name').value.trim();
+      if (!nm || nm === (prev ? prev.key : '')) $('mpe-name').value = preset.key || '';
+    } else {
+      // 自定义 = 从空白开始：清空平台字段与 Key/模型行（含刚套上的预设参数）
+      $('mpe-name').value = '';
+      $('mpe-url').value = '';
+      pfEdit.keys = [{ ref: null, api_key: '' }];
+      pfEdit.models = [pfNewModel()];
+    }
+    // 只改「新增行」且高级参数还是空/上一个预设缺省的行；已有模型与手填内容一律不动
+    for (const r of pfEdit.models) {
+      if (r.ref != null) continue;
+      if (pfUsesDefaults(r, prev)) applyModelDefaults(r, preset);
+    }
+    renderPfPresets();
+    renderPfRows();
   }
   // Key 行:全部可编辑。已有 Key 输入框置空 + placeholder 提示当前脱敏值,输入新值=替换,留空=保持。
   function pfKeysRowHtml(r, i) {
@@ -1277,18 +1362,33 @@
       '<button class="mpe-del" title="删除此 Key" onclick="sUI.mDelKey(' + i + ')">×</button>' +
     '</div>';
   }
-  // 模型子卡片两行:上行配 id,下行勾 vision/enable。id 可改(仅改 config.yml,重启生效)。
-  // display_name/concurrency/type 不进弹窗:保存只按细粒度 path 改,不碰文件里其余字段。
+  // 模型子卡片:上行配 id，中行勾 vision/enable + 「高级」，高级区放不常改的字段。
+  // 全部走细粒度 path 保存，不整体覆盖模型对象（保住文件里的手写字段）。
   function pfModelsRowHtml(r, i) {
+    const ph = (pfEdit && pfEdit.preset && pfEdit.preset.model_hint) || 'id(上游模型名)';
+    const profiles = (SET.modelProfileNames || []).slice();
+    // 配置里引用了但不在下拉里的 profile（手工改过 YAML）:补一项，避免保存时被静默改回默认
+    if (r.profile && profiles.indexOf(r.profile) < 0) profiles.push(r.profile);
+    const adv = r.adv ? '<div class="mpe-adv">' +
+      '<label class="mpe-line"><span>显示名</span><input type="text" placeholder="默认同 id" value="' + att(r.display_name) + '" oninput="sUI.mModField(' + i + ',\'display_name\',this.value)"></label>' +
+      '<label class="mpe-line"><span>Profile</span><select onchange="sUI.mModField(' + i + ',\'profile\',this.value)">' +
+        '<option value="">默认</option>' +
+        profiles.map(n => '<option value="' + att(n) + '"' + (n === r.profile ? ' selected' : '') + '>' + esc(n) + '</option>').join('') +
+      '</select></label>' +
+      '<label class="mpe-line"><span>请求参数</span><textarea rows="2" spellcheck="false" placeholder=\'{"key":"value"}\' oninput="sUI.mModField(' + i + ',\'extra_params\',this.value)">' + esc(r.extra_params) + '</textarea></label>' +
+      '<label class="mpe-line"><span>思考参数</span><textarea rows="2" spellcheck="false" placeholder=\'{"reasoning_effort":"max"}\' oninput="sUI.mModField(' + i + ',\'thinking_params\',this.value)">' + esc(r.thinking_params) + '</textarea></label>' +
+      '<label class="mpe-line"><span>思考链回传</span><input type="text" placeholder="回传字段名" value="' + att(r.reasoning_ack_field) + '" oninput="sUI.mModField(' + i + ',\'reasoning_ack_field\',this.value)"></label>' +
+    '</div>' : '';
     return '<div class="mpe-mcard">' +
       '<div class="mpe-row">' +
-        '<input class="mpe-grow" type="text" placeholder="id(上游模型名)" value="' + esc(r.id) + '" oninput="sUI.mModId(' + i + ',this.value)">' +
+        '<input class="mpe-grow" type="text" placeholder="' + att(ph) + '" value="' + att(r.id) + '" oninput="sUI.mModId(' + i + ',this.value)">' +
         '<button class="mpe-del" title="删除此模型" onclick="sUI.mDelModel(' + i + ')">×</button>' +
       '</div>' +
       '<div class="mpe-cks">' +
         '<label class="mpe-ck"><input type="checkbox"' + (r.vision ? ' checked' : '') + ' onchange="sUI.mModVision(' + i + ',this.checked)">图片输入</label>' +
         '<label class="mpe-ck"><input type="checkbox"' + (r.enable !== false ? ' checked' : '') + ' onchange="sUI.mModEnable(' + i + ',this.checked)">启用</label>' +
-      '</div>' +
+        '<button type="button" class="mpe-adv-btn" onclick="sUI.mAdvToggle(' + i + ')">' + (r.adv ? '收起' : '高级') + '</button>' +
+      '</div>' + adv +
     '</div>';
   }
   // 行下标变化后需重渲染(事件处理器里捕获了旧 i),故增删后重建两段行列表。
@@ -1298,7 +1398,7 @@
     $('mpe-models').innerHTML = pfEdit.models.map(pfModelsRowHtml).join('') || '<div class="model-group-empty">至少保留一个模型</div>';
   }
   function addPfKey() { if (!pfEdit) return; pfEdit.keys.push({ ref: null, api_key: '' }); renderPfRows(); }
-  function addPfModel() { if (!pfEdit) return; pfEdit.models.push({ ref: null, id: '', vision: true, enable: true }); renderPfRows(); }
+  function addPfModel() { if (!pfEdit) return; pfEdit.models.push(pfNewModel()); renderPfRows(); }
   function delPfKey(i) {
     if (!pfEdit) return;
     if (pfEdit.keys.length <= 1) return toast('至少保留一个 Key');
@@ -1312,6 +1412,37 @@
   function setPfKey(i, f, v) { if (pfEdit && pfEdit.keys[i]) pfEdit.keys[i][f] = v; }
   function setPfModel(i, f, v) { if (pfEdit && pfEdit.models[i]) pfEdit.models[i][f] = v; }
   function closeModelEditor() { $('model-edit-modal').classList.add('hidden'); }
+  // JSON 参数:留空 = {}（不写进文件）;非空必须是 JSON 对象（数组/标量对上游没意义）
+  function pfParams(r, key, label) {
+    const txt = String(r[key] || '').trim();
+    if (!txt) return {};
+    let v;
+    try { v = JSON.parse(txt); } catch (_) {
+      throw new Error('模型「' + (String(r.id || '').trim() || '未命名') + '」的' + label + '不是合法 JSON');
+    }
+    if (!v || typeof v !== 'object' || Array.isArray(v)) {
+      throw new Error('模型「' + (String(r.id || '').trim() || '未命名') + '」的' + label + '要填 JSON 对象，如 {"key":"value"}');
+    }
+    return v;
+  }
+  // 新增行/新增平台时落盘的模型对象:只写非缺省项,其余交给 config.js 的默认值
+  function pfModelValue(r) {
+    const id = String(r.id || '').trim();
+    const nv = { id };
+    if (r.vision === false) nv.vision = false; // 缺省 true，只在取消勾选时显式落键
+    if (r.enable === false) nv.enable = false;
+    const dn = String(r.display_name || '').trim();
+    if (dn && dn !== id) nv.display_name = dn;
+    const prof = String(r.profile || '').trim();
+    if (prof) nv.profile = prof;
+    const ep = pfParams(r, 'extra_params', '请求参数');
+    if (Object.keys(ep).length) nv.extra_params = ep;
+    const tp = pfParams(r, 'thinking_params', '思考参数');
+    if (Object.keys(tp).length) nv.thinking_params = tp;
+    const ra = String(r.reasoning_ack_field || '').trim();
+    if (ra) nv.reasoning_ack_field = ra;
+    return nv;
+  }
   // 根据工作态算批量编辑:原地改(值变更项) → 删行(降序) → 新增行(append)。
   // YAML 数组删项后下标收紧,同批内删/改/增按原 ref 定位,服务端依次应用。
   function buildPfEdits() {
@@ -1335,25 +1466,59 @@
       if (!pfEdit.keys.some(r => r.ref === ki)) delKeys.push(ki);
     }
     delKeys.sort((a, b) => b - a).forEach(ki => edits.push({ op: 'delete', path: ['platforms', pfEdit.idx, 'keys', ki] }));
-    // 模型:已有行只按细粒度 path 改 vision/enable(不整体覆盖,保住文件里的 display_name/extra_params 等);
-    // 新增行 append 最小对象(缺省项不写:display_name 后端同 id,enable 缺省启用)
+    // 模型:已有行全部按细粒度 path 改(不整体覆盖,保住文件里的手写字段与其他参数);
+    // 新增行 append 最小对象(缺省项不写:display_name 同 id、enable 缺省启用、参数为空)
     pfEdit.models.forEach(r => {
       if (r.ref != null) {
         const om = (p.models || [])[r.ref] || {};
+        const mp = ['platforms', pfEdit.idx, 'models', r.ref];
         const nid = String(r.id || '').trim();
         if (nid && om.id && nid !== om.id) {
-          edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref, 'id'], value: nid });
+          edits.push({ path: mp.concat('id'), value: nid });
           SET.deletedModels[p.name + '/' + om.id] = true; // 重启前运行池里旧 id 不再可绑,标记隐藏
           delete SET.deletedModels[p.name + '/' + nid];   // 改成曾被删的 id:清掉旧标记防误屏蔽
         }
-        if (!!om.vision !== !!r.vision) edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref, 'vision'], value: !!r.vision });
-        if ((om.enable !== false) !== (r.enable !== false)) edits.push({ path: ['platforms', pfEdit.idx, 'models', r.ref, 'enable'], value: r.enable !== false });
+        if (!!om.vision !== !!r.vision) edits.push({ path: mp.concat('vision'), value: !!r.vision });
+        if ((om.enable !== false) !== (r.enable !== false)) edits.push({ path: mp.concat('enable'), value: r.enable !== false });
+        // 显示名缺省 = id:空值/等于 id 都按「不写」处理
+        const curDn = String(om.display_name || '');
+        const dn = String(r.display_name || '').trim();
+        if (!dn || dn === (nid || om.id)) {
+          if (curDn && curDn !== om.id) edits.push({ path: mp.concat('display_name'), op: 'delete' });
+        } else if (dn !== curDn) {
+          edits.push({ path: mp.concat('display_name'), value: dn });
+        }
+        const curProf = String(om.profile || '');
+        const prof = String(r.profile || '').trim();
+        if (!prof) {
+          if (curProf) edits.push({ path: mp.concat('profile'), op: 'delete' });
+        } else if (prof !== curProf) {
+          edits.push({ path: mp.concat('profile'), value: prof });
+        }
+        // 参数类:值没变就不写(避免无意义重写丢掉节点注释);清空 = 删键,回落默认 {}
+        const curEp = om.extra_params || {};
+        const ep = pfParams(r, 'extra_params', '请求参数');
+        if (JSON.stringify(ep) !== JSON.stringify(curEp)) {
+          edits.push(Object.keys(ep).length
+            ? { path: mp.concat('extra_params'), value: ep }
+            : { path: mp.concat('extra_params'), op: 'delete' });
+        }
+        const curTp = om.thinking_params || {};
+        const tp = pfParams(r, 'thinking_params', '思考参数');
+        if (JSON.stringify(tp) !== JSON.stringify(curTp)) {
+          edits.push(Object.keys(tp).length
+            ? { path: mp.concat('thinking_params'), value: tp }
+            : { path: mp.concat('thinking_params'), op: 'delete' });
+        }
+        const curRa = String(om.reasoning_ack_field || '');
+        const ra = String(r.reasoning_ack_field || '').trim();
+        if (!ra) {
+          if (curRa) edits.push({ path: mp.concat('reasoning_ack_field'), op: 'delete' });
+        } else if (ra !== curRa) {
+          edits.push({ path: mp.concat('reasoning_ack_field'), value: ra });
+        }
       } else {
-        const id = String(r.id || '').trim();
-        const nv = { id };
-        if (r.vision === false) nv.vision = false; // 后端缺省已改 true：勾上靠缺省不落键，取消勾选必须显式写 false
-        if (r.enable === false) nv.enable = false;
-        edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'models'], value: nv });
+        edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'models'], value: pfModelValue(r) });
       }
     });
     const delMods = (p.models || []).map((_, i) => i).filter(i => !pfEdit.models.some(r => r.ref === i)).sort((a, b) => b - a);
@@ -1378,23 +1543,23 @@
     let edits;
     try {
       if (add) {
-        // 新增平台:一次 append 整个对象(name 留空由服务端取主机段;type/concurrency/display_name 均不落配置,走各自缺省)
-        edits = [{ op: 'append', path: ['platforms'], value: {
+        // 新增平台:一次 append 整个对象
+        const obj = {
           name, url,
           keys: pfEdit.keys.map(r => ({ api_key: String(r.api_key || '').trim() })),
-          models: pfEdit.models.map(r => {
-            const id = String(r.id).trim();
-            const nv = { id };
-            if (r.vision === false) nv.vision = false; // 同上：缺省 true，只在取消勾选时显式落键
-            if (r.enable === false) nv.enable = false;
-            return nv;
-          }),
-        } }];
+          models: pfEdit.models.map(pfModelValue),
+        };
+        // 用预设时把余额查询类型固定下来（不展示给用户）：名字与预设一致可不写（服务端缺省 = 平台名）
+        const presetType = pfEdit.preset ? String(pfEdit.preset.type || pfEdit.preset.key || '') : '';
+        if (presetType && presetType !== name) obj.type = presetType;
+        edits = [{ op: 'append', path: ['platforms'], value: obj }];
       } else {
         // 改名不影响 pi(数组位置);其余按原 ref 定位,见 buildPfEdits
         edits = buildPfEdits();
         if (!edits.length) { closeModelEditor(); return toast('没有变更'); }
       }
+    } catch (e) { return toast(e.message); } // JSON 校验失败等:提示后不发请求
+    try {
       await req('PATCH', '/api/config', { edits });
       // 重加同名模型(重启前被标记隐藏的):清掉删除标记防误屏蔽
       const pname = name || (SET.cfgPlatforms[pfEdit.idx] || {}).name || '';
@@ -1872,8 +2037,15 @@
     mDelModel: delPfModel,
     mKeyApi: function (i, v) { setPfKey(i, 'api_key', v); },
     mModId: function (i, v) { setPfModel(i, 'id', v); },
+    mModField: function (i, f, v) { setPfModel(i, f, v); },
     mModVision: function (i, v) { setPfModel(i, 'vision', v); },
     mModEnable: function (i, v) { setPfModel(i, 'enable', v); },
+    mAdvToggle: function (i) {
+      if (!pfEdit || !pfEdit.models[i]) return;
+      pfEdit.models[i].adv = !pfEdit.models[i].adv;
+      renderPfRows();
+    },
+    mPreset: applyPfPreset,
     mDelPlat: delPlatformFromModal,
     restartNow: restartNow,
     toggleGroup: toggleModelGroup,

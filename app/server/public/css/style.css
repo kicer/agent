@@ -1240,6 +1240,23 @@ label.icon-btn { cursor: pointer; }
 .modal .mpe-ck input { width: 15px; height: 15px; padding: 0; margin: 0; border: none; background: none; accent-color: var(--active); cursor: pointer; }
 .modal .mpe-del { flex: none; border: none; background: none; margin: 0; padding: 2px 7px; cursor: pointer; color: var(--gray-light); font-size: 18px; line-height: 1.2; }
 .modal .mpe-del:active { color: #c0392b; }
+/* 平台预设：新增平台时点一下填好 url/类型，模型卡带上该平台的参数缺省 */
+.modal .mpe-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.modal .mpe-chip { flex: none; width: auto; padding: 5px 12px; border: 1px solid #dde1ea; border-radius: 999px; background: #fff; color: var(--gray); font-size: 12.5px; line-height: 1.4; }
+.modal .mpe-chip:active { background: var(--surface); }
+.modal .mpe-chip.on { border-color: var(--active); color: var(--active); background: var(--active-light); }
+/* 模型卡「高级」折叠区：沿用左标签/右控件；JSON 用等宽小字，高度可拖 */
+.modal .mpe-adv-btn { margin-left: auto; flex: none; padding: 0; font-size: 12px; color: var(--gray); }
+.modal .mpe-adv { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.modal .mpe-adv .mpe-line { margin-bottom: 8px; }
+.modal .mpe-adv .mpe-line:last-child { margin-bottom: 0; }
+.modal .mpe-line textarea {
+  flex: 1; min-width: 0; margin: 0; height: 46px; padding: 6px 9px;
+  border: 1px solid #dde1ea; border-radius: 10px; background: #fff; color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.45;
+  resize: vertical;
+}
+.modal .mpe-line textarea:focus { border-color: var(--active); }
 
 /* ---------- 编辑器页(config.yml 原文 / 技能文件) ---------- */
 .set-editor {
@@ -1277,9 +1294,9 @@ label.icon-btn { cursor: pointer; }
   background: var(--page); border-radius: 14px; padding: 20px; width: 84%; max-width: 360px;
   position: relative; max-height: 88%; overflow-y: auto;
 }
-/* 移动端：MCP 配置弹窗左右留白收紧——表单是「左标签 + 右输入」双列，84% 宽度下输入框太窄 */
+/* 移动端：表单是「左标签 + 右输入」双列，84% 宽度下输入框太窄 */
 @media (max-width: 639px) {
-  #mcp-edit-modal .modal { width: calc(100% - 24px); padding: 18px 14px; }
+  #mcp-edit-modal .modal, #model-edit-modal .modal { width: calc(100% - 24px); padding: 18px 14px; }
 }
 .modal h3 { margin-bottom: 12px; font-size: 16px; }
 .modal input {

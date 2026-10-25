@@ -2,7 +2,7 @@
   "platforms": [
     {
       "key": "bigmodel",
-      "label": "智谱 BigModel",
+      "label": "智谱",
       "url": "https://open.bigmodel.cn/api/paas/v4",
       "type": "bigmodel",
       "model_hint": "glm-5.3-flash",

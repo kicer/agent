@@ -296,6 +296,8 @@
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         <h3 id="mpe-title">编辑平台</h3>
+        <!-- 平台预设：仅新增平台时展示，点选即填好 url/类型并给模型卡带上该平台的参数缺省 -->
+        <div class="mpe-chips hidden" id="mpe-presets"></div>
         <input type="text" id="mpe-name" placeholder="平台名(留空取 url 主机名首段)">
         <input type="text" id="mpe-url" placeholder="平台上游地址(OpenAI 兼容 /v1)">
         <div class="mpe-sec">
@@ -310,7 +312,6 @@
           <button class="ghost-btn danger hidden" id="mpe-del-btn" onclick="sUI.mDelPlat()">删除平台</button>
           <button class="primary-btn" onclick="sUI.mSave()">保存</button>
         </div>
-        <div class="cfg-note">仅写入配置，点击「重启服务」后生效。</div>
       </div>
     </div>
 
