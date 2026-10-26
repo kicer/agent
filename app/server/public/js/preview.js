@@ -31,6 +31,12 @@ function pvPreviewUrl(rel, w) {
     '/files/preview?path=' + encodeURIComponent(rel) + '&w=' + w;
 }
 
+// PDF 预览直连：让内建查看器自己发 Range 请求，不必先 fetch 整包转 blob。
+function pvPdfUrl(rel) {
+  return '/api/sessions/' + encodeURIComponent(state.sessionId) +
+    '/files/inline?path=' + encodeURIComponent(rel);
+}
+
 function pvKind(name) {
   const low = String(name).toLowerCase();
   if (/\.html?$/i.test(low)) return 'html';
@@ -60,9 +66,9 @@ function pvImgGroup(name) {
 
 // 刷新/新窗口两个钮对**所有**预览类型统一开放：
 //   refresh → pvState.reload（各类型都注入「按同一路径重开」，与地址条回车同一条路）
-//   popup   → pvState.url（office=预览网关；图片=inline 预览直链；文本/HTML/PDF=blob URL；
-//             不支持的类型=下载地址）
-// 下载接口是 attachment，直接导航只会触发下载；图片走 /files/preview（inline）可直接开新窗口。
+//   popup   → pvState.url（office=预览网关；图片/PDF=inline 直链；
+//             文本/HTML=blob URL；不支持的类型=下载地址）
+// 下载接口是 attachment，直接导航只会触发下载；图片/PDF 走各自的 inline 路由可直接开新窗口。
 function pvToolbar(o) {
   document.getElementById('pv-refresh').classList.toggle('hidden', !o.refresh);
   document.getElementById('pv-popup').classList.toggle('hidden', !o.popup);
@@ -254,6 +260,16 @@ async function openFilePreview(name, sizeText) {
     }
     return;
   }
+  // PDF 直连 inline 路由：桌面面板与窄窗口（全屏 overlay）都让内建查看器按 Range 取字节，
+  // 不再 fetch 整包转 blob。show() 会按 desk 自动落到右侧面板或 #fs-viewer。
+  if (kind === 'pdf') {
+    const url = pvPdfUrl(name);
+    const fr = document.createElement('iframe');
+    fr.className = desk ? 'pv-frame' : 'fs-html-frame';
+    fr.title = String(name); fr.src = url;
+    show(fr, Object.assign({}, tbAll, { url }));
+    return;
+  }
   let r;
   try {
     r = await fetch('/api/sessions/' + state.sessionId + '/files/download?path=' + encodeURIComponent(name));
@@ -389,6 +405,7 @@ async function pvRenderLegacy(name, r, my) {
     pvOverlayShow(iframe, { bar: true, name: name, source: html }); // 全宽沉浸，源码可看/可复制
     if (my !== pvSeq) return;
   } else if (/\.pdf$/i.test(name)) {
+    // 正常路径已在 openFilePreview 用 /files/inline 直连；这里仅作旧路径兜底。
     const u = URL.createObjectURL(await r.blob());
     if (state.lastPdfBlobUrl) { try { URL.revokeObjectURL(state.lastPdfBlobUrl); } catch (_) {} }
     state.lastPdfBlobUrl = u;

@@ -215,6 +215,34 @@ router.get('/:id/files/preview', async function (req, res) {
   }
 });
 
+// ---------- PDF 预览（inline，供 iframe 直连） ----------
+// 现有下载接口是 attachment + no-store：前端只能 fetch 整包再转 blob，查看器要等整包下完才出现。
+// 这里单独给预览一条 inline 路由，保留 sendFile 的 Range 支持，让内建查看器自己按需取字节；
+// ETag/Last-Modified 让重复打开走 304，不再重下。下载按钮仍走原 /files/download，语义不变。
+router.get('/:id/files/inline', function (req, res) {
+  try {
+    const rel = String(req.query.path || '');
+    if (!rel) return res.status(400).json({ error: '缺少 path 参数' });
+    if (!/\.pdf$/i.test(rel)) return res.status(400).json({ error: '不是 PDF' });
+    const abs = resolveInTask(engine.taskDirOf(req.params.id), rel);
+    const st = fs.statSync(abs);
+    if (!st.isFile()) return res.status(400).json({ error: '不是文件' });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
+    res.sendFile(abs, {
+      cacheControl: false,
+      dotfiles: 'allow',
+      etag: true,
+      lastModified: true,
+      acceptRanges: true,
+    });
+  } catch (err) {
+    res.status(404).json({ error: '文件不存在' });
+  }
+});
+
 // ---------- 打包下载（选中项含文件夹时，后端把整个选择打成 zip 流式返回） ----------
 // 纯 Node 实现（STORE 不压缩 + 手拼 zip 结构）：任务目录里多是媒体/生成产物，
 // 压缩收益低；两遍读文件（先算 CRC 再磁盘流发送），内存占用与总大小无关。
