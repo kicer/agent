@@ -236,7 +236,11 @@ function handleSend(db, opts) {
 
   // 普通消息：解析当前会话，无绑定自动新建（IM 用户不会先打 /new 才能聊天）。
   // 微信通道以 binding 行的全局 deep_think 开关作消息的 deepThink 取值（与 H5 按钮 body 同义，
-  // 只是没得点、改用 /think 拨）；非 wx 通道照旧不传 opts，行为零变化。
+  // 只是没得点、改用 /think 拨）；非 wx 通道照旧不传 deepThink，行为零变化。
+  // 投递走 mode:'interject'：IM 用户是在实时对话，回合中插话应当「当前工具跑完就插话」，
+  // 而不是排队等本轮结束。没在跑时 enqueueMessage 等价于立即发送，行为与旧 postUserMessage 一致。
+  // （旧实现直接 postUserMessage → live 追投：user 行可能落在 assistant.tool_calls 与
+  //   tool 回执之间，批次配对当场断裂。走队列才能保证只在安全边界写库。）
   if (!parsed || parsed.normal) {
     const wx = String(channel).startsWith('wx:');
     const deepThink = wx ? !!((db.prepare('SELECT deep_think FROM wechat_bindings WHERE id = ?').get(channel.slice(3)) || {}).deep_think) : undefined;
@@ -246,10 +250,17 @@ function handleSend(db, opts) {
       const r = newSessionFor(db, user, channel, text, wx ? { deepThink } : undefined);
       s = r.s; sent = r.sent;
     } else {
-      sent = engine.postUserMessage(s.id, text, wx ? { deepThink } : undefined);
+      sent = engine.enqueueMessage(s.id, text, wx ? { deepThink, mode: 'interject' } : { mode: 'interject' });
     }
-    log.info('msg', tag + ' channel 消息 → ' + s.id);
-    return { kind: 'message', reply: '已发送到会话 ' + s.id, session_id: s.id, message_id: sent.message_id };
+    const queued = !!(sent && sent.queued);
+    log.info('msg', tag + ' channel 消息 → ' + s.id + (queued ? '（已排队，等安全边界投递）' : ''));
+    return {
+      kind: 'message',
+      reply: (queued ? '已排队到会话 ' : '已发送到会话 ') + s.id,
+      session_id: s.id,
+      message_id: sent && sent.message_id,
+      pending_id: sent && sent.pending_id,
+    };
   }
 
   if (parsed.unknown) {

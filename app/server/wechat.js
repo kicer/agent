@@ -418,9 +418,10 @@ function saveTaskMedia(s, buf, kind, rawName) {
 //      预算够 → 全文 + 附件卡片；放不下但 ≥2 → 降级「截断头部 + 全文写会话
 //      .md 转文件卡片」（内容零丢失）；<2 → 放弃并告警（网页端完整可见）。
 //   4. 工具台账（重结果轻过程；微信端不再有独立台账消息）：tool_call/tool_result 只在 st.tools
-//      记账；失败即时单发一行「工具调用失败: 名称 + 参数」（预算保不住结论储备则留给尾段汇总）；
-//      done 时汇总为一句「本轮工具调用 N 次（name x c, ...），其中 M 次失败」搭结论尾段，
-//      纯工具轮（无结论文本）则汇总与文件卡片合成一条兜底消息（网页端始终全量可见）。
+//      记账；**工具失败一律不下发**（多数是 AI 参数用错，模型下一轮自己改，推给用户既看不懂
+//      也帮不上忙；网页端工具卡与库里的 is_error 照旧保留）。done 时只汇总一句中性计数
+//      「本轮工具调用 N 次（name x c, ...）」搭结论尾段，若本轮有因用户介入而未执行的调用，
+//      额外补「N 次因你介入未执行」；纯工具轮（无结论文本）则汇总与文件卡片合成一条兜底消息。
 //   5. 通用 ui_card（MCP 工具回包的预览卡片块）：按 URL 去重攒进 st.cards，不独立占配额，
 //      done 时作「文件」小节搭结论尾段；每条 markdown 链接 + 原始 URL 各一行（防纯文化退化
 //      后点不开）；未知 action 或未配公网前缀在微信端静默忽略。
@@ -439,13 +440,13 @@ function attachBus() {
       else if (event === 'done') enqueueDelivery(bid, () => flushHeld(bid));
       else {
         // 工具调用/回执：心跳 + 台账记账（台账不再独立成消息，见策略注释第 4 条）；
-        // 失败经串行队列即时单发一行；ui_card 攒进本回合卡片列表（done 时随尾段投）。
+        // 失败一律**不下发**（多数是 AI 参数用错，模型下一轮自己改；用户看到
+        // 「工具调用失败」既看不懂也帮不上忙）。网页端工具卡与库里的 is_error 照旧保留。
+        // ui_card 攒进本回合卡片列表（done 时随尾段投）。
         // reasoning_delta（思考流）不进台账，只走下面的心跳——微信用户能看到「正在输入」在思考。
         if (event === 'tool_call') toolDigestPush(bid, data);
-        else if (event === 'tool_result') {
-          toolDigestMark(bid, data);
-          if (data && data.is_error) enqueueDelivery(bid, () => flushFailedLine(bid));
-        } else if (event === 'ui_card') cardCollect(bid, data, sessionId);
+        else if (event === 'tool_result') toolDigestMark(bid, data);
+        else if (event === 'ui_card') cardCollect(bid, data, sessionId);
         maybeTypingPing(bid); // 「正在输入」心跳：长工具/思考回合里微信持续看到 AI 还在干活
       }
     } catch (e) {
@@ -572,32 +573,34 @@ function toolDigestPush(bid, data) {
     const name = String((data && data.name) || '');
     if (!name) return;
     const hint = argHint(data && data.arguments);
-    const ex = st.tools.find(t => t.name === name && t.hint === hint && !t.err);
+    // 同参数同名归并成一条（失败也不再单开一条：失败对用户不可见，没必要为它拆行）
+    const ex = st.tools.find(t => t.name === name && t.hint === hint && !t.skipped);
     if (ex) { ex.count++; if (data.id) ex.ids.push(data.id); return; }
-    st.tools.push({ name, hint, count: 1, err: false, ids: data && data.id ? [data.id] : [] });
+    st.tools.push({ name, hint, count: 1, skipped: false, ids: data && data.id ? [data.id] : [] });
   } catch (_) { /* 摘要锦上添花，绝不动摇投递 */ }
 }
+// 只记「未执行」（用户介入/终止导致没跑的调用）。工具自身失败不进台账展示：
+// 多数是 AI 参数写错，模型下一轮会自己改；它要不要告诉用户，由模型自己的回复决定。
 function toolDigestMark(bid, data) {
   try {
-    if (!data || !data.is_error) return;
+    if (!data || !data.skipped) return;
     const st = getTurn(bid);
     const t = st.tools.find(x => x.ids.indexOf(data.tool_call_id) >= 0);
-    if (t) t.err = true;
+    if (t) t.skipped = true;
   } catch (_) { /* 同上 */ }
 }
 // 降级路径的渲染（peek 不清空）：台账单发预算不足/失败时搭结论尾段，结论投递成功后调用方清空。
 // 若 wxbot 开 WXBOT_STRIP_MARKDOWN 回退纯文化，stripMarkdown 会把围栏/标题降为普通行，信息不丢。
-// done 尾段的工具汇总（peek 不清空）：一句计数 + 未即时送达的失败行；结论投递成功后由调用方清空。
+// done 尾段的工具汇总（peek 不清空）：一句中性计数 + 「因你介入未执行」的条数。
+// 刻意不列失败：工具报错是 AI 自己该处理的事，往里推只会让用户困惑（详见 toolDigestMark 注释）。
 function peekToolDigest(st) {
   const ts = st && st.tools;
   if (!ts || !ts.length) return '';
   const total = ts.reduce((n, t) => n + (t.count || 1), 0);
   const breakdown = ts.map(t => t.name + (t.count > 1 ? ' x' + t.count : '')).join(', ');
-  const errN = ts.filter(t => t.err).length;
   let s = '---\n\n### 工具\n\n本轮工具调用 ' + total + ' 次（' + breakdown + '）';
-  if (errN) s += '，其中 ' + errN + ' 次失败';
-  const unnotified = ts.filter(t => t.err && !t.warned);
-  if (unnotified.length) s += '\n' + unnotified.map(t => '- 失败: ' + t.name + (t.hint ? ' ' + t.hint : '')).join('\n');
+  const skipN = ts.filter(t => t.skipped).length;
+  if (skipN) s += '，' + skipN + ' 次因你介入未执行';
   return s;
 }// 正文与 digest 一起分段：正文照旧 splitText，digest 原子追尾——markdown 代码围栏不能被
 // 1800 字分段拦腰斩断；尾段能与正文同段就同段（不多占配额），放不下才单独成段。
@@ -610,22 +613,6 @@ function digestSegs(body, digest) {
   else segs.push(digest);
   return segs;
 }
-// 独立台账消息：一批 ≤8 行整屏渲染，无折叠（零头等下一班车，done 时补发）。
-// 失败即时单发：一次 tool_result 失败事件触发一次；预算保不住结论储备就留给尾段汇总兜底。
-async function flushFailedLine(bid) {
-  const st = getTurn(bid);
-  const t = st.tools.find(x => x.err && !x.warned);
-  if (!t) return;
-  const b = bindReady(bid);
-  if (!b) return;
-  if (st.sent + 1 > REPLY_QUOTA - CONCLUSION_RESERVE) return;
-  try {
-    await wxbotApi('POST', '/api/deliver', { id: b.id, to: b.wx_to_user, text: '工具调用失败: ' + t.name + (t.hint ? '\n' + t.hint : '') }, 15000);
-    st.sent++;
-    t.warned = true;
-  } catch (_) { /* 投失败不紧：done 时尾段汇总仍会列出 */ }
-}
-
 // ---------- 通用 UI 卡片（bus ui_card 事件，见 wechat 策略注释第 5 条）----------
 // open_preview → 绝对预览 URL：与前端 pvOfficeUrl/网关寻址同款，前缀真相在 core（public_link.base_url）。
 function uiCardUrl(data, sessionId) {
@@ -671,7 +658,7 @@ async function flushTail(bid) {
 // 留给结论尾段搭便车；直投失败归还队首（串行队列调度，与正文消息天然排队，无并发互踩）。
 
 // 过程消息：直发窗口内且投完后仍给结论留足储备才投；否则计入 omitted，并进结论的注记行。
-// 正文不携带工具信息——工具信息自有出口（失败即时行/done 尾段汇总），不重复。
+// 正文不携带工具信息——工具信息自有出口（done 尾段汇总），不重复；工具失败不下发。
 async function deliverProcess(bid, m, sessionId) {
   const b = bindReady(bid);
   if (!b || stale(b, m)) return;

@@ -103,9 +103,14 @@ POST /api/sessions/:id/messages
 
 | 模式 | 入口 | 行为 |
 |---|---|---|
-| `queue`（默认） | 运行中点发送 | 本轮 `finalize` 后作为新回合的第一条消息发出 |
-| `interject`（干预） | 条幅「干预」 | 当前工具跑完（或本条回复落库）后，闭合批次、就地插话，同一回合继续 |
+| `queue`（默认） | 网页端运行中点发送 | 本轮 `finalize` 后作为新回合的第一条消息发出 |
+| `interject`（干预） | 条幅「干预」/ **IM 渠道消息** | 当前工具跑完（或本条回复落库）后，闭合批次、就地插话，同一回合继续 |
 | `now`（立即发送） | 条幅「立即发送」 | 杀进程 + abort 流，本回合判 `cancelled`，收尾后立刻发 |
+
+微信 / `POST /api/channel/send` 的普通消息走 `enqueueMessage(..., {mode:'interject'})`：
+IM 用户在实时对话，回合中插话应当“当前这步跑完就插”，不排队等本轮结束；且**必须走队列**
+（旧的直接 `postUserMessage` 会把 user 行插进工具批次中间）。`interject` 入队时插到所有
+`queue` 之前（已在队列里的 interject 仍保持先来后到），这样它立刻成为队首，边界检查才能命中。
 
 **铁律：队列里的消息绝不先落 `messages` 表。** 只在安全边界写库——① 工具批次闭合
 （本批每个 `tool_call_id` 都有回执）；② 无 `tool_calls` 的回复已落库；③ 回合 finalize。
@@ -114,7 +119,10 @@ POST /api/sessions/:id/messages
 
 - `closeToolBatch(sessionId, reason)` 是配对兜底的唯一写入口：给最后一条带 `tool_calls` 的
   assistant 里缺回执的调用补一条 `is_error=1` 的合成 tool 行（「用户介入/终止，本次调用未执行」）。
-  `finalize` 无条件调一次，取消路径与干预路径各调一次。
+  `finalize` 无条件调一次，取消路径与干预路径各调一次。广播的 `tool_result` 带 `skipped:true`，
+  微信端据此显示「N 次因你介入未执行」。
+- **微信端不下发任何工具失败**（即使 `is_error=true`）：多数是模型参数用错、下一轮自己会改，
+  推给用户既看不懂也帮不上忙；要交代就由模型自己的回复说。失败仍完整保留在库里与网页端工具卡上。
 - 读侧还有一层纯过滤（`llm.buildMessages` 的 `pairedByAssistant` / `emittedCallIds`）：只下发
   「本批（紧邻的连续 tool 行）确有回执」的调用，孤儿回执也不下发。DB/UI 不动，专门兜历史脏数据。
 - `stop()`（用户点「停止」）**会清空队列**（全停语义）；「立即发送」不走 `stop`，只中断当前回合、保留队首。

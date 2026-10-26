@@ -495,9 +495,11 @@ function closeToolBatch(sessionId, reason) {
     const name = (c.function && c.function.name) || '未知工具';
     const text = 'Error: ' + reason + '本次调用未执行（' + name + '）。';
     const msgId = saveMessage(sessionId, { role: 'tool', tool_call_id: c.id, name, content: text, is_error: true });
-    // 同步广播：前端工具卡不能停在「调用中」呼吸态
+    // 同步广播：前端工具卡不能停在「调用中」呼吸态。
+    // skipped：这不是工具自己失败，而是用户介入导致没执行——微信端据此不报
+    // 「工具调用失败」、不计入失败数（否则一次干预会换来一串误导性告警）。
     bus.emit(sessionId, 'tool_result', {
-      tool_call_id: c.id, name, content: text, is_error: true, msg_id: msgId,
+      tool_call_id: c.id, name, content: text, is_error: true, skipped: true, msg_id: msgId,
     });
     n++;
   }
@@ -1186,11 +1188,16 @@ function clearPendings(sessionId) {
 }
 
 // 入队。没有在跑的回合时，任何模式都等价于立即发送（队列只对运行中的回合有意义）。
+// opts.mode：
+//   queue（默认）→ 排到队尾，本轮收尾后发（网页端发消息走这条）
+//   interject   → 插队到所有 queue 之前，下一个安全边界就投递（IM/渠道消息走这条：
+//                 用户是在实时对话，不应该排在网页端被动排队的消息后面）
 function enqueueMessage(sessionId, content, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
   const text = String(content == null ? '' : content).trim();
   if (!text) throw Object.assign(new Error('content 不能为空'), { status_code: 400 });
+  const mode = (opts && opts.mode) === 'interject' ? 'interject' : 'queue';
   const run = runs.get(sessionId);
   if (!run || !run.looping) {
     const r = postUserMessage(sessionId, text, { deepThink: !!(opts && opts.deepThink) });
@@ -1198,13 +1205,19 @@ function enqueueMessage(sessionId, content, opts) {
   }
   const item = {
     id: newPendingId(), content: text,
-    deepThink: !!(opts && opts.deepThink), mode: 'queue', created_at: now(),
+    deepThink: !!(opts && opts.deepThink), mode, created_at: now(),
   };
   const list = pendingList(sessionId).slice();
-  list.push(item);
+  if (mode === 'interject') {
+    // 插到第一条「排队」消息之前；已在队列里的干预消息仍保持先来后到（不反序）。
+    const i = list.findIndex(x => x.mode === 'queue');
+    if (i < 0) list.push(item); else list.splice(i, 0, item);
+  } else {
+    list.push(item);
+  }
   pendings.set(sessionId, list);
   bus.emit(sessionId, 'pending_added', publicPending(item));
-  log.info('msg', sessionId + ' 待投递消息入队（队列 ' + list.length + '）：' + text.slice(0, 60).replace(/\s+/g, ' '));
+  log.info('msg', sessionId + ' 待投递消息入队（' + mode + '，队列 ' + list.length + '）：' + text.slice(0, 60).replace(/\s+/g, ' '));
   return { pending_id: item.id, queued: true, pending: list.map(publicPending) };
 }
 
