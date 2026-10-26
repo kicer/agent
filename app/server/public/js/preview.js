@@ -25,6 +25,12 @@ function pvOfficeUrl(rel) {
     String(rel).split('/').filter(Boolean).map(encodeURIComponent).join('/') + '/';
 }
 
+// 图片预览派生地址：服务端按 w 生成并缓存 WebP，<img> 直连可边下边画；原图只留给“下载”。
+function pvPreviewUrl(rel, w) {
+  return '/api/sessions/' + encodeURIComponent(state.sessionId) +
+    '/files/preview?path=' + encodeURIComponent(rel) + '&w=' + w;
+}
+
 function pvKind(name) {
   const low = String(name).toLowerCase();
   if (/\.html?$/i.test(low)) return 'html';
@@ -36,8 +42,8 @@ function pvKind(name) {
 }
 
 // 文件面板「当前目录」里的图片作为一组，供查看器左右滑动切换。
-// 同组直接用下载直链（<img> 不受 Content-Disposition: attachment 影响），不必逐张取 blob。
-// 依赖 files.js 的 filesNodeAt / filesCurDir / assetDownloadUrl（同为全局，加载顺序在前）。
+// 同组直接用预览派生直链（2048px），不必逐张取原图/blob，滑动的预取也不会打满带宽。
+// 依赖 files.js 的 filesNodeAt / filesCurDir（同为全局，加载顺序在前）。
 function pvImgGroup(name) {
   try {
     if (typeof filesNodeAt !== 'function') return null;
@@ -46,7 +52,7 @@ function pvImgGroup(name) {
     const paths = node.files.map(f => f.filename).filter(p => PV_IMG.test(p));
     if (paths.length < 2) return null;
     return {
-      list: paths.map(p => ({ src: assetDownloadUrl(p), alt: p.split('/').pop() })),
+      list: paths.map(p => ({ src: pvPreviewUrl(p, 2048), alt: p.split('/').pop() })),
       at: paths.indexOf(name),
     };
   } catch (_) { return null; }
@@ -54,8 +60,9 @@ function pvImgGroup(name) {
 
 // 刷新/新窗口两个钮对**所有**预览类型统一开放：
 //   refresh → pvState.reload（各类型都注入「按同一路径重开」，与地址条回车同一条路）
-//   popup   → pvState.url（office=预览网关；文本/HTML/图片/PDF=blob URL；不支持的类型=下载地址）
-// 服务端文件响应一律是 attachment，直接导航只会触发下载，所以能用 blob 的一律走 blob。
+//   popup   → pvState.url（office=预览网关；图片=inline 预览直链；文本/HTML/PDF=blob URL；
+//             不支持的类型=下载地址）
+// 下载接口是 attachment，直接导航只会触发下载；图片走 /files/preview（inline）可直接开新窗口。
 function pvToolbar(o) {
   document.getElementById('pv-refresh').classList.toggle('hidden', !o.refresh);
   document.getElementById('pv-popup').classList.toggle('hidden', !o.popup);
@@ -221,6 +228,30 @@ async function openFilePreview(name, sizeText) {
       ? '当前浏览器不支持页内预览 PDF，请下载后用系统查看器打开。'
       : '该格式暂不支持在线预览，可下载后本地打开。';
     show(pvInfoNode(name, sizeText, hint), tbAll);
+    return;
+  }
+  // 图片走服务端派生预览：<img> 直连边下边画，不再 fetch 整包转 blob；原图只在“下载”时取。
+  // SVG 保留原路径（移动端还要展示源码），其余图片统一交给 /files/preview。
+  if (kind === 'img' && !/\.svg$/i.test(name)) {
+    const alt = String(name).split('/').pop();
+    const g = pvImgGroup(name);
+    if (desk) {
+      const im = document.createElement('img');
+      im.className = 'pv-img'; im.alt = String(name); im.decoding = 'async';
+      // 面板宽度约半屏，交给浏览器按 DPR 选 640/1280/2048，手机不会去拉大图
+      im.sizes = '(min-width: 960px) 50vw, 100vw';
+      im.srcset = [640, 1280, 2048].map(w => pvPreviewUrl(name, w) + ' ' + w + 'w').join(',');
+      const url = pvPreviewUrl(name, 2048);
+      im.src = url;
+      im.addEventListener('click', () => openImageViewer(url, alt, g && g.list, g && g.at));
+      im.addEventListener('error', () => {
+        if (my !== pvSeq) return;
+        show(pvInfoNode(name, sizeText, '图片读取失败：文件可能已被删除，或格式无法解码。'), tbAll);
+      });
+      show(im, Object.assign({}, tbAll, { url }));
+    } else {
+      openImageViewer(pvPreviewUrl(name, 2048), alt, g && g.list, g && g.at);
+    }
     return;
   }
   let r;

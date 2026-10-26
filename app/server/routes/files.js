@@ -1,5 +1,6 @@
-// 文件管理 API：上传 / 列表 / 下载 / 删除
+// 文件管理 API：上传 / 列表 / 下载 / 预览 / 删除
 const express = require('express');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
@@ -145,6 +146,74 @@ router.get('/:id/files/download', serveDownload);
 // 加固形式：URL 路径末段带上真实文件名（download-name/<名字>?path=...），
 // 供解析不了 Content-Disposition 的下载器兜底；path 参数与验签逻辑完全一致。
 router.get('/:id/files/download-name/*', serveDownload);
+
+// ---------- 图片预览派生图（inline，供 <img> 直连；与下载接口的 attachment/no-store 语义分开） ----------
+// 大图慢的三层原因：整包 fetch 完才渲染、每次都要重下、把原始像素丢给浏览器解码。
+// 这里按宽度用 sharp 生成 WebP 落盘缓存，前端 <img> 直连即可边下边画；原图只留给“下载”。
+const PREVIEW_IMG_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico)$/i;
+const PREVIEW_WIDTHS = new Set([320, 640, 960, 1280, 1600, 2048]);
+let sharp = null;
+try { sharp = require('sharp'); } catch (_) { /* 未安装 sharp 时整条路由降级为原图直出 */ }
+
+// 预览响应不能带 Content-Disposition: attachment；.imgcache 是点目录，sendFile 需显式放行。
+function sendInline(res, abs) {
+  res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
+  res.sendFile(abs, { cacheControl: false, dotfiles: 'allow', etag: true, lastModified: true });
+}
+
+router.get('/:id/files/preview', async function (req, res) {
+  try {
+    const rel = String(req.query.path || '');
+    if (!rel) return res.status(400).json({ error: '缺少 path 参数' });
+    if (!PREVIEW_IMG_RE.test(rel)) return res.status(400).json({ error: '不是图片' });
+    const w = PREVIEW_WIDTHS.has(Number(req.query.w)) ? Number(req.query.w) : 1600;
+    const taskDir = engine.taskDirOf(req.params.id);
+    const abs = resolveInTask(taskDir, rel);
+    const st = fs.statSync(abs);
+    if (!st.isFile()) return res.status(400).json({ error: '不是文件' });
+
+    // SVG 是矢量；GIF 可能在预览里要保留动画；没有 sharp 时只能原图直出。
+    if (/\.svg$/i.test(rel) || /\.gif$/i.test(rel) || !sharp) {
+      return sendInline(res, abs);
+    }
+
+    // 缓存 key 带 size+mtime：文件被 AI 覆盖后自动失效，不需要额外的清理逻辑。
+    const key = crypto.createHash('sha1')
+      .update(rel + '|' + st.size + '|' + st.mtimeMs + '|' + w)
+      .digest('hex');
+    const outDir = path.join(path.resolve(taskDir), '.imgcache', 'preview');
+    const out = path.join(outDir, key + '.webp');
+    if (!fs.existsSync(out)) {
+      // sharp 默认只取动图首帧，直接给原图避免“预览不动了”。metadata 只读文件头，不解码像素。
+      let meta = null;
+      try { meta = await sharp(abs).metadata(); } catch (_) { /* 交给下面原图兜底 */ }
+      if (meta && meta.pages && meta.pages > 1) return sendInline(res, abs);
+
+      // 小文件不一定像素少（高压缩的大尺寸图仍解码很慢）：体积与像素都小才直出原图，
+      // 避免“压缩后反而更大”，也避免把 24MP 的 200KB 图原样丢给低端机解码。
+      const px = meta && meta.width && meta.height ? meta.width * meta.height : 0;
+      if (st.size <= 256 * 1024 && (!px || px <= 2 * 1000 * 1000)) return sendInline(res, abs);
+
+      fs.mkdirSync(outDir, { recursive: true });
+      // 随机临时名 + rename：并发请求不会读到半截文件，也不互相覆盖。
+      const tmp = out + '.' + crypto.randomBytes(4).toString('hex') + '.tmp.webp';
+      try {
+        await sharp(abs, { limitInputPixels: 80 * 1000 * 1000 })
+          .rotate()
+          .resize({ width: w, height: w, fit: 'inside', withoutEnlargement: true })
+          .webp({ quality: 85 })
+          .toFile(tmp);
+        fs.renameSync(tmp, out);
+      } catch (err) {
+        try { fs.unlinkSync(tmp); } catch (_) {}
+        return sendInline(res, abs); // 解码失败/格式不支持 → 原图兜底
+      }
+    }
+    sendInline(res, out);
+  } catch (err) {
+    res.status(404).json({ error: '文件不存在' });
+  }
+});
 
 // ---------- 打包下载（选中项含文件夹时，后端把整个选择打成 zip 流式返回） ----------
 // 纯 Node 实现（STORE 不压缩 + 手拼 zip 结构）：任务目录里多是媒体/生成产物，
