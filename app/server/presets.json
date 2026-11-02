@@ -42,10 +42,25 @@
     {
       "key": "web_search",
       "label": "网页搜索",
-      "desc": "栈内搜索服务，无需密钥",
+      "desc": "内置免费搜索，也可接自建 /search",
       "url": "http://mcp_web_search:3000/",
       "mode": "advertise",
-      "fields": []
+      "fields": [
+        {
+          "header": "Authorization",
+          "label": "鉴权",
+          "secret": true,
+          "prefix": "Bearer ",
+          "placeholder": "API Key",
+          "hint": "免费后端留空"
+        },
+        {
+          "header": "X-Web-Search-Base-Url",
+          "label": "地址",
+          "placeholder": "https://<host>/v1",
+          "hint": "留空用免费后端"
+        }
+      ]
     },
     {
       "key": "image_task",

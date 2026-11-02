@@ -4,7 +4,7 @@
 
 | 目录 | 容器名 | 作用 | 容器内端口 | MCP 端点 |
 |---|---|---|---|---|
-| `web_search/` | `mcp_web_search` | 免费网页搜索（Parallel / Exa，无需 key） | `3000` | `POST /` |
+| `web_search/` | `mcp_web_search` | 网页搜索（默认免费 Parallel / Exa，可换成自建 `/search` 上游） | `3000` | `POST /` |
 | `image_task/` | `mcp_image_task` | 图片生成 / 编辑（文生图走 `/images/generations`，图生图走 `/images/edits`，单工具 op=create/get） | `3000` | `POST /mcp` |
 | `video_task/` | `mcp_video_task` | 智谱 CogVideo 视频生成（异步，单工具 op=create/get） | `3000` | `POST /mcp` |
 | `asr/` | `mcp_asr` | 语音转文字（上游 OpenAI 兼容 `/audio/transcriptions`），**额外带一个给输入框用的 `POST /transcribe`** | `3000` | `POST /mcp` |
@@ -27,6 +27,10 @@ docker compose up -d --build
 mcp_servers:
   - name: web_search
     url: "http://mcp_web_search:3000/"
+    # 可选：换成自己的搜索接口（不配 = 内置免费后端 Parallel / Exa）
+    # headers:
+    #   Authorization: Bearer <key>
+    #   X-Web-Search-Base-Url: "https://<host>/v1"
   - name: image_task
     url: "http://mcp_image_task:3000/mcp"
   - name: video_task
@@ -50,6 +54,11 @@ mcp_servers:
 `image_task` 走任意 OpenAI 兼容的 images 上游：文生图 `/images/generations`、图生图 `/images/edits`，
 上游地址与模型分别由 `X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定（两者都必填）。
 所以这两个服务不用配任何密钥。
+
+`web_search` 同理：默认走内置免费后端（Parallel → Exa，无需 key）；想换成自己的搜索接口，
+就在这段 headers 里写 `X-Web-Search-Base-Url`（容器拼 `/search`）与可选的 `Authorization`。
+一旦配了地址就以它为准——**失败直接报错，不会静默退回免费后端**（否则 key 过期 / 地址写错
+只会表现为「结果质量突然变差」）。
 
 `asr` 同理：上游的 key / base_url / model 全部由调用方随请求 header 带入
 （`Authorization` / `X-ASR-Base-Url` / `X-ASR-Model`，agent 侧配在 `config.yml` 的
@@ -85,7 +94,7 @@ AI 把拿到的 URL 当 image_url 交给 video_task:3000/mcp
 
 | 服务 | 公网暴露 | 说明 |
 |---|---|---|
-| `mcp_web_search` | 无 | 服务端无鉴权，**永远不要映射出去**（会被白嫖搜索额度）；agent 走内网访问 |
+| `mcp_web_search` | 无 | 服务端无鉴权，**永远不要映射出去**（会被白嫖搜索额度；配了自定义上游时还会把你的 key 白送出去）；agent 走内网访问 |
 | `mcp_image_task` | 无 | token 由调用方自带，暴露后可被拿去消耗你的上游图片额度 |
 | `mcp_video_task` | 无 | 它需要的公开临时 URL 由 agent 侧集成的工具提供，自己不占端口 |
 | `mcp_asr` | 无 | `/mcp` 与 `/transcribe` 都无鉴权，只能由 core 经内网调用；它不存密钥（上游参数随请求带入） |

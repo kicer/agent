@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 /**
- * MCP server 入口 —— 免费网页搜索（Parallel 默认 / Exa 备用，匿名免 key）。
+ * MCP server 入口 —— 网页搜索（自定义 /search 上游，或内置免费 Parallel / Exa）。
  *
  * 本地重构版（上游：@sheep233_/dsh-web-search-free），零运行时依赖，直接 node 启动。
  *
  * ## 双传输
  * - **stdio**（默认）：`node server.js`
  *   - `claude mcp add web_search -- node <路径>/server.js`
+ *   - 没有 HTTP header，因此只能用内置免费后端
  * - **HTTP/SSE**（监听端口）：`node server.js --http --port 3000 --host 0.0.0.0`
  *   - 兼容 Streamable HTTP（`POST /`）与老式 SSE（`GET /sse` + `POST /messages`）
  *   - `GET /` 或 `GET /health` 返回服务信息，可做健康检查
+ *
+ * 上游参数逐请求从 HTTP header 取（与 mcp/asr、mcp/image_task 同构，容器不存密钥）：
+ *   X-Web-Search-Base-Url: https://<host>/v1   → 打 {base}/search
+ *   Authorization: Bearer <key>                 → 可选，裸 key 自动补 Bearer
+ * 两者都不配 = 免费后端。
  *
  * 环境变量：EXA_API_KEY（可选，提升 Exa 匿名限额）；SEARCH_TIMEOUT_MS（可选，上游超时）。
  */
@@ -88,7 +94,8 @@ function runHttp(host, port) {
       let body = '';
       req.on('data', (chunk) => { body += chunk.toString(); });
       req.on('end', () => {
-        void dispatch(body).then((response) => {
+        // header 必须随消息带进协议层：上游地址 / 鉴权都是逐请求带入的（容器不存密钥）
+        void dispatch(body, req.headers).then((response) => {
           if (response === null) { // 通知
             res.writeHead(202).end();
             return;
