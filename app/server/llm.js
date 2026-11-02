@@ -199,8 +199,8 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
     for (const k of Array.from(session.blocksCache.keys())) if (!ids.has(k)) session.blocksCache.delete(k);
   }
   // 裁剪预扫：① 每行距尾的 assistant 轮数（从尾往头扫）；② tool_call id → function
-  // （给 fetch/read_file 占位回填 url/path）。trimOn=false 时整个跳过（压缩回合）。
-  const trimActive = trimOn !== false && (TRIM.writeRounds > 0 || TRIM.resultRounds > 0);
+  // （result 侧规则需要反查工具名）。trimOn=false（压缩回合）或没配规则时整个跳过。
+  const trimActive = trimOn !== false && (TRIM.argsByTool.size > 0 || TRIM.resultByTool.size > 0);
   const roundsAfter = new Map();
   const callById = new Map();
   if (trimActive) {
@@ -210,7 +210,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
       roundsAfter.set(r.id, n);
       if (r.role === 'assistant' && r.type !== 'archived' && r.type !== 'errAck') n++;
     }
-    if (TRIM.resultRounds > 0) {
+    if (TRIM.resultByTool.size > 0) {
       for (const r of history) {
         if (r.role !== 'assistant' || !r.tool_calls) continue;
         try { for (const c of JSON.parse(r.tool_calls) || []) if (c && c.id && c.function) callById.set(c.id, c.function); } catch (_) {}
@@ -331,7 +331,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
         } else {
           m.tool_calls = paired;
           for (const c of paired) emittedCallIds.add(c.id);
-          if (trimActive && TRIM.writeRounds > 0) trimWriteCalls(m.tool_calls, roundsAfter.get(row.id) || 0);
+          if (trimActive && TRIM.argsByTool.size > 0) trimToolCallArgs(m.tool_calls, roundsAfter.get(row.id) || 0);
         }
       }
       if (!m.content) delete m.content;
@@ -422,46 +422,81 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
 }
 
 // ---------- 重负载占位裁剪（历史重放省 token） ----------
-// fetch/read_file 回执与 write_file 参数正文是重放里最贵的存量，且都可再生：文件在盘上、
-// 页面可重抓；write 参数只是当时快照（后续 edit_file 一次就失真，本就不该被当现势引用）。
-// 组装请求时对「距尾 ≥N 个 assistant 轮」的行换单行占位：纯函数、DB 不动（UI 工具卡照旧
-// 可展全量）、与压缩归档正交（archived 行本来就不进模型）。距离按现存行数 assistant 轮：
+// 策略只在配置里：默认值来自 config.js 的 DEFAULTS.agent.trim.rules，config.yml 写了
+// agent.trim.rules 就整体替换（[] = 全关）。本模块不含任何工具名或默认阈值；未注入 = 不裁剪。
+// 语义：某条工具调用/回执距对话尾部 ≥rounds 个 assistant 轮后，把其中「可再生的重负载」
+// ——args 侧指定参数正文、result 侧整段回执——换成单行占位再发给上游。
+// 只应给可再生/快照型工具开规则：占位只改发给上游的副本（DB/UI 照旧可看全量），但模型侧
+// 一旦被裁就再也看不到那段内容（如 terminal 的一次性输出）。
+// 纯函数、与压缩归档正交（archived 行本来就不进模型）。距离按现存行数 assistant 轮：
 // 删中间消息可让已占位行短暂复活全文（一次性断前缀缓存，与图片消费 i<lastAck 同一
-// 语义，接受）。阈值可配（config agent.trim_write_rounds / trim_result_rounds，0=关），
-// 启动时 setPayloadTrim 注入。
-let TRIM = { writeRounds: 1, resultRounds: 2 };
-const TRIM_MIN_CHARS = 600; // 短正文不裁：占位行自身成本接近原文，裁了反而胀
-function setPayloadTrim(agentCfg) {
-  const a = agentCfg || {};
-  const toN = (v, d) => { const n = Math.floor(Number(v)); return Number.isFinite(n) ? Math.max(0, n) : d; };
-  TRIM = { writeRounds: toN(a.trim_write_rounds, 1), resultRounds: toN(a.trim_result_rounds, 2) };
+// 语义，接受）。
+function compileTrimRules(rules) {
+  const argsByTool = new Map();
+  const resultByTool = new Map();
+  for (const r of rules || []) {
+    if (!r || !r.tool) continue;
+    const rounds = Math.floor(Number(r.rounds));
+    if (!(rounds > 0)) continue;
+    const rule = {
+      rounds,
+      minChars: Math.max(0, Math.floor(Number(r.min_chars)) || 0),
+      fields: Array.isArray(r.fields) ? r.fields.map(String) : [],
+      statusRe: null,
+    };
+    if (r.side === 'result' && r.status_regex) {
+      try { rule.statusRe = new RegExp(String(r.status_regex)); } catch (_) { /* config.js 已校验 */ }
+    }
+    if (r.side === 'args') argsByTool.set(String(r.tool), rule);
+    else if (r.side === 'result') resultByTool.set(String(r.tool), rule);
+  }
+  return { argsByTool, resultByTool };
 }
-// write_file 参数占位：只洗 content。AI 友好记号风格：键值对、不写整句——path 不必重复，
-// 本条 arguments 里就还在；改写的是已 parse 副本，DB 行不动，重新 stringify 保持 JSON 合法。
-function trimWriteCalls(calls, rounds) {
-  if (rounds < TRIM.writeRounds) return;
+let TRIM = compileTrimRules([]);
+function setPayloadTrim(agentCfg) {
+  const trim = (agentCfg && agentCfg.trim && typeof agentCfg.trim === 'object' && !Array.isArray(agentCfg.trim))
+    ? agentCfg.trim : {};
+  TRIM = compileTrimRules(Array.isArray(trim.rules) ? trim.rules : []);
+}
+function omittedMarker(size, extra) {
+  return '[OMITTED' + (extra || '') + ', size=' + size + ']';
+}
+// args 侧占位：只洗规则点名的顶层字符串参数，其余参数原样保留（path/url 等恢复指针不动）。
+// 改写的是已 parse 副本，DB 行不动，重新 stringify 保持 JSON 合法。
+function trimToolCallArgs(calls, rounds) {
   for (const c of calls || []) {
-    if (!c || !c.function || c.function.name !== 'write_file') continue;
+    if (!c || !c.function) continue;
+    const rule = TRIM.argsByTool.get(c.function.name);
+    if (!rule || rounds < rule.rounds) continue;
     let args;
     try { args = JSON.parse(c.function.arguments || ''); } catch (_) { continue; }
-    if (!args || typeof args.content !== 'string' || args.content.length < TRIM_MIN_CHARS) continue;
-    args.content = '[OMITTED, size=' + args.content.length + ']';
-    c.function.arguments = JSON.stringify(args);
+    if (!args || typeof args !== 'object' || Array.isArray(args)) continue;
+    let changed = false;
+    for (const f of rule.fields) {
+      const v = args[f];
+      if (typeof v !== 'string' || v.length < rule.minChars) continue;
+      args[f] = omittedMarker(v.length);
+      changed = true;
+    }
+    if (changed) c.function.arguments = JSON.stringify(args);
   }
 }
-// fetch/read_file 回执占位：同款键值记号。url/path 不进占位——发起调用的 assistant 行仍载着
-// 它们，参数本身就是恢复指针。图片回执（blocks 非空）不碰：已有自己的消费省略逻辑。
+// result 侧占位：整段回执换单行。图片回执（blocks 非空）在上游分支里已还原成文字/图块，
+// 这里只处理纯文本；status_regex 可把状态码写进占位（如 fetch 的 HTTP 状态）。
 function trimToolContent(content, row, callById, roundsAfter) {
-  if (TRIM.resultRounds <= 0 || content.length < TRIM_MIN_CHARS) return content;
-  if ((roundsAfter.get(row.id) || 0) < TRIM.resultRounds) return content;
+  if (typeof content !== 'string') return content;
   const fn = callById.get(row.tool_call_id);
   const name = row.name || (fn && fn.name) || '';
-  if (name !== 'fetch' && name !== 'read_file') return content;
-  if (name === 'fetch') {
-    const hm = /^HTTP (\d{3})/.exec(content);
-    return '[OMITTED' + (hm ? ', http_status=' + hm[1] : '') + ', size=' + content.length + ']';
+  const rule = TRIM.resultByTool.get(name);
+  if (!rule) return content;
+  if ((roundsAfter.get(row.id) || 0) < rule.rounds) return content;
+  if (content.length < rule.minChars) return content;
+  let extra = '';
+  if (rule.statusRe) {
+    const m = rule.statusRe.exec(content);
+    if (m && m[1]) extra = ', http_status=' + m[1];
   }
-  return '[OMITTED, size=' + content.length + ']';
+  return omittedMarker(content.length, extra);
 }
 
 // 拼压缩回合的 messages（参考 titleMessages 的拼法）：默认 system prompt + 正常历史

@@ -86,9 +86,18 @@ const DEFAULTS = {
   // auto_compress_tokens：本轮 In token 峰值 ≥ 此值时推送「自动压缩」提议（0=关）。
   // auto_complete_ms：held（保持中）超过此时长自动收口为 completed（0=关）。key 非独占后 held 不占任何资源，
   //   收口是纯视觉动作：历史/绑定不动，再发言照常由 completed 分支续跑（见 engine.sweepHeldTimeouts）。
-  // trim_write_rounds / trim_result_rounds：历史重放占位裁剪（llm.buildMessages）——write_file 参数正文 /
-  // fetch、read_file 回执正文距尾 ≥N 个 assistant 轮后换单行占位（DB/UI 不动，内容可再生：盘上重读/重抓）；0=关。
-  agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000, auto_complete_ms: 1800000, trim_write_rounds: 1, trim_result_rounds: 2 },
+  // 历史重放占位裁剪（llm.buildMessages）：trim.rules 逐条声明「哪个工具、参数侧还是回执侧、
+  // 距尾多少个 assistant 轮后换单行占位」；只改发给上游的副本，DB/UI 不动。
+  // 这里是默认策略的唯一来源：config.yml 写了 trim.rules 就整体替换（写 [] = 全关）。
+  agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000, auto_complete_ms: 1800000, trim: {
+    min_chars: 600,
+    rules: [
+      { tool: 'write_file', side: 'args', fields: ['content'], rounds: 1 },
+      { tool: 'fetch', side: 'result', rounds: 2, status_regex: '^HTTP (\\d{3})' },
+      { tool: 'read_file', side: 'result', rounds: 2 },
+      { tool: 'web_search', side: 'result', rounds: 2 },
+    ],
+  } },
   // 大图上传预处理（浏览器端 canvas 压缩，参数经 /api/system/status 下发前端）。
   // paste_to_file_threshold_chars：粘贴文本超过该字符数时前端转成 .txt 附件，0 = 关闭。
   upload: { image_compress_threshold_kb: 1536, image_max_dim: 2000, image_quality: 0.85, confirm_size_mb: 10, paste_to_file_threshold_chars: 2000 },
@@ -236,10 +245,83 @@ function normalizePlatforms(rawPlatforms, profileNames) {
   return out;
 }
 
+// ---------- 历史重放的重负载占位裁剪（agent.trim） ----------
+// 语义：某条工具调用/回执距对话尾部 ≥rounds 个 assistant 轮后，把其中「可再生的重负载」
+// 换成单行占位再发给上游（llm.buildMessages；DB/UI 不动）。
+// 只该给「内容可再生或只是当时快照」的工具开：read_file/fetch 能重读重抓、write_file 参数
+// 只是快照；terminal 输出是一次性的，裁掉模型就永久看不到了。
+const TRIM_RULE_KEYS = new Set(['tool', 'side', 'rounds', 'fields', 'min_chars', 'status_regex']);
+
+function toNonNegInt(v, d) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) ? Math.max(0, n) : d;
+}
+
+// 单条规则校验：未知字段直接报错（拼错静默忽略 = 以为省了 token 其实没省）。
+function normalizeTrimRule(r, i, defMinChars) {
+  const at = 'agent.trim.rules[' + i + ']';
+  if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error(at + ' 必须是对象');
+  for (const k of Object.keys(r)) {
+    if (!TRIM_RULE_KEYS.has(k)) {
+      throw new Error(at + ' 含未知字段：' + k + '（可用：' + Array.from(TRIM_RULE_KEYS).join(' / ') + '）');
+    }
+  }
+  const tool = String(r.tool == null ? '' : r.tool).trim();
+  if (!tool) throw new Error(at + ' 缺少 tool（填模型看到的最终工具名，MCP 重名时含 server__ 前缀）');
+  const side = String(r.side == null ? '' : r.side).trim();
+  if (side !== 'args' && side !== 'result') {
+    throw new Error(at + '.side 只能是 args（裁调用参数）/ result（裁回执正文），收到：' + side);
+  }
+  // rounds=0 = 该条规则关闭；直接丢掉，不留空规则。
+  const rounds = toNonNegInt(r.rounds, 0);
+  if (rounds <= 0) return null;
+  const out = { tool, side, rounds, min_chars: toNonNegInt(r.min_chars, defMinChars) };
+  if (side === 'args') {
+    if (!Array.isArray(r.fields) || !r.fields.length) {
+      throw new Error(at + '（args 侧）必须配 fields 数组（要占位的顶层参数名，如 [content]）');
+    }
+    out.fields = r.fields.map(x => String(x).trim()).filter(Boolean);
+    if (!out.fields.length) throw new Error(at + '（args 侧）fields 不能为空');
+  } else if (r.fields !== undefined) {
+    throw new Error(at + '.fields 只适用于 args 侧（result 侧整段正文替换，无需点名字段）');
+  }
+  if (r.status_regex !== undefined && r.status_regex !== null && String(r.status_regex).trim()) {
+    if (side !== 'result') throw new Error(at + '.status_regex 只适用于 result 侧');
+    const src = String(r.status_regex);
+    try { new RegExp(src); } catch (_) { throw new Error(at + '.status_regex 不是合法正则：' + src); }
+    out.status_regex = src;
+  }
+  return out;
+}
+
+// agent.trim 归一：默认值来自 DEFAULTS.agent.trim.rules（唯一来源），config.yml 写了 rules
+// 就整体替换（[] = 全关）。归一结果直接写回 cfg.agent.trim.rules，不再另造 trim_rules 键。
+function normalizeAgentTrim(cfg) {
+  // 拷一份再改：无 agent 段时 cfg.agent 与 DEFAULTS.agent 是同一引用，直接写会污染默认值
+  // （配置页反复校验时上一份的 trim 会漏给下一份）。
+  const a = Object.assign({}, cfg.agent || {});
+  cfg.agent = a;
+  const trim = (a.trim && typeof a.trim === 'object' && !Array.isArray(a.trim)) ? a.trim : {};
+  const defMinChars = toNonNegInt(trim.min_chars, DEFAULTS.agent.trim.min_chars);
+  // undefined / null 都是「没配」，回落到 DEFAULTS（deepMerge 通常已把默认数组带进来，
+  // 这里兜住 agent.trim: null 这类显式空值）；显式 [] 才是全关。
+  const rawRules = (trim.rules === undefined || trim.rules === null) ? DEFAULTS.agent.trim.rules : trim.rules;
+  if (!Array.isArray(rawRules)) throw new Error('agent.trim.rules 必须是数组');
+  const rules = rawRules.map((r, i) => normalizeTrimRule(r, i, defMinChars)).filter(Boolean);
+  const seen = new Set();
+  for (const r of rules) {
+    const k = r.side + '\u0000' + r.tool;
+    if (seen.has(k)) throw new Error('agent.trim.rules 重复声明同一工具同一侧：' + r.tool + '（' + r.side + '）');
+    seen.add(k);
+  }
+  a.trim = Object.assign({}, trim, { min_chars: defMinChars, rules });
+}
+
 // 校验原始配置文本(启动读文件与网页编辑共用)。configPath 仅记录来源,可为空。
 function parseAndValidate(rawText, configPath) {
   let raw = YAML.parse(rawText || '') || {};
   const cfg = deepMerge(DEFAULTS, raw);
+  normalizeAgentTrim(cfg);
 
   // ---------- 模型配置：platforms 层级（platforms[].models[] + platforms[].keys[]）----------
   // models 提到平台层（与 url/type 同级），多 key 共用同一份 models。
