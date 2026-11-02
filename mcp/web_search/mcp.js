@@ -27,6 +27,7 @@ const TOOLS = [
       properties: {
         query: { type: 'string', description: 'Search query text' },
         numResults: { type: 'integer', minimum: 1, default: 8, description: 'Maximum number of results to return (default 8)' },
+        maxSnippetLength: { type: 'integer', minimum: 1, description: 'Truncate each snippet to this many characters (default: keep full text)' },
       },
       required: ['query'],
     },
@@ -65,15 +66,18 @@ async function callTool(name, args, headers) {
   const numResults = typeof params.numResults === 'number' && Number.isFinite(params.numResults)
     ? Math.max(1, Math.floor(params.numResults))
     : 8;
+  // 截断是调用方的选择：不传就原样返回整段 snippet（上游可能给整篇正文，由调用方自己控上下文）
+  const rawMaxLen = Number(params.maxSnippetLength);
+  const maxSnippetLength = Number.isFinite(rawMaxLen) && rawMaxLen >= 1 ? Math.floor(rawMaxLen) : undefined;
 
   const up = upstreamOf(headers);
   let sources;
   try {
     if (up.base) {
       assertBase(up.base);
-      sources = await customSearch(query, numResults, up);
+      sources = await customSearch(query, numResults, up, maxSnippetLength);
     } else {
-      sources = await freeSearch(query, numResults, process.env.EXA_API_KEY);
+      sources = await freeSearch(query, numResults, process.env.EXA_API_KEY, maxSnippetLength);
     }
   } catch (error) {
     // 工具级错误回文本、协议层仍成功：模型能读懂并换查询/换工具，

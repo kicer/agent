@@ -24,12 +24,14 @@ const REQUEST_TIMEOUT_MS = Number(process.env.SEARCH_TIMEOUT_MS ?? 30_000);
  * snippet 一律截断：搜索结果会进历史，之后每一轮都可能被整条重放。
  * 有些上游（如自建 v1/search）的 snippet 是整段正文，不截等于白烧 token。
  */
-const SNIPPET_MAX_CHARS = 500;
-
-/** 压平空白并截断；空串返回 ''（调用方据此决定要不要带这个字段）。 */
-export function capSnippet(text) {
+/**
+ * snippet 一律压平空白；是否截断由调用方传 maxSnippetLength 决定，缺省不截断。
+ * 为什么默认不截：上限该由调用方按自己的上下文预算定，写死在服务里会让「换上游 = 悄悄丢内容」。
+ */
+export function capSnippet(text, max) {
   const s = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
-  return s.length > SNIPPET_MAX_CHARS ? s.slice(0, SNIPPET_MAX_CHARS) + '…' : s;
+  if (!Number.isFinite(max) || max <= 0 || s.length <= max) return s;
+  return s.slice(0, max) + '…';
 }
 
 /**
@@ -89,7 +91,7 @@ export function extractToolText(body) {
 }
 
 /** Parallel 响应解析：text 是内嵌 JSON `{ results: [...] }`。 */
-export function mapParallelResponse(text) {
+export function mapParallelResponse(text, maxSnippetLength) {
   let payload;
   try {
     payload = JSON.parse(text);
@@ -99,10 +101,11 @@ export function mapParallelResponse(text) {
   const sources = [];
   for (const item of payload.results ?? []) {
     if (!item.url) continue;
+    const snippet = item.excerpts?.length > 0 ? capSnippet(item.excerpts.join(' '), maxSnippetLength) : '';
     sources.push({
       url: item.url,
       ...(item.title ? { title: item.title } : {}),
-      ...(item.excerpts?.length > 0 ? { snippet: item.excerpts.join(' ') } : {}),
+      ...(snippet ? { snippet } : {}),
       ...(item.publish_date ? { publishedAt: item.publish_date } : {}),
     });
   }
@@ -120,7 +123,7 @@ export function mapParallelResponse(text) {
  * <正文摘要>
  * ```
  */
-export function parseExaText(text) {
+export function parseExaText(text, maxSnippetLength) {
   const blocks = text.split(/(?=^Title: )/m).filter((block) => block.trim().length > 0);
   const sources = [];
   for (const block of blocks) {
@@ -129,10 +132,11 @@ export function parseExaText(text) {
     const title = block.match(/^Title: (.+)$/m)?.[1]?.trim();
     const published = block.match(/^Published: (.+)$/m)?.[1]?.trim();
     const highlights = block.split(/^Highlights:\s*$/m)[1]?.trim();
+    const snippet = capSnippet(highlights, maxSnippetLength);
     sources.push({
       url,
       ...(title ? { title } : {}),
-      ...(highlights ? { snippet: highlights.slice(0, 500) } : {}),
+      ...(snippet ? { snippet } : {}),
       ...(published && published !== 'N/A' ? { publishedAt: published } : {}),
     });
   }
@@ -144,8 +148,9 @@ export function parseExaText(text) {
  * 配置了地址就以它为准——失败直接抛错，不静默退回免费后端（否则 key 过期/base 写错
  * 只会表现为「结果质量突然变差」，永远没人发现）。
  * @param {{ auth: string, base: string }} up 由 mcp.js 从请求 header 解析（容器不存密钥）
+ * @param {number} [maxSnippetLength] 调用方要求的最大 snippet 长度；缺省不截断
  */
-export async function customSearch(query, maxResults, up) {
+export async function customSearch(query, maxResults, up, maxSnippetLength) {
   const url = up.base.replace(/\/+$/, '') + '/search';
   const headers = {
     'content-type': 'application/json',
@@ -170,7 +175,7 @@ export async function customSearch(query, maxResults, up) {
   const raw = await response.text();
   if (!response.ok) {
     // 带上游响应片段：401 和 500 的处置完全不同，只说「请求失败」没法排查
-    const detail = capSnippet(raw).slice(0, 200);
+    const detail = capSnippet(raw, 200);
     throw new Error(`搜索上游 HTTP ${response.status}${detail ? '：' + detail : ''}`);
   }
   let payload;
@@ -182,7 +187,7 @@ export async function customSearch(query, maxResults, up) {
   const sources = [];
   for (const item of payload.results ?? []) {
     if (!item || !item.url) continue;
-    const snippet = capSnippet(item.snippet);
+    const snippet = capSnippet(item.snippet, maxSnippetLength);
     const publishedAt = item.published_at ?? item.publishedAt ?? item.publish_date;
     sources.push({
       url: String(item.url),
@@ -195,12 +200,12 @@ export async function customSearch(query, maxResults, up) {
 }
 
 /** Parallel 搜索（默认免费后端）。 */
-export async function parallelSearch(query, maxResults) {
+export async function parallelSearch(query, maxResults, maxSnippetLength) {
   const text = await callMcpTool(PARALLEL_MCP_URL, 'web_search', {
     objective: query,
     search_queries: [query],
   }, AbortSignal.timeout(REQUEST_TIMEOUT_MS));
-  const sources = mapParallelResponse(text);
+  const sources = mapParallelResponse(text, maxSnippetLength);
   return maxResults !== undefined ? sources.slice(0, maxResults) : sources;
 }
 
@@ -208,13 +213,14 @@ export async function parallelSearch(query, maxResults) {
  * 免费侧入口：Parallel 优先，失败自动退 Exa。
  * 降级放在服务端（而不是让模型显式传 provider）——模型看不到后端，也就不会选错。
  * @param {string} [exaApiKey] 可选，提升 Exa 匿名限额
+ * @param {number} [maxSnippetLength] 缺省不截断
  */
-export async function freeSearch(query, maxResults, exaApiKey) {
+export async function freeSearch(query, maxResults, exaApiKey, maxSnippetLength) {
   try {
-    return await parallelSearch(query, maxResults);
+    return await parallelSearch(query, maxResults, maxSnippetLength);
   } catch (first) {
     try {
-      return await exaSearch(query, maxResults, exaApiKey);
+      return await exaSearch(query, maxResults, exaApiKey, maxSnippetLength);
     } catch (second) {
       throw new Error(`免费搜索后端均不可用（parallel: ${String(first && first.message || first)}；` +
         `exa: ${String(second && second.message || second)}）`);
@@ -223,7 +229,7 @@ export async function freeSearch(query, maxResults, exaApiKey) {
 }
 
 /** Exa 搜索（备用免费后端；apiKey 可选，用于提升匿名限额）。 */
-export async function exaSearch(query, maxResults, apiKey) {
+export async function exaSearch(query, maxResults, apiKey, maxSnippetLength) {
   const endpoint = apiKey
     ? `${EXA_MCP_URL}?exaApiKey=${encodeURIComponent(apiKey)}`
     : EXA_MCP_URL;
@@ -233,6 +239,6 @@ export async function exaSearch(query, maxResults, apiKey) {
     numResults: maxResults ?? 8,
     livecrawl: 'fallback',
   }, AbortSignal.timeout(REQUEST_TIMEOUT_MS));
-  const sources = parseExaText(text);
+  const sources = parseExaText(text, maxSnippetLength);
   return maxResults !== undefined ? sources.slice(0, maxResults) : sources;
 }

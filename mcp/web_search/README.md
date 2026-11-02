@@ -27,8 +27,16 @@ Content-Type: application/json
 ```
 
 响应归一化成 `[{url, title?, snippet?, publishedAt?}]`：`results[]` 里没有 `url` 的条目丢弃，
-`snippet` 压平空白并截断到 500 字（搜索结果会进对话历史、之后每轮都可能被整条重放，不截等于白烧 token），
+`snippet` 压平空白后**原样返回**（默认不截断）；调用方传 `maxSnippetLength: 3000` 才会按该长度截断，
 `published_at` / `publishedAt` / `publish_date` 任一存在则映射为 `publishedAt`。
+
+## 工具参数
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `query` | 是 | 搜什么 |
+| `numResults` | 否 | 返回条数，默认 8 |
+| `maxSnippetLength` | 否 | 每条 `snippet` 的最大字符数；**不传 = 不截断**（上游常给整段正文，长文本请自行控预算） |
 
 ## 结构
 
