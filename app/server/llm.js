@@ -198,16 +198,23 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
     const ids = new Set(history.map(r => r.id));
     for (const k of Array.from(session.blocksCache.keys())) if (!ids.has(k)) session.blocksCache.delete(k);
   }
-  // 裁剪预扫：① 每行距尾的 assistant 轮数（从尾往头扫）；② tool_call id → function
-  // （result 侧规则需要反查工具名）。trimOn=false（压缩回合）或没配规则时整个跳过。
+  // 裁剪预扫：① 每行距尾的 assistant 轮数（rounds）与真人回合数（turns），一趟从尾往头扫；
+  // ② tool_call id → function（result 侧规则需要反查工具名）。
+  // turns 只数「真实用户消息」（role=user 且 type 为空）：channel_note / memory_note 这类注入行
+  // 不是回合边界（与 engine 立题同口径），数进去会让回合数虚高、提前裁掉本回合的内容。
+  // trimOn=false（压缩回合）或没配规则时整个跳过。
   const trimActive = trimOn !== false && (TRIM.argsByTool.size > 0 || TRIM.resultByTool.size > 0);
   const roundsAfter = new Map();
+  const turnsAfter = new Map();
   const callById = new Map();
   if (trimActive) {
     let n = 0;
+    let t = 0;
     for (let i = history.length - 1; i >= 0; i--) {
       const r = history[i];
       roundsAfter.set(r.id, n);
+      turnsAfter.set(r.id, t);
+      if (r.role === 'user' && r.type == null) t++;
       if (r.role === 'assistant' && r.type !== 'archived' && r.type !== 'errAck') n++;
     }
     if (TRIM.resultByTool.size > 0) {
@@ -331,7 +338,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
         } else {
           m.tool_calls = paired;
           for (const c of paired) emittedCallIds.add(c.id);
-          if (trimActive && TRIM.argsByTool.size > 0) trimToolCallArgs(m.tool_calls, roundsAfter.get(row.id) || 0);
+          if (trimActive && TRIM.argsByTool.size > 0) trimToolCallArgs(m.tool_calls, roundsAfter.get(row.id) || 0, turnsAfter.get(row.id) || 0);
         }
       }
       if (!m.content) delete m.content;
@@ -394,7 +401,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
       }
     }
     if (row.role === 'tool') {
-      if (trimActive && typeof content === 'string') content = trimToolContent(content, row, callById, roundsAfter);
+      if (trimActive && typeof content === 'string') content = trimToolContent(content, row, callById, roundsAfter, turnsAfter);
       messages.push({ role: 'tool', tool_call_id: row.tool_call_id, name: row.name, content });
     } else {
       messages.push({ role: row.role, content });
@@ -424,22 +431,26 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
 // ---------- 重负载占位裁剪（历史重放省 token） ----------
 // 策略只在配置里：默认值来自 config.js 的 DEFAULTS.agent.trim.rules，config.yml 写了
 // agent.trim.rules 就整体替换（[] = 全关）。本模块不含任何工具名或默认阈值；未注入 = 不裁剪。
-// 语义：某条工具调用/回执距对话尾部 ≥rounds 个 assistant 轮后，把其中「可再生的重负载」
-// ——args 侧指定参数正文、result 侧整段回执——换成单行占位再发给上游。
+// 语义：某条工具调用/回执距对话尾部 ≥rounds 个 assistant 轮**且** ≥turns 个真人回合后，把其中
+//「可再生的重负载」——args 侧指定参数正文、result 侧整段回执——换成单行占位再发给上游。
+// rounds = 「后面 AI 又说了几句话」，turns = 「后面又来了几条真人消息」；
+// turns:1 就是「回合内绝不裁，跨过用户回合边界才裁」（长回合里防模型反复重读同一段）。
 // 只应给可再生/快照型工具开规则：占位只改发给上游的副本（DB/UI 照旧可看全量），但模型侧
 // 一旦被裁就再也看不到那段内容（如 terminal 的一次性输出）。
-// 纯函数、与压缩归档正交（archived 行本来就不进模型）。距离按现存行数 assistant 轮：
-// 删中间消息可让已占位行短暂复活全文（一次性断前缀缓存，与图片消费 i<lastAck 同一
-// 语义，接受）。
+// 纯函数、与压缩归档正交（archived 行本来就不进模型）。距离按现存行数：删中间消息可让已占位行
+// 短暂复活全文（一次性断前缀缓存，与图片消费 i<lastAck 同一语义，接受）。
 function compileTrimRules(rules) {
   const argsByTool = new Map();
   const resultByTool = new Map();
   for (const r of rules || []) {
     if (!r || !r.tool) continue;
-    const rounds = Math.floor(Number(r.rounds));
-    if (!(rounds > 0)) continue;
+    const rounds = Math.max(0, Math.floor(Number(r.rounds)) || 0);
+    const turns = Math.max(0, Math.floor(Number(r.turns)) || 0);
+    // 两个距离都写 0 = 规则关闭（config.js 归一化时已丢弃，这里兼容手搓 cfg）
+    if (rounds <= 0 && turns <= 0) continue;
     const rule = {
       rounds,
+      turns,
       minChars: Math.max(0, Math.floor(Number(r.min_chars)) || 0),
       fields: Array.isArray(r.fields) ? r.fields.map(String) : [],
       statusRe: null,
@@ -463,11 +474,11 @@ function omittedMarker(size, extra) {
 }
 // args 侧占位：只洗规则点名的顶层字符串参数，其余参数原样保留（path/url 等恢复指针不动）。
 // 改写的是已 parse 副本，DB 行不动，重新 stringify 保持 JSON 合法。
-function trimToolCallArgs(calls, rounds) {
+function trimToolCallArgs(calls, rounds, turns) {
   for (const c of calls || []) {
     if (!c || !c.function) continue;
     const rule = TRIM.argsByTool.get(c.function.name);
-    if (!rule || rounds < rule.rounds) continue;
+    if (!rule || rounds < rule.rounds || turns < rule.turns) continue;
     let args;
     try { args = JSON.parse(c.function.arguments || ''); } catch (_) { continue; }
     if (!args || typeof args !== 'object' || Array.isArray(args)) continue;
@@ -483,13 +494,14 @@ function trimToolCallArgs(calls, rounds) {
 }
 // result 侧占位：整段回执换单行。图片回执（blocks 非空）在上游分支里已还原成文字/图块，
 // 这里只处理纯文本；status_regex 可把状态码写进占位（如 fetch 的 HTTP 状态）。
-function trimToolContent(content, row, callById, roundsAfter) {
+function trimToolContent(content, row, callById, roundsAfter, turnsAfter) {
   if (typeof content !== 'string') return content;
   const fn = callById.get(row.tool_call_id);
   const name = row.name || (fn && fn.name) || '';
   const rule = TRIM.resultByTool.get(name);
   if (!rule) return content;
   if ((roundsAfter.get(row.id) || 0) < rule.rounds) return content;
+  if ((turnsAfter.get(row.id) || 0) < rule.turns) return content;
   if (content.length < rule.minChars) return content;
   let extra = '';
   if (rule.statusRe) {

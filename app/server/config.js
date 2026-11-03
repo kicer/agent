@@ -87,15 +87,21 @@ const DEFAULTS = {
   // auto_complete_ms：held（保持中）超过此时长自动收口为 completed（0=关）。key 非独占后 held 不占任何资源，
   //   收口是纯视觉动作：历史/绑定不动，再发言照常由 completed 分支续跑（见 engine.sweepHeldTimeouts）。
   // 历史重放占位裁剪（llm.buildMessages）：trim.rules 逐条声明「哪个工具、参数侧还是回执侧、
-  // 距尾多少个 assistant 轮后换单行占位」；只改发给上游的副本，DB/UI 不动。
+  // 距尾多远换单行占位」；只改发给上游的副本，DB/UI 不动。
+  // 两个距离条件**同时满足**才裁：
+  //   rounds = 这一行之后又出现了几条 assistant 行（「后面 AI 又说了几句话」）
+  //   turns  = 这一行之后又来了几条真人消息（role=user 且 type 为空，「后面又来了几条真人消息」）
+  // 所以 turns:1 = 回合内绝不裁、跨过用户回合边界才裁（避免长回合里模型反复重读同一个文件）。
   // 这里是默认策略的唯一来源：config.yml 写了 trim.rules 就整体替换（写 [] = 全关）。
   agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000, auto_complete_ms: 1800000, trim: {
     min_chars: 600,
     rules: [
+      // 参数正文只是写盘时的快照：不带 turns，回合内也照裁（省的是每轮重发整个文件）
       { tool: 'write_file', side: 'args', fields: ['content'], rounds: 1 },
-      { tool: 'fetch', side: 'result', rounds: 2, status_regex: '^HTTP (\\d{3})' },
-      { tool: 'read_file', side: 'result', rounds: 2 },
-      { tool: 'web_search', side: 'result', rounds: 2 },
+      // 回执可再生（页面可重抓 / 文件可重读 / 可重搜）：turns:1 保证同一回合内不裁，回合结束后按 rounds 兜底
+      { tool: 'fetch', side: 'result', rounds: 2, turns: 1, status_regex: '^HTTP (\\d{3})' },
+      { tool: 'read_file', side: 'result', rounds: 2, turns: 1 },
+      { tool: 'web_search', side: 'result', rounds: 2, turns: 1 },
     ],
   } },
   // 大图上传预处理（浏览器端 canvas 压缩，参数经 /api/system/status 下发前端）。
@@ -246,11 +252,12 @@ function normalizePlatforms(rawPlatforms, profileNames) {
 }
 
 // ---------- 历史重放的重负载占位裁剪（agent.trim） ----------
-// 语义：某条工具调用/回执距对话尾部 ≥rounds 个 assistant 轮后，把其中「可再生的重负载」
-// 换成单行占位再发给上游（llm.buildMessages；DB/UI 不动）。
-// 只该给「内容可再生或只是当时快照」的工具开：read_file/fetch 能重读重抓、write_file 参数
+// 语义：某条工具调用/回执距对话尾部 ≥rounds 个 assistant 轮、且 ≥turns 个真人回合后，
+// 把其中「可再生的重负载」换成单行占位再发给上游（llm.buildMessages；DB/UI 不动）。
+// rounds = 「后面 AI 又说了几句话」；turns = 「后面又来了几条真人消息」（type 为空的 user 行）。
+// 两者同时满足才裁。只该给「内容可再生或只是当时快照」的工具开：read_file/fetch 能重读重抓、write_file 参数
 // 只是快照；terminal 输出是一次性的，裁掉模型就永久看不到了。
-const TRIM_RULE_KEYS = new Set(['tool', 'side', 'rounds', 'fields', 'min_chars', 'status_regex']);
+const TRIM_RULE_KEYS = new Set(['tool', 'side', 'rounds', 'turns', 'fields', 'min_chars', 'status_regex']);
 
 function toNonNegInt(v, d) {
   const n = Math.floor(Number(v));
@@ -272,10 +279,11 @@ function normalizeTrimRule(r, i, defMinChars) {
   if (side !== 'args' && side !== 'result') {
     throw new Error(at + '.side 只能是 args（裁调用参数）/ result（裁回执正文），收到：' + side);
   }
-  // rounds=0 = 该条规则关闭；直接丢掉，不留空规则。
+  // rounds / turns 都是「距尾多远」，同时满足才裁；两个都写 0（或不写）= 该条规则关闭，直接丢掉，不留空规则。
   const rounds = toNonNegInt(r.rounds, 0);
-  if (rounds <= 0) return null;
-  const out = { tool, side, rounds, min_chars: toNonNegInt(r.min_chars, defMinChars) };
+  const turns = toNonNegInt(r.turns, 0);
+  if (rounds <= 0 && turns <= 0) return null;
+  const out = { tool, side, rounds, turns, min_chars: toNonNegInt(r.min_chars, defMinChars) };
   if (side === 'args') {
     if (!Array.isArray(r.fields) || !r.fields.length) {
       throw new Error(at + '（args 侧）必须配 fields 数组（要占位的顶层参数名，如 [content]）');

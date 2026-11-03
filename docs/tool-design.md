@@ -67,8 +67,10 @@ system prompt 不重复 schema 已表达的内容。
 tools 数组每轮请求完整重发。新工具进来时，先问"能不能装进已有工具"，再问"要不要新建"。
 
 回执/参数里可能很大的内容，若**可再生**（文件在盘上可重读、页面可重抓）或只是当时快照，
-可在 `agent.trim.rules` 登记历史重放占位裁剪：距尾 ≥N 个 assistant 轮后换成单行占位
-（`app/server/llm.js` 的 `setPayloadTrim`；`side: args` 点名参数、`side: result` 裁整段回执）。
+可在 `agent.trim.rules` 登记历史重放占位裁剪：同时满足「其后 ≥rounds 条 assistant 行」与
+「其后 ≥turns 条真人消息」后换成单行占位（`app/server/llm.js` 的 `setPayloadTrim`；
+`side: args` 点名参数、`side: result` 裁整段回执）。`turns: 1` = 回合内不裁、跨回合才裁；
+长回合里会被反复回看的内容（如 `read_file` 的分段）应配它，否则模型会把同一段重读一遍。
 一次性输出（`terminal`、外部服务扣额度的生成结果等）不要登记——裁掉后模型无法恢复。
 
 ### 九、回执形态

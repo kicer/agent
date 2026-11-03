@@ -47,12 +47,22 @@ agent:
   max_retries: 2                                   # 上游失败重试次数
   language: "Simplified Chinese"                   # 强制回复语言；留空不限
   auto_compress_tokens: 60000                      # In token 超此值弹「自动压缩」提议；0=关
-  # 历史重放占位裁剪（省 token）：某条工具调用/回执距对话尾部 ≥rounds 个 assistant 轮后，
-  # 把可再生的重负载换成单行占位再发给上游（DB/UI 不动，盘上可重读/重抓）。rounds=0 或
-  # 不写这条规则 = 不裁；整段 rules: [] = 全关。
-  # 下面是内置默认（与 config.js 的 DEFAULTS.agent.trim.rules 同步）；写了本段就整体替换默认。
+  # 历史重放占位裁剪（省 token）：把「可再生的重负载」换成单行占位再发给上游
+  #（DB/UI 不动，盘上可重读/重抓）。两个距离条件**同时满足**才裁：
+  #   rounds = 这一行之后又出现了几条 AI 回复   （「后面 AI 又说了几句话」）
+  #   turns  = 这一行之后又来了几条真人消息     （「后面又来了几条真人消息」；注入行不算）
+  #
+  # 举例（rounds: 2 + turns: 1）：
+  #   回合1：读① → 读② → 改③ → 「改好了」
+  #   回合2 第 1 句请求：①② 已过 2 条 AI 回复 + 1 条真人消息 → 裁成占位；
+  #                     ③ 只过了 1 条 AI 回复 → 留着
+  #   回合2 第 2 句请求：③ 也过了 2 条 → 裁
+  #   也就是说：回合内绝不会裁，回合结束后开始清；想「新回合第一句就清光」把 rounds 改成 1。
+  #
+  # rounds 与 turns 都写 0（或不写）= 该条规则关闭；整段 rules: [] = 全关。
   # side=args 裁调用参数（fields 点名顶层字符串参数）；side=result 裁整段回执正文。
   # tool 用模型看到的最终工具名（MCP 重名时含 server__ 前缀）。
+  # 下面就是内置默认（与 config.js 的 DEFAULTS.agent.trim.rules 同步）；写了本段就整体替换默认。
   trim:
     min_chars: 600                                 # 短于此长度的正文不裁（占位自身也有成本）；单条规则可用 min_chars 覆盖
     rules:
@@ -60,16 +70,20 @@ agent:
         side: args
         fields: [content]
         rounds: 1
+        turns: 0                                   # 不带 turns：回合内也照裁（省的是每轮重发整个文件）
       - tool: fetch                                # 页面可重抓；status_regex 取第一个捕获组写进占位（YAML 用单引号，避免 \d 被当转义）
         side: result
         rounds: 2
+        turns: 1                                   # 回合内不裁（否则同一 URL 会被反复重抓），跨回合后按 rounds 清
         status_regex: '^HTTP (\d{3})'
       - tool: read_file                            # 文件在盘上，可重读
         side: result
         rounds: 2
+        turns: 1                                   # 回合内不裁（否则长回合里模型会反复重读同一段）
       - tool: web_search                           # 栈内免费搜索 MCP；可重搜，但结果会随时间变化
         side: result
         rounds: 2
+        turns: 1                                   # 同上；现在回执默认不截断，单条可能上万字
   auto_complete_ms: 1800000                        # 保持中(held)超此时长自动收口为已完成；0=关（纯状态动作，历史/模型绑定不动）
 
 # 长期记忆（日记，memory.js）：收口时一条几十字第一人称碎片入当日条目；存储默认永久，旧记忆靠回忆下钻

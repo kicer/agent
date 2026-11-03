@@ -190,12 +190,16 @@ IM 用户在实时对话，回合中插话应当“当前这步跑完就插”�
 - 重读去重（engine `run.imgDelivered`）**只拦同一批 tool call 内的重复读**（一次请求里塞两份同样的图
   没意义）；跨批次重读一律放行。不要写成「一回合只投递一次」，也不要靠推测「图还在不在上下文里」——
   模型说拿不到就得给，而且文件可能已重新生成（路径相同、内容不同）；拦掉只会把新像素挡在门外。
-- 占位裁剪（`agent.trim.rules`）：距尾 ≥N 个 assistant 轮的指定工具参数（`side: args` + `fields`，
-  仅顶层字符串）或回执正文（`side: result`）换成单行占位。默认规则在 `config.js` 的
-  `DEFAULTS.agent.trim.rules`（`write_file.content` / `fetch` / `read_file` / `web_search`），
-  `config.yml` 写了 `trim.rules` 就整体替换（`[]` = 全关）。
-  **只改发给上游的副本**，DB 与 UI 不动。规则只给「内容可再生或只是当时快照」的工具配：
-  `terminal` 这类一次性输出裁掉后模型就再也看不到（规则写法见 `config.example.yml` 的 `agent.trim`）。
+- 占位裁剪（`agent.trim.rules`）：指定工具的参数（`side: args` + `fields`，仅顶层字符串）或回执正文
+  （`side: result`）在满足**两个距离条件**时换成单行占位：`rounds` = 其后又有几条 assistant 行
+  （「后面 AI 又说了几句话」）、`turns` = 其后又有几条真人消息（`role=user` 且 `type` 为空，
+  「后面又来了几条真人消息」）。两者是 AND，同时满足才裁；`turns: 1` = 回合内绝不裁、跨过用户
+  回合边界才裁——`fetch` / `read_file` / `web_search` 默认都配了它（否则长回合里模型会把同一段
+  反复重读，实测有回合重读同一文件 24 次）；`write_file` 的参数只是快照，只配 `rounds: 1`。
+  默认规则在 `config.js` 的 `DEFAULTS.agent.trim.rules`（唯一来源），`config.yml` 写了 `trim.rules`
+  就整体替换（`[]` = 全关）。**只改发给上游的副本**，DB 与 UI 不动。规则只给「内容可再生或
+  只是当时快照」的工具配：`terminal` 这类一次性输出裁掉后模型就再也看不到
+  （规则写法与示例见 `config.example.yml` 的 `agent.trim`）。
 - `compressMessages` = `buildMessages` + 末尾一条压缩指令 `user`。**铁律**：压缩请求必须与上一次
   常规请求字节同构、只在尾部追加；不要为了省 token 在压缩回合抽掉快照或裁剪历史，断前缀缓存等于全价重读。
 - `titleMessages`：不带 system prompt，只取 user/assistant 纯文本行（白名单 `null`/`summary`/`task_brief`）
