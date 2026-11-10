@@ -360,6 +360,7 @@ http://<host>/p/<id>
 - 只由 core 进程内的工具签发，签发前校验文件在任务目录内且 `realpath` 未越界。
 - 默认 30 分钟过期，可配置 1 分钟到 24 小时。
 - 链接可重复使用，直到过期；服务重启后全部失效。
+- 响应头按类型分开：图片（`png/jpg/webp/gif/bmp/tif/avif/ico/svg`）返回 `inline` + 对应 `image/*`，点开链接直接看图；其余类型返回 `attachment`，交给浏览器/WebView 下载（SVG 额外带 `Content-Security-Policy: sandbox`，禁止内嵌脚本）。
 - 任何人拿到链接即可匿名访问，不要对含密钥的文件签发。
 
 ### HTTPS
