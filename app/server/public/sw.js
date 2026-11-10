@@ -50,8 +50,12 @@ self.addEventListener('fetch', (event) => {
   // 只处理同源
   if (url.origin !== self.location.origin) return;
 
-  // 跳过 API/SSE/预览/交付取件，避免缓存动态数据(预览页需实时；/f/ 同链内容会随重新 save 变化)
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/sse') || url.pathname.startsWith('/preview') || url.pathname.startsWith('/f/')) return;
+  // 跳过 API/SSE/预览/交付取件，避免缓存动态数据(预览页需实时；/f/ 同链内容会随重新 save 变化)。
+  // /p/ 是公网短链(图片/文件直链)：内容是二进制、带 TTL 的 bearer 能力，既不能当 HTML 文本重建，
+  // 也不该进缓存。漏掉它时点开图片外链会先被“导航”分支 fetch 两次、再按文本重建，结果是一张坏图，
+  // 日志里表现为每点一次成对出现两条 public-file 取用记录。
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/sse') || url.pathname.startsWith('/preview')
+    || url.pathname.startsWith('/f/') || url.pathname.startsWith('/p/')) return;
 
   // vendor 预览页发出的根绝对请求(fetch('/') 自刷新、EventSource('/events') 等,Referer 是预览页):
   // 内容随文档变化,既不缓存,也不能把 office 文档页写进 '/' 这类 SPA 缓存键。
@@ -73,6 +77,9 @@ self.addEventListener('fetch', (event) => {
         try {
           const resp = await fetch(request);
           if (!resp.ok || resp.type !== 'basic') return resp;
+          // 非 HTML 的导航(图片/PDF 等直链)：二进制不能按文本重建，原样透传；
+          // 否则 resp.text() 会把像素解成替换字符，页面只剩空白/乱码。
+          if (!/text\/html/i.test(resp.headers.get('content-type') || '')) return resp;
           last = { txt: await resp.text(), resp };
         } catch (e) {
           if (last) break; // 已有残破快照:降级返回它
