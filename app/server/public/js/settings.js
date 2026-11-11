@@ -1686,16 +1686,15 @@
       return '<div class="cfg-kv"><label>' + esc(f.label || f.header) + '</label><b>' + esc(txt) + '</b></div>';
     }).join('');
     // 地址一律显示真实配置:预设地址只是容器形态的缺省值,本地形态是 127.0.0.1:809x,
-    // 照抄预设会与「已连接」徽章自相矛盾。与预设不同时标一句,免得用户以为配错了。
+    // 照抄预设会与「已连接」徽章自相矛盾。
     const urlTxt = (s ? (s.url || '') : p.url) || '';
-    const urlMark = s && p.url && urlTxt !== p.url ? ' （自定义）' : '';
     return '<div class="model-card' + (mode === 'disable' ? ' off' : '') + '"' +
       ' onclick="mcpUI.' + (s ? 'editPreset' : 'addPreset') + '(\'' + att(p.key) + '\')">' +
       '<div class="model-card-head">' +
         '<span class="model-card-name">' + esc(p.label || p.key) + '</span>' +
         state +
       '</div>' +
-      '<div class="cfg-kv"><label>地址</label><b>' + esc(urlTxt + urlMark) + '</b></div>' + kv +
+      '<div class="cfg-kv"><label>地址</label><b>' + esc(urlTxt) + '</b></div>' + kv +
     '</div>';
   }
   // MCP 卡:头部 = 名称 + url + mode 状态;体内 = headers 键值列表。整卡点击进入编辑。
