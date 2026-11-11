@@ -1237,6 +1237,8 @@
   // 「文件树」是侧栏两个互斥面板的切换开关：不在文件页 → 切到文件树（高亮），
   // 再点一次 → 回会话列表（不亮）。预览与设置不占用侧栏，高亮由 preview.js / settings.js 同步。
   function setDrawerPane(files) {
+    // 窄屏没有文件树（只有输入行右侧的旧文件面板），任何调用方都不允许切过去
+    if (files && !drawerMQ.matches) return;
     // 文件树模块没加载成功时不要把一个空面板切出来
     if (files && typeof window.showFileTree !== 'function') return;
     const drawer = $('drawer');
@@ -1251,6 +1253,9 @@
   $('da-files').addEventListener('click', () => {
     setDrawerPane(!$('drawer').classList.contains('drawer-mode-files'));
   });
+  // 窄屏只保留输入行右侧的旧「任务文件」面板，左栏不再提供文件树（按钮也已 CSS 隐藏）。
+  // 宽屏缩到窄屏时如果正停在文件页，先退回会话列表，避免出现两套文件 UI。
+  drawerMQ.addEventListener('change', (e) => { if (!e.matches) setDrawerPane(false); });
   // 预览：同一个按钮开/关右侧面板
   $('da-preview').addEventListener('click', () => {
     if (typeof pvTogglePane === 'function') pvTogglePane();

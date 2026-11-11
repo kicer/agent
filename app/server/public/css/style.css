@@ -872,9 +872,9 @@ body.voice-active .scroll-bottom-btn { display: none; }
   width: 20px; height: 20px; fill: none; stroke: currentColor;
   stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
 }
-/* 窄屏没有右侧预览分栏（预览改走全屏 #fs-viewer），所以只藏这一个钮；
-   文件树只是抽屉里的一个面板，任何宽度都能用，不藏。 */
-@media (max-width: 959px) { #da-preview { display: none !important; } }
+/* 窄屏：没有右侧预览分栏（预览走全屏 #fs-viewer）；文件浏览只保留输入行右侧的
+   旧「任务文件」面板，左栏不再出现文件树（不做两套文件 UI）。所以这两个钮都隐藏。 */
+@media (max-width: 959px) { #da-preview, #da-files { display: none !important; } }
 
 .files-tree { display: none; flex: 1; min-height: 0; flex-direction: column; }
 #drawer.drawer-mode-files .drawer-search,
