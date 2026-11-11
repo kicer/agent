@@ -66,6 +66,7 @@ cd agent
 |---|---|---|
 | 语音输入 | `ffmpeg` + 设置页给 `asr` 填上游（`X-ASR-Base-Url` / `X-ASR-Model`） | 麦克风入口自动隐藏（`/api/asr/status` 返回 `enabled:false`），`mcp_asr` 子进程也不启动 |
 | 技能 | `python3`（仅 Python 类技能需要） | 技能清单照常显示；调 `run.py` 类技能报「入口启动失败」，`office` 这类非 Python 技能不受影响 |
+| Office 文档（docx/xlsx/pptx） | 首次用到时下载一次 officecli 二进制（约 34MB） | `office` 命令报「binary missing」并给出 `skills/office/install.sh` 绝对路径，按提示跑一次即可（不需要 root、不需重启） |
 | 网页搜索 | 无 | 装了 Node 就有（内置免费后端） |
 | 图片 / 视频生成 | 设置页给对应 MCP 填上游 key | 调用时报明确的缺参错误 |
 
@@ -139,6 +140,8 @@ git pull
 - **Windows 暂不支持**：本机执行走 `spawn('/bin/sh')` 与 `process.kill(-pid)`，都是 POSIX 语义。
 - **`mint_public_link` 不可用**：`public_link.base_url` 未配置（本地生成的链接只有本机能打开），
   模型调用该工具会得到明确的「未配置」错误。
+- **`office` 文档没有预览**：预览卡片走 core → executor 的 `:3100` 网关，本地没有这个网关，
+  点开得不到可用页面；文档本身的创建/编辑/读取完全正常。
 - **技能依赖不预装**：本地没有 `agent-executor-init`，`skills/*/requirements.txt` 不会在启动时
   自动安装。技能缺包时会报 `ModuleNotFoundError`，模型会把缺的包装进 `skills/deps`
   （`AGENT_SKILLS_DEPS` 指向它，且已在该进程的 `PYTHONPATH` 里，装完下次运行即生效）。

@@ -277,6 +277,25 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 需要系统库的包（`weasyprint` → pango/cairo）pip 装不了，仍需用户 `brew install`；这类不在
 自动修复范围内，模型只报结论。
 
+### 4.14 `office` 本地化：平台矩阵 + PATH 直塞，不碰 `app/`
+
+`office` 技能是 `SKILL.md` + `scripts/office`（Node 封装层）+ `bin/officecli`（.NET 单文件二进制）。
+本地化只做两件小事：
+
+- **PATH**：服务器上靠镜像里的 `/usr/local/bin/office` 软链；本地没 root 写不了系统目录，
+  `start.sh` 起 core 时把 `skills/office/scripts` 直接塞进 `PATH`（脚本自身可执行，不复制、不装软链）。
+  `terminal` 继承 core 的 env，模型调 `office <cmd>` 即命中。
+- **二进制**：`install.sh` 改成按 `uname -s/-m` 选资产（linux x64/arm64、mac x64/arm64），
+  校验和 pin 到上游 release 的 `SHA256SUMS`（八个平台都有，不用猜）；mac 没有 `sha256sum`，
+  用 `shasum -a 256` 兜底。但已经存在的二进制只要能跑就沿用：officecli 会把自己更新到上游
+  latest（实测 1.0.157 跑一次变 1.0.160，大小与 latest 资产完全一致），拿 pin 去比对只会反复
+  重拉 34MB。pin 因此只约束「本次下载的东西」；服务器上卷是 `:ro`，二进制不会漂，仍走 sha 比对。
+  **启动器不预下载**：首次用到时，封装层报错里带 `install.sh` 的绝对路径，
+  模型跑一次即可（~34MB，GitHub 慢时自动换 gh-proxy）。
+
+没做的是预览：预览卡片要 executor 的 `:3100` 网关，本地没有。要补就相当于把
+`executor/preview.js` 的槽位管理搬进 core，不值得。
+
 ## 5. 验证结果（macOS 12.7.6 / x86_64 / Node 22.21 / python3 3.10 / 本机无 ffmpeg）
 
 静态检查：`sh -n local/start.sh`、`sh -n local/stop.sh`、`node --check` 均通过。
@@ -348,6 +367,8 @@ tail -f local/.runtime/core.log             # 以及 npm-install.log / mcp-*.log
 | Windows 不支持 | `spawn('/bin/sh')`、`process.kill(-pid)`、模型写的 bash 语法都是 POSIX 语义 |
 | `mint_public_link` 不可用 | 本地 `public_link.base_url` 为空，工具会回明确的「未配置」错误 |
 | 技能依赖 | 本地不预装：缺包时模型会把包装进 `skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）；连 `python3` 都没有时也由它自己装。怎么装由模型自己决定。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
+| `office` 二进制 | 不入库、镜像阶段不下载：首次用到时由模型按报错提示跑一次 `skills/office/install.sh`（按 `uname` 选 linux/mac 资产，下载时校验和 pin 到上游 `SHA256SUMS`，约 34MB；GitHub 慢时自动换 gh-proxy）。不需要 root，装完不需重启。officecli 会自更新到上游 latest，版本比 pin 新属正常 |
+| `office` 预览 | 预览卡片走 core → executor 的 `:3100` 网关，本地没有这个网关 → 点开打不开。文档创建/编辑/读取不受影响 |
 | 首个 `npm install` 要联网 | 支持 `NPM_REGISTRY` 覆盖源；`app/package-lock.json` 的 `resolved` 已改指向公共 registry（原来钉在内网镜像，外部机器必失败） |
 
 ## 8. 回滚

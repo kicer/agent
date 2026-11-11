@@ -822,6 +822,9 @@ start_core() {
   # 的 PYTHONPATH 对齐，那边由 compose 注入）。本地没有 agent-executor-init 替我们装包，
   # 所以另外把目录路径作为 AGENT_SKILLS_DEPS 传下去：模型在 terminal 里发现技能缺包时，
   # 按提示词里的写法 pip install --target "$AGENT_SKILLS_DEPS" 即可，技能下次运行就能 import。
+  # PATH 前面加 skills/office/scripts：office 技能的唯一入口就是那个 Node 封装层。
+  # 服务器上靠镜像里的 /usr/local/bin/office 软链进 PATH，本地没 root 写不了系统目录，
+  # 所以直接把目录塞进 PATH（脚本自身可执行，不复制、不装软链）。二进制缺时封装层会报 install.sh 路径。
   ( cd "$ROOT/app" && exec env \
       PORT="$PORT" \
       HOST="$HOST_ADDR" \
@@ -831,6 +834,7 @@ start_core() {
       ASR_URL="$ASR_URL" \
       PYTHONPATH="$ROOT/skills/deps" \
       AGENT_SKILLS_DEPS="$ROOT/skills/deps" \
+      PATH="$ROOT/skills/office/scripts:$PATH" \
       node server/server.js >>"$LOG" 2>&1 ) &
   CORE_PID=$!
 }

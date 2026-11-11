@@ -92,7 +92,8 @@ try {
 }
 if (r.error) {
   if (r.error.code === 'ENOENT') {
-    err('office.core binary missing: ' + BIN + ' (skill asset not fetched: docker compose up -d agent-executor-init to retry, or place it per skills/office/install.sh)');
+    err('office.core binary missing: ' + BIN + '\nInstall it: bash ' + path.resolve(__dirname, '..', 'install.sh')
+      + ' (server: docker compose up -d agent-executor-init)');
   }
   err(String(r.error.message || r.error));
 }
