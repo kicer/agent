@@ -104,6 +104,12 @@ function createAuth(cfg) {
   let users = (cfg.auth && cfg.auth.users) || [];
   if (!users.length) {
     // 未启用认证 = 单用户自用：管理接口按「本机主人」放行，用户 CRUD 由 routes/users.js 自己拒绝。
+    // /api/me 在关闭分支里也必须存在：前端靠它一次请求判定形态（auth:false = 未启用），
+    // 若这里不注册，本地模式（无认证）下浏览器网络面板会永远挂着一条红色 404，
+    // 也无法区分「路由不存在」和「cookie 失效」——后者才该跳登录页。
+    router.get('/api/me', (req, res) => {
+      res.json({ user: null, role: 'admin', model: '', auth: false });
+    });
     return {
       enabled: false,
       middleware: (req, res, next) => next(),
@@ -232,7 +238,9 @@ function createAuth(cfg) {
     // 与中间件同一解析顺序（cookie 优先），保证 /api/me 显示的用户与业务路由认定的用户一致
     const name = authUser(req);
     const row = name ? userRow(name) : null;
-    res.json({ user: name, role: row ? row.role : '', model: row ? (row.model || '') : '' });
+    // auth:true 让前端明确区分「启用了认证但当前无登录」（user:null → 跳登录）
+    // 与「根本没启用认证」（auth:false → 单用户自用）这两种 user:null。
+    res.json({ user: name, role: row ? row.role : '', model: row ? (row.model || '') : '', auth: true });
   });
 
   // ----- 登录页 / 登出跳转 -----

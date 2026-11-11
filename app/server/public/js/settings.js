@@ -16,7 +16,7 @@
     stack: [],
     snaps: {},                        // 页名 → 静态快照 HTML(setPush 时刷新;右滑返回垫底用)
     role: 'user',                     // 当前登录用户角色（admin | user）；启动时由 /api/me 回填
-    authEnabled: true,                // 是否启用多用户认证（/api/me 404 = 未启用，单用户自用）
+    authEnabled: true,                // 是否启用多用户认证（/api/me 返回 auth:false = 未启用，单用户自用）
     pendingKeys: new Set(),           // 已写盘、尚未重启生效的顶层配置段
     effCfg: null, cfgOrig: '',
     users: [], userModels: [],        // 用户管理页：账号/角色/默认模型 + 可选模型清单
@@ -336,9 +336,9 @@
     setActions('');
     setBody('<div class="set-scroll"><div class="empty-tip">加载中…</div></div>');
     // 单个 /api/me 判认证开关:启用时中间件保证已登录,user 必有;
-    // 未启用时该路由 404 → 只是没有密码/登出卡,画像仍渲染(未认证 = 空串键隐式单用户)。
+    // 未启用时回 auth:false + user:null → 只是没有密码/登出卡,画像仍渲染(未认证 = 空串键隐式单用户)。
     let me = null;
-    try { const r = await req('GET', '/api/me'); if (r && r.user) me = r; } catch (_) { /* 404 等一律按无账户信息处理 */ }
+    try { const r = await req('GET', '/api/me'); if (r && r.user) me = r; } catch (_) { /* 一律按无账户信息处理 */ }
     let p = null, pErr = '';
     try { p = await req('GET', '/api/profile'); } catch (e) { pErr = String((e && e.message) || e); }
     if (!ctx()) return;
@@ -2042,23 +2042,26 @@
   drawerMQ.addEventListener('change', e => openDrawer(e.matches));
   // 页面加载时校验 cookie 身份：防止 localStorage 旧 token 通过 autoRestore 恢复错误用户
   (async () => {
-    let verifiedUser = null; // 校验结果顺带复用给侧边栏，避免同一次加载请求两次 /api/me
     try {
       const res = await fetch('/api/me', { credentials: 'include' });
       if (res.ok) {
         const j = await res.json();
-        if (!j.user) {
+        if (j.auth === false) {
+          // 未启用多用户认证（单用户自用，本地模式即此形态）：没有登录态可校验，全部设置可见
+          SET.role = 'admin';
+          SET.authEnabled = false;
+        } else if (!j.user) {
           // cookie 无效或用户已从配置中移除 → 彻底清理所有前端凭据并跳登录
           localStorage.removeItem('agent_token');
           sessionStorage.removeItem('agent_creds'); // 旧版本遗留的 Basic 凭据，顺带清理
           location.href = '/logout';
           return;
+        } else {
+          SET.role = j.role === 'admin' ? 'admin' : 'user';
+          SET.authEnabled = true;
         }
-        verifiedUser = String(j.user);
-        SET.role = j.role === 'admin' ? 'admin' : 'user';
-        SET.authEnabled = true;
       } else {
-        // /api/me 404 = 未启用多用户认证：单用户自用，全部设置可见（用户管理页因 auth 关闭而隐藏）
+        // 兜底：改契约之前的旧后端在未启用认证时该路由不存在（404），按未启用处理
         SET.role = 'admin';
         SET.authEnabled = false;
       }
