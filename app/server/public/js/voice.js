@@ -36,6 +36,9 @@
   const MAX_MS = 180000;       // 单次录音上限（流式上传后不再受 60s 限制）
   const MIN_MS = 500;          // 短于这个时长按误触处理，不上传
   const FLUSH_MS = 60000;      // 松手后等尾段识别完的上限（超过就当失败）
+  // 转写请求的并发上限：段一碎（6s 软切）并发就会很多，全放出去会把上游压垮、
+  // 也可能被限流。超过就排到后面，等前面的落定再发。改完刷新页面即生效。
+  const ASR_MAX_CONCURRENCY = 3;
   const OUT_RATE = 16000;      // 页面内部统一按 16k 处理：VAD 时长与段长上限都按它算
   const BAR_COUNT = 45;        // 声波柱数（要足够宽，手指按住时两侧仍能看到）
 
@@ -77,12 +80,14 @@
   let segDbs = [];             // 各分片峰值 dB（与 segChunks 平行：软切要找能量最低的边界）
   let segLen = 0;              // 当前段总采样数
   let silLen = 0;              // 段尾连续静音采样数
-  let textParts = [];          // 各段识别结果（按顺序）
+  let textParts = [];          // 各段识别结果，按提交顺序占位（并行返回是乱序的）
   let segSent = 0;             // 本轮已提交转写的段数（进度分母）
   let segDone = 0;             // 已返回（含失败）的段数（进度分子）
   let busyTimer = null;        // 「识别中」提示的秒表（1s 一跳）
   let busyStartAt = 0;
-  let chain = Promise.resolve(); // 串行上传链：保证拼接顺序 = 说话顺序
+  let inflight = [];           // 本轮各段的落定 promise（收口要等全它们）
+  let waiting = [];            // 等名额的段（在飞满了才排）
+  let active = 0;              // 正在飞的请求数
   let gen = 0;                 // 会话代号：取消/重录后迟到结果直接丢弃
   let streamOn = false;        // 是否接受 PCM 分片
   let flushTimer = null;
@@ -348,6 +353,7 @@
       phase = 'recording';
       recordStartAt = Date.now();
       gen++;                 // 新会话：让上一轮迟到的结果全部失效
+      inflight = [];         // 上一轮的在途请求不再计入本轮收口
       streamOn = true;
       pcmRate = 16000;
       clearSeg();
@@ -385,6 +391,7 @@
     gen++;
     pcmRate = OUT_RATE;
     streamOn = true;
+    inflight = [];
     clearSeg();
     textParts = [];
     if (!startCapture()) {
@@ -613,27 +620,43 @@
     emit(encodeWav(takeSeg(n), pcmRate));
   }
 
-  // 串行上传：一段没回来不发下一段（2 vCPU 上并发只会互相拖慢，而且顺序也没法保证）
+  // 每段切出来就发，不等上一段回来，但同时最多 ASR_MAX_CONCURRENCY 个。
+  // 名额是「谁落定谁交出去」，不按固定顺序等某一段：否则最慢那段会卡住本可以发的后续段。
+  // 并行返回是乱序的，所以结果按「提交时的下标」落位，拼接时仍按说话顺序。
   function emit(blob) {
     const my = gen;
-    segSent++;   // 分母：已提交的段数（含排队中的）
-    chain = chain.then(function () {
-      if (my !== gen) return;   // 已取消/重录：不再发
+    const idx = segSent++;   // 分母：已提交的段数，同时是这一段结果的落位下标
+    const p = acquire().then(function () {
+      if (my !== gen) { release(); return; }   // 已取消/重录：名额还回去，别再发
       return req('POST', '/api/asr/transcribe', blob, true, 120000)
         .then(function (r) {
           if (my !== gen) return;
-          segDone++;
           const t = String((r && r.text) || '').replace(/\s+/g, ' ').trim();
-          if (t) textParts.push(t);
-          refreshBusyHint();
+          if (t) textParts[idx] = t;
         })
         .catch(function () {
           /* 单段失败不连坐，其余段照常出字；失败也算走完一段，进度才不会停在半路 */
+        })
+        .then(function () {
+          release();   // 不论成败都先腾名额
           if (my !== gen) return;
           segDone++;
           refreshBusyHint();
         });
     });
+    inflight.push(p);
+  }
+
+  // 名额：没满直接拿；满了就排队，任一请求落定后把名额交给下一个（不按固定顺序）
+  function acquire() {
+    if (active < ASR_MAX_CONCURRENCY) { active++; return Promise.resolve(); }
+    return new Promise(function (res) { waiting.push(res); });
+  }
+
+  function release() {
+    const next = waiting.shift();
+    if (next) next();          // 名额直接转交，active 不变
+    else active--;
   }
 
   // 拼接各段：中文直接相连；两侧都是西文字母/数字时补一个空格，
@@ -653,6 +676,7 @@
     streamOn = false;
     clearSeg();
     textParts = [];
+    inflight = [];
     gen++;
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
   }
@@ -719,7 +743,11 @@
       resetUI();
       toast('语音识别超时');
     }, FLUSH_MS);
-    chain = chain.then(function () {
+    // 并行发之后没有串行链可挂：等本轮全部段落定（含被限流挡着的）再收口。
+    // 逐个兜一层 catch：只要有一个 Promise 意外 reject，Promise.all 就整批失败，
+    // 收口逻辑永远不跑，只能等 60s 超时把已识别的内容全部丢掉。
+    const all = inflight.map(function (p) { return p.catch(function () {}); });
+    Promise.all(all).then(function () {
       if (my !== gen) return;
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
       const text = joinText(textParts);
