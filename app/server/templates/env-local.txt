@@ -2,4 +2,5 @@
   conversations share it and `/tmp` is the system temp dir. Work inside the
   working directory; treat everything outside it as the user's.
 - `python3` may be missing. Install what a task needs; Python packages go into
-  `$AGENT_SKILLS_DEPS`.
+  `$AGENT_SKILLS_DEPS`. If a skill fails, read its own `AGENTS.md`
+  (`"$(dirname "$AGENT_SKILLS_DEPS")/<skill>/AGENTS.md"`) and follow it.

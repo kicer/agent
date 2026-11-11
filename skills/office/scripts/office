@@ -92,7 +92,7 @@ try {
 }
 if (r.error) {
   if (r.error.code === 'ENOENT') {
-    err('office.core binary missing: ' + BIN + '\nLocal install steps: ' + path.resolve(__dirname, '..', 'INSTALL.md')
+    err('office.core binary missing: ' + BIN + '\nLocal env: ' + path.resolve(__dirname, '..', 'AGENTS.md')
       + ' (server: docker compose up -d agent-executor-init)');
   }
   err(String(r.error.message || r.error));

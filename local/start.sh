@@ -417,7 +417,7 @@ EOF
 
 # ---------- 技能目录：软链到仓库 skills，不动配置 ----------
 # 为什么不再按 python3 有无切换成空目录：技能不一定是 Python 的。office 就是
-# SKILL.md + scripts/office，模型在 terminal 里调 `office <cmd>`，跟 python3 无关；
+# SKILL.md + scripts/office（Node）+ 二进制，跟 python3 无关；
 # 一刀切会把这类技能一并藏起来。而 Python 技能缺解释器时，skills.js 的 runEntry 对
 # spawn 的 error 有处理，模型拿到的是「技能入口启动失败：spawn python3 ENOENT」，
 # 干净可读，不会崩也不会挂住——没必要靠藏清单来避险。
@@ -820,11 +820,8 @@ check_mcp() {
 start_core() {
   # PYTHONPATH 把技能共享依赖层 skills/deps 放进 python 的搜索路径（与服务器上 executor 容器
   # 的 PYTHONPATH 对齐，那边由 compose 注入）。本地没有 agent-executor-init 替我们装包，
-  # 所以另外把目录路径作为 AGENT_SKILLS_DEPS 传下去：模型在 terminal 里发现技能缺包时，
-  # 按提示词里的写法 pip install --target "$AGENT_SKILLS_DEPS" 即可，技能下次运行就能 import。
-  # PATH 前面加 skills/office/scripts：office 技能的唯一入口就是那个 Node 封装层。
-  # 服务器上靠镜像里的 /usr/local/bin/office 软链进 PATH，本地没 root 写不了系统目录，
-  # 所以直接把目录塞进 PATH（脚本自身可执行，不复制、不装软链）。二进制缺时封装层会报 install.sh 路径。
+  # 所以另外把目录路径作为 AGENT_SKILLS_DEPS 传下去：技能缺什么时，模型按该技能目录的
+  # AGENTS.md 自行安装（提示词里只给这一句指路），启动器不认识任何具体技能。
   ( cd "$ROOT/app" && exec env \
       PORT="$PORT" \
       HOST="$HOST_ADDR" \
@@ -834,7 +831,6 @@ start_core() {
       ASR_URL="$ASR_URL" \
       PYTHONPATH="$ROOT/skills/deps" \
       AGENT_SKILLS_DEPS="$ROOT/skills/deps" \
-      PATH="$ROOT/skills/office/scripts:$PATH" \
       node server/server.js >>"$LOG" 2>&1 ) &
   CORE_PID=$!
 }

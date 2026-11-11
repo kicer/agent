@@ -51,7 +51,7 @@ def find_soffice():
 
 
 def req_hint():
-    return '安装步骤: %s（依赖清单 requirements.txt）' % (SKILL_DIR / 'INSTALL.md')
+    return '本机环境: %s' % (SKILL_DIR / 'AGENTS.md')
 
 # 默认样式:黑白友好、打印向。字号用 em 相对值,整体缩放只依赖 html font-size
 # (由 page.font_size 参数注入),因此压单页只需调小字号/边距。

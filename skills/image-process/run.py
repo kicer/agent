@@ -249,8 +249,8 @@ def action_watermark(img, fmt, args):
     if font_path:
         font = ImageFont.truetype(font_path, font_size)
     elif need_cjk:
-        raise ValueError('中文水印缺少字体：传 font 参数（TTF/TTC 路径）；各平台常见字体路径见 %s'
-                         % (Path(__file__).resolve().parent / 'INSTALL.md'))
+        raise ValueError('中文水印缺少字体：传 font 参数（TTF/TTC 路径）；本机环境见 %s'
+                         % (Path(__file__).resolve().parent / 'AGENTS.md'))
     else:
         try:
             font = ImageFont.load_default(size=font_size)

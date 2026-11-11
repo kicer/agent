@@ -34,5 +34,4 @@ create/open 成功后，用户可自行查看该文档的实时预览（预览�
 ## 注意
 
 - 所有操作文档在任务目录里。
-- 缺 `bin/officecli`（报 `binary missing`）时：按同目录 `INSTALL.md` 自己装；服务器端由镜像构建 / `agent-executor-init` 提供，本机不要跑 `install.sh`。
 - `view` 的渲染族（html/screenshot/pdf 等）本环境不可用；要 PDF 用 x2pdf 技能。
