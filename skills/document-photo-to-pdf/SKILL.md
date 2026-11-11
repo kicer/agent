@@ -39,7 +39,7 @@ input_schema:
 
 ```json
 {"ok":true,"summary":"3 页已生成；1 页建议在审核页确认；原始页图见 out/","pdf":"合同_校正.pdf","images":["out/合同_校正-01.png","out/合同_校正-02.png","out/合同_校正-03.png"]}
-访问地址：https://agent.ai.foresh.com/app/task-20261023-001/doc-review/
+访问地址：<站点地址>/app/task-20261023-001/doc-review/
 ```
 
 审核页可拖角、旋转、删页/排序、改纸张与清晰度；改动后点「重新生成 PDF」覆盖同名文件。

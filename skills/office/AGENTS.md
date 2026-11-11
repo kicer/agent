@@ -17,5 +17,3 @@ chmod +x "$SK/bin/officecli"
 
 资产名是 `{mac,linux,win}-{x64,arm64}`，如 `officecli-mac-arm64`、`officecli-linux-x64`、`officecli-win-x64.exe`；
 musl 系统（Alpine）用 `officecli-linux-alpine-{x64,arm64}`。`uname -sm` 可判断平台与架构。
-
-网络慢或装不上（GitHub 下载 / brew 等）：见技能根目录的 `AGENTS.md`。

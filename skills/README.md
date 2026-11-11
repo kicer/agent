@@ -20,7 +20,6 @@
 
 ```
 skills/
-├── AGENTS.md          # 技能排错与国内网络换源（可选参考；core 不读）
 └── <skill-name>/
     ├── SKILL.md          # 技能描述文件（必须）
     ├── run.py            # 技能主入口（Python 脚本，推荐）或 run.sh

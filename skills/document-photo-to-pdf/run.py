@@ -864,7 +864,11 @@ def process(args, t0):
         if not state_ok:
             warnings.append("state 文件写入失败：%s" % state_path)
 
-        if checks.get("ok") is False:
+        if checks.get("ok") is None:
+            # 自检根本没跑（无 PDF 渲染后端等）：不能让它伪装成「建议确认」——
+            # 那种情况下页面压根没过边缘/短边检验，模型和用户都得知道判据缺失。
+            summary = "%d 页已生成；PDF 自检未能执行，请在审核页人工确认" % len(ordered_pages)
+        elif checks.get("ok") is False:
             summary = "%d 页已生成；自检有未通过项" % len(ordered_pages)
         elif needs:
             summary = "%d 页已生成；%d 页建议在审核页确认" % (

@@ -2,5 +2,10 @@
   conversations share it and `/tmp` is the system temp dir. Work inside the
   working directory; treat everything outside it as the user's.
 - `python3` may be missing. Install what a task needs; Python packages go into
-  `$AGENT_SKILLS_DEPS`. If a skill fails, read its own `AGENTS.md`
+  `$AGENT_SKILLS_DEPS`. If a skill fails, cat its own `AGENTS.md`
   (`"$(dirname "$AGENT_SKILLS_DEPS")/<skill>/AGENTS.md"`) and follow it.
+- Installs and big downloads stay silent until they end. Run them in the background
+  with output to a log file and poll that file every ~10s, instead of one long timeout.
+- Slow or failing installs and downloads: switch mirrors instead of retrying — pip
+  `-i https://pypi.tuna.tsinghua.edu.cn/simple`, npm `--registry=https://registry.npmmirror.com`,
+  GitHub URLs prefixed with `https://gh-proxy.com/`, Homebrew mirrors or let the user install.
