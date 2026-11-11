@@ -78,6 +78,7 @@
         state.sessionId = null;
         state.sessionTitle = '';
         state.sessionType = 'secretary';
+        if (window.refreshFileTree) window.refreshFileTree();
         state.pendingModel = '';
         state.pending = [];
         renderSendQueue();
@@ -188,6 +189,8 @@
       removeTyping();
       setFilesPanel(false); // 会话切换,收起文件面板防旧列表残留
       if (typeof pvCloseDoc === 'function') pvCloseDoc(); // 同上:收起文档预览右栏,防旧会话内容残留
+      // 预览图标会「重开上次看过的文件」，跨会话重开会指向别的会话的路径，逐会话清掉
+      if (typeof pvState === 'object' && pvState) pvState.lastName = null;
       state.sessionId = id;
       state.status = '';
       state.modelId = '';
@@ -222,6 +225,7 @@
       if (state.sessionId !== id) return; // 期间已切到别的会话
       renderDetail(detail);
       connectStream();
+      if (window.refreshFileTree) window.refreshFileTree();
     } catch (e) {
       if (state.sessionId === id) toast('打开会话失败:' + e.message);
     }
@@ -236,6 +240,7 @@
     state.sessionTitle = (s && s.title) || '';
     state.sessionType = (s && s.assistant_type) || state.mode;
     state.pendingModel = '';
+    if (window.refreshFileTree) window.refreshFileTree();
     setView('chat');
     renderHeader();
     updateHeaderActions();
@@ -293,6 +298,7 @@
     state.sessionId = null;
     state.sessionTitle = '';
     state.sessionType = 'secretary';
+    if (window.refreshFileTree) window.refreshFileTree();
     state.status = '';
     state.modelId = '';
     state.schedule = null;

@@ -1,7 +1,7 @@
 // 通用文档预览窗（桌面右侧 #pv-pane / 移动端全屏 #fs-viewer）
 //  —— 文件列表的点击一律进预览窗：office 走 /preview 预览网关(固定格式前端自拼)；
 //     md/txt/代码/json/csv 等文本渲染；html/pdf/图片专用渲染；其余类型显示文件信息占位 + 下载。
-//     桌面打开时自动折叠左侧历史栏让位，关闭恢复；左右边界可拖拽调宽(记忆在 localStorage)。
+//     桌面端与左栏并排（不再自动折叠左栏让位）；左右边界可拖拽调宽(记忆在 localStorage)。
 //  依赖(core.js/chat.js/stream.js/files.js 顶层声明)：state $ esc toast mdHtml decorateCodePre
 //     rewriteHtmlDocSrcs rewriteMdImageSrcs openFullscreen setFsSource closeFullscreen
 //     openImageViewer downloadFile openDrawer
@@ -16,7 +16,8 @@ const PV_TEXT = /\.(md|markdown|txt|log|csv|tsv|json|jsonl|xml|yml|yaml|toml|ini
 const PV_TEXT_MAX = 512 * 1024; // 文本预览截断阈值(字符)，超出提示下载看全文
 let pvSeq = 0; // 预览序号：快速连点时旧请求不许再动 DOM
 // reload: 当前内容的"重新载入"动作(文本类无 iframe，按名重开)；为 null 时回退到 reload iframe
-const pvState = { name: null, url: null, blobUrl: null, reload: null, drawerWasOpen: false, mobilePush: false };
+// lastName: 最后展示过的文件路径。关窗后 pvState.name 会被清空，靠它支持"再点预览图标重开上次文件"
+const pvState = { name: null, url: null, blobUrl: null, reload: null, mobilePush: false, lastName: null };
 
 function pvDesktop() { return window.matchMedia('(min-width: 960px)').matches; }
 
@@ -79,6 +80,7 @@ function pvToolbar(o) {
 // 每次展示内容都过一遍：标题显示相对路径(子目录可见)，右上角下载钮随文件走
 function pvHeader(name, sizeText) {
   pvState.name = name;
+  if (name) pvState.lastName = name; // 记住最后一份内容，供关窗后重开
   const t = document.getElementById('pv-title');
   t.value = String(name || '');
   t.title = sizeText ? name + ' · ' + sizeText : String(name || '');
@@ -117,11 +119,11 @@ function pvInfoNode(name, sizeText, hint) {
 }
 
 function pvOpenPane() {
+  // 不自动折叠左侧栏：本地端左栏是文件树，打开预览时保持可见（左侧树 + 右侧预览并排）。
   if (!document.body.classList.contains('pv-open')) {
-    pvState.drawerWasOpen = document.getElementById('drawer').classList.contains('open');
-    if (pvState.drawerWasOpen && typeof openDrawer === 'function') openDrawer(false); // 挤压式分栏：折叠左侧让位
     document.body.classList.add('pv-open');
   }
+  pvSyncBtn();
 }
 
 function pvCloseDoc() {
@@ -130,9 +132,27 @@ function pvCloseDoc() {
   if (typeof pvSetMaxUI === 'function') pvSetMaxUI(false); // 收起时复位放大钮图标(函数声明提升，定义在后亦可)
   pvClearBody();
   pvState.name = null; pvState.url = null;
-  if (pvState.drawerWasOpen) {
-    pvState.drawerWasOpen = false;
-    if (typeof openDrawer === 'function') openDrawer(true); // 恢复打开预览前的折叠态
+  pvSyncBtn();
+}
+
+// 侧栏底部「预览」图标：开/关右侧预览面板（桌面端）。图标随开合高亮。
+function pvSyncBtn() {
+  const b = document.getElementById('da-preview');
+  if (b) b.classList.toggle('active', document.body.classList.contains('pv-open'));
+}
+
+// 同一个图标开/关预览：已开 → 关；未开 → 优先重开上次看过的文件，没有就开空面板给个提示。
+function pvTogglePane() {
+  if (!pvDesktop()) return; // 移动端预览走全屏 #fs-viewer，不维护右栏
+  if (document.body.classList.contains('pv-open')) { pvCloseDoc(); return; }
+  if (pvState.lastName) { openFilePreview(pvState.lastName); return; }
+  pvOpenPane(); pvClearBody(); pvHeader('', '');
+  const body = document.getElementById('pv-body');
+  if (body) {
+    const tip = document.createElement('div');
+    tip.className = 'pv-none';
+    tip.innerHTML = '<div class="hint">点击文件即可在此预览</div>';
+    body.appendChild(tip);
   }
 }
 

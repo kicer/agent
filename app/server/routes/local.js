@@ -6,6 +6,8 @@
 // 都会卡住，直到用户关掉对话框。用户取消不是错误，回 { path: '' }；
 // 其它失败（无对话框、权限被拒、超时）要带原因回给前端，别让用户以为是自己取消了。
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const os = require('os');
 const { execFile } = require('child_process');
 const engine = require('../engine');
@@ -63,6 +65,121 @@ async function pickDir() {
   }
   throw Object.assign(new Error('没有可用的目录选择器（Linux 请安装 zenity 或 kdialog）'), { status_code: 501 });
 }
+
+// ---------- 只读文件树 / 原生文件管理器（仅本机会话目录内） ----------
+// 目录可能是真实项目，含 node_modules 等大目录：一律「一次只列一层」，客户端展开才请求。
+// 绝不能复用 listTaskFiles 的整棵递归——同步递归会卡死单线程 core，连 SSE 一起挂。
+const IGNORE_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'out', 'target', '.venv', 'venv',
+  '__pycache__', '.next', '.cache', 'coverage', '.idea', '.vscode',
+]);
+const TREE_MAX = 500;
+
+function isInside(rootAbs, abs) {
+  return abs === rootAbs || abs.startsWith(rootAbs + path.sep);
+}
+
+// 会话内相对路径 → 绝对路径，双重越界校验（字面 + realpath，防符号链接跳出）。
+function resolveInside(sessionId, rel) {
+  const sid = String(sessionId || '').trim();
+  if (!sid) throw Object.assign(new Error('缺少 session'), { status_code: 400 });
+  const session = engine.getSession(sid);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const rootAbs = path.resolve(engine.taskDirOf(sid));
+  const p = String(rel || '').replace(/^[\\/]+/, '');
+  const abs = p ? path.resolve(rootAbs, p) : rootAbs;
+  if (!isInside(rootAbs, abs)) throw Object.assign(new Error('路径越界'), { status_code: 400 });
+  let real = abs, rootReal = rootAbs;
+  try { real = fs.realpathSync(abs); } catch (_) {}
+  try { rootReal = fs.realpathSync(rootAbs); } catch (_) {}
+  if (!isInside(rootReal, real)) throw Object.assign(new Error('路径越界'), { status_code: 400 });
+  return { rootAbs: rootAbs, abs: abs };
+}
+
+// 懒加载单层目录。ignored 的目录只回标记、前端灰显且不展开（避免 node_modules 那种灾难）。
+router.get('/tree', (req, res) => {
+  let abs;
+  try { abs = resolveInside(req.query.session, req.query.dir || '').abs; }
+  catch (err) { return sendErr(res, err); }
+  let st;
+  try { st = fs.statSync(abs); } catch (_) { return res.status(404).json({ error: '目录不存在' }); }
+  if (!st.isDirectory()) return res.status(400).json({ error: '不是目录' });
+  const showHidden = req.query.hidden === '1';
+  const rel = String(req.query.dir || '').replace(/^[\\/]+/, '').replace(/\/+$/, '');
+  const entries = [];
+  try {
+    for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
+      if (!showHidden && e.name.startsWith('.')) continue;
+      const childRel = rel ? rel + '/' + e.name : e.name;
+      if (e.isSymbolicLink()) { entries.push({ name: e.name, rel: childRel, type: 'link' }); continue; }
+      if (e.isDirectory()) {
+        entries.push({ name: e.name, rel: childRel, type: 'dir', ignored: IGNORE_DIRS.has(e.name) });
+      } else if (e.isFile()) {
+        let size = null;
+        try { size = fs.statSync(path.join(abs, e.name)).size; } catch (_) {}
+        entries.push({ name: e.name, rel: childRel, type: 'file', size: size });
+      }
+    }
+  } catch (err) { return sendErr(res, err); }
+  entries.sort((a, b) =>
+    (a.ignored ? 1 : 0) - (b.ignored ? 1 : 0) ||
+    (a.type === 'dir' ? 0 : 1) - (b.type === 'dir' ? 0 : 1) ||
+    (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  res.json({
+    root: path.resolve(engine.taskDirOf(String(req.query.session || ''))),
+    dir: rel,
+    total: entries.length,
+    capped: entries.length > TREE_MAX,
+    entries: entries.slice(0, TREE_MAX),
+  });
+});
+
+// execFile 异步（同步会阻塞事件循环）；open/xdg-open 一般秒回，10s 兜底。
+function runOpen(cmd, args) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 10000 }, (err) => {
+      if (!err) return resolve();
+      if (err.code === 'ENOENT') return reject(Object.assign(new Error('no-cmd'), { no_cmd: true }));
+      if (err.killed) return reject(Object.assign(new Error('系统调用超时'), { status_code: 504 }));
+      reject(Object.assign(new Error('打开失败：' + (err.message || err.code)), { status_code: 500 }));
+    });
+  });
+}
+
+function dirOf(abs) {
+  try { return fs.statSync(abs).isDirectory() ? abs : path.dirname(abs); } catch (_) { return path.dirname(abs); }
+}
+
+// 在系统文件管理器里打开：目录→直接打开；文件→定位所在目录（mac 用 open -R 直接选中该文件）。
+router.post('/reveal', (req, res) => {
+  let target;
+  try { target = resolveInside(req.body && req.body.session, req.body && req.body.path); }
+  catch (err) { return sendErr(res, err); }
+  const abs = target.abs;
+  let isDir = false;
+  try { isDir = fs.statSync(abs).isDirectory(); } catch (_) {}
+  const mac = process.platform === 'darwin';
+  const cmd = mac ? 'open' : 'xdg-open';
+  const args = mac && !isDir ? ['-R', abs] : [isDir ? abs : path.dirname(abs)];
+  runOpen(cmd, args).then(() => res.json({ ok: true })).catch(err => sendErr(res, err));
+});
+
+// 在系统终端里打开该目录。mac 用 open -a Terminal；Linux 尽力而为。
+router.post('/terminal', (req, res) => {
+  let target;
+  try { target = resolveInside(req.body && req.body.session, req.body && req.body.path); }
+  catch (err) { return sendErr(res, err); }
+  const dir = dirOf(target.abs);
+  if (process.platform === 'darwin') {
+    runOpen('open', ['-a', 'Terminal', dir]).then(() => res.json({ ok: true })).catch(err => sendErr(res, err));
+    return;
+  }
+  runOpen('x-terminal-emulator', ['--working-directory=' + dir])
+    .then(() => res.json({ ok: true }))
+    .catch(() => runOpen('gnome-terminal', ['--working-directory=' + dir])
+      .then(() => res.json({ ok: true }))
+      .catch(() => sendErr(res, Object.assign(new Error('没有可用的终端程序'), { status_code: 501 }))));
+});
 
 // 能力探测：前端凭这个决定是否显示「工作目录」入口（拿不到就整条隐藏）。
 router.get('/info', (req, res) => {

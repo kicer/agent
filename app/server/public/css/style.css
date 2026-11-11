@@ -853,6 +853,82 @@ body.voice-active .scroll-bottom-btn { display: none; }
 .search-box input::placeholder { color: var(--gray-light); }
 
 .drawer-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
+
+/* ---------- 抽屉底部图标操作栏（会话/文件树/预览/设置） + 只读文件树 ----------
+   操作栏替代了原来整行可点的用户区：4 个图标，当前生效的那一项高亮（active）。 */
+.drawer-actions {
+  flex: none; display: flex; align-items: center; justify-content: space-around; gap: 4px;
+  padding: 6px 10px calc(6px + var(--sab)); border-top: 1px solid var(--border);
+  background: var(--drawer-bg);
+}
+.drawer-act {
+  flex: 1; height: 40px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; border-radius: 10px; color: var(--gray); cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.drawer-act:hover { background: var(--surface); color: var(--ink); }
+.drawer-act.active { color: var(--active); background: var(--active-soft); }
+.drawer-act svg {
+  width: 20px; height: 20px; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+/* 手机/窄屏没有右侧预览栏（预览走全屏浮层），这个按钮无意义 */
+@media (max-width: 959px) { #da-preview { display: none !important; } }
+
+.files-tree { display: none; flex: 1; min-height: 0; flex-direction: column; }
+#drawer.drawer-mode-files .drawer-search,
+#drawer.drawer-mode-files .drawer-list { display: none; }
+#drawer.drawer-mode-files .files-tree { display: flex; }
+
+.tree-head {
+  flex: none; display: flex; align-items: center; gap: 4px;
+  padding: 8px 12px 6px; border-bottom: 1px solid var(--border);
+}
+.tree-title {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; color: var(--ink);
+}
+.tree-actions { display: flex; gap: 2px; }
+.tree-hbtn {
+  width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; border-radius: 8px; color: var(--gray); cursor: pointer;
+}
+.tree-hbtn:hover { background: var(--surface); color: var(--active); }
+.tree-hbtn.active { color: var(--active); background: var(--active-soft); }
+.tree-hbtn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.tree-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 6px 12px; }
+.tree-row {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 6px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; color: var(--ink); white-space: nowrap;
+}
+.tree-row:hover { background: var(--surface); }
+.tree-row.is-ignored { color: var(--gray-light); cursor: default; }
+.tree-row.is-link { color: var(--gray); }
+.tree-caret { flex: none; width: 12px; height: 12px; position: relative; }
+.tree-row.is-dir .tree-caret::before {
+  content: ""; position: absolute; left: 3px; top: 3px;
+  border-left: 5px solid var(--gray);
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  transition: transform .12s;
+}
+.tree-row.is-dir.open .tree-caret::before { transform: rotate(90deg); }
+.tree-ico { flex: none; width: 16px; height: 16px; display: inline-flex; color: var(--gray); }
+.tree-ico svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tree-row.is-dir .tree-ico { color: var(--active); }
+.tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tree-act {
+  flex: none; width: 20px; height: 20px; display: none; align-items: center; justify-content: center;
+  border: 0; background: none; color: var(--gray); cursor: pointer; border-radius: 6px;
+}
+.tree-row:hover .tree-act { display: inline-flex; }
+.tree-act:hover { background: var(--border); color: var(--active); }
+.tree-act svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tree-empty, .tree-loading, .tree-more { padding: 10px 12px; font-size: 12px; color: var(--gray); }
+
+/* 本地模式：隐藏旧的底部「任务文件」浮层入口（它走整棵递归接口，大项目会卡死。改用左栏树） */
+body.local-mode #files-btn { display: none !important; }
 /* 会话分组表头(按今天/昨天分组):滚动时吸顶,下一个 group-label 滚过来时把它顶走
    背景色与抽屉一致,避免 sticky 时下面会话透过看到上一组的尾巴 */
 .group-label {
@@ -921,12 +997,7 @@ body.voice-active .scroll-bottom-btn { display: none; }
 /* 删除会话 modal 副标题:会话 ID 等二级说明,字号小、灰色 */
 .confirm-sub { font-size: 12px; color: var(--gray); margin-top: 6px; }
 
-/* 底部用户区 */
-.drawer-user {
-  flex: none; display: flex; align-items: center; gap: 10px;
-  padding: 12px 14px calc(12px + var(--sab));
-  border-top: 1px solid var(--border);
-}
+/* 底部图标操作栏见上方 .drawer-actions（原用户区整行可点已废弃） */
 .avatar {
   width: 36px; height: 36px; border-radius: 50%; flex: none;
   background: var(--active); /* 真实用户名下的头像:JS 按用户名取色内联覆盖,与设置页 user-card 一致 */
@@ -1123,10 +1194,6 @@ label.icon-btn { cursor: pointer; }
 .set-name { font-size: 15px; font-weight: 600; }
 .set-desc { font-size: 12px; color: var(--gray); }
 .set-arrow { color: var(--gray-light); }
-
-/* ---------- 抽屉底部用户区:整行可点 ---------- */
-.drawer-user { cursor: pointer; }
-.drawer-user:active { background: var(--surface); }
 
 /* ---------- 通用白卡与设置表单(搬自 style.css 设置页) ---------- */
 .settings-card {
@@ -1468,7 +1535,7 @@ label.icon-btn { cursor: pointer; }
     z-index: 55;
   }
   body.pv-open.pv-max #pv-pane { left: 0; width: auto; border-left: none; z-index: 120; }
-  /* 挤压式分栏:会话列让位;打开右栏时左侧历史栏会自动折叠(若手动再展开则两者同时让位) */
+  /* 挤压式分栏:打开右栏时会话列让位；左栏不再自动折叠（本地端左栏是文件树，需要与预览并排） */
   body.pv-open #app { width: calc(100% - var(--pv-w, min(50vw, 900px))); margin-left: 0; }
   body.pv-open.drawer-open #app { width: calc(100% - var(--sidebar-w) - var(--pv-w, min(50vw, 900px))); margin-left: var(--sidebar-w); }
   body.pv-open.pv-max #app { width: 100%; margin-left: 0; }

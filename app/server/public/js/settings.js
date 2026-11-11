@@ -130,17 +130,17 @@
   function showSettings() {
     // 普通用户没有设置主页：直接进账户页（栈里只有一页，返回即退出设置）
     SET.stack = [SET.role === 'admin' ? 'home' : 'account']; SET.snaps = {}; setUnderHide();
-    // 桌面端:打开设置时收起侧边栏让设置页占满窗口,关闭时恢复之前的展开态
-    if (drawerMQ.matches) { drawerWasOpenBeforeSet = document.body.classList.contains('drawer-open'); openDrawer(false); }
+    // 桌面端保留左侧栏：设置页是 #app 内的 absolute 覆盖层，自然只占侧栏右侧区域，
+    // 左栏（会话/文件）保持可见可用。
     $('settings-page').classList.remove('hidden'); renderSetPage();
+    const b = $('da-settings'); if (b) b.classList.add('active'); // 侧栏底部图标同步选中态
   }
-  let drawerWasOpenBeforeSet = false;
   function closeSettings() {
     SET.stack = []; SET.snaps = {}; setUnderHide();
     // 退回会话页才重置模型池状态:平台卡全部折叠、余额清空,下次进入重新自动查
     SET.expandedGroups = {}; SET.balanceByGroup = {}; SET.balanceRequested = {};
     $('settings-page').classList.add('hidden');
-    if (drawerMQ.matches && drawerWasOpenBeforeSet) { openDrawer(true); drawerWasOpenBeforeSet = false; }
+    const b = $('da-settings'); if (b) b.classList.remove('active');
   }
   // 当前页静态快照(顶栏+正文):右滑返回时垫底,呈现原生导航栈的视差感。
   // 快照里的 id 全部剥除,防止重复 id 干扰 $('…') 查找;仅作动画背景,滑完由 renderSetPage 重渲染真页。
@@ -320,23 +320,8 @@
     for (const ch of String(name || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
     return AVATAR_COLORS[h % AVATAR_COLORS.length];
   }
-  // 侧边栏底部用户区:展示真实登录用户名,头像样式与设置页 user-card 一致(按用户名取色+首两字)。
-  // 启动校验已经拉到登录用户时直接传入，避免同一次加载重复请求 /api/me；未传入时自拉兜底。
-  async function loadDrawerUser(knownUser) {
-    const av = $('drawer-avatar'), un = $('drawer-user-name');
-    if (!av || !un) return;
-    let name = knownUser ? String(knownUser) : '';
-    if (!name) {
-      try {
-        const r = await req('GET', '/api/me');
-        name = r && r.user ? String(r.user) : '';
-      } catch (_) { return; /* 未启用认证时无 /api/me,保留默认占位 */ }
-    }
-    if (!name) return; // 未登录态(理论上不会出现,401 已自动跳登录页)
-    av.textContent = userInitials(name);
-    av.style.background = avatarColor(name);
-    un.textContent = name;
-  }
+  // 侧栏底部已改成纯图标操作栏，不再展示登录用户名（用户信息仍在设置页「账户」里），
+  // 所以原来的 loadDrawerUser 已随之删除。
   function userCardHtml(me) {
     return '<div class="settings-card user-card">' +
       '<div class="user-avatar" style="background:' + avatarColor(me) + '">' + esc(userInitials(me)) + '</div>' +
@@ -2079,7 +2064,7 @@
       }
     } catch (_) { /* 网络错误放过，让后续请求正常走 */ }
     loadSessionList();
-    loadDrawerUser(verifiedUser); // 侧边栏底部展示真实登录用户(未启用鉴权/拉取失败时静默回退默认占位)
+    // 侧栏底部已是纯图标操作栏（不展示用户信息），不再需要 loadDrawerUser
     // 会话深链 /?s=<session_id>：数据页面（/app/{task_id}/...）的「返回会话」FAB 用——
     // task_id 即会话 id（engine 里 1:1），启动时消费一次即 replaceState 抹掉参数，
     // 避免刷新/分享时被钉回该会话；会话已删则 openSession 自行报错，落在 welcome。
