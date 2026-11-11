@@ -62,7 +62,7 @@ AGENT_CONFIG=./config.yml node server/server.js
 | `server/log.js` | 分级日志 `log.debug/info/warn/error(category, ...)` |
 | `server/balance.js` | 平台余额查询适配器（按 `platform.type` 分发） |
 | `server/version.js` | git commit/date：优先读 `version.json`（post-commit 钩子生成），宿主机有 git 时兜底 `git rev-parse`；页面版本号另外由 `routes/system.js` 的 `VERSION` 字面量决定 |
-| `server/templates/` | system prompt 模板、压缩/标题指令、profile prompt |
+| `server/templates/` | system prompt 模板、环境段（按部署形态二选一）、压缩/标题指令、profile prompt |
 
 ## 一次用户消息的生命周期
 
@@ -162,7 +162,7 @@ IM 用户在实时对话，回合中插话应当“当前这步跑完就插”�
 
 `buildMessages(session, language, mintUrl, profile)` 的输出顺序固定：
 
-1. `system`：模板（`profile-default.txt` 或 profile 自定义 prompt）+ 技能清单段 + 语言指令；
+1. `system`：模板（`profile-default.txt` 或 profile 自定义 prompt）+ 环境段 + 技能清单段 + 语言指令；
    进程内按 `(profile, language)` 缓存，保证前缀缓存稳定。
 2. 画像快照（`sessions.profile_snapshot`，建会话/清空时冻结）：作为首条 `user`。**不在 messages 表里**，
    压缩与归档碰不到它。
@@ -386,7 +386,10 @@ preview-proxy.mount（末尾兜底）
 
 **改 prompt / profile**
 
-- 默认 prompt：`templates/profile-default.txt`（`{APP_SKILLS_SECTION}` 占位技能清单）。
+- 默认 prompt：`templates/profile-default.txt`（`{APP_SKILLS_SECTION}` 占位技能清单，
+  `{APP_ENV_SECTION}` 占位环境段）。
+- 环境段：`templates/env-server.txt`（executor 容器形态）/ `env-local.txt`（本机 spawn 形态），
+  启动时按 `EXECUTOR_URL` 有无选定（`server.js` 的 `llm.setEnvMode`），改完重启。
 - 压缩/标题指令：`templates/prompt-compress.txt` / `prompt-title.txt`。
 - 自定义组合：`config.yml` 的 `model_profiles` + 模型的 `profile: <名>`；改完重启。
 

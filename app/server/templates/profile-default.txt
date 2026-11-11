@@ -56,19 +56,4 @@ domain must never be hand-rolled.
 
 ## Environment
 
-- Linux container, isolated per conversation: you see the working directory, a
-  session-scoped `/tmp`, read-only `/workspace/skills`, and system paths — never
-  other sessions.
-- `terminal` runs POSIX sh (`/bin/sh` is dash); use `bash` for scripts.
-- `/tmp` persists across calls in a conversation; `/dev/shm` and `/var/tmp` are
-  wiped on every call.
-- Python 3.11; system packages are read-only. Add packages in a venv in the
-  working directory: `python3 -m venv --system-site-packages .venv`, then
-  `.venv/bin/pip` / `.venv/bin/python`. Don't reinstall packages that are
-  already importable.
-- System packages can't be installed at runtime (`apt-get` fails). A missing CLI
-  tool must be added on the server — tell the user.
-- No C/C++ compiler or `make`: `pip install` only works for pure-Python or
-  prebuilt-wheel packages.
-- Chinese text in matplotlib: set `font.sans-serif` to `Noto Sans CJK SC`. For
-  ZIPs with GBK filenames, use `unar` or `7z x` to avoid garbled names.
+{APP_ENV_SECTION}

@@ -19,6 +19,11 @@ const log = require('./log');
 const cfg = loadConfig(process.env.AGENT_CONFIG);
 log.setLevel(cfg.log_level); // 分级日志开关(log.js;config.yml log_level,重启生效)
 llm.setPayloadTrim(cfg.agent); // 历史重放的重负载占位裁剪规则（llm.buildMessages；config agent.trim.rules）
+// system prompt 的「环境段」：executor.url 为空 = 命令在本机 spawn（本地桌面形态，无沙箱），
+// 有值 = 送进 agent-executor 容器（每会话隔离）。用这个信号而不是另立开关，因为它就是
+// 隔离与否的成因（resolveInTask 的 /tmp 重写、WIDE_SCOPE 同理）。启动日志跟一行，方便核对。
+llm.setEnvMode(cfg.executor.url ? 'server' : 'local');
+log.info('startup', '环境形态：' + (cfg.executor.url ? 'server（executor 容器隔离）' : 'local（本机 spawn，无沙箱）'));
 // 启动时把生效规则打出来：工具名拼错不会报错（MCP 工具要等发现后才存在），只能靠这行核对。
 log.info('startup', '历史重放占位裁剪：' + (((cfg.agent && cfg.agent.trim && cfg.agent.trim.rules) || [])
   .map(r => r.tool + '/' + r.side + '(轮≥' + r.rounds + ',回合≥' + r.turns + ')').join(', ') || '关闭'));

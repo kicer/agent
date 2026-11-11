@@ -58,6 +58,26 @@ function setProfilePrompts(map) {
 // system prompt 每次请求都随 messages 发出，拼接结果按 (profile, 语言) 缓存，不重复分配大字符串。
 let _promptTextCache = new Map(); // 'profile\u0000lang' -> text
 
+// 部署形态决定的环境段：模板里的 {APP_ENV_SECTION} 由两份小模板填充（mode 由 server.js 启动时选定）。
+// 为什么不能写成一段「两边都成立」的话：服务器形态是容器（每会话隔离、会话级 /tmp、只读 skills），
+// 本地形态是用户自己那台机器（无沙箱、真实共享 /tmp）——两边的环境事实互相矛盾，混着写会误导模型。
+// 只选一次、进程内恒定，和技能段同属「前缀缓存不得抖动」的部分。
+const APP_ENV_TOKEN = '{APP_ENV_SECTION}';
+const ENV_TEXTS = {
+  server: fs.readFileSync(path.join(__dirname, 'templates', 'env-server.txt'), 'utf8').trim(),
+  local: fs.readFileSync(path.join(__dirname, 'templates', 'env-local.txt'), 'utf8').trim(),
+};
+let ENV_TEXT = ENV_TEXTS.server;
+function setEnvMode(mode) {
+  ENV_TEXT = ENV_TEXTS[mode] || ENV_TEXTS.server;
+  _promptTextCache = new Map(); // 环境段换了，拼接结果必须重建
+}
+
+// 自定义 profile prompt 里写了占位符也照样生效（没写就是没有环境段，同技能段规则）。
+function withEnvSection(text) {
+  return text.indexOf(APP_ENV_TOKEN) >= 0 ? text.split(APP_ENV_TOKEN).join(ENV_TEXT) : text;
+}
+
 // “可用技能”段落（skills.formatSkillListForPrompt）：启动时快照（server.js）与技能变更后
 //（routes/skills.js）经 setSkillListText 更新。插入位置由模板内的 {APP_SKILLS_SECTION} 占位符决定
 //（拼在技能规则旁边，模型一眼看到清单，不再盲猜尾部多出来的孤儿段落）：
@@ -85,12 +105,9 @@ function systemPromptText(language, profile) {
   const key = (profile || 'default') + '\u0000' + t;
   const hit = _promptTextCache.get(key);
   if (hit) return hit;
-  let text;
-  if (profile && PROFILE_PROMPTS[profile]) {
-    text = withSkillList(PROFILE_PROMPTS[profile], false); // 自定义文件：没放占位符就真没有技能段
-  } else {
-    text = withSkillList(SYSTEM_PROMPT_TEMPLATE, true);
-  }
+  // 环境段先替（模板里的占位符），再拼技能段：自定义 prompt 没放占位符就真没有环境段/技能段
+  const custom = profile && PROFILE_PROMPTS[profile];
+  let text = withSkillList(withEnvSection(custom || SYSTEM_PROMPT_TEMPLATE), !custom);
   if (t) text += '\n\n## Reply Language\n' +
     '- ALWAYS respond to the user in ' + t + '. Tool descriptions, tool outputs and errors are usually in English — ' +
     'never let them switch your reply language. Tool names, parameters, code, file paths and shell commands stay as-is; ' +
@@ -795,4 +812,4 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setPayloadTrim, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages, patchImageReceipt };
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setEnvMode, setPayloadTrim, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages, patchImageReceipt };

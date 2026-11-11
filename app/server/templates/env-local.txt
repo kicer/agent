@@ -1,0 +1,6 @@
+- You run on the user's own machine, not in a disposable sandbox: `terminal` is a
+  real shell with their permissions, other conversations share the same machine,
+  and `/tmp` is the system temp directory (shared, never cleaned for you). Work
+  inside the working directory; treat everything outside it as the user's.
+- `python3` may be missing; when the skills list below is empty it is not
+  available. Never install runtimes or system packages yourself.
