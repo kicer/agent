@@ -234,13 +234,13 @@
         </div>
       </div>
       <div class="drawer-list" id="drawer-list"></div>
-      <div class="files-tree hidden" id="files-tree"></div>
-      <!-- 底部图标操作栏：会话 / 文件树 / 预览 / 设置（文件树仅本地模式出现）。选中项高亮。 -->
+      <div class="files-tree" id="files-tree"></div>
+      <!-- 底部图标操作栏：会话 / 文件树 / 预览 / 设置（文件树仅桌面端出现）。选中项高亮。 -->
       <div class="drawer-actions" id="drawer-actions">
         <button class="drawer-act active" id="da-sessions" type="button" title="会话" aria-label="会话">
           <svg viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-11.8 7.8L4 21l1.7-5.2A8.5 8.5 0 1 1 21 11.5z"></path></svg>
         </button>
-        <button class="drawer-act hidden" id="da-files" type="button" title="文件树" aria-label="文件树">
+        <button class="drawer-act" id="da-files" type="button" title="文件树" aria-label="文件树">
           <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
         </button>
         <button class="drawer-act" id="da-preview" type="button" title="预览" aria-label="预览">
@@ -557,7 +557,7 @@
   <script src="/js/files.js"></script>
   <script src="/js/voice.js"></script>
   <script src="/js/preview.js"></script>
-  <script src="/js/local-files.js"></script>
+  <script src="/js/files-tree.js"></script>
   <script src="/js/settings.js"></script>
   <script>
   // 启动自愈:外部工具改前端文件是非原子写入,极端时机下浏览器可能拿到半截或重复拼接的 HTML

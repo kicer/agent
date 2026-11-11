@@ -66,15 +66,9 @@ async function pickDir() {
   throw Object.assign(new Error('没有可用的目录选择器（Linux 请安装 zenity 或 kdialog）'), { status_code: 501 });
 }
 
-// ---------- 只读文件树 / 原生文件管理器（仅本机会话目录内） ----------
-// 目录可能是真实项目，含 node_modules 等大目录：一律「一次只列一层」，客户端展开才请求。
-// 绝不能复用 listTaskFiles 的整棵递归——同步递归会卡死单线程 core，连 SSE 一起挂。
-const IGNORE_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'out', 'target', '.venv', 'venv',
-  '__pycache__', '.next', '.cache', 'coverage', '.idea', '.vscode',
-]);
-const TREE_MAX = 500;
-
+// ---------- 原生文件管理器（仅本机会话目录内） ----------
+// 文件树的列表接口已上收为通用的 GET /api/sessions/:id/tree（桌面端服务器形态也用），
+// 这里只剩「在 Finder / 终端中打开」这两个只能开在本机的动作。
 function isInside(rootAbs, abs) {
   return abs === rootAbs || abs.startsWith(rootAbs + path.sep);
 }
@@ -95,44 +89,6 @@ function resolveInside(sessionId, rel) {
   if (!isInside(rootReal, real)) throw Object.assign(new Error('路径越界'), { status_code: 400 });
   return { rootAbs: rootAbs, abs: abs };
 }
-
-// 懒加载单层目录。ignored 的目录只回标记、前端灰显且不展开（避免 node_modules 那种灾难）。
-router.get('/tree', (req, res) => {
-  let abs;
-  try { abs = resolveInside(req.query.session, req.query.dir || '').abs; }
-  catch (err) { return sendErr(res, err); }
-  let st;
-  try { st = fs.statSync(abs); } catch (_) { return res.status(404).json({ error: '目录不存在' }); }
-  if (!st.isDirectory()) return res.status(400).json({ error: '不是目录' });
-  const showHidden = req.query.hidden === '1';
-  const rel = String(req.query.dir || '').replace(/^[\\/]+/, '').replace(/\/+$/, '');
-  const entries = [];
-  try {
-    for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
-      if (!showHidden && e.name.startsWith('.')) continue;
-      const childRel = rel ? rel + '/' + e.name : e.name;
-      if (e.isSymbolicLink()) { entries.push({ name: e.name, rel: childRel, type: 'link' }); continue; }
-      if (e.isDirectory()) {
-        entries.push({ name: e.name, rel: childRel, type: 'dir', ignored: IGNORE_DIRS.has(e.name) });
-      } else if (e.isFile()) {
-        let size = null;
-        try { size = fs.statSync(path.join(abs, e.name)).size; } catch (_) {}
-        entries.push({ name: e.name, rel: childRel, type: 'file', size: size });
-      }
-    }
-  } catch (err) { return sendErr(res, err); }
-  entries.sort((a, b) =>
-    (a.ignored ? 1 : 0) - (b.ignored ? 1 : 0) ||
-    (a.type === 'dir' ? 0 : 1) - (b.type === 'dir' ? 0 : 1) ||
-    (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  res.json({
-    root: path.resolve(engine.taskDirOf(String(req.query.session || ''))),
-    dir: rel,
-    total: entries.length,
-    capped: entries.length > TREE_MAX,
-    entries: entries.slice(0, TREE_MAX),
-  });
-});
 
 // execFile 异步（同步会阻塞事件循环）；open/xdg-open 一般秒回，10s 兜底。
 function runOpen(cmd, args) {

@@ -872,30 +872,23 @@ body.voice-active .scroll-bottom-btn { display: none; }
   width: 20px; height: 20px; fill: none; stroke: currentColor;
   stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
 }
-/* 手机/窄屏没有右侧预览栏（预览走全屏浮层），这个按钮无意义 */
-@media (max-width: 959px) { #da-preview { display: none !important; } }
+/* 手机/窄屏没有右侧预览栏（预览走全屏浮层），也没有左栏文件树（窄屏不适合） */
+@media (max-width: 959px) { #da-preview, #da-files { display: none !important; } }
 
 .files-tree { display: none; flex: 1; min-height: 0; flex-direction: column; }
 #drawer.drawer-mode-files .drawer-search,
 #drawer.drawer-mode-files .drawer-list { display: none; }
 #drawer.drawer-mode-files .files-tree { display: flex; }
 
-.tree-head {
-  flex: none; display: flex; align-items: center; gap: 4px;
-  padding: 8px 12px 6px; border-bottom: 1px solid var(--border);
+/* 左栏树头部复用预览栏的 .pv-head/.pv-addr/.pv-actions/.icon-btn：
+   它俩在桌面上左右并排，高一点点或图标小一号都会明显错位。 */
+.tree-head .pv-actions { gap: 4px; margin-left: 6px; } /* 侧栏窄，4 个按钮也塞得下 */
+.tree-path {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: default;
 }
-.tree-title {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 13px; color: var(--ink);
-}
-.tree-actions { display: flex; gap: 2px; }
-.tree-hbtn {
-  width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
-  border: 0; background: none; border-radius: 8px; color: var(--gray); cursor: pointer;
-}
-.tree-hbtn:hover { background: var(--surface); color: var(--active); }
-.tree-hbtn.active { color: var(--active); background: var(--active-soft); }
-.tree-hbtn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* 头部图标的「开启中」态（如显示隐藏文件） */
+.pv-actions .icon-btn.active { color: var(--active); background: var(--active-soft); }
 
 .tree-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 6px 12px; }
 .tree-row {
@@ -924,11 +917,13 @@ body.voice-active .scroll-bottom-btn { display: none; }
 }
 .tree-row:hover .tree-act { display: inline-flex; }
 .tree-act:hover { background: var(--border); color: var(--active); }
+.tree-act.danger:hover { background: #fdf3f2; color: #c0392b; }
 .tree-act svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tree-empty, .tree-loading, .tree-more { padding: 10px 12px; font-size: 12px; color: var(--gray); }
 
-/* 本地模式：隐藏旧的底部「任务文件」浮层入口（它走整棵递归接口，大项目会卡死。改用左栏树） */
-body.local-mode #files-btn { display: none !important; }
+/* 桌面端：文件浏览交给左栏文件树，隐藏输入行右侧的旧「任务文件」浮层入口。
+   手机端仍用它（窄屏放不下树）。 */
+@media (min-width: 960px) { #files-btn { display: none !important; } }
 /* 会话分组表头(按今天/昨天分组):滚动时吸顶,下一个 group-label 滚过来时把它顶走
    背景色与抽屉一致,避免 sticky 时下面会话透过看到上一组的尾巴 */
 .group-label {

@@ -32,12 +32,13 @@
 
 ## 3. 本次改动清单
 
-### 后端（`app/`，只 2 个文件）
+### 后端（`app/`）
 
 | 文件 | 改动 |
 |---|---|
 | `app/server/server.js` | 读 `HOST` 环境变量；有值则 `server.listen(PORT, HOST, cb)`，无值维持 `listen(PORT, cb)`（= `0.0.0.0`）。启动日志带上 host |
 | `app/server/tools/executor.js` | 新增 `WIDE_SCOPE`（由 `AGENT_FILE_SCOPE=workspace` 打开）与 `fsRoot(ctx)`；`resolveInTask()` 增加可选第三参 `rootDir`；6 个业务工具的调用点改为传 `fsRoot(ctx)`；`recordFile()` 跳过会话目录之外的文件 |
+| `app/server/routes/files.js` | 新增 `GET /:id/tree`（桌面端左栏文件树用：单层懒加载、忽略大目录、上限 500、越界双重校验） |
 
 `resolveInTask` 的两个分叉点：
 
@@ -48,10 +49,13 @@
 ### 刻意没有动的（重要）
 
 - `resolvePastPath()`（`@<会话id>/...` 跨会话只读）—— 仍锁在对方会话目录
-- `routes/files.js`、`routes/public-files.js`、`routes/data-page.js` —— HTTP 文件 API 与公网短链
-  仍按会话目录校验，前台不能借本地模式越权
+- `routes/public-files.js`、`routes/data-page.js` —— 公网短链与 data-page 仍按会话目录校验
 - `mint_public_link` —— 仍会话目录语义（本地本来也没配 `public_link.base_url`）
-- 前端 —— 一行没改；首次配置靠终端提示「用户区 → 设置 → 模型池」
+- 前端 —— 本地模式没有专属前端代码；左栏文件树是桌面端共用的（见下）
+
+> 追加：文件树最初只给 local 用，后来上收为桌面端通用能力 —— `/tree` 移到 `routes/files.js`，
+> 服务器形态的桌面端也用它取代「输入行右侧的旧文件面板」（含下载/删除）；`reveal`、`terminal`、
+> `pick-dir` 仍只在 `AGENT_LOCAL_PICK=1` 下挂载（它们开的是跑 core 那台机器的窗口）。
 
 ### 新增 `local/`
 
