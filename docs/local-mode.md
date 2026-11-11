@@ -1,8 +1,9 @@
 # 本地端（local 模式）：设计与交接
 
 > 本文是 `local/` 的设计说明 + 交接单。
-> **状态：代码已写完，仅在 Linux 服务器上做过「能否启动」的粗测，尚未在 macOS 真机验证。**
-> 下一轮的任务就是按第 6 节的清单在 mac 上逐项确认。
+> **状态：已在 macOS 真机（12.7.6 / x86_64 / Node 22.21 / python3 3.10，本机无 ffmpeg）按第 6 节
+> 清单逐项跑过，结果见第 5 节。** 只剩三件依赖人工交互或外部环境的事没覆盖（真实选目录弹窗、
+> 真浏览器打开、装 ffmpeg 之后的链路），见第 6 节。
 
 ## 1. 目标
 
@@ -56,12 +57,36 @@
 
 | 文件 | 作用 |
 |---|---|
-| `start.sh` | 主入口：探测 → 首次生成配置 → 装依赖 → 起 core + 4 个 MCP → 开浏览器 → 守护重启 |
-| `start.command` | macOS 双击入口（补 Homebrew 的 PATH，失败时留窗口） |
+| `start.sh` | 主入口：探测 → 首次生成配置 → 装依赖 → 起 core + MCP → 守护重启。**后台化**：拉起真正的启动器就返回 |
+| `stop.sh` | 停止启动器（按 `supervisor.pid` → core 的父进程 → 占端口的进程，三级兜底），幂等 |
 | `config.example.yml` | **仅作参考，不被读取**；实际配置由 `start.sh` 生成到 `config.local.yml` |
 | `README.md` | 给使用者的说明（含安全边界、已知限制） |
 
 `.gitignore` 增加 `local/.runtime/`、`local/config.local.yml`。
+
+> 曾经有一个 `start.command`（macOS 双击入口），已删除：Finder 里双击 `.command` 常被系统当文本
+> 预览打开、不执行，而且它补的 PATH 探测和 `start.sh` 重复。现在唯一入口就是 `./local/start.sh`。
+
+### 3.1 真机验证阶段补的修改
+
+首次在 mac 上跑，暴露了下面这些；都不是设计变更，是实现跟设计对不上或漏了边界：
+
+| 文件 | 改动 | 为的什么 |
+|---|---|---|
+| `local/start.sh` | 新增启动即弹出的**状态页**（`local/.runtime/status.html`，每秒自刷新） | 启动时终端看不到进度；失败页既没有应用名也没有日志，用户无从判断 |
+| `local/start.sh` | 依赖检测从「node_modules 在不在」改成**逐包实测 + `.agent-installed` 时间戳** | `npm install` 中途失败会留下半成品目录（目录在、包不全），原逻辑会永远跳过安装，core 起来就 require 失败 |
+| `local/start.sh` | `npm install` 输出 `tee` 到 `local/.runtime/npm-install.log`，并嵌进状态页 | 失败时只有终端能看到，滚过去就没了 |
+| `local/start.sh` | MCP 默认端口 3101~3104 → **8091~8094**；新增「PORT 撞 MCP 端口就拒绝启动」检查 | 跟 core 的 8090 连号，同时堵掉「换端口时不小心占用 MCP 端口」→ 子进程 bind 失败、静默降级 |
+| `local/start.sh` | 已有配置里的 MCP 端口与本次启动不一致时**告警** | 配置永不覆盖，改了默认值/用了 `MCP_*_PORT` 时，旧配置会让 core 静默发现不到工具 |
+| `local/start.sh` | 生成的 YAML 里路径**加引号** | 用户选的目录带空格/`:`/`#` 时会被 YAML 解析坏 |
+| `local/start.sh` | 没 ffmpeg 时**不再启动** `mcp_asr`（原实现无条件启动，与 4.3 的设计说明不符） | 否则模型拿到一个必然失败的 `transcribe_audio` 工具；同时少一个 `0.0.0.0` 监听 |
+| `local/start.sh` | 默认**后台化**（`AGENT_LOCAL_DETACH=1`），拉起启动器后 1 秒返回；新增 `local/stop.sh` | 用户不想让一个终端窗口永远挂着；Finder 里关窗口很容易误杀服务，后台 + 显式 `stop.sh` 更可控 |
+| `local/start.sh` | 没 node 时在入口就拦下（生成配置之前），并在终端打出安装方式 | 原来先进「选工作目录」、写好配置才报「后台进程立刻退出了」，用户白选一次，而且日志里只有两行启动横幅，看不出原因 |
+| `local/start.sh` | 同一轮只开一个状态页标签（`UI_OPENED`） | `ui_init` 已经开过一次，失败时 `ui_fail` 又开一个，同一个页面两个标签 |
+| `local/start.sh` | 「已在运行」改看 `supervisor.pid`（pid 存活且命令行是本脚本），health 只做兜底 | 只看 health 时 core 还没起来的几秒内连跑两次，会拉起两个启动器抢同一端口（实测：互相 `EADDRINUSE` 重启，`stop.sh` 只能停一个） |
+| `local/start.sh` | 首次安装**不自动跳转**，停在状态页给「打开应用」按钮；后续启动才 2 秒自动跳 | 首次装完先让用户看完「怎么配模型」再进去，别一上来就甩进空界面 |
+| `app/server/tools/executor.js` | 新增 `dispPath()`：会话目录外用绝对路径回显 | 宽根模式下写 `/tmp/x` 会回 `../../../../tmp/x`，模型容易当会话内路径二次拼接 |
+| `app/package-lock.json` | `resolved` 从腾讯云**内网镜像**改为公共 registry | 原 lockfile 把 tarball 钉在 `mirrors.tencentyun.com`（只有腾讯云 VPC 内能解析），外部机器 `npm install` 必失败，且换 `NPM_REGISTRY` 也无效 |
 
 ## 4. 关键设计决定（含「为什么」，别推翻）
 
@@ -109,7 +134,7 @@
 
 ### 4.6 四个 MCP 必须分端口
 
-容器里它们是四个独立容器、都监听 3000；本地同机必须错开（默认 3101~3104）。
+容器里它们是四个独立容器、都监听 3000；本地同机必须错开（默认 **8091~8094**，紧跟 core 的 8090）。
 另外**它们的启动参数不统一**，这是个坑：
 
 | 服务 | 启动方式 | 说明 |
@@ -137,84 +162,125 @@
 `workspace_root` 指到用户选的目录后，默认值会变成不存在的 `<用户目录>/../skills`。
 因此生成的配置必须显式写死 `skills_root`。
 
-## 5. 已验证 / 未验证
+### 4.9 状态页：静态文件 + `meta refresh`，不起 HTTP 服务
 
-### 已在 Linux 服务器上粗测（`PORT=18090`，避免碰线上 8090）
+启动时终端窗口不一定在前台，失败时也可能已经滚过去。所以启动就打开
+`local/.runtime/status.html`，并让它能自己更新：
+
+- 脚本把状态写进 `local/.runtime/ui/` 下的几个小文件（`title` / `steps` / `busy` / `logpath` /
+  `error` / `redirect`），`ui_render` 把它们拼成整页；页面用 `<meta http-equiv="refresh" content="1">`
+  每秒重读一次。不需要常驻服务，所以「连 node 都没装」的环境也能打开。
+- 长步骤（`npm install`、等 core 健康检查）另起一个**心跳子进程**每秒重绘，页面上就能看到
+  已经过了多少秒 + 当前日志的尾巴（npm 输出、core 启动报错）。
+- 状态全部落文件而不是留 shell 变量：心跳子进程拿到的是 fork 时的快照，用变量会越刷越旧。
+- 成功时：**首次安装**（配置是本次刚生成的）页面停在「已启动」，只给一个「打开应用」按钮，
+  用户自己点（先看完下面的首次使用提示）；**后续启动**写入 `redirect`，2 秒后自动进应用
+  （同一个标签页，不多开窗）。
+- 失败时页面保留错误说明和日志尾部，并把完整日志路径写在页面上。
+- 默认只在 macOS 自动弹出（`AGENT_LOCAL_UI=auto`），Linux 服务器上要显式 `AGENT_LOCAL_UI=1`；
+  无论弹不弹，页面都会生成。
+- 渲染先写临时文件再 `mv`：浏览器随时可能在刷新，不能让它读到半截 HTML；临时名用 `mktemp`
+  而不是 `$$`——`$$` 在子 shell 里仍是主 shell 的 PID，心跳与主流程同时渲染会撞车。
+
+### 4.10 依赖检测为什么不能只看 `node_modules` 目录
+
+`npm install` 失败（断网、源不对）会留下一堆**空目录**：`app/node_modules` 在、`express` 目录
+也在，但里面没东西。原逻辑「目录存在且不比 `package.json` 旧」会判定为已安装，以后每次启动
+都跳过安装，core 起来立刻 `require` 失败——用户看到的是「装依赖那步过了，但服务起不来」。
+
+现在的判定：
+
+1. 逐个直接依赖检查 `node_modules/<dep>/package.json` 是否存在（比 `require.resolve` 可靠：
+   `@modelcontextprotocol/sdk` 这类纯 ESM 包的 `exports.require` 指向的文件根本不存在，
+   `require.resolve` 会误判成「没装」）；
+2. 装成功后 `touch node_modules/.agent-installed`，只有 `package.json` 比它新才重装
+   （npm 在「已经是最新」时不会更新 `node_modules` 的 mtime，只比目录 mtime 会每启动都白跑一次）。
+
+### 4.11 后台化 + 显式 `stop.sh`，以及「已在运行」怎么判
+
+用户不想为了跑一个本地服务永久占着一个终端窗口（而且关窗口可能连带杀掉进程）。所以：
+
+- `start.sh` 自己**只做入口**：首次配置生成（要 tty 弹窗）→ `nohup` 拉起真正的启动器 → 1 秒后
+  打印地址/状态页/停止命令并 `exit 0`。`AGENT_LOCAL_DETACHED=1` 是子进程标记，防无限重入。
+- 停止统一走 `local/stop.sh`。它按「`supervisor.pid` → core 的父进程 → 占端口的进程」三级兜底：
+  只杀 core 会被守护循环重新拉起，所以必须能认出**启动器**。命令行是相对路径（`sh ./local/start.sh`），
+  `pgrep -f` 匹配不到绝对路径，所以第一选择是 pid 文件。
+- 前台模式保留：`AGENT_LOCAL_DETACH=0 ./local/start.sh`（看实时日志、`Ctrl-C` 停）。
+
+「已在运行」的判定不能只看 `/api/health`：core 起来要几秒（先起 MCP，首次还要装依赖），
+这期间再跟一次 `start.sh` 就会拉起第二个启动器，两个 core 抢同一个端口——一个被守护循环
+反复 `EADDRINUSE` 重启，而 `stop.sh` 只认 pid 文件里那一个，等于停不干净（已实测复现）。
+改成先看 `supervisor.pid`（子进程一启动就写，秒级就绪；`kill -0` + 命令行含 `start.sh` 防 pid 被回收），
+health 只作为「端口上有服务但不是本启动器拉起的」兜底提示。
+
+## 5. 验证结果（macOS 12.7.6 / x86_64 / Node 22.21 / python3 3.10 / 本机无 ffmpeg）
+
+静态检查：`sh -n local/start.sh`、`sh -n local/stop.sh`、`node --check` 均通过。
 
 | 项 | 结果 |
 |---|---|
-| `sh -n` / `node --check` | 通过 |
-| 首次运行生成 `config.local.yml` | 通过（无 tty 时回落 `~/AgentWork`） |
-| core 启动 + `/api/health` | 通过，`auth_required:false` |
-| `HOST=127.0.0.1` 生效 | 通过（`ss` 只看到 `127.0.0.1:18090`） |
-| 端口占用检测 + 自检页 | 通过（线上 8090 被占时正确拒绝并生成 `setup.html`） |
-| MCP 端口分配 / `start_mcp_env` 分离 | `web_search`、`asr` 起来了；`image_task`、`video_task` 因缺 npm 依赖未起 |
-| 因此新增 `ensure_deps` 遍历 `app` 与 `mcp/*/` | **改完未复验**（用户要求停止测试） |
+| 首次启动：生成配置 → 装依赖（app 134 包，image_task / video_task 各 127 包）→ 起 MCP + core → 打开状态页（停在「已启动」，等点击） | 通过 |
+| 配置内容：`workspace_root` 是选的目录、`data_root` 指仓库 `data/`、`skills_root` 指 `local/.runtime/skills`、`platforms: []`、MCP 端口 8091~8094 | 通过 |
+| 绑定地址：`lsof` 只有 `127.0.0.1:8090` | 通过 |
+| 设置页「重启」→ 守护拉起：PID 变化，2 秒内 `/api/health` 恢复 | 通过 |
+| 文件工具越出会话目录：工作目录根的 `probe.txt` 可读 | 通过 |
+| 越界保护：`read_file ~/.ssh/config`、`terminal cd /etc` 均报「路径越界」 | 通过 |
+| `/tmp` 一致性：`write_file /tmp/x` → `terminal cat /tmp/x` 与 `read_file /tmp/x` 内容一致 | 通过 |
+| 无 ffmpeg：`/api/asr/status` = `enabled:false`（麦克风隐藏），asr 子进程不启动，8094 不监听 | 通过 |
+| 有 python3：技能列表有内容；桩掉 python3 后 `/api/skills` 返回 `[]`、状态页显示「技能：已关闭」 | 通过 |
+| 四个 MCP 在具备条件时均能发现工具（`[mcp] web_search / image_task / video_task / asr: 发现 1 个工具`） | 通过 |
+| 前台模式 `Ctrl-C` 与 `TERM`：8090 与 8091~8094 全部释放，无残留进程 | 通过 |
+| 二次启动：沿用配置、跳过依赖安装（时间戳生效） | 通过 |
+| 后台模式：`start.sh` 1 秒返回、启动器 PPID=1、`supervisor.pid` 是子进程 pid | 通过 |
+| `stop.sh`：命中 pid 文件分支；pid 文件丢失时按 core 父进程/端口也能停；未运行时幂等返回 | 通过 |
+| 重复执行 `start.sh`：打印「已在运行（启动器 pid N）」+ 停止命令，exit 0，不起第二个进程 | 通过 |
+| 启动器被 `kill -9` 后的恢复：残留 pid 文件被清理，端口仍被占时明确提示先 `stop.sh` | 通过 |
+| 前台模式 `AGENT_LOCAL_DETACH=0`：阻塞运行，`TERM` 后端口全部释放 | 通过 |
+| 无 node（PATH 里剥掉 node/npm）：入口直接拦下，**不** 先让选目录、不生成配置；终端打出安装方式；状态页列出自检项（X Node.js / X npm） | 通过 |
+| 失败时只开一个状态页标签（不再两个） | 通过 |
+| 状态页：启动即弹出、每秒刷新、显示步骤/计时/日志尾巴；失败时保留错误与日志 | 通过 |
+| `osascript` 真实选目录弹窗 | 未验证（用桩跑的「没选→回落 `~/AgentWork`」分支） |
+| 真浏览器打开（`open`） | 未验证（用桩记录了被打开的 URL） |
+| 装 ffmpeg 之后：`ASR_URL` 注入、asr 子进程与麦克风一起出现 | 未验证（本机未装 ffmpeg） |
 
-### 完全未验证（mac 上要逐项确认）
+验证过程中发现并修掉的问题见 3.1（依赖检测、lockfile 内网源、`asr` 无条件启动、端口冲突、
+状态页日志缺失、全角字符紧贴变量名导致的 `unbound variable`）。
 
-`osascript` 选目录、`start.command` 双击、`open` 打开浏览器、ffmpeg 语音链路、python3 软链切换、
-重启按钮的守护拉起、`Ctrl-C` 清理子进程、`AGENT_FILE_SCOPE=workspace` 下文件工具的真实行为、
-`/tmp` 读写一致性、`ensure_deps` 在 mac 上的实际效果。
+## 6. 还没覆盖的三项（需要人工交互或外部环境）
 
-## 6. macOS 验证清单（下一轮按这个做）
+其余清单已在 mac 上跑完（结果见第 5 节）。剩下这三项要在真实场景里补：
 
-前置：全新 clone（不要带服务器上的测试残留）。**全程只用非默认端口的前提不再需要**——mac 上没有
-常驻服务，用默认 8090 即可。
+1. **真实选目录弹窗**：删掉 `local/config.local.yml` 后跑 `./local/start.sh`，确认弹出的是 macOS 原生
+   选目录窗、选完的路径写进 `workspace_root`（带空格的目录名要顺手验一下，配置里已加引号）。
+2. **真浏览器打开**：跑 `./local/start.sh`（或前台模式），确认（a）状态页在启动过程中每秒刷新；
+   （b）首次安装停在页面上等你点「打开应用」；（c）后续启动 2 秒自动进应用。
+3. **装 ffmpeg 之后**：`brew install ffmpeg` → 重跑脚本，预期：状态页显示 `ffmpeg` 为 OK、
+   终端打「语音：可用」、8094 开始监听、`/api/asr/status` 变成需要填上游（不再是「未设置 ASR_URL」）。
 
-1. **首次启动**
-   ```bash
-   ./local/start.sh
-   ```
-   预期：弹出「选择工作目录」窗口 → 生成 `local/config.local.yml` → 装依赖（`app` +
-   `mcp/image_task` + `mcp/video_task`）→ 起 4 个 MCP + core → 自动打开浏览器 → 终端打印访问地址与
-   「首次使用」提示。
+手工复验用的命令：
 
-2. **配置文件内容**：检查 `workspace_root` 是你选的目录、`data_root` 指向仓库 `data/`、
-   `skills_root` 指向 `local/.runtime/skills`、`platforms: []`。
-
-3. **绑定地址**：`lsof -nP -iTCP:8090 -sTCP:LISTEN` 应只有 `127.0.0.1`（不是 `*`）。
-
-4. **重启按钮（最关键）**：设置页加一个平台 + API Key → 点「重启」→ 页面应能在十几秒内自行恢复
-   （`settings.js` 会轮询 `/api/health` 90 秒后 reload）。若页面一直转圈，说明守护循环没生效。
-
-5. **文件工具越出会话目录**：在工作目录根（不是 `task-*` 子目录里）放一个 `probe.txt`，让 AI
-   `read_file` 它的绝对路径。预期：能读到（`session` 形态下这里会报「路径越界」）。
-
-6. **`/tmp` 一致性（本次修的 bug）**：让 AI 执行
-   ```bash
-   terminal: echo hello-tmp > /tmp/probe-local.txt
-   read_file: /tmp/probe-local.txt
-   ```
-   预期：读得到。反过来也可验证 `ls /tmp` 与 `read_file` 指向同一处。
-
-7. **语音（可选能力）**：没装 ffmpeg 时终端应打印「语音：不可用」，输入框**没有麦克风**；
-   `brew install ffmpeg` 后重跑脚本 → 打印「语音：可用」+ 麦克风出现（还需在设置页给 `asr`
-   填 `X-ASR-Base-Url` / `X-ASR-Model` 才真正能用）。
-
-8. **技能（可选能力）**：有 python3 时打印「技能：已启用」；临时把 PATH 里的 python3 藏掉再跑，
-   应打印「技能：已关闭」，且设置页技能列表为空、模型提示词里没有技能段。
-
-9. **退出清理**：`Ctrl-C` 后确认没有残留进程。**按 PID 查，不要用 `pkill -f`**：
-   ```bash
-   lsof -nP -iTCP:8090 -sTCP:LISTEN
-   lsof -nP -iTCP:3101-3104 -sTCP:LISTEN
-   ```
-   三个 MCP 端口都应释放。
-
-10. **二次启动**：再跑一次 `./local/start.sh`，应跳过生成配置、跳过装依赖、直接起服务
-    （验证「配置不覆盖」与依赖检测的 mtime 判断）。
+```bash
+./local/start.sh                            # 后台启动（1 秒返回）
+./local/stop.sh                             # 停止（幂等）
+./local/start.sh                            # 已在运行时只打印地址与停止方式
+lsof -nP -iTCP:8090 -sTCP:LISTEN            # 应只有 127.0.0.1
+lsof -nP -iTCP:8091-8094 -sTCP:LISTEN       # 3 或 4 个 MCP（没 ffmpeg 时没有 8094）
+curl -s http://127.0.0.1:8090/api/asr/status
+curl -s -X POST http://127.0.0.1:8090/api/system/restart   # 应由守护拉起
+tail -f local/.runtime/core.log             # 以及 npm-install.log / mcp-*.log
+```
 
 ## 7. 已知限制（都不打算在本次解决）
 
 | 限制 | 说明 |
 |---|---|
 | **无沙箱** | AI 的 `terminal` 就是本机 shell，能读 `~/.ssh` 等一切。这是「给它一个目录就放开手脚」的代价；README 已提示「专用目录 + `git init`」 |
-| `mcp_asr` 监听 `0.0.0.0` | 它只认 `PORT` 环境变量、`listen` 不带 host。不存密钥（上游参数随请求带入），暴露面有限；要收紧需给 `mcp/asr` 加 `--host` 支持 |
+| 没 ffmpeg 时 asr 会报「工具发现失败」 | 此时 `mcp_asr` 不启动（它转码依赖 ffmpeg），但配置里的 asr 条目仍在（配置不覆盖），所以 core 启动会 warn 一次并重试，属预期 |
+| `mcp_asr` 监听 `0.0.0.0` | 它只认 `PORT` 环境变量、`listen` 不带 host（已启动时才是问题）。不存密钥（上游参数随请求带入），暴露面有限；要收紧需给 `mcp/asr` 加 `--host` 支持 |
 | Windows 不支持 | `spawn('/bin/sh')`、`process.kill(-pid)`、模型写的 bash 语法都是 POSIX 语义 |
 | `mint_public_link` 不可用 | 本地 `public_link.base_url` 为空，工具会回明确的「未配置」错误 |
 | 技能依赖 | 有 `requirements.txt` 的技能需手工装进 `skills/deps`（服务器上由 `agent-executor-init` 在构建期做）。默认只保证纯标准库技能 |
-| 首个 `npm install` 要联网 | 支持 `NPM_REGISTRY` 覆盖源 |
+| 首个 `npm install` 要联网 | 支持 `NPM_REGISTRY` 覆盖源；`app/package-lock.json` 的 `resolved` 已改指向公共 registry（原来钉在内网镜像，外部机器必失败） |
 
 ## 8. 回滚
 
@@ -227,8 +293,9 @@ rm -rf local/   # 或保留脚本、只是不用
 
 `v2.5.0` 是这批改动之前的基线，可随时对照。
 
-## 9. 记录：上一台机器上的测试残留（mac 全新 clone 不受影响）
+## 9. 记录：测试残留（都不入库）
 
-在 Linux 服务器上试跑时产生过：`local/.runtime/`、`local/config.local.yml`、`~/AgentWork/`、
-`mcp/image_task/node_modules/`、`mcp/video_task/node_modules/`（可能半成品）。全部在 gitignore 内，
-不影响仓库；mac 上重新 clone 不会有这些。
+跑过启动器之后本机会多出：`local/.runtime/`（日志、状态页、技能软链）、
+`local/config.local.yml`、`~/AgentWork/`、`app/node_modules/`、`mcp/image_task|video_task/node_modules/`。
+全部在 gitignore 内，不影响仓库；想彻底重来就把它们删掉再跑脚本（会话产出在 `data/` 与
+工作目录下的 `task-*` 里，不会被清）。

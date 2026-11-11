@@ -66,6 +66,15 @@ function relOf(taskDir, abs) {
   return path.relative(path.resolve(taskDir), abs) || '.';
 }
 
+// 展示用路径：会话目录内保持相对（跟以前一致，省 token）；
+// 宽根模式下文件可能在会话目录外，那就回绝对路径——否则模型看到的是
+// ../../../../tmp/x 这种既难读、又容易被它当成会话内路径去二次拼接的名字。
+function dispPath(ctx, abs) {
+  const rel = relOf(ctx.taskDir, abs);
+  if (rel === '..' || rel.startsWith('..' + path.sep)) return abs;
+  return rel;
+}
+
 // ---------- 跨会话路径：@<会话id>/<rel>（历史只读，「看一眼」可过墙，「字节落地」只走 copy_path） ----------
 // 背景：terminal 在远端 executor 容器里跑（compose：wrapper 启动即 unmount host-tasks），
 // 别的会话目录在 shell 物理视图里根本不存在；core 进程内的文件工具又被 resolveInTask
@@ -459,12 +468,12 @@ async function toolCopyPath(ctx, args) {
   }
   let exists = true;
   try { await fsp.stat(dst); } catch (_) { exists = false; }
-  if (exists) throw new Error('目标已存在, 拒绝覆盖: ' + relOf(ctx.taskDir, dst));
+  if (exists) throw new Error('目标已存在, 拒绝覆盖: ' + dispPath(ctx, dst));
   await fsp.mkdir(path.dirname(dst), { recursive: true });
   await fsp.cp(src, dst, { recursive: true });
   recordFile(ctx, dst); // 文件表只记普通文件（目录自然跳过），供前端/微信附件展示
   const sizeNote = budget ? ' (' + budget.files + ' files, ' + Math.round(budget.bytes / 1024) + ' KB)' : '';
-  return '已复制 ' + sp + ' -> ' + relOf(ctx.taskDir, dst) + sizeNote;
+  return '已复制 ' + sp + ' -> ' + dispPath(ctx, dst) + sizeNote;
 }
 
 async function toolWriteFile(ctx, args) {
@@ -480,7 +489,7 @@ async function toolWriteFile(ctx, args) {
   await fsp.writeFile(abs, String(args.content), 'utf8');
   recordFile(ctx, abs);
   const nbytes = Buffer.byteLength(String(args.content), 'utf8');
-  const rel = relOf(ctx.taskDir, abs);
+  const rel = dispPath(ctx, abs);
   // 区分新建/覆盖：「原 M 字节」是给模型的止损信号（盲覆盖大文件时能立刻察觉）。
   return st
     ? '已覆盖文件 ' + rel + '（' + nbytes + ' 字节，原 ' + st.size + ' 字节）'
@@ -735,7 +744,7 @@ async function toolEditFile(ctx, args) {
       ? '（前 ' + applied + ' 处编辑已应用并保存，文件已变化，请重新 read_file 后再继续）'
       : '（文件未改动）'));
   }
-  return '已成功应用 ' + applied + ' 处编辑到 ' + relOf(ctx.taskDir, abs);
+  return '已成功应用 ' + applied + ' 处编辑到 ' + dispPath(ctx, abs);
 }
 
 // 对齐 Zed select_terminal_output_lines：head/tail 各自取行；同时给时中间空一行；不去重叠；0 合法。

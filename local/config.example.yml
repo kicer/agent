@@ -25,19 +25,20 @@ platforms: []
 log_level: info
 
 mcp_servers:
-  # 四个同栈 MCP 由启动器在本机拉起，端口与 start.sh 里的常量对应。
+  # 四个同栈 MCP 由启动器在本机拉起，端口与 start.sh 里的默认值对应（8091~8094，
+  # 紧跟在 core 的 8090 后面；改 PORT 时别撞上这四个）。
   # web_search 不需要任何密钥（内置免费后端）；其余三个的上游参数在设置页卡片里填，
   # 会写进对应条目的 headers。
   - name: web_search
-    url: "http://127.0.0.1:3101/"
+    url: "http://127.0.0.1:8091/"
   - name: image_task
-    url: "http://127.0.0.1:3102/mcp"
+    url: "http://127.0.0.1:8092/mcp"
     mode: skill
   - name: video_task
-    url: "http://127.0.0.1:3103/mcp"
+    url: "http://127.0.0.1:8093/mcp"
     mode: skill
   - name: asr
-    url: "http://127.0.0.1:3104/mcp"
+    url: "http://127.0.0.1:8094/mcp"
     mode: skill
     # 例：填了这两项才算启用语音（缺 X-ASR-Base-Url 时 /api/asr/status 返回 enabled:false，麦克风自动隐藏）
     # headers:

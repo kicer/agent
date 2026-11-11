@@ -227,6 +227,9 @@ IM 用户在实时对话，回合中插话应当“当前这步跑完就插”�
   `{text, image_rel}`（`text` 是结构化 JSON 回执，由 engine 转成 `image_ref` 块）。
 - **路径沙箱**：所有路径经 `resolveInTask` 解析到 `taskDir` 内；`/tmp` 会被映射到
   `<taskDir>/.tmp`（与 executor 容器里 `/tmp` 的 bind 对齐）。符号链接越界一律拒绝。
+  例外：`AGENT_FILE_SCOPE=workspace`（本地端 `local/start.sh` 注入）把业务工具的根放宽到
+  `workspace_root`，且 `/tmp` 不重写、直接放行（本地 terminal 写的是真 `/tmp`）；
+  路由层（文件 API / 公网短链 / data-page）与 `@会话` 仍按 `taskDir` 校验，不随之外扩。
 - **跨会话只读**：`@<session-id>/<rel>` 只允许 `list_directory`、`read_file`、`copy_path` 的
   `source_path`，且只限同一用户的会话。写侧显式拒绝——否则会造出字面 `@task-x` 目录。
 - `checkToolArgs` + `unwrapToolArgs`：前者做结构性预检并生成 `errAck`，后者按 schema 逐层剥掉

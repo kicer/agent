@@ -24,6 +24,7 @@
 | `wxbot/` | 微信 iLink 协议调制解调器（多实例） | 独立容器 `agent-wxbot` |
 | `mcp/` | 同栈 MCP 服务：`web_search` / `image_task` / `video_task` / `asr` | 四个容器，仅内网 |
 | `skills/` | 目录式技能（`SKILL.md` + `run.py`/`run.sh`） | 运行时挂载，`skills/deps` 为依赖层 |
+| `local/` | **本地端启动器**：同一份代码跑在本机（不起 Docker / executor），`start.sh` 负责探测、装依赖、守护 | 独立于 compose，见 `docs/local-mode.md` |
 | `scripts/` | `init.sh` 生成 `.env` + 首次创建 `config.yml`（仅初始管理员）；`init_host.sh` 裸机初始化 | 幂等，**不覆盖已有配置** |
 | `docs/` | 专题文档：`tool-design.md`（工具接口规范）、`OFFICE.md` | — |
 | `tasks/` | **运行时数据**：每个会话一个工作目录 | gitignore |

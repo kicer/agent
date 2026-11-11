@@ -16,31 +16,51 @@
 ## 快速开始
 
 ```bash
-git clone <本仓库> agent && cd agent
-./local/start.sh          # macOS 也可以在 Finder 里双击 local/start.command
+cd agent
+./local/start.sh     # 后台启动，命令 1 秒就返回，可以关掉终端窗口
+./local/stop.sh      # 停止
 ```
 
 首次运行会：
 
-1. 自检环境（Node 20+ 必需；ffmpeg / python3 可选）
+1. 自检环境（Node 20+ 必需；ffmpeg / python3 可选），并打开一个**启动状态页**
 2. 弹窗让你选一个**工作目录**（AI 会在这个目录里干活）
 3. 生成 `local/config.local.yml`
-4. 装一次 `app/` 的 Node 依赖（需要联网）
-5. 起 core + 4 个 MCP 子进程，就绪后自动打开浏览器
+4. 装一次 Node 依赖（`app/` 与带依赖的 MCP，需要联网）
+5. 起 core + MCP 子进程（没 ffmpeg 时 asr 不启动）
 6. 停在那儿守护：core 退出就自动拉起
 
 浏览器里首次使用：**左下角「用户区」→ 设置 → 模型池**，添加平台和 API Key，然后点「重启」。
 
+没有 Node 20+ 时不会让你白选目录：脚本在入口就停下，终端打出安装方式，自检结果（哪项缺、怎么装）写到状态页。
+
 > 「重启」能用是因为启动器在守护。`routes/system.js` 的重启实现是 `process.exit(0)`，
 > 原本靠 Docker 的 restart 策略拉起；本地没有 Docker，没有守护的话点一次服务就回不来了。
 
-关闭：在终端按 `Ctrl-C`，子进程会一起收掉。
+启动器在后台常驻，所以：
+
+- 关掉终端窗口**不会**停服务；要停就 `./local/stop.sh`
+- 重复跑 `./local/start.sh` 是安全的：检测到已在运行就只打印地址和停止方式
+- 想在终端里看实时日志、用 `Ctrl-C` 停：`AGENT_LOCAL_DETACH=0 ./local/start.sh`
+
+## 启动状态页
+
+启动时会在浏览器打开 `local/.runtime/status.html`（macOS 默认自动弹，Linux 要 `AGENT_LOCAL_UI=1`）：
+
+- 启动过程中每秒自动刷新，依次列出环境自检、工作目录、依赖安装、MCP、core 就绪
+- 长步骤（装依赖、等 core 起来）会显示已用时间，并把 npm / core 日志的尾巴实时刷出来
+- **首次安装**（配置刚生成）不自动跳转：就停在这一页，点「打开应用」自己进去
+- **后续启动**：就绪后 2 秒自动进应用（同一个标签页）
+- **失败时就在页面上给出原因和日志**，不用回头翻终端
+
+这个页面是纯静态文件（不用起服务），所以“node 都没装”的时候也能打开。重跑脚本会重新生成；
+即使没自动弹出，文件也一直在那个路径。
 
 ## 可选能力
 
 | 能力 | 需要 | 没有时的表现 |
 |---|---|---|
-| 语音输入 | `ffmpeg` + 设置页给 `asr` 填上游（`X-ASR-Base-Url` / `X-ASR-Model`） | 麦克风入口自动隐藏（`/api/asr/status` 返回 `enabled:false`） |
+| 语音输入 | `ffmpeg` + 设置页给 `asr` 填上游（`X-ASR-Base-Url` / `X-ASR-Model`） | 麦克风入口自动隐藏（`/api/asr/status` 返回 `enabled:false`），`mcp_asr` 子进程也不启动 |
 | 技能 | `python3` | 技能清单为空，其余功能不受影响 |
 | 网页搜索 | 无 | 装了 Node 就有（内置免费后端） |
 | 图片 / 视频生成 | 设置页给对应 MCP 填上游 key | 调用时报明确的缺参错误 |
@@ -52,7 +72,7 @@ git clone <本仓库> agent && cd agent
 
 - 生成的配置：`local/config.local.yml`（**首次生成，之后永不覆盖**，避免冲掉你在网页里配的模型与密钥）
 - 会话数据：`data/`（SQLite + prompt dump）与工作目录下的 `task-YYYYMMDD-NNN/`
-- 运行期产物：`local/.runtime/`（`core.log`、各 MCP 日志、自检页、技能软链）
+- 运行期产物：`local/.runtime/`（`status.html` 状态页、`core.log`、`npm-install.log`、各 MCP 日志、技能软链）
 
 想彻底重来：删掉 `local/config.local.yml`（以及可选的 `data/`）再启动。会话目录里的产出不会被删。
 
@@ -60,15 +80,17 @@ git clone <本仓库> agent && cd agent
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `PORT` | `8090` | core 端口 |
-| `NPM_REGISTRY` | 空 | 首次装依赖时用的 npm 源，如 `https://registry.npmmirror.com` |
-| `MCP_WEB_PORT` / `MCP_IMAGE_PORT` / `MCP_VIDEO_PORT` / `MCP_ASR_PORT` | 3101~3104 | 四个 MCP 的端口（同机跑必须各占一个） |
+| `PORT` | `8090` | core 端口（别撞下面的 MCP 端口） |
+| `NPM_REGISTRY` | 空 | 首次装依赖时用的 npm 源，如 `https://registry.npmjs.org` |
+| `MCP_WEB_PORT` / `MCP_IMAGE_PORT` / `MCP_VIDEO_PORT` / `MCP_ASR_PORT` | 8091~8094 | 四个 MCP 的端口（同机跑必须各占一个；改这里还要同步改配置里的 url） |
+| `AGENT_LOCAL_UI` | `auto` | 是否自动打开状态页：`auto` = 仅 macOS，`1` 强制，`0` 关闭（页面无论如何都会生成） |
+| `AGENT_LOCAL_DETACH` | `1` | `1` = 后台启动后立即返回（用 `stop.sh` 停）；`0` = 前台阻塞（看实时日志、`Ctrl-C` 停） |
 
 ## 更新
 
 ```bash
 git pull
-./local/start.sh     # package.json 变了会自动重装依赖
+./local/stop.sh && ./local/start.sh   # package.json 变了会自动重装依赖
 ```
 
 `app/server` 是直接跑源码，前端也是免构建的，所以改完代码重启（或在网页点「重启」）即生效。
@@ -87,7 +109,9 @@ git pull
 
 ## 已知限制
 
-- **MCP 子进程里 `mcp_asr` 仍然监听 `0.0.0.0`**：它只认 `PORT` 环境变量，没有 `--host` 参数
+- **没 ffmpeg 时 core 日志会有一条 `asr 工具发现失败`**：此时 `mcp_asr` 不启动（它转码要靠
+  ffmpeg），但配置里的 asr 条目仍保留（配置不被覆盖）。重试几次后放弃，不影响其它功能。
+- **`mcp_asr` 启动后监听 `0.0.0.0`**：它只认 `PORT` 环境变量，没有 `--host` 参数
   （另外三个服务都传了 `--host 127.0.0.1`）。它不存任何密钥（上游参数随请求带入），
   暴露面有限，但严格起见可以给 `mcp/asr` 补一个 `--host` 支持。
 - **Windows 暂不支持**：本机执行走 `spawn('/bin/sh')` 与 `process.kill(-pid)`，都是 POSIX 语义。
@@ -95,13 +119,24 @@ git pull
   模型调用该工具会得到明确的「未配置」错误。
 - **技能依赖**：有 `requirements.txt` 的技能需要自己把包装进 `skills/deps`
   （服务器上这一步由 `agent-executor-init` 在构建期完成）。默认只保证纯标准库技能可用。
+- **首个 `npm install` 要联网**：源不可达时换一个重跑：
+  `NPM_REGISTRY=https://registry.npmjs.org ./local/start.sh`。中途失败留下的半成品 node_modules
+  不用手删，下次启动会重新检测缺失的包。
 
 ## 排查
 
 ```bash
+open local/.runtime/status.html        # 启动状态页：步骤、失败原因、日志尾巴
 tail -f local/.runtime/core.log        # core 日志（含 prompt dump 路径、MCP 发现结果）
+tail -f local/.runtime/npm-install.log # 装依赖的输出
 tail -f local/.runtime/mcp-asr.log     # 单个 MCP 的日志
 ```
 
-启动前自检不通过时，会生成并打开 `local/.runtime/setup.html`——那是个静态页，
-所以改完环境要自己重跑脚本（它不会自动重试）。
+启动失败时状态页会自己弹出（带错误说明和日志尾部）；它是个静态页，所以改完环境要自己重跑脚本
+（它不会自动重试）。
+
+进程表 / 端口对不上时：
+
+```bash
+lsof -nP -iTCP:8090-8094 -sTCP:LISTEN   # core + 四个 MCP 的监听情况
+```
