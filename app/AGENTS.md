@@ -245,8 +245,9 @@ IM 用户在实时对话，回合中插话应当“当前这步跑完就插”�
   get/run 指认技能，`args` 仅 run 用；条件必填写不进 schema，由 `toolSkill` 校验并点名。
   `toolSkill` 在入口把旧字段名 `input_args` 归一化成 `args`，之后只走一条分派路径
   （曾有两条路径，其中一条只读 `input_args`，会静默丢参）。
-  `input_schema.required` 在 `run` 前校验；相对路径参数按会话目录转绝对路径；入口一律用绝对路径
-  （远端 cwd 是会话目录）。配了 executor 就走 `remote-exec`，否则本地 `spawn`。
+  `input_schema.required` 在 `run` 前校验；相对路径参数按会话目录转绝对路径；入口一律用绝对路径，
+  cwd 也一律是会话目录（本地 spawn 与远端一致，否则按 cwd 干活的技能会写到技能目录里）。
+  配了 executor 就走 `remote-exec`，否则本地 `spawn`。
   模型可见的技能清单是 `listCallableSkills`（目录技能 + `mode=skill` 的 MCP 工具，同名时目录胜出）；
   设置页的技能 API 仍只用 `listSkills`（按目录增删改），两者不要混用。
   mode=skill 的 MCP 技能在 `runSkill` 里位于 `absolutizeArgs` **之前**：直接 `mcp.callTool` 转发

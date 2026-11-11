@@ -280,10 +280,10 @@ async function runSkill(ctx, skillName, inputArgs) {
     throw new SkillExecutionError('技能 ' + skillName + ' 缺少入口 run.py 或 run.sh', 1);
   }
 
-  // cwd：远端取会话目录（executor 侧命中 session 隔离，技能看到的 /workspace/tasks/<sid>
-  // 与 core 侧是同一份数据，absolutizeArgs 产出的绝对路径因此有效）；缺 taskDir 时退回
-  // 技能目录（退化为旧行为）。本地无隔离诉求，仍以技能目录为 cwd。
-  const execCwd = rexec.isRemote(ctx.cfg) ? (ctx.taskDir || dir) : dir;
+  // cwd 一律取会话任务目录（技能契约，见 skills/README §6：技能按 cwd 读写会话数据，
+  // data-page 这类会往 cwd 下写 .app/）。旧代码在「无 executor」分支退回技能目录，
+  // 等于假设线上一定走远端；本地桌面形态（本机 spawn）下会把所有按 cwd 干活的技能打歪。
+  const execCwd = ctx.taskDir || dir;
   const timeoutMs = (ctx.cfg && ctx.cfg.skills && ctx.cfg.skills.timeout_ms) || 120000;
   log.info('skills', '执行 ' + skillName + '：' + entry + ' ' + cmdArgs.join(' ') + '（cwd=' + execCwd + '）');
   return runEntry(ctx, entry, cmdArgs, execCwd, timeoutMs);
