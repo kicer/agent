@@ -17,8 +17,7 @@ const PV_TEXT = /\.(md|markdown|txt|log|csv|tsv|json|jsonl|xml|yml|yaml|toml|ini
 const PV_TEXT_MAX = 512 * 1024; // 文本预览截断阈值(字符)，超出提示下载看全文
 let pvSeq = 0; // 预览序号：快速连点时旧请求不许再动 DOM
 // reload: 当前内容的"重新载入"动作(文本类无 iframe，按名重开)；为 null 时回退到 reload iframe
-// lastName: 最后展示过的文件路径。关窗后 pvState.name 会被清空，靠它支持"再点预览图标重开上次文件"
-const pvState = { name: null, url: null, blobUrl: null, reload: null, mobilePush: false, lastName: null };
+const pvState = { name: null, url: null, blobUrl: null, reload: null, mobilePush: false };
 
 function pvDesktop() { return window.matchMedia('(min-width: 960px)').matches; }
 
@@ -81,7 +80,6 @@ function pvToolbar(o) {
 // 每次展示内容都过一遍：标题显示相对路径(子目录可见)，右上角下载钮随文件走
 function pvHeader(name, sizeText) {
   pvState.name = name;
-  if (name) pvState.lastName = name; // 记住最后一份内容，供关窗后重开
   const t = document.getElementById('pv-title');
   t.value = String(name || '');
   t.title = sizeText ? name + ' · ' + sizeText : String(name || '');
@@ -127,7 +125,6 @@ function pvOpenPane() {
   // 开预览就把侧栏切到文件树：预览就贴在它旁边，切了才能顺手换文件看。
   // 已经在文件页时 setDrawerPane 内部会因「没变化」而直接返回，不会重复拉树。
   if (typeof setDrawerPane === 'function') setDrawerPane(true);
-  pvSyncBtn();
 }
 
 function pvCloseDoc() {
@@ -136,32 +133,10 @@ function pvCloseDoc() {
   if (typeof pvSetMaxUI === 'function') pvSetMaxUI(false); // 收起时复位放大钮图标(函数声明提升，定义在后亦可)
   pvClearBody();
   pvState.name = null; pvState.url = null;
-  pvSyncBtn();
 }
 
-// 侧栏底部「预览」图标：开/关预览分栏（桌面端）。图标随开合高亮。
-function pvSyncBtn() {
-  const b = document.getElementById('da-preview');
-  if (b) b.classList.toggle('active', document.body.classList.contains('pv-open'));
-}
-
-// 同一个图标开/关预览：已开 → 关；未开 → 优先重开上次看过的文件，没有就开空面板给个提示。
-function pvTogglePane() {
-  if (!pvDesktop()) return; // 移动端预览走全屏 #fs-viewer，不维护分栏
-  // 已开着的先允许关：新建会话后 sessionId 会变空，不能让开了的窗关不掉
-  if (document.body.classList.contains('pv-open')) { pvCloseDoc(); return; }
-  // 还没开始会话：没有任务目录可看，点了就什么都别做（不弹提示、不开空窗、不切侧栏）
-  if (!state.sessionId) return;
-  if (pvState.lastName) { openFilePreview(pvState.lastName); return; }
-  pvOpenPane(); pvClearBody(); pvHeader('', '');
-  const body = document.getElementById('pv-body');
-  if (body) {
-    const tip = document.createElement('div');
-    tip.className = 'pv-none';
-    tip.innerHTML = '<div class="hint">点击文件即可在此预览</div>';
-    body.appendChild(tip);
-  }
-}
+// 侧栏底部没有「预览」按钮：桌面端的预览只有一条入口——在文件树里点文件（点即开窗），
+// 关窗走预览栏自己的关闭钮 / Esc / 缩到窄屏。所以这里不再维护任何按钮高亮状态。
 
 // 移动端全屏承载：把节点塞进 #fs-viewer 并展开
 // opts.bar    → 文件预览沉浸模式：顶部独立操作条，内容全宽占满剩余空间

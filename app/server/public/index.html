@@ -235,14 +235,12 @@
       </div>
       <div class="drawer-list" id="drawer-list"></div>
       <div class="files-tree" id="files-tree"></div>
-      <!-- 底部图标操作栏：文件树 / 预览 / 设置（文件树按钮是「会话 ↔ 文件」的切换开关）。
-           窄屏两个都隐藏：预览走全屏浮层，文件只保留输入行右侧的旧面板（不做两套）。选中项高亮。 -->
+      <!-- 底部图标操作栏：文件树 / 设置（文件树按钮是「会话 ↔ 文件」的切换开关）。
+           预览不占按钮：桌面端在文件树里点文件即开预览栏，关窗走预览栏自己的关闭钮。
+           窄屏两个都隐藏：文件只保留输入行右侧的旧面板（不做两套）。选中项高亮。 -->
       <div class="drawer-actions" id="drawer-actions">
         <button class="drawer-act" id="da-files" type="button" title="文件树" aria-label="文件树">
           <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
-        </button>
-        <button class="drawer-act" id="da-preview" type="button" title="预览" aria-label="预览">
-          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M14 4v16"></path></svg>
         </button>
         <button class="drawer-act" id="da-settings" type="button" title="设置" aria-label="设置">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>

@@ -1258,10 +1258,7 @@
   // 窄屏只保留输入行右侧的旧「任务文件」面板，左栏不再提供文件树（按钮也已 CSS 隐藏）。
   // 宽屏缩到窄屏时如果正停在文件页，先退回会话列表，避免出现两套文件 UI。
   drawerMQ.addEventListener('change', (e) => { if (!e.matches) setDrawerPane(false); });
-  // 预览：同一个按钮开/关右侧面板
-  $('da-preview').addEventListener('click', () => {
-    if (typeof pvTogglePane === 'function') pvTogglePane();
-  });
+  // 预览没有独立按钮：桌面端只在文件树里点文件时开窗（关窗走预览栏自己的关闭钮 / Esc）。
   $('da-settings').addEventListener('click', () => {
     if (typeof showSettings !== 'function') return;
     const page = $('settings-page');
