@@ -49,7 +49,7 @@ for p in "$MCP_WEB_PORT" "$MCP_IMAGE_PORT" "$MCP_VIDEO_PORT" "$MCP_ASR_PORT"; do
   [ "$p" = "$PORT" ] && PORT_COLLIDE=1
 done
 
-mkdir -p "$RUNTIME" "$ROOT/data"
+mkdir -p "$RUNTIME"
 printf '\n==== %s 启动 ====\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG"
 
 if [ -t 1 ]; then
@@ -365,10 +365,10 @@ ui_checks() {
 choose_workspace() {
   ws=''
   if [ "$(uname -s)" = 'Darwin' ] && command -v osascript >/dev/null 2>&1; then
-    ws=$(osascript -e 'POSIX path of (choose folder with prompt "选择 Agent 的工作目录：AI 会在这个目录里干活")' 2>/dev/null) || ws=''
+    ws=$(osascript -e 'POSIX path of (choose folder with prompt "选择 Agent 的工作目录：会在里面创建 data、skills、tasks 三个子目录")' 2>/dev/null) || ws=''
   fi
   if [ -z "$ws" ] && [ -t 0 ]; then
-    printf '工作目录（AI 会在这里干活）[%s/AgentWork]: ' "$HOME"
+    printf '工作目录（会在里面创建 data、skills、tasks）[%s/AgentWork]: ' "$HOME"
     read -r ans || ans=''
     if [ -n "${ans:-}" ]; then ws=$ans; else ws="$HOME/AgentWork"; fi
   fi
@@ -378,21 +378,24 @@ choose_workspace() {
 
 generate_config() {
   ws=$1
-  mkdir -p "$ws" 2>/dev/null || { say "无法创建工作目录：$ws"; exit 1; }
+  mkdir -p "$ws/tasks" "$ws/data" "$ws/skills" 2>/dev/null || { say "无法创建工作目录：$ws"; exit 1; }
   cat > "$CONFIG" <<EOF
 # 本机 local 模式配置 —— 由 local/start.sh 首次启动时生成，之后不再覆盖。
 # 改模型 / 密钥 / MCP：浏览器打开 http://$HOST_ADDR:$PORT → 左下角用户区 → 设置。
-# 想彻底重来：删掉本文件再跑一次 ./local/start.sh（会话记录在 data/ 和工作目录里，不会被删）。
+# 想彻底重来：删掉本文件再跑一次 ./local/start.sh（会话、技能、数据库都在工作目录里，不会被删）。
 port: $PORT
-# AI 的工作根。启动器注入 AGENT_FILE_SCOPE=workspace，文件工具可读写这个目录下的任意位置，
-# 不再像服务器那样被限制在单个会话子目录里。路径一律加引号：用户选的目录带空格/':'/'#' 时
-# 不加引号会被 YAML 当成注释或键值分隔符。
-workspace_root: "$ws"
-data_root: "$ROOT/data"
+# 工作目录下的三个子目录分工：tasks=会话工作区（AI 的地盘）、data=数据库与调试产物、
+# skills=技能（内置技能首次运行时复制过来，之后可自行增删改）。
+# 路径一律加引号：用户选的目录带空格/':'/'#' 时，不加引号会被 YAML 当成注释或键值分隔符。
+#
+# AI 的工作根。启动器注入 AGENT_FILE_SCOPE=workspace，文件工具的根就是这个目录：
+# AI 能在这里面任意读写，但看不到同级的 data/ 和 skills/。
+workspace_root: "$ws/tasks"
+data_root: "$ws/data"
 skills:
-  # 指向 local/.runtime/skills：启动脚本按「有没有可用的 python3」把它软链到真技能目录或空目录。
-  # 这样装不装 python3 都不用改这份配置（改完重跑脚本即生效）。
-  skills_root: "$ROOT/local/.runtime/skills"
+  # 技能根。首次启动时把仓库 skills/ 里的内置技能复制到这里，之后只补缺不覆盖；
+  # pip 装的依赖落在同级的 deps/（AGENT_SKILLS_DEPS 指向它，已在 PYTHONPATH 里）。
+  skills_root: "$ws/skills"
 # 故意留空：启动后在设置页添加平台与 API Key，再点「重启」——启动器会自动拉起。
 platforms: []
 log_level: info
@@ -415,19 +418,42 @@ EOF
   say "工作目录：$ws"
 }
 
-# ---------- 技能目录：软链到仓库 skills，不动配置 ----------
-# 为什么不再按 python3 有无切换成空目录：技能不一定是 Python 的。office 就是
-# SKILL.md + scripts/office（Node）+ 二进制，跟 python3 无关；
-# 一刀切会把这类技能一并藏起来。而 Python 技能缺解释器时，skills.js 的 runEntry 对
-# spawn 的 error 有处理，模型拿到的是「技能入口启动失败：spawn python3 ENOENT」，
-# 干净可读，不会崩也不会挂住——没必要靠藏清单来避险。
-link_skills() {
-  link="$RUNTIME/skills"
-  dest="$ROOT/skills"
-  rm -f "$link" 2>/dev/null || true
-  # 万一上次留下了真目录（老版本行为），先挪走再建软链
-  if [ -d "$link" ] && [ ! -L "$link" ]; then rm -rf "$link"; fi
-  ln -s "$dest" "$link" || { warn "技能目录软链创建失败：$link"; return 1; }
+# ---------- 技能目录：内置技能复制到工作目录，之后只补缺 ----------
+# 技能根在用户选的工作目录里（<ws>/skills），与 data/、tasks/ 同级。仓库 skills/ 只是出厂副本：
+# 这里只补缺——工作目录里没有的内置技能才复制，已存在的一律不动，所以用户改过的、
+# AI 自己新建的技能都不会被覆盖。要拿仓库里的新版技能：删掉对应子目录再重跑本脚本。
+# deps 不复制：仓库那份是服务器构建期产物，平台和版本都不该跟着走；本地 pip 自己装。
+
+# 取配置里一个标量值（去掉引号）。不试图当 YAML 解析器用：配置是本脚本生成的，格式稳定。
+cfg_get() {
+  sed -n "s/^[[:space:]]*$1:[[:space:]]*[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}[[:space:]]*$/\1/p" \
+    "$CONFIG" 2>/dev/null | head -n 1
+}
+
+# 技能根：配置里的 skills_root；留空则取 workspace_root 的同级 skills（与 core 的默认一致）。
+skills_dir() {
+  d=$(cfg_get skills_root)
+  if [ -z "$d" ]; then
+    w=$(cfg_get workspace_root)
+    [ -n "$w" ] && d="$(dirname "$w")/skills"
+  fi
+  printf '%s' "$d"
+}
+
+sync_skills() {
+  dest=$1
+  [ -n "$dest" ] || { warn '配置里既没有 skills_root 也没有 workspace_root，技能不可用'; return 1; }
+  mkdir -p "$dest/deps" 2>/dev/null || { warn "无法创建技能目录：$dest"; return 1; }
+  added=0
+  for s in "$ROOT/skills"/*; do
+    [ -d "$s" ] || continue
+    name=${s##*/}
+    [ "$name" = 'deps' ] && continue
+    [ -e "$dest/$name" ] && continue
+    cp -R "$s" "$dest/$name" 2>/dev/null && added=$((added + 1))
+  done
+  [ "$added" -gt 0 ] && say "技能：复制 $added 个内置技能到 $dest"
+  return 0
 }
 
 # 依赖是否装全：0 = 齐全，非 0 = 缺（npm install 中途失败、被手工删过等）。
@@ -818,7 +844,7 @@ check_mcp() {
 }
 
 start_core() {
-  # PYTHONPATH 把技能共享依赖层 skills/deps 放进 python 的搜索路径（与服务器上 executor 容器
+  # PYTHONPATH 把技能依赖层 <工作目录>/skills/deps 放进 python 搜索路径（与服务器上 executor 容器
   # 的 PYTHONPATH 对齐，那边由 compose 注入）。本地没有 agent-executor-init 替我们装包，
   # 所以另外把目录路径作为 AGENT_SKILLS_DEPS 传下去：技能缺什么时，模型按该技能目录的
   # AGENTS.md 自行安装（提示词里只给这一句指路），启动器不认识任何具体技能。
@@ -832,8 +858,8 @@ start_core() {
       AGENT_LOCAL_PICK=1 \
       AGENT_IMAGE_INLINE=1 \
       ASR_URL="$ASR_URL" \
-      PYTHONPATH="$ROOT/skills/deps" \
-      AGENT_SKILLS_DEPS="$ROOT/skills/deps" \
+      PYTHONPATH="$SKILLS_DIR/deps" \
+      AGENT_SKILLS_DEPS="$SKILLS_DIR/deps" \
       node server/server.js >>"$LOG" 2>&1 ) &
   CORE_PID=$!
 }
@@ -963,11 +989,13 @@ if ! ensure_deps; then
   exit 1
 fi
 
-if link_skills; then
-  if [ "$PY_OK" = 1 ]; then ui_step '技能：已启用' ok
-  else ui_step '技能：python3 未安装（Python 技能会失败）' warn; fi
+SKILLS_DIR=$(skills_dir)
+[ -n "$SKILLS_DIR" ] || SKILLS_DIR="$ROOT/skills"   # 配置里两个键都被删掉时的兼底
+if sync_skills "$SKILLS_DIR"; then
+  if [ "$PY_OK" = 1 ]; then ui_step "技能：$SKILLS_DIR" ok
+  else ui_step "技能：$SKILLS_DIR（python3 未安装，Python 技能会失败）" warn; fi
 else
-  ui_step '技能目录软链创建失败，技能不可用' warn
+  ui_step '技能目录不可用（检查配置里的 skills_root）' warn
 fi
 
 # 语音：ffmpeg 在就启用，两条线都靠同一个开关：

@@ -7,7 +7,7 @@
 | 差异 | 服务器 | 本地 |
 |---|---|---|
 | 命令在哪跑 | `agent-executor` 容器（mount/pid namespace 隔离） | 直接在本机 `spawn`（无沙箱） |
-| 文件工具的根 | 会话目录 `tasks/<会话id>/` | 你指定的工作目录 `workspace_root` |
+| 文件工具的根 | 会话目录 `tasks/<会话id>/` | 你选的工作目录下的 `tasks/` |
 | 监听地址 | `0.0.0.0`（靠宿主机端口映射对外） | `127.0.0.1`（只有本机能访问） |
 
 后两项分别由环境变量 `AGENT_FILE_SCOPE=workspace` 和 `HOST=127.0.0.1` 控制，容器部署不设置，
@@ -24,16 +24,19 @@ cd agent
 首次运行会：
 
 1. 自检环境（Node 20+ 必需；ffmpeg / python3 可选），并打开一个**启动状态页**
-2. 弹窗让你选一个**工作目录**（AI 会在这个目录里干活）
-3. 生成 `local/config.local.yml`
-4. 装一次 Node 依赖（`app/` 与带依赖的 MCP，需要联网）
-5. 起 core + MCP 子进程（没 ffmpeg 时 asr 不启动）
-6. 停在那儿守护：core 退出就自动拉起
+2. 弹窗让你选一个**工作目录**，在里面建 `data/`、`skills/`、`tasks/` 三个子目录
+3. 把仓库 `skills/` 里的内置技能复制到 `<工作目录>/skills/`
+4. 生成 `local/config.local.yml`
+5. 装一次 Node 依赖（`app/` 与带依赖的 MCP，需要联网）
+6. 起 core + MCP 子进程（没 ffmpeg 时 asr 不启动）
+7. 停在那儿守护：core 退出就自动拉起
+
+工作目录是你的：数据库、会话、技能都在里面，仓库里不存任何运行数据。
 
 浏览器里首次使用：**左下角「用户区」→ 设置 → 模型池**，添加平台和 API Key，然后点「重启」。
 
 新建会话时，欢迎页「随时开始吧」下方可以**手选一个工作目录**：选了之后这个会话的 AI 一切操作
-都在那个目录里（不再建 `task-*` 子目录）；不选就沿用默认（系统工作目录下的独立会话目录）。
+都在那个目录里（不再建 `task-*` 子目录）；不选就沿用默认（`<工作目录>/tasks/<会话id>`）。
 删会话不会删你选的目录。
 
 没有 Node 20+ 时不会让你白选目录：脚本在入口就停下，终端打出安装方式，自检结果（哪项缺、怎么装）写到状态页。
@@ -76,11 +79,21 @@ cd agent
 
 ## 配置放哪
 
-- 生成的配置：`local/config.local.yml`（**首次生成，之后永不覆盖**，避免冲掉你在网页里配的模型与密钥）
-- 会话数据：`data/`（SQLite + prompt dump）与工作目录下的 `task-YYYYMMDD-NNN/`
-- 运行期产物：`local/.runtime/`（`status.html` 状态页、`core.log`、`npm-install.log`、各 MCP 日志、技能软链）
+你选的工作目录下：
 
-想彻底重来：删掉 `local/config.local.yml`（以及可选的 `data/`）再启动。会话目录里的产出不会被删。
+| 路径 | 内容 |
+|---|---|
+| `<工作目录>/data/` | SQLite（`.agent.db`）、启动时的 prompt dump |
+| `<工作目录>/tasks/` | 会话工作区，一个会话一个 `task-YYYYMMDD-NNN/` |
+| `<工作目录>/skills/` | 技能；内置技能首次启动时复制过来，以后只补缺不覆盖。依赖装在 `skills/deps/` |
+
+仓库里只有：
+
+- 生成的配置：`local/config.local.yml`（**首次生成，之后永不覆盖**，避免冲掉你在网页里配的模型与密钥）
+- 运行期产物：`local/.runtime/`（`status.html` 状态页、`core.log`、`npm-install.log`、各 MCP 日志）
+
+想彻底重来：删掉 `local/config.local.yml` 再启动（工作目录里的数据不会动，重选一个目录就换一套）。
+技能要跟着仓库更新：删掉 `<工作目录>/skills/<技能名>` 再启动，脚本会把新版补回来（你自建的技能不受影响）。
 
 ## 常用环境变量
 
@@ -144,8 +157,8 @@ git pull
   base64（`AGENT_IMAGE_INLINE=1`，启动器已注入）。
 - **`office` 文档没有预览**：预览卡片走 core → executor 的 `:3100` 网关，本地没有这个网关，
   点开得不到可用页面；文档本身的创建/编辑/读取完全正常。
-- **技能依赖不预装**：本地没有 `agent-executor-init`，`skills/*/requirements.txt` 不会在启动时
-  自动安装。技能缺包时会报 `ModuleNotFoundError`，模型会把缺的包装进 `skills/deps`
+- **技能依赖不预装**：本地没有 `agent-executor-init`，技能自带的 `requirements.txt` 不会在启动时
+  自动安装。缺包时会报 `ModuleNotFoundError`，模型会把缺的包装进 `<工作目录>/skills/deps`
   （`AGENT_SKILLS_DEPS` 指向它，且已在该进程的 `PYTHONPATH` 里，装完下次运行即生效）。
   连 `python3` 都没有时技能清单依旧完整，模型会自己把它装上再继续。
   需要系统库的包（如 `weasyprint` 依赖 pango/cairo）pip 装不了，得自己 `brew install`。

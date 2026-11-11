@@ -8,7 +8,8 @@
 ## 1. 目标
 
 把同一个 `agent-core` 直接跑在本机（macOS / Linux），**不装 Docker、不起 executor**，形态类似
-桌面 agent：给它一个工作目录，它在这个目录里放开手脚干活。
+桌面 agent：给它一个工作目录，它在这个目录下的 `tasks/` 里放开手脚干活（`data/`、`skills/` 是兄弟目录，
+归启动器和技能自己管）。
 
 明确的设计约束（都来自讨论）：
 
@@ -25,7 +26,7 @@
 | 差异 | 服务器 | 本地 | 由谁注入 |
 |---|---|---|---|
 | 命令在哪跑 | `agent-executor` 容器（mount/pid namespace 隔离） | 本机 `spawn`（**无沙箱**） | `EXECUTOR_URL` 留空 → 现成分支，未改代码 |
-| 文件工具的根 | 会话目录 `tasks/<会话id>/` | 指定的工作目录 | `AGENT_FILE_SCOPE=workspace` |
+| 文件工具的根 | 会话目录 `tasks/<会话id>/` | 工作目录下的 `tasks/`（`data/`、`skills/` 是兄弟目录，越界） | `AGENT_FILE_SCOPE=workspace` |
 | 监听地址 | `0.0.0.0` | `127.0.0.1` | `HOST=127.0.0.1` |
 | 对外链接（`mint_public_link` / `visit_url`） | `public_link.base_url` 拼公网短链 | 没有公网前缀时改拼 `http://127.0.0.1:<PORT>/p/<id>` | 复用 `localOrigin()`，靠 `HOST` 判断形态，不写配置 |
 | 读图回传给模型 | 签公网短链，上游服务器来拉 | 上游拉不到回环地址，改为内联 base64 `data:` URL | `AGENT_IMAGE_INLINE=1` |
@@ -108,7 +109,7 @@
 `config.local.yml` 里既有启动器生成的字段（`workspace_root` / `skills_root`），也有用户在网页里
 配的东西（`platforms`、API Key、MCP headers）。每次启动重写会直接冲掉后者。
 
-推论：**能力变化不能靠改配置实现**，只能靠 env / 起不起子进程 / 软链（见 4.3、4.4）。
+推论：**能力变化不能靠改配置实现**，只能靠 env / 起不起子进程 / 首次复制（见 4.3、4.4）。
 
 ### 4.3 ffmpeg 是运行时能力，与配置解耦
 
@@ -120,21 +121,31 @@
 
 装完 ffmpeg 后**重跑脚本**即生效，配置文件一个字不用改。
 
-### 4.4 技能目录用软链固定指向仓库，不再按 python3 有无切换
+### 4.4 技能是工作目录里的副本，不再软链仓库并随 python3 有无切换
 
-配置里永远写 `skills_root: <仓库>/local/.runtime/skills`（首次生成后不覆盖），启动器每次都重建这个
-软链，恒指向 `<仓库>/skills`。
+用户选的工作目录被拆成三个兄弟目录：
 
-早期版本在「没有 python3」时把它指向一个空目录，想的是“别让模型看到跑不了的工具”。两个问题：
+```
+<工作目录>/tasks/    会话工作区（AI 的文件根）
+<工作目录>/data/     SQLite、prompt dump
+<工作目录>/skills/   技能 + deps/
+```
 
-1. **技能不一定是 Python 的**。`office` 只有 `SKILL.md` + `scripts/office`，模型在 `terminal` 里调
-   `office <cmd>`，完全不需要 python3——一刀切会把这类技能一并藏掉。
-2. **没必要防**。`skills.js` 的 `runEntry` 对 `spawn` 的 `error` 有处理，缺解释器时模型拿到的是
-   「技能入口启动失败：spawn python3 ENOENT」，干净可读、不崩不挂。模型据此自己装解释器或模块，
-   装完继续跑即可。
+`skills_root` 写死 `<工作目录>/skills`（首次生成后不覆盖）。首次启动时把仓库 `skills/` 里的
+**内置技能逐个复制**过去，之后每次启动**只补缺、不覆盖**：
 
-所以现在只有一种行为：技能总是可见；python3 缺失只影响 `run.py` 类技能能否执行。装好 python3 后
-（若在 core 启动时 `PATH` 已有的目录里，如 brew 的 `/opt/homebrew/bin`）无需重启即生效，否则重跑脚本。
+- 只复制目录，`deps` 不复制（仓库那份是服务器构建期产物，平台/版本都不该跟着走）
+- 目标已存在就跳过——用户改过的、AI 自己新建的技能都靠这条保住
+- 要拿仓库里的新版：删掉对应子目录再跑一次脚本
+
+这样三个东西同时在位：仓库永远干净（`git status` 无未跟踪用户数据）；用户数据一目录备份、
+一目录卸载；AI 真能“自己长技能”（新增目录即被发现，`skill list` 实时可见）。
+
+早期版本把 `.runtime/skills` 软链到仓库，导致技能只能写回版本库（与仓库更新抢地盘）。
+更早还按 python3 有无切到空目录，想“别让模型看到跑不了的工具”——但技能不一定是 Python 的
+（`office` 只要 Node + 二进制），一刀切会把它们一并藏掉；而且 `skills.js` 的 `runEntry` 对
+`spawn` 的 `error` 有处理，缺解释器时模型拿到的是「技能入口启动失败：spawn python3 ENOENT」，
+干净可读，自己装完继续跑即可。
 
 **没有改 `skills.js` 一行代码。**
 
@@ -171,11 +182,11 @@
 「terminal 写真实 /tmp、file 工具读会话 .tmp」的错位——这正是 `AGENT_FILE_SCOPE=workspace`
 要关掉重定向的原因。
 
-### 4.8 `skills_root` 的默认值陷阱
+### 4.8 `skills_root` 的默认值
 
-`skills.skills_root` 留空时默认取 `workspace_root` 的**同级** `skills` 目录。本地把
-`workspace_root` 指到用户选的目录后，默认值会变成不存在的 `<用户目录>/../skills`。
-因此生成的配置必须显式写死 `skills_root`。
+`skills.skills_root` 留空时默认取 `workspace_root` 的**同级** `skills` 目录。新的目录布局正好也是
+`tasks/` 与 `skills/` 同级，所以留空也能算对；但生成的配置仍然显式写死它——一个字段就能看出
+技能到底在哪，不依赖目录推导。
 
 ### 4.9 状态页：静态文件 + `meta refresh`，不起 HTTP 服务
 
@@ -260,8 +271,8 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 `PYTHONPATH`）。本地没有这套东西，`start.sh` 也不去跑 pip——安装时机、镜像源、半成品清理
 是另一整套逻辑，收益不抵成本。做法改成「缺了再装」：
 
-- `start.sh` 起 core 时注入 `PYTHONPATH=<仓库>/skills/deps`（**原本就有**）与
-  `AGENT_SKILLS_DEPS=<仓库>/skills/deps`（新增，只为把路径交给模型）。
+- `start.sh` 起 core 时注入 `PYTHONPATH=<工作目录>/skills/deps` 与
+  `AGENT_SKILLS_DEPS=<工作目录>/skills/deps`（后者只为把路径交给模型）。
   `terminal` 与技能子进程都继承 core 的 env，所以装进去的东西**下次运行就能 import**，不用重启。
 - `templates/env-local.txt` 把原来的「永远不要自己装任何东西」改成「缺模块就装进
   `$AGENT_SKILLS_DEPS` 再重试」——**只给路径，不给命令**，怎么装由模型自己决定。
@@ -320,10 +331,10 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 | 项 | 结果 |
 |---|---|
 | 首次启动：生成配置 → 装依赖（app 134 包，image_task / video_task 各 127 包）→ 起 MCP + core → 打开状态页（停在「已启动」，等点击） | 通过 |
-| 配置内容：`workspace_root` 是选的目录、`data_root` 指仓库 `data/`、`skills_root` 指 `local/.runtime/skills`、`platforms: []`、MCP 端口 8091~8094 | 通过 |
+| 配置内容：`workspace_root` = `<选定目录>/tasks`、`data_root` = `<选定目录>/data`、`skills_root` = `<选定目录>/skills`（内置技能已复制）、`platforms: []`、MCP 端口 8091~8094 | 通过 |
 | 绑定地址：`lsof` 只有 `127.0.0.1:8090` | 通过 |
 | 设置页「重启」→ 守护拉起：PID 变化，2 秒内 `/api/health` 恢复 | 通过 |
-| 文件工具越出会话目录：工作目录根的 `probe.txt` 可读 | 通过 |
+| 文件工具限定在 `<工作目录>/tasks/` 下：放进 `tasks/` 的 `probe.txt` 可读，`<工作目录>/data/` 报路径越界 | 待复测 |
 | 越界保护：`read_file ~/.ssh/config`、`terminal cd /etc` 均报「路径越界」 | 通过 |
 | `/tmp` 一致性：`write_file /tmp/x` → `terminal cat /tmp/x` 与 `read_file /tmp/x` 内容一致 | 通过 |
 | 无 ffmpeg：`/api/asr/status` = `enabled:false`（麦克风隐藏），asr 子进程不启动，8094 不监听 | 通过 |
@@ -383,7 +394,7 @@ tail -f local/.runtime/core.log             # 以及 npm-install.log / mcp-*.log
 | `mcp_asr` 监听 `0.0.0.0` | 它只认 `PORT` 环境变量、`listen` 不带 host（已启动时才是问题）。不存密钥（上游参数随请求带入），暴露面有限；要收紧需给 `mcp/asr` 加 `--host` 支持 |
 | Windows 不支持 | `spawn('/bin/sh')`、`process.kill(-pid)`、模型写的 bash 语法都是 POSIX 语义 |
 | 链接只在本机可达 | 本地没有公网前缀：`mint_public_link` / 页面访问地址都签成 `http://127.0.0.1:<PORT>/...`，只能在这台机器上打开（这正是本地形态的预期）。要真正对外暴露才需在设置页填 `public_link.base_url` |
-| 技能依赖 | 本地不预装：缺包时模型会把包装进 `skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）；连 `python3` 都没有时也由它自己装。怎么装由模型自己决定。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
+| 技能依赖 | 本地不预装：缺包时模型会把包装进 `<工作目录>/skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）；连 `python3` 都没有时也由它自己装。怎么装由模型自己决定。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
 | `office` 二进制 | 不入库、也不预装：首次用到时报 `binary missing` 并给出该技能 `AGENTS.md` 的绝对路径，模型按它自己下载（`releases/latest`，~34MB，GitHub 慢就用 gh-proxy）。不需要 root、不需重启。officecli 会自更新到 latest，版本比服务器 pin 的新属正常 |
 | `office` 预览 | 预览卡片走 core → executor 的 `:3100` 网关，本地没有这个网关 → 点开打不开。文档创建/编辑/读取不受影响 |
 | 首个 `npm install` 要联网 | 支持 `NPM_REGISTRY` 覆盖源；`app/package-lock.json` 的 `resolved` 已改指向公共 registry（原来钉在内网镜像，外部机器必失败） |
@@ -401,10 +412,9 @@ rm -rf local/   # 或保留脚本、只是不用
 
 ## 9. 记录：测试残留（都不入库）
 
-跑过启动器之后本机会多出：`local/.runtime/`（日志、状态页、技能软链）、
-`local/config.local.yml`、`~/AgentWork/`、`app/node_modules/`、`mcp/image_task|video_task/node_modules/`。
-全部在 gitignore 内，不影响仓库；想彻底重来就把它们删掉再跑脚本（会话产出在 `data/` 与
-工作目录下的 `task-*` 里，不会被清）。
+跑过启动器之后本机会多出：`local/.runtime/`（日志、状态页）、`local/config.local.yml`、
+你选的工作目录（`data/` `skills/` `tasks/`）、`app/node_modules/`、`mcp/image_task|video_task/node_modules/`。
+仓库里只有前两项，且都在 gitignore 内；用户数据全在工作目录里，删掉它等于彻底重置。
 
 ## 10. 新建会话手选工作目录（本地端）
 

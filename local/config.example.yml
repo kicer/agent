@@ -8,16 +8,18 @@
 
 port: 8090
 
-# AI 的工作根。local 模式注入 AGENT_FILE_SCOPE=workspace 后，文件工具可读写这个目录下任何位置。
-workspace_root: /Users/you/AgentWork
+# 你选的工作目录下的三个子目录：tasks（会话工作区）、data（数据库等）、skills（技能）。
 
-# SQLite（.agent.db）与启动 prompt dump。默认指到仓库里的 data/（已在 .gitignore）。
-data_root: /path/to/agent/data
+# AI 的工作根：文件工具的根就是它，AI 看不到同级的 data/ 与 skills/。
+workspace_root: /Users/you/AgentWork/tasks
+
+# SQLite（.agent.db）与启动 prompt dump。
+data_root: /Users/you/AgentWork/data
 
 skills:
-  # 指向 local/.runtime/skills —— 启动脚本按「python3 是否可用」把它软链到真技能目录或空目录，
-  # 因此装不装 python3 都不需要改这里，改完重跑启动脚本即生效。
-  skills_root: /path/to/agent/local/.runtime/skills
+  # 技能根。首次启动时从仓库 skills/ 复制内置技能过来，之后只补缺不覆盖；
+  # pip 装的依赖落在同级的 deps/。
+  skills_root: /Users/you/AgentWork/skills
 
 # 留空：启动后到设置页添加平台与 API Key，再点「重启」（启动器负责把进程拉起来）。
 platforms: []
