@@ -73,6 +73,8 @@
   // 流式：壳推的分片 / 浏览器自己采的分片，都在这里断句后逐段上传
   let pcmRate = 16000;         // 当前流的采样率（契约要求 16k）
   let segChunks = [];          // 当前段的 PCM 分片（Int16Array）
+  let segLens = [];            // 各分片采样数（与 segChunks 平行：软切要按采样换算边界）
+  let segDbs = [];             // 各分片峰值 dB（与 segChunks 平行：软切要找能量最低的边界）
   let segLen = 0;              // 当前段总采样数
   let silLen = 0;              // 段尾连续静音采样数
   let textParts = [];          // 各段识别结果（按顺序）
@@ -90,6 +92,8 @@
   const VAD_PAUSE_SEC = 0.5;      // 连续静音这么久 → 断句（与壳无关）
   const VAD_MIN_SPEECH_SEC = 0.3; // 一段短于这个 → 当噪声丢掉
   const VAD_MAX_SEG_SEC = 25;     // 单段上限：连续说话没停顿就硬切（上游单次上限）
+  const VAD_SOFT_CUT_SEC = 6;     // 累计语音超过这么久 → 在低能量处先切一刀发出去
+  const VAD_SOFT_WINDOW_SEC = 3;  // 软切只在尾部这个窗口里找切点（不切在很久以前）
 
   // 电平与渲染
   let rafId = 0;
@@ -568,7 +572,39 @@
     return out;
   }
 
-  function clearSeg() { segChunks = []; segLen = 0; silLen = 0; }
+  function clearSeg() { segChunks = []; segLens = []; segDbs = []; segLen = 0; silLen = 0; }
+
+  // 长说不停顿是最慢的路径：没有 0.5s 停顿就一段都发不出去，只能憋到松手整段上传。
+  // 所以累计语音到 VAD_SOFT_CUT_SEC 后，在尾部窗口里挑能量最低的分片边界先切一刀，
+  // 后面的继续累积。真静音切点依然优先（更自然），这里只解决「一直说个没完」。
+  function softCutChunk() {
+    const win = Math.floor(pcmRate * VAD_SOFT_WINDOW_SEC);
+    let from = segChunks.length - 1;   // 窗口起点分片下标
+    let acc = 0;
+    for (let i = segChunks.length - 1; i >= 0; i--) {
+      acc += segLens[i];
+      from = i;
+      if (acc >= win) break;
+    }
+    let best = from;
+    for (let i = from + 1; i < segChunks.length; i++) {
+      if (segDbs[i] < segDbs[best]) best = i;
+    }
+    // 切在 best 之前（前 best 片发走）；best 为 0 说明没有可切的前缀
+    return best > 0 ? best : -1;
+  }
+
+  // 从段头取走前 k 个分片发出去，剩下的留在缓冲里继续累积
+  function softCut(k) {
+    let n = 0;
+    for (let i = 0; i < k; i++) n += segLens[i];
+    emitSegment(n);
+    segChunks = segChunks.slice(k);
+    segLens = segLens.slice(k);
+    segDbs = segDbs.slice(k);
+    segLen -= n;
+    if (silLen > segLen) silLen = segLen; // 切点落在尾巴的静音里时，静音计数不能超过剩余长度
+  }
 
   // 把当前段的前 n 个采样作为一段发出去（太短当噪声丢掉）。
   // 注意：必须在 clearSeg() 之前调，takeSeg 要读 segChunks。
@@ -636,6 +672,8 @@
     startLoop();
 
     segChunks.push(pcm);
+    segLens.push(pcm.length);
+    segDbs.push(db);
     segLen += pcm.length;
     // 静音按「整片」判：一片约 20~100ms，足够分辨 0.5s 的停顿（再细也没意义）
     silLen = db < VAD_SILENCE_DB ? silLen + pcm.length : 0;
@@ -649,6 +687,10 @@
       // 一口气说了 25 秒没停顿：硬切（宁可切开也不能超上游上限）
       emitSegment(segLen);
       clearSeg();
+    } else if (segLen >= pcmRate * VAD_SOFT_CUT_SEC) {
+      // 说太久又没停顿：先在能量最低处切一刀（软切），别把整段憋到松手或 25s 硬切
+      const k = softCutChunk();
+      if (k > 0) softCut(k);
     }
   }
 
