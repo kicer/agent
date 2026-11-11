@@ -1619,6 +1619,15 @@ function toolDb(ctx, args) {
 // visit_url（front matter 可选）：页面产物类技能声明访问路径模板，run 成功后在本层拼
 // public_link.base_url（与 mint_public_link 同源）追加完整「访问地址」——技能进程跑在
 // executor 隔离视图里不知道公网前缀，AI 拿到相对路径就会原样转给用户，而相对路径打不开。
+// 本地桌面形态的对外前缀：只有监听在回环地址（local/start.sh 注入 HOST=127.0.0.1）才认。
+// 容器/服务器形态 HOST 为空（= 0.0.0.0），不能凭空造一个 127.0.0.1 给远端用户，照旧只给站内路径。
+function localOrigin(cfg) {
+  const host = String(process.env.HOST || '').trim().toLowerCase();
+  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') return '';
+  const port = String(process.env.PORT || (cfg && cfg.port) || '').trim();
+  return port ? 'http://127.0.0.1:' + port : '';
+}
+
 async function runSkillWithVisit(ctx, name, inputArgs) {
   const out = await skills.runSkill(ctx, name, inputArgs);
   let fm;
@@ -1632,9 +1641,11 @@ async function runSkillWithVisit(ctx, name, inputArgs) {
   const rel = tpl.replace(/\{task_id\}/g, ctx.sessionId || path.basename(path.resolve(ctx.taskDir || '')));
   const pl = (ctx.cfg && ctx.cfg.public_link) || {};
   const base = String(pl.base_url || '').trim().replace(/\/+$/, '');
-  return out + '\n访问地址：' + (base
-    ? base + rel
-    : rel + '（站内路径：public_link.base_url 未配置，拼不出公网前缀）');
+  if (base) return out + '\n访问地址：' + base + rel;
+  // 没有公网前缀时别只给站内路径：本地形态用户就在这台机器上，回环地址就是能直接点开的地址。
+  const origin = localOrigin(ctx.cfg);
+  if (origin) return out + '\n访问地址：' + origin + rel;
+  return out + '\n访问地址：' + rel + '（站内路径：public_link.base_url 未配置，拼不出公网前缀）';
 }
 
 const SKILL_USAGE = 'skill 用法：{"op":"list"} / {"op":"get","name":"<技能名>"} / {"op":"run","name":"<技能名>","args":{...}}';
