@@ -25,6 +25,7 @@ skills/
     ├── run.py            # 技能主入口（Python 脚本，推荐）或 run.sh
     ├── requirements.txt  # Python 依赖（可选，若需要第三方包）
     ├── install.sh        # 系统级依赖安装脚本（可选，如 apt-get）
+    ├── AGENTS.md         # 本机排错命令（可选；core 不读，只在技能报错信息里被指向）
     └── ...               # 其他技能相关文件（如字体、模板等）
 ```
 
@@ -163,12 +164,13 @@ def main():
 示例 `requirements.txt`：
 
 ```
-requests==2.28.1
-beautifulsoup4==4.11.1
+requests
+beautifulsoup4
 ```
 
 - 依赖安装使用 `pip install --target`，不会污染系统全局；镜像已带的包不会重复装。
-- 所有技能**共享**同一个 `deps` 目录，请注意版本冲突（后装的覆盖先装的）。建议锁定精确版本。
+- 所有技能**共享**同一个 `deps` 目录，请注意版本冲突（后装的覆盖先装的）。
+- 默认**不写版本号**：init 用 `pip install --no-index --dry-run <行>` 探测是否已满足，写死版本而镜像/外挂层里是别的版本时探测失败，会往 `deps` 再装一份，而 `PYTHONPATH` 优先于系统 site-packages，等于用旧版本遮蔽镜像包。确有兼容约束才 pin（如 `weasyprint==65.1` 与 pydyf 的编码兼容）。
 - 运行期 skills 目录只读；若上线后经 UI 改了 `requirements.txt`，需重启（`docker compose up -d`）触发重新 init，否则该技能会因依赖未就绪而失败。
 
 ### 5.2 系统级依赖
@@ -288,7 +290,7 @@ A：确保 `requirements.txt` 存在且列出了所有需要的包，并检查 `
 A：检查网络连接和 pip 源是否可用，查看 Skill Manager 输出的错误日志。
 
 **Q：多个技能依赖冲突如何解决？**  
-A：目前所有技能共享同一个 `deps` 目录，建议锁定精确版本，或考虑将冲突的技能拆分到不同的环境中（未来可能支持隔离）。
+A：目前所有技能共享同一个 `deps` 目录，后装的覆盖先装的。真遇到冲突才给冲突的包 pin（pin 会让离线探测失败，把该版本强行装进 `deps` 并遮蔽镜像包）；能升到共同版本更好。
 
 ---
 
@@ -296,7 +298,7 @@ A：目前所有技能共享同一个 `deps` 目录，建议锁定精确版本�
 
 查看现有的 `x2pdf` 技能（位于 `skills/x2pdf/`）可以了解一个较为完整的实现，包括如何自带声明 Python 依赖与系统级依赖（不假设镜像预烘）、按扩展名分派渲染后端、参数化版式 CSS 等。但请根据自身技能的实际需求进行设计，不必拘泥于该示例。
 
-图像处理类需求可参考 `skills/image-process/`：它演示了一个纯 Python + 预装 Pillow 的实现（转换/缩放/裁剪/压缩/水印/切片/拼图，无 requirements.txt，仅靠 install.sh 保证中文字体），并明确区分“确定性图像处理”与“AI 生成/修图”的能力边界。
+图像处理类需求可参考 `skills/image-process/`：它演示了一个纯 Python + 预装 Pillow 的实现（转换/缩放/裁剪/压缩/水印/切片/拼图，Python 依赖只列 Pillow，中文字体由 install.sh 保证），并明确区分“确定性图像处理”与“AI 生成/修图”的能力边界。
 
 ---
 
