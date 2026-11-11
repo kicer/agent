@@ -21,7 +21,7 @@
 
 基线版本：`v2.5.0`（服务器端最后一个纯容器部署版本）。
 
-## 2. 与服务器形态的差异（只有五处）
+## 2. 与服务器形态的差异（只有六处）
 
 | 差异 | 服务器 | 本地 | 由谁注入 |
 |---|---|---|---|
@@ -30,8 +30,9 @@
 | 监听地址 | `0.0.0.0` | `127.0.0.1` | `HOST=127.0.0.1` |
 | 对外链接（`mint_public_link` / `visit_url`） | `public_link.base_url` 拼公网短链 | 没有公网前缀时改拼 `http://127.0.0.1:<PORT>/p/<id>` | 复用 `localOrigin()`，靠 `HOST` 判断形态，不写配置 |
 | 读图回传给模型 | 签公网短链，上游服务器来拉 | 上游拉不到回环地址，改为内联 base64 `data:` URL | `AGENT_IMAGE_INLINE=1` |
+| office 预览的后端 | executor 的 `:3100` 网关（mount/pid 牢笼） | `local/preview-gateway.js`（同机、无牢笼） | `PREVIEW_PROXIES` 注入 core 的反代注册表 |
 
-后四项是本次新增的开关。**四个都不设置时，行为与 v2.5.0 完全一致**（容器部署不受影响）。
+后五项都由本地启动器注入。**都不注入时，行为与 v2.5.0 完全一致**（容器部署不受影响）。
 
 ## 3. 本次改动清单
 
@@ -68,6 +69,7 @@
 | `start.sh` | 主入口：探测 → 首次生成配置 → 装依赖 → 起 core + MCP → 守护重启。**后台化**：拉起真正的启动器就返回 |
 | `stop.sh` | 停止启动器（按 `supervisor.pid` → core 的父进程 → 占端口的进程，三级兜底），幂等 |
 | `config.example.yml` | **仅作参考，不被读取**；实际配置由 `start.sh` 生成到 `config.local.yml` |
+| `preview-gateway.js` | 本地 office 预览网关（对位 executor 的 `:3100`，见 §4.15） |
 | `README.md` | 给使用者的说明（含安全边界、已知限制） |
 
 `.gitignore` 增加 `local/.runtime/`、`local/config.local.yml`。
@@ -321,8 +323,32 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 `soffice` 不在 PATH（在 app bundle 内），不探这几个默认位置，“装 LibreOffice 即可”就是假的。
 另保留了 WeasyPrint 不可用时回落 LibreOffice，让本地只需一个后端而不是 pango + WeasyPrint 两套链。
 
-没做的是预览：预览卡片要 executor 的 `:3100` 网关，本地没有。要补相当于把
-`executor/preview.js` 的槽位管理搬进 core，不值得。
+没做的是预览：预览卡片要 executor 的 `:3100` 网关，本地没有——这一项后来补了，见 §4.15。
+
+### 4.15 office 文档预览：本地自建一个薄网关
+
+服务器上「点开 docx」是 core → 反代 `/preview` → executor 的 `:3100` 网关 → 网关按需 spawn
+`officecli watch`。本地没有 executor，链路断在中间。补法不是改 core，而是在 `local/` 里放一个
+零依赖网关，用 `PREVIEW_PROXIES` 把它登记进 core 的反代注册表（`app/` 一行没改）。
+
+**不复用 `executor/preview.js`**：那套 `unshare --mount --pid` + `nsenter` + `mount --bind` 是为
+「让沙箱内的命令和 watch 看见同一个世界」造的（vendor 靠 `TMPDIR` 下的句柄文件 + 回环 TCP 相互
+发现）。本地没有沙箱，命令和 watch 本来就同机同盘，那些系统调用不但用不上，有些平台根本没有。
+于是本地网关只剩数据面：
+
+- `/preview/<会话id>/<相对路径>` → 解析真实文件 → 确保有 watch → 剥前缀转发
+- `/events`（SSE）与 `/api/*`（选区回读、切换、发送）→ 按 `Referer` 认领槽位再转发
+- 4 个槽位，LRU 挤占 + 闲置回收；watch 端口从 26315 起按代轮转，跳过已被占用的
+- 缺 `officecli` 时给「安装说明页」，而不是无限转圈：服务器那份二进制是构建期必装的，
+  `preview.js` 从没为「没装」设计；本地全新 clone 一定没有，这是常态不是异常
+
+于是本地 `office` 的体验与服务器一致：`create`/`open` 后聊天里出预览卡片，点开即右侧预览，
+`get-pos` 能读到选区。技能侧因此不需要任何本地分支（`skills/office` 与服务器同源）。
+
+平台差异都收在两处：进程回收（POSIX 杀进程组 / Windows `taskkill /T`）、二进制解析（`.exe`、
+POSIX 补 `chmod +x`、`officecli-*` 资产名也认）。其余只用 Node 内置能力。
+
+已知：watch 没有 `--host` 参数，只能绑 `0.0.0.0`（与 `mcp_asr` 同类）；网关与 core 只在回环上。
 
 ## 5. 验证结果（macOS 12.7.6 / x86_64 / Node 22.21 / python3 3.10 / 本机无 ffmpeg）
 
@@ -354,6 +380,11 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 | 无 node（PATH 里剥掉 node/npm）：入口直接拦下，**不** 先让选目录、不生成配置；终端打出安装方式；状态页列出自检项（X Node.js / X npm） | 通过 |
 | 失败时只开一个状态页标签（不再两个） | 通过 |
 | 状态页：启动即弹出、每秒刷新、显示步骤/计时/日志尾巴；失败时保留错误与日志 | 通过 |
+| 预览网关（直接打网关，临时 tasks 根）：HEAD 探针 200、GET 200、自动起 watch @26315 | 通过 |
+| 预览数据面：`/events` 是真 SSE、`/api/selection` 204、`/api/send` 200；无 `Referer` 404 | 通过 |
+| 缺 `officecli`：给安装说明页，HEAD 仍 200（面板不闪死链） | 通过 |
+| 网关退出：watch 端口释放，无残留进程 | 通过 |
+| 经 core 的 `/preview` 端到端（含手选工作目录、`work_dir` 在 `tasks/` 外的会话） | 待复验 |
 | `osascript` 真实选目录弹窗 | 未验证（用桩跑的「没选→回落 `~/AgentWork`」分支） |
 | 真浏览器打开（`open`） | 未验证（用桩记录了被打开的 URL） |
 | 装 ffmpeg 之后：`ASR_URL` 注入、asr 子进程与麦克风一起出现 | 未验证（本机未装 ffmpeg） |
@@ -396,7 +427,7 @@ tail -f local/.runtime/core.log             # 以及 npm-install.log / mcp-*.log
 | 链接只在本机可达 | 本地没有公网前缀：`mint_public_link` / 页面访问地址都签成 `http://127.0.0.1:<PORT>/...`，只能在这台机器上打开（这正是本地形态的预期）。要真正对外暴露才需在设置页填 `public_link.base_url` |
 | 技能依赖 | 本地不预装：缺包时模型会把包装进 `<工作目录>/skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）；连 `python3` 都没有时也由它自己装。怎么装由模型自己决定。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
 | `office` 二进制 | 不入库、也不预装：首次用到时报 `binary missing` 并给出该技能 `AGENTS.md` 的绝对路径，模型按它自己下载（`releases/latest`，~34MB，GitHub 慢就用 gh-proxy）。不需要 root、不需重启。officecli 会自更新到 latest，版本比服务器 pin 的新属正常 |
-| `office` 预览 | 预览卡片走 core → executor 的 `:3100` 网关，本地没有这个网关 → 点开打不开。文档创建/编辑/读取不受影响 |
+| `office` 预览 | 本地网关按需起 `officecli watch`，体验与服务器一致；但 watch 没有 `--host`，只能绑 `0.0.0.0`，且预览进程闲置 6h 回收（槽位 4 个） |
 | 首个 `npm install` 要联网 | 支持 `NPM_REGISTRY` 覆盖源；`app/package-lock.json` 的 `resolved` 已改指向公共 registry（原来钉在内网镜像，外部机器必失败） |
 
 ## 8. 回滚

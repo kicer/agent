@@ -31,9 +31,6 @@ office <command> [args...]
 
 create/open 成功后，用户可自行查看该文档的实时预览（预览页上的选区、标注类交互之后都能被 get-pos 读到）。用户反馈"看第几段/选中了哪里/修改哪里"时，优先用 get-pos 读回选区再针对性改。
 
-本地直跑没有预览卡片时，用 `office watch <file>` 起自带预览页（立即返回本机地址），
-`office unwatch <file>` 停。
-
 ## 注意
 
 - 所有操作文档在任务目录里。

@@ -69,7 +69,7 @@ cd agent
 |---|---|---|
 | 语音输入 | `ffmpeg` + 设置页给 `asr` 填上游（`X-ASR-Base-Url` / `X-ASR-Model`） | 麦克风入口自动隐藏（`/api/asr/status` 返回 `enabled:false`），`mcp_asr` 子进程也不启动 |
 | 技能 | `python3`（仅 Python 类技能需要） | 技能清单照常显示；调 `run.py` 类技能报「入口启动失败」，`office` 这类非 Python 技能不受影响 |
-| Office 文档（docx/xlsx/pptx） | 首次用到时下载一次 officecli 二进制（约 34MB） | `office` 报 `binary missing` 并给出该技能 `AGENTS.md` 的路径，按它下载即可（不需 root、不需重启） |
+| Office 文档（docx/xlsx/pptx） | 首次用到时下载一次 officecli 二进制（约 34MB） | `office` 报 `binary missing` 并给出该技能 `AGENTS.md` 的路径，按它下载即可（不需 root、不需重启）；预览面板里直接显示同一份安装说明 |
 | 网页搜索 | 无 | 装了 Node 就有（内置免费后端） |
 | 图片 / 视频生成 | 设置页给对应 MCP 填上游 key | 调用时报明确的缺参错误 |
 
@@ -90,7 +90,7 @@ cd agent
 仓库里只有：
 
 - 生成的配置：`local/config.local.yml`（**首次生成，之后永不覆盖**，避免冲掉你在网页里配的模型与密钥）
-- 运行期产物：`local/.runtime/`（`status.html` 状态页、`core.log`、`npm-install.log`、各 MCP 日志）
+- 运行期产物：`local/.runtime/`（`status.html` 状态页、`core.log`、`npm-install.log`、`mcp-*.log`、`preview.log` + `watch-<端口>.log`）
 
 想彻底重来：删掉 `local/config.local.yml` 再启动（工作目录里的数据不会动，重选一个目录就换一套）。
 技能要跟着仓库更新：删掉 `<工作目录>/skills/<技能名>` 再启动，脚本会把新版补回来（你自建的技能不受影响）。
@@ -102,6 +102,7 @@ cd agent
 | `PORT` | `8090` | core 端口（别撞下面的 MCP 端口） |
 | `NPM_REGISTRY` | 空 | 手动指定 npm 源（默认自动探测；指定后不再自动换源） |
 | `MCP_WEB_PORT` / `MCP_IMAGE_PORT` / `MCP_VIDEO_PORT` / `MCP_ASR_PORT` | 8091~8094 | 四个 MCP 的端口（同机跑必须各占一个；改这里还要同步改配置里的 url） |
+| `PREVIEW_PORT` | `3100` | office 文档预览网关的端口（被占时自动往后找）；watch 自己的端口从 26315 起 |
 | `AGENT_LOCAL_UI` | `auto` | 是否自动打开状态页：`auto` = 仅 macOS，`1` 强制，`0` 关闭（页面无论如何都会生成） |
 | `AGENT_LOCAL_DETACH` | `1` | `1` = 后台启动后立即返回（用 `stop.sh` 停）；`0` = 前台阻塞（看实时日志、`Ctrl-C` 停） |
 | `AGENT_LOCAL_CACHE` | `~/.cache/agent-local` | 依赖缓存的存放位置（多个 clone 共享） |
@@ -155,8 +156,9 @@ git pull
   `http://127.0.0.1:<PORT>/...`，在这台机器上点得开，发给别人打不开。要对外暴露再填
   `public_link.base_url`（设置页）。本地监听回环地址，模型厂商也拉不到，所以读图回传改走内联
   base64（`AGENT_IMAGE_INLINE=1`，启动器已注入）。
-- **`office` 文档没有预览**：预览卡片走 core → executor 的 `:3100` 网关，本地没有这个网关，
-  点开得不到可用页面；文档本身的创建/编辑/读取完全正常。
+- **`office` 预览依赖 `officecli`**：网关按需起 `officecli watch`（最多 4 个，闲置 6 小时回收）。
+  没装二进制时预览面板会直接显示安装说明，不会无限转圈。watch 只能监听 `0.0.0.0`（它没有
+  `--host` 参数），同机其它用户理论上能访问那几个端口。
 - **技能依赖不预装**：本地没有 `agent-executor-init`，技能自带的 `requirements.txt` 不会在启动时
   自动安装。缺包时会报 `ModuleNotFoundError`，模型会把缺的包装进 `<工作目录>/skills/deps`
   （`AGENT_SKILLS_DEPS` 指向它，且已在该进程的 `PYTHONPATH` 里，装完下次运行即生效）。
@@ -174,6 +176,7 @@ open local/.runtime/status.html        # 启动状态页：步骤、失败原因
 tail -f local/.runtime/core.log        # core 日志（含 prompt dump 路径、MCP 发现结果）
 tail -f local/.runtime/npm-install.log # 装依赖的输出
 tail -f local/.runtime/mcp-asr.log     # 单个 MCP 的日志
+tail -f local/.runtime/preview.log     # office 预览网关（watch 启动失败的原因也在这）
 ```
 
 启动失败时状态页会自己弹出（带错误说明和日志尾部）；它是个静态页，所以改完环境要自己重跑脚本
@@ -183,4 +186,5 @@ tail -f local/.runtime/mcp-asr.log     # 单个 MCP 的日志
 
 ```bash
 lsof -nP -iTCP:8090-8094 -sTCP:LISTEN   # core + 四个 MCP 的监听情况
+lsof -nP -iTCP:3100 -sTCP:LISTEN        # 预览网关（没用 office 时不存在）
 ```

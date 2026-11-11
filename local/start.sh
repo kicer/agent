@@ -795,7 +795,7 @@ kill_tree_hard() {
 do_cleanup() {
   # 心跳子进程也得收掉，不然退出后它会继续每秒重绘页面。
   ui_stop_ticker
-  rm -f "$RUNTIME/ui/busy" "$RUNTIME/supervisor.pid"
+  rm -f "$RUNTIME/ui/busy" "$RUNTIME/supervisor.pid" "$RUNTIME/preview.port"
   for p in $CORE_PID $MCP_PIDS; do kill_tree "$p"; done
   CORE_PID=''
   MCP_PIDS=''
@@ -843,6 +843,34 @@ check_mcp() {
   fi
 }
 
+# ---------- 预览网关：office 文档的 iframe 预览 ----------
+# 服务器上这条链是 core → 反代 /preview → executor 的 :3100 预览网关；本地没有 executor，
+# 由 local/preview-gateway.js 顶上：收到预览请求就按需起 `officecli watch`，再转发页面与 SSE。
+# 端口默认 3100（与服务器一致），被占就往后找几个：本机可能已经有别的服务占着 3100。
+pick_preview_port() {
+  p="${PREVIEW_PORT:-3100}"
+  i=0
+  while [ "$i" -lt 10 ]; do
+    port_open "$p" || { printf '%s' "$p"; return 0; }
+    p=$((p + 1)); i=$((i + 1))
+  done
+  return 1
+}
+
+start_preview() {
+  printf '%s\n' "$PREVIEW_PORT" > "$RUNTIME/preview.port"
+  ( cd "$ROOT" && exec env \
+      OFFICE_PREVIEW_HOST="$HOST_ADDR" \
+      OFFICE_PREVIEW_PORT="$PREVIEW_PORT" \
+      AGENT_TASKS_ROOT="$TASKS_DIR" \
+      AGENT_SKILLS_ROOT="$SKILLS_DIR" \
+      AGENT_REPO_ROOT="$ROOT" \
+      AGENT_CORE_URL="http://$HOST_ADDR:$PORT" \
+      AGENT_RUNTIME="$RUNTIME" \
+      node local/preview-gateway.js >>"$RUNTIME/preview.log" 2>&1 ) &
+  MCP_PIDS="$MCP_PIDS $!"
+}
+
 start_core() {
   # PYTHONPATH 把技能依赖层 <工作目录>/skills/deps 放进 python 搜索路径（与服务器上 executor 容器
   # 的 PYTHONPATH 对齐，那边由 compose 注入）。本地没有 agent-executor-init 替我们装包，
@@ -860,6 +888,7 @@ start_core() {
       ASR_URL="$ASR_URL" \
       PYTHONPATH="$SKILLS_DIR/deps" \
       AGENT_SKILLS_DEPS="$SKILLS_DIR/deps" \
+      PREVIEW_PROXIES="[{\"name\":\"office\",\"prefix\":\"/preview\",\"host\":\"$HOST_ADDR\",\"port\":${PREVIEW_PORT:-3100}}]" \
       node server/server.js >>"$LOG" 2>&1 ) &
   CORE_PID=$!
 }
@@ -998,6 +1027,19 @@ else
   ui_step '技能目录不可用（检查配置里的 skills_root）' warn
 fi
 
+# 会话工作区：配置里的 workspace_root（local 形态 = <工作目录>/tasks）；给预览网关解析会话目录用。
+TASKS_DIR=$(cfg_get workspace_root)
+[ -n "$TASKS_DIR" ] || TASKS_DIR="$(dirname "$SKILLS_DIR")/tasks"
+
+if PREVIEW_PORT=$(pick_preview_port); then
+  start_preview
+  ui_step "预览网关：$HOST_ADDR:$PREVIEW_PORT（office 文档）" ok
+else
+  PREVIEW_PORT=''
+  warn '找不到空闲的预览端口（3100-3109），office 文档的预览将不可用'
+  ui_step '预览网关未启动（3100-3109 都被占用）' warn
+fi
+
 # 语音：ffmpeg 在就启用，两条线都靠同一个开关：
 #   ASR_URL 注入  → core 才挂 /api/asr、前端才显示麦克风
 #   mcp_asr 子进程 → 模型的 transcribe_audio 工具（它转码依赖 ffmpeg，没有就没意义）
@@ -1044,6 +1086,10 @@ while :; do
       check_mcp "$MCP_IMAGE_PORT" image
       check_mcp "$MCP_VIDEO_PORT" video
       [ "$FF_OK" = 1 ] && check_mcp "$MCP_ASR_PORT" asr
+      # 预览网关挂了不会影响别的功能，但它静默失败时用户只会看到空白预览，所以点名。
+      if [ -n "${PREVIEW_PORT:-}" ] && ! port_open "$PREVIEW_PORT"; then
+        warn "预览网关没起来（端口 $PREVIEW_PORT）——日志：local/.runtime/preview.log"
+      fi
       if [ "$FIRST_RUN" = 1 ]; then
         # 首次安装：停在状态页，给一个按钮让用户自己点（先看完「首次使用」提示再进去）。
         ui_done "http://${HOST_ADDR}:${PORT}" click

@@ -17,6 +17,9 @@ PIDFILE="$RUNTIME/supervisor.pid"
 PORT="${PORT:-8090}"
 # 与 start.sh 的默认值一致；用 MCP_*_PORT 改过端口时这里也要跟着改（否则兜底那步找不到它们）。
 MCP_PORTS="${MCP_WEB_PORT:-8091} ${MCP_IMAGE_PORT:-8092} ${MCP_VIDEO_PORT:-8093} ${MCP_ASR_PORT:-8094}"
+# 预览网关端口是启动时从 3100 往后找的第一个空闲口，只能读它写下的记录。
+pv_port=$(cat "$RUNTIME/preview.port" 2>/dev/null || printf '')
+case "$pv_port" in ''|*[!0-9]*) pv_port='3100';; esac
 
 stopped=0
 
@@ -81,7 +84,7 @@ if [ "$stopped" = 0 ]; then
 fi
 
 # 3) 兜底：还占着端口的直接收（启动器已经死了，剩下的都是孤儿）。
-for p in "$PORT" $MCP_PORTS; do
+for p in "$PORT" $MCP_PORTS "$pv_port"; do
   for pid in $(pids_on_port "$p"); do
     stop_pid "$pid" "端口 $p 上的进程"
   done
@@ -89,7 +92,7 @@ done
 [ "$stopped" = 1 ] && sleep 2
 
 # 4) 收尾：仍占着端口的强制结束，避免下次启动被判「端口被占用」。
-for p in "$PORT" $MCP_PORTS; do
+for p in "$PORT" $MCP_PORTS "$pv_port"; do
   for pid in $(pids_on_port "$p"); do
     kill -KILL "$pid" 2>/dev/null || true
   done
@@ -98,5 +101,5 @@ done
 if [ "$stopped" = 1 ]; then
   say '已停止'
 else
-  say "没有在运行（$PORT 与 MCP 端口 $MCP_PORTS 都空闲）"
+  say "没有在运行（$PORT、MCP 端口 $MCP_PORTS、预览端口 $pv_port 都空闲）"
 fi
