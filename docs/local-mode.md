@@ -20,15 +20,17 @@
 
 基线版本：`v2.5.0`（服务器端最后一个纯容器部署版本）。
 
-## 2. 与服务器形态的差异（只有三处）
+## 2. 与服务器形态的差异（只有五处）
 
 | 差异 | 服务器 | 本地 | 由谁注入 |
 |---|---|---|---|
 | 命令在哪跑 | `agent-executor` 容器（mount/pid namespace 隔离） | 本机 `spawn`（**无沙箱**） | `EXECUTOR_URL` 留空 → 现成分支，未改代码 |
 | 文件工具的根 | 会话目录 `tasks/<会话id>/` | 指定的工作目录 | `AGENT_FILE_SCOPE=workspace` |
 | 监听地址 | `0.0.0.0` | `127.0.0.1` | `HOST=127.0.0.1` |
+| 对外链接（`mint_public_link` / `visit_url`） | `public_link.base_url` 拼公网短链 | 没有公网前缀时改拼 `http://127.0.0.1:<PORT>/p/<id>` | 复用 `localOrigin()`，靠 `HOST` 判断形态，不写配置 |
+| 读图回传给模型 | 签公网短链，上游服务器来拉 | 上游拉不到回环地址，改为内联 base64 `data:` URL | `AGENT_IMAGE_INLINE=1` |
 
-后两项是本次新增的开关。**两者都不设置时，行为与 v2.5.0 完全一致**（容器部署不受影响）。
+后四项是本次新增的开关。**四个都不设置时，行为与 v2.5.0 完全一致**（容器部署不受影响）。
 
 ## 3. 本次改动清单
 
@@ -37,7 +39,8 @@
 | 文件 | 改动 |
 |---|---|
 | `app/server/server.js` | 读 `HOST` 环境变量；有值则 `server.listen(PORT, HOST, cb)`，无值维持 `listen(PORT, cb)`（= `0.0.0.0`）。启动日志带上 host |
-| `app/server/tools/executor.js` | 新增 `WIDE_SCOPE`（由 `AGENT_FILE_SCOPE=workspace` 打开）与 `fsRoot(ctx)`；`resolveInTask()` 增加可选第三参 `rootDir`；6 个业务工具的调用点改为传 `fsRoot(ctx)`；`recordFile()` 跳过会话目录之外的文件 |
+| `app/server/tools/executor.js` | 新增 `WIDE_SCOPE`（由 `AGENT_FILE_SCOPE=workspace` 打开）与 `fsRoot(ctx)`；`resolveInTask()` 增加可选第三参 `rootDir`；6 个业务工具的调用点改为传 `fsRoot(ctx)`；`recordFile()` 跳过会话目录之外的文件；`mint_public_link` 在没有 `public_link.base_url` 时改用 `localOrigin()`（回环地址） |
+| `app/server/engine.js` | `mintImageUrl` 在没有 `public_link.base_url` 且 `AGENT_IMAGE_INLINE=1` 时，把待回传的图内联成 `data:` URL（先做同样的 realpath 越界复核；>1.5MB 仍降级） |
 | `app/server/routes/files.js` | 新增 `GET /:id/tree`（桌面端左栏文件树用：单层懒加载、忽略大目录、上限 500、越界双重校验） |
 
 `resolveInTask` 的两个分叉点：
@@ -50,7 +53,7 @@
 
 - `resolvePastPath()`（`@<会话id>/...` 跨会话只读）—— 仍锁在对方会话目录
 - `routes/public-files.js`、`routes/data-page.js` —— 公网短链与 data-page 仍按会话目录校验
-- `mint_public_link` —— 仍会话目录语义（本地本来也没配 `public_link.base_url`）
+- `mint_public_link` —— 路径校验仍是会话目录语义；只是没有公网前缀时改用回环地址签发（见 §2）
 - 前端 —— 本地模式没有专属前端代码；左栏文件树是桌面端共用的（见下）
 
 > 追加：文件树最初只给 local 用，后来上收为桌面端通用能力 —— `/tree` 移到 `routes/files.js`，
@@ -373,7 +376,7 @@ tail -f local/.runtime/core.log             # 以及 npm-install.log / mcp-*.log
 | 没 ffmpeg 时 asr 会报「工具发现失败」 | 此时 `mcp_asr` 不启动（它转码依赖 ffmpeg），但配置里的 asr 条目仍在（配置不覆盖），所以 core 启动会 warn 一次并重试，属预期 |
 | `mcp_asr` 监听 `0.0.0.0` | 它只认 `PORT` 环境变量、`listen` 不带 host（已启动时才是问题）。不存密钥（上游参数随请求带入），暴露面有限；要收紧需给 `mcp/asr` 加 `--host` 支持 |
 | Windows 不支持 | `spawn('/bin/sh')`、`process.kill(-pid)`、模型写的 bash 语法都是 POSIX 语义 |
-| `mint_public_link` 不可用 | 本地 `public_link.base_url` 为空，工具会回明确的「未配置」错误 |
+| 链接只在本机可达 | 本地没有公网前缀：`mint_public_link` / 页面访问地址都签成 `http://127.0.0.1:<PORT>/...`，只能在这台机器上打开（这正是本地形态的预期）。要真正对外暴露才需在设置页填 `public_link.base_url` |
 | 技能依赖 | 本地不预装：缺包时模型会把包装进 `skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）；连 `python3` 都没有时也由它自己装。怎么装由模型自己决定。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
 | `office` 二进制 | 不入库、也不预装：首次用到时报 `binary missing` 并给出该技能 `AGENTS.md` 的绝对路径，模型按它自己下载（`releases/latest`，~34MB，GitHub 慢就用 gh-proxy）。不需要 root、不需重启。officecli 会自更新到 latest，版本比服务器 pin 的新属正常 |
 | `office` 预览 | 预览卡片走 core → executor 的 `:3100` 网关，本地没有这个网关 → 点开打不开。文档创建/编辑/读取不受影响 |

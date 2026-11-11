@@ -664,6 +664,29 @@ function cleanTitle(raw) {
   return t.slice(0, 60);
 }
 
+// 读图回传上游有两条取图路，取决于「谁能访问这个 URL」：
+// - 服务器形态：签一条公网短链（/p/<id>），模型厂商的服务器来拉；
+// - 本地形态：core 监听在回环地址，厂商拉不到 127.0.0.1，改为把压缩后的图内联成 data URL
+//   （llm.js 侧本来就接受这个形态——用户粘贴附件的 image_url 走的就是它）。
+// 只认 AGENT_IMAGE_INLINE=1（local/start.sh 注入）：服务器不设 → 完全走原路径。
+const INLINE_IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;
+const INLINE_IMAGE_MIME = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.webp': 'image/webp', '.gif': 'image/gif',
+};
+
+function inlineImageDataUrl(abs) {
+  if (String(process.env.AGENT_IMAGE_INLINE || '') !== '1') return null;
+  const mime = INLINE_IMAGE_MIME[path.extname(abs).toLowerCase()];
+  if (!mime) return null;
+  try {
+    // 上限按原文件字节算（base64 约 1.34 倍）：超限宁可不发——llm 侧会照旧降级成
+    // 「像素未送达」——也不把请求体顶爆（.imgcache 产物已压到长边 2000px，正常远低于上限）。
+    if (fs.statSync(abs).size > INLINE_IMAGE_MAX_BYTES) return null;
+    return 'data:' + mime + ';base64,' + fs.readFileSync(abs).toString('base64');
+  } catch (_) { return null; }
+}
+
 async function runLoopInner(sessionId, run) {
   let iter = 0;
   // 已纳入模型请求的最大消息 id；用于判断是否有尚未被回应的新 user 消息
@@ -680,16 +703,21 @@ async function runLoopInner(sessionId, run) {
     // 且不传 tools，模型只能输出摘要文本。
     // 发送前为历史里的 image_ref 块现签公网外链（GET /p/<id>，同 mint_public_link）：
     // 每次请求重签，回合内多轮迭代/重试永不过期；DB 只存几十字符的 rel，base64 不进库不进请求体。
-    // base_url 未配/校验不过/mint 异常时返回 null，buildMessages 降级为文字占位。
+    // base_url 未配/校验不过/mint 异常时返回 null，buildMessages 降级为文字占位；本地形态
+    // 没有公网前缀时改走内联 data URL（同见 inlineImageDataUrl），厂商拉不到回环地址。
     // image_rel 可能是压缩无收益时直指的原文件：与 mint_public_link 同款 realpath 复核，
     // 防任务目录里指向外部的符号链接图片被签上公网。
     const mintImageUrl = (rel) => {
       const pl = cfg.public_link || {};
-      if (!pl.base_url) return null;
+      let dir, real;
       try {
-        const dir = taskDirOf(sessionId);
-        const real = fs.realpathSync(resolveInTask(dir, rel));
+        dir = taskDirOf(sessionId);
+        real = fs.realpathSync(resolveInTask(dir, rel));
         if (real !== dir && !real.startsWith(dir + path.sep)) return null;
+      } catch (_) { return null; }
+      // 符号链接复核先做完再分叉：内联形态同样不能让任务目录外的图出去（见 inlineImageDataUrl）。
+      if (!pl.base_url) return inlineImageDataUrl(real);
+      try {
         return pl.base_url + '/p/' + publicFiles.mint({ sessionId: sessionId, rel, ttlMs: pl.ttl_ms });
       } catch (_) { return null; }
     };

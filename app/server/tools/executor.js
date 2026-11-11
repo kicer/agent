@@ -1219,7 +1219,11 @@ function recordFile(ctx, abs) {
 // 而 ctx.taskDir 就是会话目录，relOf 的结果正是取用侧（routes/public-files.js）要的 rel。
 async function toolMintPublicLink(ctx, args) {
   const pl = (ctx.cfg && ctx.cfg.public_link) || {};
-  if (!pl.base_url) throw new Error('public_link.base_url 未配置，无法签发公网链接');
+  // 本地桌面形态没有公网前缀，但用户就在这台机器上：回环地址签出来的链接照样点得开。
+  // 与 visit_url 的回落同源（都不写配置，靠 HOST 判断形态）；容器/服务器形态 HOST 为空
+  // → localOrigin 返回 '' → 仍是原来那句报错，行为不变。
+  const base = String(pl.base_url || '').replace(/\/+$/, '') || localOrigin(ctx.cfg);
+  if (!base) throw new Error('public_link.base_url 未配置，无法签发公网链接');
   const abs = resolveInTask(ctx.taskDir, args.path);
   const rel = relOf(ctx.taskDir, abs);
   if (rel === '.') throw new Error('path 要指向一个文件，不能是任务目录本身');
@@ -1233,7 +1237,7 @@ async function toolMintPublicLink(ctx, args) {
     throw new Error('path 经符号链接指向了任务目录之外，拒绝签发');
   }
   const id = publicFiles.mint({ sessionId: ctx.sessionId, rel, ttlMs: pl.ttl_ms });
-  return pl.base_url + '/p/' + id;
+  return base + '/p/' + id;
 }
 
 // schedule：用户全部定时任务的生命周期（op 分派，规范见 docs/tool-design.md）。

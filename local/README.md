@@ -138,8 +138,10 @@ git pull
   （另外三个服务都传了 `--host 127.0.0.1`）。它不存任何密钥（上游参数随请求带入），
   暴露面有限，但严格起见可以给 `mcp/asr` 补一个 `--host` 支持。
 - **Windows 暂不支持**：本机执行走 `spawn('/bin/sh')` 与 `process.kill(-pid)`，都是 POSIX 语义。
-- **`mint_public_link` 不可用**：`public_link.base_url` 未配置（本地生成的链接只有本机能打开），
-  模型调用该工具会得到明确的「未配置」错误。
+- **链接只在本机可达**：没有公网前缀时，`mint_public_link` 与页面访问地址都会签成
+  `http://127.0.0.1:<PORT>/...`，在这台机器上点得开，发给别人打不开。要对外暴露再填
+  `public_link.base_url`（设置页）。本地监听回环地址，模型厂商也拉不到，所以读图回传改走内联
+  base64（`AGENT_IMAGE_INLINE=1`，启动器已注入）。
 - **`office` 文档没有预览**：预览卡片走 core → executor 的 `:3100` 网关，本地没有这个网关，
   点开得不到可用页面；文档本身的创建/编辑/读取完全正常。
 - **技能依赖不预装**：本地没有 `agent-executor-init`，`skills/*/requirements.txt` 不会在启动时
