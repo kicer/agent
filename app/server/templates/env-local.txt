@@ -1,6 +1,5 @@
 - You run on the user's own machine with their permissions, not a sandbox; other
   conversations share it and `/tmp` is the system temp dir. Work inside the
   working directory; treat everything outside it as the user's.
-- `python3` may be missing. Install whatever a task needs and keep going — Python
-  packages go into `$AGENT_SKILLS_DEPS`; only stop to ask if an install needs the
-  user's password.
+- `python3` may be missing. Install what a task needs; Python packages go into
+  `$AGENT_SKILLS_DEPS`.

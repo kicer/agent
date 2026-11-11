@@ -268,8 +268,8 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
   PEP 668 拦截明确豁免（`pip/_internal/commands/install.py`），所以这条路在 Homebrew 那种
   externally-managed 解释器上也走得通——但这话不写进提示词，交给模型自己判断。
 - 缺 `python3` 本体时也放给模型自己处理：本地形态是「用户自己的机器 + 用户自己的 agent」，
-  目标是把事做成，而不是把它当生产环境保护。提示词只说「需要什么就装、装完继续；只有需要
-  用户密码时才停下来问」——`sudo` 本来就会卡在密码上，不必再用规则去禁。
+  目标是把事做成，而不是把它当生产环境保护。提示词只告诉它**装到哪**（Python 包进
+  `$AGENT_SKILLS_DEPS`），不写条件也不写禁令——要不要先知会用户，交给模型按场合自己判断。
 - 技能自己的 `requirements.txt` 一律**不写版本号**：服务端 init 用
   `pip install --no-index --dry-run` 探测，pin 到与镜像不同的版本会让探测失败 → 真的往
   `skills/deps` 装一份旧的，而 `PYTHONPATH` 优先于系统 site-packages，等于反向遮蔽镜像包。
