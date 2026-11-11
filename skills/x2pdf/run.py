@@ -3,10 +3,13 @@
 x2pdf 技能主入口:通用 PDF 转换。
 
 分派策略(按输入文件扩展名):
-- .md / .markdown / .txt / .html / .htm → WeasyPrint 渲染
+- .md / .markdown / .txt / .html / .htm → WeasyPrint 渲染;本机没有 WeasyPrint
+  (缺包,或缺它要 dlopen 的 pango/cairo)时回落 LibreOffice,保真度略低但不缺库
 - .docx / .xlsx / .pptx / .odt / .ods / .odp → LibreOffice headless 转换
 
 依赖不假设镜像预烘:Python 包由 requirements.txt 声明,系统库由 install.sh 就绪校验。
+LibreOffice 的定位不只看 PATH:macOS 的 app bundle 与 Windows 的安装目录都不进 PATH,
+which() 找不到不等于没装(见 find_soffice)。
 中文字体走 fontconfig(系统文泉驿/Noto),技能不携带字体文件。
 """
 import html as html_mod
@@ -26,6 +29,29 @@ OFFICE_EXTS = {'.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp'}
 SUPPORTED_EXTS = TEXT_EXTS | OFFICE_EXTS
 
 PAGE_DEFAULTS = {'size': 'A4', 'margin': '20mm', 'font_size': '10.5pt'}
+
+SKILL_DIR = Path(__file__).resolve().parent
+
+
+def find_soffice():
+    """定位 LibreOffice 可执行文件。
+    PATH 优先(服务器/apt 装的都在);再探 macOS 的 app bundle 与 Windows 的安装目录——
+    这两个位置正常安装都不进 PATH,只用 shutil.which() 会把「装了」误判成「没装」。"""
+    for name in ('soffice', 'libreoffice'):
+        p = shutil.which(name)
+        if p:
+            return p
+    for c in ('/Applications/LibreOffice.app/Contents/MacOS/soffice',
+              str(Path.home() / 'Applications/LibreOffice.app/Contents/MacOS/soffice'),
+              r'C:\Program Files\LibreOffice\program\soffice.exe',
+              r'C:\Program Files (x86)\LibreOffice\program\soffice.exe'):
+        if Path(c).is_file():
+            return c
+    return None
+
+
+def req_hint():
+    return '依赖清单: %s' % (SKILL_DIR / 'requirements.txt')
 
 # 默认样式:黑白友好、打印向。字号用 em 相对值,整体缩放只依赖 html font-size
 # (由 page.font_size 参数注入),因此压单页只需调小字号/边距。
@@ -136,9 +162,7 @@ def build_document(title, body_html):
 
 
 def convert_text_pdf(input_path, output_path, css_arg, page_arg):
-    """md/txt/html → WeasyPrint"""
-    from weasyprint import CSS, HTML
-
+    """md/txt/html → PDF。返回一句后端提示(正常走 WeasyPrint 时为空串)。"""
     ext = input_path.suffix.lower()
     text = input_path.read_text(encoding='utf-8', errors='replace')
     user_css = None
@@ -157,7 +181,10 @@ def convert_text_pdf(input_path, output_path, css_arg, page_arg):
         sheets = [s for s in (page_css(page_arg, with_defaults=False), user_css) if s]
     else:
         if ext in MD_EXTS:
-            import markdown
+            try:
+                import markdown
+            except ImportError:
+                raise RuntimeError('缺 Python 包 markdown,无法解析 Markdown;%s' % req_hint())
             # extra 已含 tables/fenced_code/footnotes/attr_list/md_in_html/sane_lists 等;
             # 不可再单独传其中的扩展名,否则 ExtensionAlreadyConfigured
             body = markdown.markdown(
@@ -172,17 +199,43 @@ def convert_text_pdf(input_path, output_path, css_arg, page_arg):
             sheets.append(user_css)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from weasyprint import CSS, HTML
+    except (ImportError, OSError):
+        # 缺 Python 包是 ImportError;装了包但缺它要 dlopen 的 libpango/libgobject 时是 OSError。
+        # 两种都当作「本机没有 WeasyPrint」,回落 LibreOffice(Office 分支本来也要它)。
+        return convert_html_pdf(document, output_path, ext)
     # 注:stylesheets 参数只接受 CSS 对象,传字符串会被当成文件路径
     HTML(string=document, base_url=base_url).write_pdf(
         str(output_path), stylesheets=[CSS(string=s) for s in sheets] or None)
+    return ''
+
+
+def convert_html_pdf(document, output_path, ext):
+    """HTML → LibreOffice:WeasyPrint 不可用时的回落路径。
+    代价是保真度:@page 的边距/页码与大部分 CSS 在 LibreOffice 的 HTML 导入里不生效,
+    适合「拿到一份能看的 PDF」,不适合精确排版。"""
+    if not find_soffice():
+        raise RuntimeError('这台机器没有可用的 PDF 渲染后端:%s 需 WeasyPrint,但 WeasyPrint 不可用'
+                           '(缺 Python 包,或缺系统库 pango/cairo);也没找到 LibreOffice。%s'
+                           % (ext, req_hint()))
+    tmp_root = Path(tempfile.mkdtemp(prefix='x2pdf-html-'))
+    try:
+        src = tmp_root / 'document.html'
+        src.write_text(document, encoding='utf-8')
+        convert_office_pdf(src, output_path)
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+    return '用 LibreOffice 渲染(WeasyPrint 不可用):@page 边距/页码与部分 CSS 不生效'
 
 
 def convert_office_pdf(input_path, output_path):
     """docx/xlsx/pptx 等 → LibreOffice headless。
     每次用独立临时 UserInstallation/HOME,避免并发实例互踩共享配置。"""
-    soffice = shutil.which('soffice') or shutil.which('libreoffice')
+    soffice = find_soffice()
     if not soffice:
-        raise FileNotFoundError('未找到 soffice/libreoffice,无法转换 Office 文档(需镜像预装)')
+        raise FileNotFoundError('未找到 LibreOffice(soffice),无法转换 Office 文档。'
+                                '服务器镜像已预装;本机装一个 LibreOffice 即可。')
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_root = Path(tempfile.mkdtemp(prefix='x2pdf-office-'))
@@ -239,6 +292,7 @@ def main():
     output_arg = args.get('output')
     output_path = Path(output_arg) if output_arg else input_path.with_suffix('.pdf')
 
+    note = ''
     try:
         if ext in OFFICE_EXTS:
             ignored = [k for k in ('css', 'page') if args.get(k)]
@@ -246,12 +300,14 @@ def main():
                 print('提示:Office 输入忽略参数 %s' % '、'.join(ignored))
             convert_office_pdf(input_path, output_path)
         else:
-            convert_text_pdf(input_path, output_path, args.get('css'), args.get('page'))
+            note = convert_text_pdf(input_path, output_path, args.get('css'), args.get('page'))
     except Exception as e:
         print('Error during conversion: %s' % e, file=sys.stderr)
         sys.exit(1)
 
     print('PDF generated: %s' % output_path.resolve())
+    if note:
+        print(note)
 
 
 if __name__ == '__main__':

@@ -4,4 +4,7 @@
 # 选 65.1:晚于 pydyf 0.12 发布,对 pydyf 0.11/0.12 兼容性经上游验证;
 # 系统要求(Pango>=1.44)与本技能 install.sh 声明一致。
 weasyprint==65.1
-markdown==3.6
+# markdown 不锁版:只用 markdown(text, extensions=['extra','toc']),3.x 全系稳定。
+# 锁了反而有害——服务端 init 用 `pip install --no-index --dry-run` 探测,写死版本与镜像里
+# 已有的不一致时会往 skills/deps 再装一份,而 PYTHONPATH 优先于系统 site-packages。
+markdown
