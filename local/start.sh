@@ -2,7 +2,7 @@
 # local/start.sh —— 本机（macOS / Linux）一键启动 agent-core。
 #
 # 这个脚本只负责「把容器部署的形状换成本机形状」，不改任何业务逻辑：
-#   1. 探测环境（node 必需；ffmpeg 决定能不能语音；python3 决定技能可不可用）
+#   1. 探测环境（node 必需；ffmpeg 决定能不能语音；python3 决定 Python 技能能否执行）
 #   2. 首次运行：选工作目录 + 生成 local/config.local.yml
 #   3. 起 core（+ 四个同栈 MCP 子进程），就绪后打开浏览器
 #   4. 守护：core 退出就拉起来
@@ -353,8 +353,8 @@ ui_checks() {
   else ui_step "Node.js 缺失或版本过低：$NODE_HINT" bad; fi
   if [ "$NPM_OK" = 1 ]; then ui_step 'npm 可用（装依赖用）' ok
   else ui_step 'npm 缺失：随 Node.js 一起装，重装 Node 即可' bad; fi
-  if [ "$PY_OK" = 1 ]; then ui_step "python3 ${PY_VER}（技能可用）" ok
-  else ui_step 'python3 未安装（可选，技能清单为空）' warn; fi
+  if [ "$PY_OK" = 1 ]; then ui_step "python3 ${PY_VER}（Python 技能可用）" ok
+  else ui_step 'python3 未安装（Python 技能会失败；office 等非 Python 技能不受影响）' warn; fi
   if [ "$FF_OK" = 1 ]; then ui_step "ffmpeg ${FF_VER}（语音可用）" ok
   else ui_step 'ffmpeg 未安装（可选，麦克风入口隐藏）' warn; fi
   if [ "$PORT_FREE" = 1 ]; then ui_step "端口 $PORT 可用" ok
@@ -415,10 +415,15 @@ EOF
   say "工作目录：$ws"
 }
 
-# ---------- 技能目录：用软链切换，不动配置 ----------
+# ---------- 技能目录：软链到仓库 skills，不动配置 ----------
+# 为什么不再按 python3 有无切换成空目录：技能不一定是 Python 的。office 就是
+# SKILL.md + scripts/office，模型在 terminal 里调 `office <cmd>`，跟 python3 无关；
+# 一刀切会把这类技能一并藏起来。而 Python 技能缺解释器时，skills.js 的 runEntry 对
+# spawn 的 error 有处理，模型拿到的是「技能入口启动失败：spawn python3 ENOENT」，
+# 干净可读，不会崩也不会挂住——没必要靠藏清单来避险。
 link_skills() {
   link="$RUNTIME/skills"
-  if [ "$PY_OK" = 1 ]; then dest="$ROOT/skills"; else dest="$RUNTIME/empty-skills"; mkdir -p "$dest"; fi
+  dest="$ROOT/skills"
   rm -f "$link" 2>/dev/null || true
   # 万一上次留下了真目录（老版本行为），先挪走再建软链
   if [ -d "$link" ] && [ ! -L "$link" ]; then rm -rf "$link"; fi
@@ -957,7 +962,7 @@ fi
 
 if link_skills; then
   if [ "$PY_OK" = 1 ]; then ui_step '技能：已启用（python3 就绪）' ok
-  else ui_step '技能：已关闭（未安装 python3，装好后重跑脚本即可）' warn; fi
+  else ui_step '技能已暴露，但 python3 未安装：Python 技能会执行失败' warn; fi
 else
   ui_step '技能目录软链创建失败，技能不可用' warn
 fi
@@ -1028,7 +1033,7 @@ while :; do
       if [ "$PY_OK" = 1 ]; then
         say '技能：已启用（python3 就绪）'
       else
-        say '技能：已关闭（未安装 python3；装好后重跑本脚本即可）'
+        say '技能：已暴露，但 python3 未安装——Python 技能调用会失败，其余照常'
       fi
       if [ "$FIRST_RUN" = 1 ]; then
         printf '\n首次使用：左下角「用户区」→ 设置 → 模型池，添加平台和 API Key，然后点「重启」。\n'

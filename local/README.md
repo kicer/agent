@@ -65,12 +65,13 @@ cd agent
 | 能力 | 需要 | 没有时的表现 |
 |---|---|---|
 | 语音输入 | `ffmpeg` + 设置页给 `asr` 填上游（`X-ASR-Base-Url` / `X-ASR-Model`） | 麦克风入口自动隐藏（`/api/asr/status` 返回 `enabled:false`），`mcp_asr` 子进程也不启动 |
-| 技能 | `python3` | 技能清单为空，其余功能不受影响 |
+| 技能 | `python3`（仅 Python 类技能需要） | 技能清单照常显示；调 `run.py` 类技能报「入口启动失败」，`office` 这类非 Python 技能不受影响 |
 | 网页搜索 | 无 | 装了 Node 就有（内置免费后端） |
 | 图片 / 视频生成 | 设置页给对应 MCP 填上游 key | 调用时报明确的缺参错误 |
 
-装完 `ffmpeg` / `python3` 之后**重跑一次 `./local/start.sh`** 即可生效——这两项都不写进配置，
-靠「起不起子进程 / 软链指向哪 / 注入什么环境变量」切换。
+装完 `ffmpeg` 之后**重跑一次 `./local/start.sh`** 即可生效。`python3` 稍特殊：技能清单本来就在，
+只要新装的解释器落在 core 启动时 `PATH` 已包含的目录里（如 brew 的 `/opt/homebrew/bin`）就无需重启；
+换了目录就重跑脚本。这三项都不写进配置，靠「起不起子进程 / 注入什么环境变量」切换。
 
 ## 配置放哪
 
@@ -141,6 +142,7 @@ git pull
 - **技能依赖不预装**：本地没有 `agent-executor-init`，`skills/*/requirements.txt` 不会在启动时
   自动安装。技能缺包时会报 `ModuleNotFoundError`，模型会把缺的包装进 `skills/deps`
   （`AGENT_SKILLS_DEPS` 指向它，且已在该进程的 `PYTHONPATH` 里，装完下次运行即生效）。
+  连 `python3` 都没有时，技能清单仍是完整的，模型会先问你、得到同意后才装解释器。
   需要系统库的包（如 `weasyprint` 依赖 pango/cairo）pip 装不了，得自己 `brew install`。
 - **首个 `npm install` 要联网**：启动器会自动选源、换源重试、并把装好的依赖缓存到
   `~/.cache/agent-local/`；之后重启 / 换 clone 都是本地解压，不需要网络。真要手动指定源：

@@ -14,7 +14,7 @@
 
 - **和服务器端同一份代码**，不 fork 新仓库、不长期开 branch；靠运行时开关分叉
 - **`app/` 最小化改动**（最终只有 2 个后端文件，前端 0 改动）
-- **组件按需**：node 必需；ffmpeg 决定语音；python3 决定技能
+- **组件按需**：node 必需；ffmpeg 决定语音；python3 决定 Python 类技能能否执行（非 Python 技能如 `office` 不受影响）
 - **Windows 暂时不做**（本机执行依赖 POSIX 语义，见第 7 节）
 - 不用 Docker（用户明确否决）
 
@@ -117,15 +117,23 @@
 
 装完 ffmpeg 后**重跑脚本**即生效，配置文件一个字不用改。
 
-### 4.4 python3 用软链切换，与配置解耦
+### 4.4 技能目录用软链固定指向仓库，不再按 python3 有无切换
 
-`skills.js` 对技能根目录不存在的行为是「warn + 返回空列表」，不报错不阻塞。于是配置里永远写
-`skills_root: <仓库>/local/.runtime/skills`，启动器每次都重建这个软链：
+配置里永远写 `skills_root: <仓库>/local/.runtime/skills`（首次生成后不覆盖），启动器每次都重建这个
+软链，恒指向 `<仓库>/skills`。
 
-- 有可用 python3 → 指向 `<仓库>/skills`
-- 没有 → 指向 `.runtime/empty-skills`（空目录）
+早期版本在「没有 python3」时把它指向一个空目录，想的是“别让模型看到跑不了的工具”。两个问题：
 
-装完 python3 重跑脚本即生效。**没有改 `skills.js` 一行代码。**
+1. **技能不一定是 Python 的**。`office` 只有 `SKILL.md` + `scripts/office`，模型在 `terminal` 里调
+   `office <cmd>`，完全不需要 python3——一刀切会把这类技能一并藏掉。
+2. **没必要防**。`skills.js` 的 `runEntry` 对 `spawn` 的 `error` 有处理，缺解释器时模型拿到的是
+   「技能入口启动失败：spawn python3 ENOENT」，干净可读、不崩不挂。模型能据此自己决定：装模块、
+   问你装运行时，或者放弃。
+
+所以现在只有一种行为：技能总是可见；python3 缺失只影响 `run.py` 类技能能否执行。装好 python3 后
+（若在 core 启动时 `PATH` 已有的目录里，如 brew 的 `/opt/homebrew/bin`）无需重启即生效，否则重跑脚本。
+
+**没有改 `skills.js` 一行代码。**
 
 ### 4.5 启动器必须是守护进程
 
@@ -259,6 +267,10 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
   import；而不指定位置的话，它很可能装到别处（或去改系统 Python）。pip 对 `--target` 的
   PEP 668 拦截明确豁免（`pip/_internal/commands/install.py`），所以这条路在 Homebrew 那种
   externally-managed 解释器上也走得通——但这话不写进提示词，交给模型自己判断。
+- 缺 `python3` 本体时：提示词允许模型装运行时，但**必须先问用户**（`ask the user before
+  installing a runtime`）。理由：macOS 的 `/usr/bin/python3` 是 Xcode CLT 的桩，真装要走 brew
+  或官方安装器，耗时长且可能改 `PATH`/要管理员权限——这种级别的改动不能默许模型自主做。
+  同时仍然禁止 `sudo` 与装系统包。
 - 技能自己的 `requirements.txt` 一律**不写版本号**：服务端 init 用
   `pip install --no-index --dry-run` 探测，pin 到与镜像不同的版本会让探测失败 → 真的往
   `skills/deps` 装一份旧的，而 `PYTHONPATH` 优先于系统 site-packages，等于反向遮蔽镜像包。
@@ -280,7 +292,7 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 | 越界保护：`read_file ~/.ssh/config`、`terminal cd /etc` 均报「路径越界」 | 通过 |
 | `/tmp` 一致性：`write_file /tmp/x` → `terminal cat /tmp/x` 与 `read_file /tmp/x` 内容一致 | 通过 |
 | 无 ffmpeg：`/api/asr/status` = `enabled:false`（麦克风隐藏），asr 子进程不启动，8094 不监听 | 通过 |
-| 有 python3：技能列表有内容；桩掉 python3 后 `/api/skills` 返回 `[]`、状态页显示「技能：已关闭」 | 通过 |
+| 有 python3：Python 技能可执行；桩掉 python3 后技能清单不变（`/api/skills` 照常返回），执行 `run.py` 类技能报「技能入口启动失败：spawn python3 ENOENT」，`office` 这类非 Python 技能不受影响 | 待复测 |
 | 四个 MCP 在具备条件时均能发现工具（`[mcp] web_search / image_task / video_task / asr: 发现 1 个工具`） | 通过 |
 | 前台模式 `Ctrl-C` 与 `TERM`：8090 与 8091~8094 全部释放，无残留进程 | 通过 |
 | 二次启动：沿用配置、跳过依赖安装（时间戳生效） | 通过 |
@@ -336,7 +348,7 @@ tail -f local/.runtime/core.log             # 以及 npm-install.log / mcp-*.log
 | `mcp_asr` 监听 `0.0.0.0` | 它只认 `PORT` 环境变量、`listen` 不带 host（已启动时才是问题）。不存密钥（上游参数随请求带入），暴露面有限；要收紧需给 `mcp/asr` 加 `--host` 支持 |
 | Windows 不支持 | `spawn('/bin/sh')`、`process.kill(-pid)`、模型写的 bash 语法都是 POSIX 语义 |
 | `mint_public_link` 不可用 | 本地 `public_link.base_url` 为空，工具会回明确的「未配置」错误 |
-| 技能依赖 | 本地不预装：缺包时模型会把包装进 `skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）。怎么装由模型自己决定。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
+| 技能依赖 | 本地不预装：缺包时模型会把包装进 `skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）。怎么装由模型自己决定。缺 `python3` 本体时它会先问你，同意后才装。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
 | 首个 `npm install` 要联网 | 支持 `NPM_REGISTRY` 覆盖源；`app/package-lock.json` 的 `resolved` 已改指向公共 registry（原来钉在内网镜像，外部机器必失败） |
 
 ## 8. 回滚
