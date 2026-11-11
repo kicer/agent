@@ -1,0 +1,13 @@
+# 这份文件主要给「本地端」（local/）用：本机 python 缺包时，启动器或模型自己可以按它补装。
+#
+# 刻意不写版本号：服务端 agent-executor-init 的判定是
+#   python3 -m pip install --no-index --dry-run <本行>
+# 退出码 0 即视为已满足、直接跳过装包（executor 镜像已烘了 numpy/Pillow/pymupdf）。
+# 一旦写了 pin 而镜像里是别的版本，探测就会失败 → 真的往 skills/deps 装一份老版本，
+# 而 PYTHONPATH 优先于系统 site-packages，等于用外挂层遮蔽镜像版，会牵连其它技能。
+#
+# pypdfium2 是 check.py 里 fitz 缺失时的兜底渲染器，不是必需，故不声明。
+
+numpy
+Pillow
+pymupdf

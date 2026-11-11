@@ -1,0 +1,7 @@
+# 本技能只用 Pillow（Image/ImageDraw/ImageFont/ImageOps）。
+#
+# 这份文件主要给「本地端」（local/）用：本机 python 缺包时按它补装。
+# 不写版本号的原因见 skills/document-photo-to-pdf/requirements.txt 顶部的说明：
+# 服务端 init 用 `pip install --no-index --dry-run` 探测，pin 到与镜像不同的版本会反向遮蔽镜像包。
+
+Pillow

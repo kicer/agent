@@ -813,6 +813,10 @@ check_mcp() {
 }
 
 start_core() {
+  # PYTHONPATH 把技能共享依赖层 skills/deps 放进 python 的搜索路径（与服务器上 executor 容器
+  # 的 PYTHONPATH 对齐，那边由 compose 注入）。本地没有 agent-executor-init 替我们装包，
+  # 所以另外把目录路径作为 AGENT_SKILLS_DEPS 传下去：模型在 terminal 里发现技能缺包时，
+  # 按提示词里的写法 pip install --target "$AGENT_SKILLS_DEPS" 即可，技能下次运行就能 import。
   ( cd "$ROOT/app" && exec env \
       PORT="$PORT" \
       HOST="$HOST_ADDR" \
@@ -821,6 +825,7 @@ start_core() {
       AGENT_LOCAL_PICK=1 \
       ASR_URL="$ASR_URL" \
       PYTHONPATH="$ROOT/skills/deps" \
+      AGENT_SKILLS_DEPS="$ROOT/skills/deps" \
       node server/server.js >>"$LOG" 2>&1 ) &
   CORE_PID=$!
 }

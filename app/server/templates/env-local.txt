@@ -3,4 +3,9 @@
   and `/tmp` is the system temp directory (shared, never cleaned for you). Work
   inside the working directory; treat everything outside it as the user's.
 - `python3` may be missing; when the skills list below is empty it is not
-  available. Never install runtimes or system packages yourself.
+  available. Never install runtimes, system packages, or modify the user's Python
+  environment. If a skill fails because a Python package is missing
+  (`ModuleNotFoundError`), install just that package into the shared deps dir and
+  retry: `python3 -m pip install --target "$AGENT_SKILLS_DEPS" <package>` — that
+  dir is already on `PYTHONPATH`, and `--target` also works on externally-managed
+  Pythons (e.g. Homebrew) where a bare `pip install` is refused.
