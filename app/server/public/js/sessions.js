@@ -188,9 +188,8 @@
       closeStream();
       removeTyping();
       setFilesPanel(false); // 会话切换,收起文件面板防旧列表残留
-      if (typeof pvCloseDoc === 'function') pvCloseDoc(); // 同上:收起文档预览右栏,防旧会话内容残留
-      // 预览图标会「重开上次看过的文件」，跨会话重开会指向别的会话的路径，逐会话清掉
-      if (typeof pvState === 'object' && pvState) pvState.lastName = null;
+      // 预览分栏故意不关：它现在是「随手看参考」的第三列，切会话时关掉会让用户反复重开。
+      // 保留已渲染的内容（静态文件，不存在跨会话越权），点新会话的文件会自然覆盖。
       state.sessionId = id;
       state.status = '';
       state.modelId = '';

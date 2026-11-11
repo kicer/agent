@@ -1,7 +1,8 @@
-// 通用文档预览窗（桌面右侧 #pv-pane / 移动端全屏 #fs-viewer）
+// 通用文档预览窗（桌面分栏 #pv-pane：文件树 | 预览 | 会话 / 移动端全屏 #fs-viewer）
 //  —— 文件列表的点击一律进预览窗：office 走 /preview 预览网关(固定格式前端自拼)；
 //     md/txt/代码/json/csv 等文本渲染；html/pdf/图片专用渲染；其余类型显示文件信息占位 + 下载。
-//     桌面端与左栏并排（不再自动折叠左栏让位）；左右边界可拖拽调宽(记忆在 localStorage)。
+//     桌面端紧贴左栏文件树右侧：点文件后内容就在旁边，不用横跨整个会话区看。
+//     右边界可拖拽调宽(记忆在 localStorage)。
 //  依赖(core.js/chat.js/stream.js/files.js 顶层声明)：state $ esc toast mdHtml decorateCodePre
 //     rewriteHtmlDocSrcs rewriteMdImageSrcs openFullscreen setFsSource closeFullscreen
 //     openImageViewer downloadFile openDrawer
@@ -119,10 +120,13 @@ function pvInfoNode(name, sizeText, hint) {
 }
 
 function pvOpenPane() {
-  // 不自动折叠左侧栏：本地端左栏是文件树，打开预览时保持可见（左侧树 + 右侧预览并排）。
+  // 不自动折叠左侧栏：左栏是文件树，打开预览时保持可见（文件树 | 预览 | 会话）。
   if (!document.body.classList.contains('pv-open')) {
     document.body.classList.add('pv-open');
   }
+  // 开预览就把侧栏切到文件树：预览就贴在它旁边，切了才能顺手换文件看。
+  // 已经在文件页时 setDrawerPane 内部会因「没变化」而直接返回，不会重复拉树。
+  if (typeof setDrawerPane === 'function') setDrawerPane(true);
   pvSyncBtn();
 }
 
@@ -135,7 +139,7 @@ function pvCloseDoc() {
   pvSyncBtn();
 }
 
-// 侧栏底部「预览」图标：开/关右侧预览面板（桌面端）。图标随开合高亮。
+// 侧栏底部「预览」图标：开/关预览分栏（桌面端）。图标随开合高亮。
 function pvSyncBtn() {
   const b = document.getElementById('da-preview');
   if (b) b.classList.toggle('active', document.body.classList.contains('pv-open'));
@@ -143,7 +147,7 @@ function pvSyncBtn() {
 
 // 同一个图标开/关预览：已开 → 关；未开 → 优先重开上次看过的文件，没有就开空面板给个提示。
 function pvTogglePane() {
-  if (!pvDesktop()) return; // 移动端预览走全屏 #fs-viewer，不维护右栏
+  if (!pvDesktop()) return; // 移动端预览走全屏 #fs-viewer，不维护分栏
   if (document.body.classList.contains('pv-open')) { pvCloseDoc(); return; }
   if (pvState.lastName) { openFilePreview(pvState.lastName); return; }
   pvOpenPane(); pvClearBody(); pvHeader('', '');
@@ -592,17 +596,18 @@ window.addEventListener('popstate', () => {
   const fs = document.getElementById('fs-viewer');
   if (!fs.classList.contains('hidden') && fs.querySelector('.fs-html-frame[src^="/preview/"]')) closeFullscreen();
 });
-// Esc 关闭右栏(未开全屏查看器时)
+// Esc 关闭预览分栏(未开全屏查看器时)
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (document.activeElement && document.activeElement.id === 'pv-title') { document.activeElement.blur(); return; } // 地址条聚焦时:先退框不关栏
   if (!document.getElementById('fs-viewer').classList.contains('hidden')) return;
   pvCloseDoc();
 });
-// 窗口收窄到移动端宽度：右栏收起
+// 窗口收窄到移动端宽度：预览栏收起
 window.matchMedia('(min-width: 960px)').addEventListener('change', () => { if (!pvDesktop()) pvCloseDoc(); });
 
-// ---------- 左缘拖拽调宽(预览/会话列边界)：双击复位默认宽度，宽度记在 localStorage ----------
+// ---------- 右缘拖拽调宽(预览/会话列边界)：双击复位默认宽度，宽度记在 localStorage ----------
+// 预览现在贴在文件树右侧（文件树 | 预览 | 会话），所以手柄在它自己的右缘，往右拖变宽。
 (function bindPvResize() {
   const pane = document.getElementById('pv-pane');
   const saved = Number(localStorage.getItem('pv-w') || 0);
@@ -619,7 +624,7 @@ window.matchMedia('(min-width: 960px)').addEventListener('change', () => { if (!
   });
   h.addEventListener('pointermove', (e) => {
     if (!st) return;
-    document.documentElement.style.setProperty('--pv-w', clamp(st.w + (st.x - e.clientX)) + 'px');
+    document.documentElement.style.setProperty('--pv-w', clamp(st.w + (e.clientX - st.x)) + 'px');
   });
   function end() {
     if (!st) return;

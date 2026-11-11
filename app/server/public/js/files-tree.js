@@ -1,7 +1,7 @@
 // 桌面端左栏文件树：会话文件的唯一浏览入口（服务器形态与 local 形态共用）。
 //   · 懒加载：一次只请求一层目录，展开才拉下一层；node_modules 这类大目录后端只回标记、不展开，
 //     避免旧的整棵递归接口在单线程 core 上卡死；
-//   · 点文件 → 右侧预览；行内 hover 出「下载 / 删除 / 在 Finder 中显示」；
+//   · 点文件 → 中间预览栏（文件树 | 预览 | 会话）；行内 hover 出「下载 / 删除 / 在 Finder 中显示」；
 //   · 「在 Finder / 终端中打开」只在 local 启动器下可用（服务器上这些动作没有意义），
 //     靠 /api/local/info 探测，拿不到就隐藏这两个按钮。
 // 手机端不启用（收纳在抽屉里体验太差），仍走输入行右侧的旧文件面板。
@@ -25,7 +25,6 @@
   let cache = new Map();        // rel -> /tree 响应
   let loading = new Map();      // rel -> Promise（并发去重）
   let gen = 0;                  // 会话切换/刷新时自增，防止旧请求回填到新树的缓存
-  let rootPath = '';            // 会话根绝对路径（后端回的），显示在头部
 
   // 失效缓存。gen 自增让在飞的旧请求回来时不再写缓存（否则切会话会闪旧目录）。
   function invalidate(keepExpanded) {
@@ -116,7 +115,6 @@
     container.innerHTML = '';
     const data = await openDir(rel);
     if (!data) return;
-    if (!rel && data.root) rootPath = data.root;
     const frag = document.createDocumentFragment();
     const list = data.entries || [];
     if (!list.length) tip(frag, '（空目录）');
@@ -133,20 +131,10 @@
     container.appendChild(frag);
   }
 
-  function renderPathLabel() {
-    const el = $('tree-path');
-    if (!el) return;
-    // 根路径太长时只留末两段，完整路径放 title（地址条的直觉：能看个大概，悬停能看全）
-    const parts = String(rootPath || '').split('/').filter(Boolean);
-    const short = parts.length > 2 ? '.../' + parts.slice(-2).join('/') : (rootPath || '会话文件');
-    el.textContent = short;
-    el.title = rootPath || '';
-  }
-
   async function renderBody() {
     const body = $('tree-body');
     if (!body) return;
-    if (!sid()) { body.innerHTML = ''; rootPath = ''; renderPathLabel(); tip(body, '尚未开始会话'); return; }
+    if (!sid()) { body.innerHTML = ''; tip(body, '尚未开始会话'); return; }
     const sc = body.scrollTop;
     body.innerHTML = '';
     const root = document.createElement('div');
@@ -157,7 +145,6 @@
       root.innerHTML = '';
       tip(root, '加载失败：' + e.message);
     }
-    renderPathLabel();
     body.scrollTop = sc;
   }
 
@@ -209,6 +196,8 @@
       renderBody();
     } else if (typeof openFilePreview === 'function') {
       openFilePreview(rel, '');
+      // 窄屏的预览是全屏浮层：点完把抽屉收起（同点会话的行为），否则关预览后还压在抽屉上
+      if (typeof openDrawer === 'function' && !window.matchMedia('(min-width: 960px)').matches) openDrawer(false);
     }
   }
 
@@ -226,12 +215,12 @@
     box.dataset.ready = '1';
     box.innerHTML = '';
 
-    // 头部直接复用预览栏的 .pv-head / .pv-addr / .pv-actions / .icon-btn：
+    // 头部直接复用预览栏的 .pv-head / .pv-actions / .icon-btn：
     // 两者在桌面上左右并排，尺寸/描边/内边距必须一模一样，否则一眼就看出错位。
+    // 不放地址条（路径在 280px 里必然截断，没有信息量），所以只剩右侧操作钮。
     const head = document.createElement('header');
     head.className = 'pv-head tree-head';
     head.innerHTML =
-      '<span class="pv-addr"><span class="pv-title tree-path" id="tree-path"></span></span>' +
       '<span class="pv-actions">' +
         '<button class="icon-btn" type="button" id="tree-hidden" title="显示隐藏文件" aria-label="显示隐藏文件">' + SVG_EYE + '</button>' +
         '<button class="icon-btn" type="button" id="tree-refresh" title="刷新" aria-label="刷新">' + SVG_REFRESH + '</button>' +

@@ -1233,26 +1233,24 @@
     document.addEventListener('touchcancel', e => endDrag(e, false), { passive: true });
   })();
 
-  // 抽屉底部图标操作栏：会话 / 文件树 / 预览 / 设置。
-  // 会话与文件树是侧栏的两个互斥面板，所以这两个的 active 由 setDrawerPane 维护；
-  // 预览与设置不占用侧栏（各自是右侧面板/覆盖层），高亮由 preview.js / settings.js 自己同步。
-  function setDrawerPane(mode) {
-    const drawer = $('drawer');
-    const files = mode === 'files';
-    // 文件树只在本地模式存在；服务器形态下这个按钮是 hidden 的，这里再做一层兜底
+  // 抽屉底部图标操作栏：文件树 / 预览 / 设置。
+  // 「文件树」是侧栏两个互斥面板的切换开关：不在文件页 → 切到文件树（高亮），
+  // 再点一次 → 回会话列表（不亮）。预览与设置不占用侧栏，高亮由 preview.js / settings.js 同步。
+  function setDrawerPane(files) {
+    // 文件树模块没加载成功时不要把一个空面板切出来
     if (files && typeof window.showFileTree !== 'function') return;
+    const drawer = $('drawer');
     const changed = drawer.classList.contains('drawer-mode-files') !== files;
     drawer.classList.toggle('drawer-mode-files', files);
-    $('da-sessions').classList.toggle('active', !files);
     $('da-files').classList.toggle('active', files);
     // 重复点当前项不重干活（不重拉列表/不重渲树），避免白掉请求和滚动位置
-    if (changed) {
-      if (files) window.showFileTree();
-      else loadSessionList();
-    }
+    if (!changed) return;
+    if (files) window.showFileTree();
+    else loadSessionList();
   }
-  $('da-sessions').addEventListener('click', () => setDrawerPane('sessions'));
-  $('da-files').addEventListener('click', () => setDrawerPane('files'));
+  $('da-files').addEventListener('click', () => {
+    setDrawerPane(!$('drawer').classList.contains('drawer-mode-files'));
+  });
   // 预览：同一个按钮开/关右侧面板
   $('da-preview').addEventListener('click', () => {
     if (typeof pvTogglePane === 'function') pvTogglePane();

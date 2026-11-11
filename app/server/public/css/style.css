@@ -872,21 +872,19 @@ body.voice-active .scroll-bottom-btn { display: none; }
   width: 20px; height: 20px; fill: none; stroke: currentColor;
   stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
 }
-/* 手机/窄屏没有右侧预览栏（预览走全屏浮层），也没有左栏文件树（窄屏不适合） */
-@media (max-width: 959px) { #da-preview, #da-files { display: none !important; } }
+/* 窄屏没有右侧预览分栏（预览改走全屏 #fs-viewer），所以只藏这一个钮；
+   文件树只是抽屉里的一个面板，任何宽度都能用，不藏。 */
+@media (max-width: 959px) { #da-preview { display: none !important; } }
 
 .files-tree { display: none; flex: 1; min-height: 0; flex-direction: column; }
 #drawer.drawer-mode-files .drawer-search,
 #drawer.drawer-mode-files .drawer-list { display: none; }
 #drawer.drawer-mode-files .files-tree { display: flex; }
 
-/* 左栏树头部复用预览栏的 .pv-head/.pv-addr/.pv-actions/.icon-btn：
-   它俩在桌面上左右并排，高一点点或图标小一号都会明显错位。 */
-.tree-head .pv-actions { gap: 4px; margin-left: 6px; } /* 侧栏窄，4 个按钮也塞得下 */
-.tree-path {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  cursor: default;
-}
+/* 左栏树头部复用预览栏的 .pv-head / .pv-actions / .icon-btn：
+   它俩在桌面上左右并排，高一点点或图标小一号都会明显错位。
+   不放地址条：侧栏只有 280px，路径必然被截断，没有信息量。 */
+.tree-head .pv-actions { gap: 4px; margin-left: auto; } /* 靠右，与预览栏的操作钮同一侧 */
 /* 头部图标的「开启中」态（如显示隐藏文件） */
 .pv-actions .icon-btn.active { color: var(--active); background: var(--active-soft); }
 
@@ -1519,23 +1517,33 @@ label.icon-btn { cursor: pointer; }
   body.drawer-open #toast { left: calc(50% + var(--sidebar-w) / 2); }
 }
 
-/* ---------- 文档预览右栏(桌面端≥960px;移动端 office 走全屏 #fs-viewer,本栏隐藏) ---------- */
+/* ---------- 文档预览分栏(桌面端≥960px;紧贴左侧文件树,移动端 office 走全屏 #fs-viewer,本栏隐藏) ---------- */
 #pv-pane { display: none; }
 @media (min-width: 960px) {
   body.pv-open #pv-pane {
     display: flex; flex-direction: column;
-    position: fixed; top: 0; right: 0; bottom: 0;
+    position: fixed; top: 0; left: 0; right: auto; bottom: 0;
     width: var(--pv-w, min(50vw, 900px)); min-width: 320px;
-    background: var(--page); border-left: 1px solid var(--border);
+    background: var(--page); border-right: 1px solid var(--border);
     z-index: 55;
   }
-  body.pv-open.pv-max #pv-pane { left: 0; width: auto; border-left: none; z-index: 120; }
-  /* 挤压式分栏:打开右栏时会话列让位；左栏不再自动折叠（本地端左栏是文件树，需要与预览并排） */
-  body.pv-open #app { width: calc(100% - var(--pv-w, min(50vw, 900px))); margin-left: 0; }
-  body.pv-open.drawer-open #app { width: calc(100% - var(--sidebar-w) - var(--pv-w, min(50vw, 900px))); margin-left: var(--sidebar-w); }
+  /* 侧栏展开时预览紧贴文件树右侧:文件树 | 预览 | 会话(IDE 习惯,点文件后内容就在旁边) */
+  body.pv-open.drawer-open #pv-pane { left: var(--sidebar-w); }
+  body.pv-open.pv-max #pv-pane { left: 0; right: 0; width: auto; border-right: none; z-index: 120; }
+  /* 挤压式分栏:会话列往右让位 */
+  body.pv-open #app { width: calc(100% - var(--pv-w, min(50vw, 900px))); margin-left: var(--pv-w, min(50vw, 900px)); }
+  body.pv-open.drawer-open #app {
+    width: calc(100% - var(--sidebar-w) - var(--pv-w, min(50vw, 900px)));
+    margin-left: calc(var(--sidebar-w) + var(--pv-w, min(50vw, 900px)));
+  }
   body.pv-open.pv-max #app { width: 100%; margin-left: 0; }
+  /* toast 相对会话列居中（预览开着时会话列被挤到右边） */
+  body.pv-open.drawer-open #toast { left: calc(50% + (var(--sidebar-w) + var(--pv-w, min(50vw, 900px))) / 2); }
 }
-.pv-head { flex: none; position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--border); background: var(--drawer-bg); }
+/* 头部高度定死：预览栏里有地址条（内容更高）、文件树只有 32px 图标钮，
+   靠内容撑会让两栏的头部差几像素、下边框对不齐。
+   49 = 32 控件 + 上下各 8 内边距 + 1 下边框（全局 box-sizing:border-box）。 */
+.pv-head { flex: none; position: relative; display: flex; align-items: center; gap: 8px; height: 49px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--border); background: var(--drawer-bg); }
 /* 地址条胶囊：路径 input + 内嵌动作钮，模拟浏览器地址栏 */
 .pv-addr { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; background: var(--surface); border: 1px solid transparent; border-radius: 10px; padding: 2px 2px 2px 4px; }
 .pv-addr:focus-within { border-color: var(--border); background: var(--page); }
@@ -1562,7 +1570,8 @@ label.icon-btn { cursor: pointer; }
 @keyframes pvspin { to { transform: rotate(360deg); } }
 
 /* ---------- preview pane v2: drag resize / info card / plain text ---------- */
-.pv-resizer { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 6; touch-action: none; }
+/* 拖拽调宽的手柄：预览在左半侧，所以手柄在它的右缘（与会话列的分界） */
+.pv-resizer { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 6; touch-action: none; }
 .pv-resizer:hover, .pv-resizer:active { background: var(--active); opacity: .3; }
 body.pv-resizing { cursor: col-resize; user-select: none; }
 body.pv-resizing #pv-pane iframe { pointer-events: none; }
