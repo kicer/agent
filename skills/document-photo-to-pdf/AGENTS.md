@@ -1,16 +1,9 @@
-# document-photo-to-pdf：本机环境
+# document-photo-to-pdf
+
+`ModuleNotFoundError`（`numpy` / `PIL` / `fitz`）
 
 ```sh
-SK="$(dirname "$AGENT_SKILLS_DEPS")/document-photo-to-pdf"
+python3 -m pip install --target "$AGENT_SKILLS_DEPS" -r "$(dirname "$AGENT_SKILLS_DEPS")/document-photo-to-pdf/requirements.txt"
 ```
 
-缺依赖时（`ModuleNotFoundError`，最先撞到的是 `numpy`）：
-
-```sh
-python3 -m pip install --target "$AGENT_SKILLS_DEPS" -r "$SK/requirements.txt"
-python3 -c "import numpy, PIL, fitz"
-```
-
-- `fitz` 是 `pymupdf` 的 import 名
-- `pypdfium2` 不必装：只在 `pymupdf` 也缺失时才用得上
-- 自检渲染优先系统 `pdftoppm`（poppler，可选）
+`fitz` 是 `pymupdf` 的 import 名。`pypdfium2` 不用装。

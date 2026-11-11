@@ -282,8 +282,8 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 `install.sh` / `requirements.txt` 是服务器工件（镜像构建与 `agent-executor-init` 读它们），本机不跑、
 不改。启动器也不认识任何具体技能：不注入 PATH、不预装、不做特判。新增技能不需要动 `local/`。
 
-本机缺东西时只有一条入口：技能自己目录下的 `AGENTS.md`（下载/安装/验证命令、平台资产名、字体路径）。
-起点是 `env-local` 提示词的一句话：技能失败就读
+本机缺东西时只有一条入口：技能自己目录下的 `AGENTS.md`。它是**排错清单**，只写「现象 → 命令」
+（报什么错、敲什么），不写背景、不提服务器。起点是 `env-local` 提示词的一句话：技能失败就读
 `"$(dirname "$AGENT_SKILLS_DEPS")/<技能>/AGENTS.md"`。装完不需要重启，旧进程不影响。
 
 代价明写：`office` 的命令入口在本地不在 PATH 上，按次 `PATH="$SK/scripts:$PATH" office ...` 即可
