@@ -139,10 +139,9 @@ git pull
 - **`mint_public_link` 不可用**：`public_link.base_url` 未配置（本地生成的链接只有本机能打开），
   模型调用该工具会得到明确的「未配置」错误。
 - **技能依赖不预装**：本地没有 `agent-executor-init`，`skills/*/requirements.txt` 不会在启动时
-  自动安装。技能缺包时会报 `ModuleNotFoundError`，模型会把缺的包 `pip install --target`
-  进 `skills/deps`（`AGENT_SKILLS_DEPS` 指向它，且已在该进程的 `PYTHONPATH` 里，装完下次
-  运行即生效）。需要系统库的包（如 `weasyprint` 依赖 pango/cairo）pip 装不了，得自己
-  `brew install`。
+  自动安装。技能缺包时会报 `ModuleNotFoundError`，模型会把缺的包装进 `skills/deps`
+  （`AGENT_SKILLS_DEPS` 指向它，且已在该进程的 `PYTHONPATH` 里，装完下次运行即生效）。
+  需要系统库的包（如 `weasyprint` 依赖 pango/cairo）pip 装不了，得自己 `brew install`。
 - **首个 `npm install` 要联网**：启动器会自动选源、换源重试、并把装好的依赖缓存到
   `~/.cache/agent-local/`；之后重启 / 换 clone 都是本地解压，不需要网络。真要手动指定源：
   `NPM_REGISTRY=https://registry.npmmirror.com ./local/start.sh`。中途失败留下的半成品

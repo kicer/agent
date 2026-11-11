@@ -252,12 +252,13 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 - `start.sh` 起 core 时注入 `PYTHONPATH=<仓库>/skills/deps`（**原本就有**）与
   `AGENT_SKILLS_DEPS=<仓库>/skills/deps`（新增，只为把路径交给模型）。
   `terminal` 与技能子进程都继承 core 的 env，所以装进去的东西**下次运行就能 import**，不用重启。
-- `templates/env-local.txt` 把原来的「永远不要自己装任何东西」换成「缺包时按
-  `pip install --target "$AGENT_SKILLS_DEPS" <包>` 装进这个目录，别动系统 Python」。
+- `templates/env-local.txt` 把原来的「永远不要自己装任何东西」改成「缺模块就装进
+  `$AGENT_SKILLS_DEPS` 再重试」——**只给路径，不给命令**，怎么装由模型自己决定。
   技能失败时 stdout+stderr 是合并回给模型的，它能看到 `ModuleNotFoundError` 自己判断。
-- 用 `--target` 而不是 `--user`：pip 的 PEP 668 拦截对 `--target`/`--prefix`/`--root` 明确豁免
-  （`pip/_internal/commands/install.py`），Homebrew 那种 externally-managed 解释器也不会报
-  `externally-managed-environment`；而且不污染用户的 Python，删目录即撤销。
+- 为什么给一个目录而不是让模型自己选：那个目录已经在 `PYTHONPATH` 里，装进去下次运行就能
+  import；而不指定位置的话，它很可能装到别处（或去改系统 Python）。pip 对 `--target` 的
+  PEP 668 拦截明确豁免（`pip/_internal/commands/install.py`），所以这条路在 Homebrew 那种
+  externally-managed 解释器上也走得通——但这话不写进提示词，交给模型自己判断。
 - 技能自己的 `requirements.txt` 一律**不写版本号**：服务端 init 用
   `pip install --no-index --dry-run` 探测，pin 到与镜像不同的版本会让探测失败 → 真的往
   `skills/deps` 装一份旧的，而 `PYTHONPATH` 优先于系统 site-packages，等于反向遮蔽镜像包。
@@ -335,7 +336,7 @@ tail -f local/.runtime/core.log             # 以及 npm-install.log / mcp-*.log
 | `mcp_asr` 监听 `0.0.0.0` | 它只认 `PORT` 环境变量、`listen` 不带 host（已启动时才是问题）。不存密钥（上游参数随请求带入），暴露面有限；要收紧需给 `mcp/asr` 加 `--host` 支持 |
 | Windows 不支持 | `spawn('/bin/sh')`、`process.kill(-pid)`、模型写的 bash 语法都是 POSIX 语义 |
 | `mint_public_link` 不可用 | 本地 `public_link.base_url` 为空，工具会回明确的「未配置」错误 |
-| 技能依赖 | 本地不预装：缺包时模型按提示词把包 `pip install --target "$AGENT_SKILLS_DEPS"` 装进 `skills/deps`（已在该进程 `PYTHONPATH`）。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
+| 技能依赖 | 本地不预装：缺包时模型会把包装进 `skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）。怎么装由模型自己决定。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
 | 首个 `npm install` 要联网 | 支持 `NPM_REGISTRY` 覆盖源；`app/package-lock.json` 的 `resolved` 已改指向公共 registry（原来钉在内网镜像，外部机器必失败） |
 
 ## 8. 回滚
