@@ -179,6 +179,12 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// 统一错误出口：**必须最后挂**（Express 按注册顺序挑错误中间件，挂在路由前等于没挂）。
+// 没有它，任何路由漏出的异常（最典型：res.sendFile 的异步失败）都会落到 Express 默认
+// 处理器，在非 production 环境下把 err.stack 拼成 HTML 吐给请求方，泄露服务端绝对路径、
+// 源码行号与依赖版本——/p/<id> 是匿名可达端点，这份栈等于公开。详见 error-handler.js。
+app.use(require('./error-handler').errorHandler);
+
 const PORT = process.env.PORT || cfg.port;
 // 监听地址：不设 = 0.0.0.0（容器/服务器形态，宿主机端口映射靠它）。
 // 本机 local 模式由 local/start.sh 注入 HOST=127.0.0.1：单机自用不该让同一局域网的人直接访问。

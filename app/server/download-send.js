@@ -3,6 +3,7 @@
 'use strict';
 
 const path = require('path');
+const log = require('./log');
 
 // Content-Disposition 手工构造，绕开 content-disposition 包的 ASCII 兜底：
 // 该包会把中文名逐字替换成 ?（???.pdf），且 filename= 后紧跟 filename*= 会让
@@ -53,10 +54,36 @@ function noStore(res) {
   res.setHeader('Expires', '0');
 }
 
+// sendFile 失败的统一出口（所有调用方共用，不再各自 try/catch——sendFile 的失败是
+// **异步**回调，调用方外层的 try/catch 根本抓不到）。
+//
+// 为什么必须有人接：没人接就落进 Express 默认错误处理器，而它在 NODE_ENV != production 时
+// 会把 err.stack 拼成 HTML 页面吐给请求方——服务端绝对路径、源码文件名+行号、依赖版本全在
+// 里面。/p/<id> 是匿名可达端点（public-files.js 挂在 auth 之前），一次失败就等于把内部结构
+// 公开。所以正文只留一行固定文案，细节进日志。
+//
+// 4xx 一律折叠成 404：不向匿名取用方区分「不存在」与「无权限」（原来的 403/416 会变成
+// 探针，能区分路径是否存在）。
+function sendFileError(res, err, abs) {
+  const code = Number(err && err.status);
+  const notFound = !!err && (err.code === 'ENOENT' || (code >= 400 && code < 500));
+  const status = notFound ? 404 : 500;
+  log.warn('download', (notFound ? '取不到文件：' : '发送失败：') + abs +
+    '（' + ((err && (err.code || err.message)) || err) + '）');
+  if (res.headersSent) { if (res.destroy) res.destroy(); return; } // 已吐了半截，只能断开
+  res.removeHeader('Content-Disposition'); // 进来前已按附件设过，错误响应不该带文件名
+  res.status(status).type('text').send(notFound ? 'not found' : 'internal error');
+}
+
 function sendDownload(res, abs) {
   noStore(res);
   res.setHeader('Content-Disposition', downloadDisposition(path.basename(abs)));
-  res.sendFile(abs, { lastModified: false, etag: false, maxAge: 0 });
+  // dotfiles:'allow' 与下面的图片分支对齐。send 默认 'ignore' 会把 .env / .gitignore 这类
+  // 文件当成"不存在"抛 NotFoundError——文件明明在，取用方却拿到 404，且历史版本还会连带
+  // 把堆栈页吐出去（见 sendFileError）。点文件本来就是我们自己签发的，没有理由拒绝。
+  res.sendFile(abs, { dotfiles: 'allow', lastModified: false, etag: false, maxAge: 0 }, function (err) {
+    if (err) sendFileError(res, err, abs);
+  });
 }
 
 // 内联图片响应（公网链 GET /p/<id> 的图片分支）：点开链接直接显示，不再被当成附件下载。
@@ -72,7 +99,10 @@ function sendInlineImage(res, abs, type) {
   // sandbox 不给 allow-scripts，退化成不可执行、无同源权限的文档；<img> 引用本就不执行脚本，不受影响。
   if (type === 'image/svg+xml') res.setHeader('Content-Security-Policy', 'sandbox');
   // dotfiles 显式放行：read_file 的压缩产物在 .imgcache/（点目录），默认策略对其他调用方不保证。
-  res.sendFile(abs, { dotfiles: 'allow', lastModified: false, etag: false, maxAge: 0 });
+  // 回调同 sendDownload：图片也可能在读盘中途失败（被删/EACCES），不能漏给默认错误处理器。
+  res.sendFile(abs, { dotfiles: 'allow', lastModified: false, etag: false, maxAge: 0 }, function (err) {
+    if (err) sendFileError(res, err, abs);
+  });
 }
 
 module.exports = { contentDisposition, downloadDisposition, sendDownload, sendInlineImage, inlineImageType };
