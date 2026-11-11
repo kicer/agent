@@ -81,10 +81,27 @@ cd agent
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `PORT` | `8090` | core 端口（别撞下面的 MCP 端口） |
-| `NPM_REGISTRY` | 空 | 首次装依赖时用的 npm 源，如 `https://registry.npmjs.org` |
+| `NPM_REGISTRY` | 空 | 手动指定 npm 源（默认自动探测；指定后不再自动换源） |
 | `MCP_WEB_PORT` / `MCP_IMAGE_PORT` / `MCP_VIDEO_PORT` / `MCP_ASR_PORT` | 8091~8094 | 四个 MCP 的端口（同机跑必须各占一个；改这里还要同步改配置里的 url） |
 | `AGENT_LOCAL_UI` | `auto` | 是否自动打开状态页：`auto` = 仅 macOS，`1` 强制，`0` 关闭（页面无论如何都会生成） |
 | `AGENT_LOCAL_DETACH` | `1` | `1` = 后台启动后立即返回（用 `stop.sh` 停）；`0` = 前台阻塞（看实时日志、`Ctrl-C` 停） |
+| `AGENT_LOCAL_CACHE` | `~/.cache/agent-local` | 依赖缓存的存放位置（多个 clone 共享） |
+| `AGENT_LOCAL_NPM_TIMEOUT` | `240` | 单次 `npm install` 的超时秒数，超过就换源重试 |
+
+## 依赖安装与网络（国内环境）
+
+首次启动要装一次 Node 依赖，启动器会自己处理环境问题，不需要你操心：
+
+- **自动选源**：并行探 `registry.npmmirror.com` 与官方源，用最快的那个（国内基本会选 npmmirror）。
+  结果缓存一天；不写你本机的 `~/.npmrc`，也不改全局配置。
+- **失败自动换源重试**：一个源不行就换下一个；换源成功会记住它。
+- **卡住有看门狗**：npm 在断网时可能既不报错也不退出，超过 `AGENT_LOCAL_NPM_TIMEOUT` 就结束它并换源。
+- **装完存缓存**：打成一张 tarball 放到 `~/.cache/agent-local/`。之后重启、删掉 `node_modules`、
+  再 clone 一份，都是解压恢复（秒级、零网络）。
+- **失败说人话**：状态页会直接告诉你「网络没通 / 缺编译工具链（`xcode-select --install`）/ 没有写权限」，
+  不需要读 npm 日志。
+
+要清缓存就删那个目录：`rm -rf ~/.cache/agent-local`（下次启动会重新装一次）。
 
 ## 更新
 
@@ -119,9 +136,10 @@ git pull
   模型调用该工具会得到明确的「未配置」错误。
 - **技能依赖**：有 `requirements.txt` 的技能需要自己把包装进 `skills/deps`
   （服务器上这一步由 `agent-executor-init` 在构建期完成）。默认只保证纯标准库技能可用。
-- **首个 `npm install` 要联网**：源不可达时换一个重跑：
-  `NPM_REGISTRY=https://registry.npmjs.org ./local/start.sh`。中途失败留下的半成品 node_modules
-  不用手删，下次启动会重新检测缺失的包。
+- **首个 `npm install` 要联网**：启动器会自动选源、换源重试、并把装好的依赖缓存到
+  `~/.cache/agent-local/`；之后重启 / 换 clone 都是本地解压，不需要网络。真要手动指定源：
+  `NPM_REGISTRY=https://registry.npmmirror.com ./local/start.sh`。中途失败留下的半成品
+  `node_modules` 不用手删（换源重试前会自动清）。
 
 ## 排查
 

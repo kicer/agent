@@ -26,6 +26,14 @@ PORT="${PORT:-8090}"
 HOST_ADDR="127.0.0.1"
 NPM_REGISTRY="${NPM_REGISTRY:-}"
 
+# 依赖缓存：装成功后把 node_modules 打一张 tarball 存这里，重启 / 换 clone / 删 node_modules
+# 都能直接解压恢复，完全不走网络。放用户缓存目录（而不是仓库里）是为了多个 clone 共享；
+# 卸载时删这一个目录就行（README 有写）。
+LOCAL_CACHE="${AGENT_LOCAL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agent-local}"
+REGISTRY_CACHE="$RUNTIME/registry"
+# npm 源候选。并行探测、挑最快的，所以国内会选 npmmirror、海外会选官方，不用用户干预。
+REGISTRY_CANDIDATES='https://registry.npmmirror.com https://registry.npmjs.org'
+
 # 四个同栈 MCP 服务在服务器上是各自独立的容器，都监听 3000 也不冲突；
 # 本地挤在同一台机器上，必须各占一个端口。默认紧跟 core 的 8090 往后排，
 # 所以 core 换端口时（PORT=xxx）要留意别撞上这四个——下面有冲突检查。
@@ -291,6 +299,16 @@ ui_busy() {
   fi
 }
 
+# 只换「进行中」的文案，保留开始时间：换源重试时计时不该归零（否则看起来像卡死后重来）。
+ui_busy_relabel() {
+  if [ ! -f "$UI_DIR/busy" ]; then ui_busy "$1" "${2:-}"; return 0; fi
+  bsince=$(sed -n 2p "$UI_DIR/busy" 2>/dev/null)
+  case "${bsince:-}" in ''|*[!0-9]*) bsince=$(date +%s);; esac
+  printf '%s\n%s\n' "$1" "$bsince" > "$UI_DIR/busy"
+  [ -n "${2:-}" ] && printf '%s\n' "$2" > "$UI_DIR/logpath"
+  ui_render
+}
+
 # 必须显式收掉并清空 PID：心跳在 busy 文件消失后自己退出，但变量还留着旧的 PID，
 # 下一个步骤就不会再起心跳（页面会永远停在「已 0 秒」）。
 ui_stop_ticker() {
@@ -423,63 +441,285 @@ deps_resolvable() {
   ' "$1/package.json" "$1" >/dev/null 2>&1
 }
 
+# ---------- npm 源：自动探测 ----------
+# 国内直连 registry.npmjs.org 经常几十秒超时，而 npm 自己不会换源。用户不该被要求懂这些，
+# 所以装之前并行探一次候选源、挑最快的，结果缓存一天。
+# 约束：只通过命令行参数传源，绝不写 ~/.npmrc —— 不为了装依赖改用户的全局配置。
+probe_registry() {
+  node -e '
+    const ctl = (ms) => { const c = new AbortController(); setTimeout(() => c.abort(), ms); return c.signal; };
+    const probe = async (r) => {
+      const t0 = Date.now();
+      try { await fetch(r + "/-/ping", { signal: ctl(3000) }); return { r, ms: Date.now() - t0 }; }
+      catch { return null; }
+    };
+    Promise.all(process.argv.slice(1).map(probe)).then((rs) => {
+      const ok = rs.filter(Boolean).sort((a, b) => a.ms - b.ms);
+      if (!ok.length) process.exit(1);
+      process.stdout.write(ok[0].r);
+    });
+  ' $REGISTRY_CANDIDATES
+}
+
+registry_cached() {
+  [ -f "$REGISTRY_CACHE" ] || return 1
+  reg=$(sed -n 1p "$REGISTRY_CACHE" 2>/dev/null)
+  ts=$(sed -n 2p "$REGISTRY_CACHE" 2>/dev/null)
+  [ -n "${reg:-}" ] || return 1
+  case "${ts:-}" in ''|*[!0-9]*) return 1;; esac
+  [ $(( $(date +%s) - ts )) -lt 86400 ] || return 1
+  printf '%s' "$reg"
+}
+
+registry_remember() {
+  { printf '%s\n' "$1"; date +%s; } > "$REGISTRY_CACHE" 2>/dev/null || true
+}
+
+short_reg() { printf '%s' "${1#https://}" | sed -e 's|/$||'; }
+
+# 选出要用的源；返回 1 = 一个都连不上。
+pick_registry() {
+  # 用户显式指定的源优先级最高
+  if [ -n "$NPM_REGISTRY" ]; then printf '%s' "$NPM_REGISTRY"; return 0; fi
+  # 有代理时探针不可信（node 的 fetch 不走 env 代理，npm 会走），交给 npm 自己
+  if [ -n "${HTTPS_PROXY:-}${https_proxy:-}${HTTP_PROXY:-}${http_proxy:-}${ALL_PROXY:-}" ]; then
+    printf '%s' "$(npm config get registry 2>/dev/null || printf '')"
+    return 0
+  fi
+  # npm 全局配置里显式改过源（公司私有源）→ 尊重它，不覆盖
+  cfg=$(npm config get registry 2>/dev/null || printf '')
+  case "$cfg" in
+    ''|https://registry.npmjs.org|https://registry.npmjs.org/) : ;;
+    *) printf '%s' "$cfg"; return 0 ;;
+  esac
+  cached=$(registry_cached) && { printf '%s' "$cached"; return 0; }
+  reg=$(probe_registry) || return 1
+  [ -n "${reg:-}" ] || return 1
+  registry_remember "$reg"
+  printf '%s' "$reg"
+}
+
+# ---------- 依赖缓存 ----------
+# 装成功之后把 node_modules 打一张 tarball 放到用户缓存目录：重启、删 node_modules、
+# 换一个 clone 都直接解压恢复，完全不走网络。文件名带平台 / 架构 / Node ABI /
+# 依赖清单哈希 —— 原生模块（better-sqlite3 的 .node）与 ABI 绑定，不能混用。
+cache_key() {
+  node -e '
+    const fs = require("fs"), crypto = require("crypto");
+    const h = crypto.createHash("sha256");
+    for (const f of process.argv.slice(1)) { try { h.update(fs.readFileSync(f)); } catch {} }
+    process.stdout.write(h.digest("hex").slice(0, 16));
+  ' "$ROOT/app/package.json" "$ROOT/app/package-lock.json" "$ROOT"/mcp/*/package.json
+}
+
+cache_file() {
+  abi=$(node -p 'process.versions.modules' 2>/dev/null || printf '0')
+  printf '%s/deps-%s-%s-abi%s-%s.tgz' "$LOCAL_CACHE" \
+    "$(uname -s | tr 'A-Z' 'a-z')" "$(uname -m)" "$abi" "$(cache_key)"
+}
+
+# 有依赖并且已经装好的目录（相对仓库根 + /node_modules），打包缓存用它。
+cache_dirs() {
+  for d in "$ROOT/app" "$ROOT"/mcp/*/; do
+    [ -f "$d/package.json" ] || continue
+    [ -d "$d/node_modules" ] || continue
+    node -e 'process.exit(Object.keys(require(process.argv[1]).dependencies||{}).length?0:1)' "$d/package.json" >/dev/null 2>&1 || continue
+    rel=${d#"$ROOT"/}; rel=${rel%/}
+    printf '%s\n' "$rel/node_modules"
+  done
+}
+
+# 需要安装的目录（每行一个，容忍路径里有空格）。
+# 不能只看 node_modules 在不在：npm install 中途失败会留下「目录在、包不全」的半成品，
+# 按「存在即已装」判断就会永远跳过安装，core 起来立刻 require 失败。
+need_dirs() {
+  for d in "$ROOT/app" "$ROOT"/mcp/*/; do
+    [ -f "$d/package.json" ] || continue
+    node -e 'process.exit(Object.keys(require(process.argv[1]).dependencies||{}).length?0:1)' "$d/package.json" >/dev/null 2>&1 || continue
+    if [ ! -d "$d/node_modules" ] || [ ! -f "$d/node_modules/.agent-installed" ] \
+       || [ "$d/package.json" -nt "$d/node_modules/.agent-installed" ] \
+       || ! deps_resolvable "$d"; then
+      printf '%s\n' "$d"
+    fi
+  done
+}
+
+cache_restore() {
+  f=$(cache_file)
+  [ -f "$f" ] || return 1
+  say "使用本地依赖缓存：$f"
+  ui_busy_relabel '恢复本地依赖缓存（不走网络）'
+  if ! tar -xzf "$f" -C "$ROOT" >>"$NPM_LOG" 2>&1; then
+    warn '缓存解压失败，改为联网安装'
+    return 1
+  fi
+  return 0
+}
+
+cache_save() {
+  list=$(cache_dirs)
+  [ -n "$list" ] || return 0
+  mkdir -p "$LOCAL_CACHE" 2>/dev/null || return 0
+  f=$(cache_file)
+  tmp="$f.part"
+  # tar 里的路径相对仓库根，解压时 -C "$ROOT" 就能还原
+  if printf '%s\n' "$list" | tar -czf "$tmp" -C "$ROOT" -T - >/dev/null 2>&1; then
+    mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp"
+    # 只留最近 3 份：每次依赖变化都会产生新文件，不清理会一直涨
+    ls -t "$LOCAL_CACHE"/deps-*.tgz 2>/dev/null | tail -n +4 | while IFS= read -r old; do rm -f "$old"; done
+    say "依赖缓存：$f"
+  else
+    rm -f "$tmp" 2>/dev/null || true
+  fi
+}
+
 # ---------- 依赖安装 ----------
+# 跑一次 npm install（输出落日志），带看门狗。
+# npm 10 + Node 22 在网络失败时既不退出也不报错（已知的 "Exit handler never called"）：
+# 没有超时用户就会干等到崩溃。超过上限就杀掉，交给外层换源重试。
+NPM_TIMEOUT="${AGENT_LOCAL_NPM_TIMEOUT:-240}"
+npm_install_into() {
+  _dir=$1; _reg=$2
+  ( cd "$_dir" && npm install --no-audit --no-fund --omit=dev \
+      --registry "$_reg" --replace-registry-host=always \
+      --fetch-retries=2 --fetch-timeout=20000 --prefer-offline ) >>"$NPM_LOG" 2>&1 &
+  _pid=$!
+  _waited=0
+  NPM_TIMED_OUT=0
+  while kill -0 "$_pid" 2>/dev/null; do
+    if [ "$_waited" -ge "$NPM_TIMEOUT" ]; then
+      warn "npm ${NPM_TIMEOUT} 秒没有响应，结束它并换源重试"
+      # 直接 KILL：npm 卡死时不理 TERM；kill_tree_hard 先递归子进程再杀自己，
+      # 不会像「先 TERM 后 KILL」那样把 npm 变成孤儿（PPID=1）漏在外面。
+      NPM_TIMED_OUT=1
+      kill_tree_hard "$_pid"
+      break
+    fi
+    sleep 2
+    _waited=$((_waited + 2))
+    # 前台模式下给个心跳，否则长时间没输出像是卡死了
+    if [ $((_waited % 20)) -eq 0 ]; then printf '    ... %s 秒\n' "$_waited"; fi
+  done
+  wait "$_pid" 2>/dev/null
+}
+
 # 不只 app：mcp/image_task 与 mcp/video_task 也带 npm 依赖（@modelcontextprotocol/sdk + express），
 # 服务器上这些是镜像构建时装好的，本地得自己装。asr / web_search 是零依赖，自动跳过。
 ensure_deps() {
-  NEED=''
-  for d in "$ROOT/app" "$ROOT"/mcp/*/; do
-    [ -f "$d/package.json" ] || continue
-    if node -e 'process.exit(Object.keys(require(process.argv[1]).dependencies||{}).length?0:1)' "$d/package.json" >/dev/null 2>&1; then
-      # 不能只看 node_modules 在不在：上次 npm install 中途失败会留下半成品目录，
-      # 目录在、包不全，再按「存在即已装」判断就会永远跳过安装，core 起来就 require 失败。
-      # 所以逐个依赖 require.resolve 实测一遍（顺带覆盖手误删掉某个包的情况）。
-      if [ ! -d "$d/node_modules" ] || [ ! -f "$d/node_modules/.agent-installed" ] \
-         || [ "$d/package.json" -nt "$d/node_modules/.agent-installed" ] \
-         || ! deps_resolvable "$d"; then
-        NEED="$NEED $d"
-      fi
-    fi
-  done
-  [ -z "$NEED" ] && { ui_step 'Node 依赖已就绪（无需安装）' ok; return 0; }
+  if ! need_dirs | grep -q .; then
+    ui_step 'Node 依赖已就绪（无需安装）' ok
+    return 0
+  fi
   if [ "$NPM_OK" != 1 ]; then
     SETUP_TITLE='缺少 npm，无法安装依赖'
     SETUP_HINT='Node.js 一般自带 npm。若你是用系统包管理器装的 node，可能需要单独安装 <code>npm</code>。'
     return 1
   fi
-  say '安装 Node 依赖（需要联网，通常 1~3 分钟；已装好的目录会跳过）'
   : > "$NPM_LOG"
-  # 长步骤：页面上会持续显示已用秒数 + npm 输出的尾巴（心跳每秒重绘）。
-  ui_busy '安装 Node 依赖（npm install）' "$NPM_LOG"
-  ndir=0
-  for d in $NEED; do
-    ndir=$((ndir + 1))
-    say "  npm install → ${d#$ROOT/}"
-    # 输出同时落盘（页面里要带日志）与终端（人盯着看进度）。
-    # tee 会把 npm 的退出码吃掉，所以下面不靠退出码，而是直接实测依赖齐不齐。
-    if [ -n "$NPM_REGISTRY" ]; then
-      ( cd "$d" && npm install --no-audit --no-fund --omit=dev --registry "$NPM_REGISTRY" ) 2>&1 | tee -a "$NPM_LOG"
-    else
-      ( cd "$d" && npm install --no-audit --no-fund --omit=dev ) 2>&1 | tee -a "$NPM_LOG"
+
+  # 1) 本地缓存：装过一次后，重启 / 删 node_modules / 换 clone 都是解压，秒级且零网络
+  if cache_restore; then
+    if ! need_dirs | grep -q .; then
+      ui_idle
+      ui_step 'Node 依赖已就绪（本地缓存恢复）' ok
+      return 0
     fi
-    if ! deps_resolvable "$d"; then
-      install_failed "$d"
+    warn '缓存不完整，剩下的改为联网安装'
+  fi
+
+  # 2) 选源。一个都连不上就别让 npm 重试三次刷屏，直接给结论。
+  reg=$(pick_registry) || reg=''
+  if [ -z "$reg" ]; then
+    SETUP_TITLE='连不上任何 npm 源'
+    SETUP_HINT="npmmirror 与官方源都连不上，安装没法进行。检查代理 / VPN 后重跑；或在有网络的机器上装好，把缓存目录拷过来：<code>$(html_escape "$LOCAL_CACHE")</code>。"
+    return 1
+  fi
+  # 什么情况不自动换源：用户显式指定了源，或用的是公司私有源（乱兜底到公网可能装错东西）。
+  # 用公共源（npmmirror / 官方）时换源重试是安全的，也是国内环境最需要的。
+  allow_fallback=0
+  case "$reg" in
+    *registry.npmmirror.com*|*registry.npmjs.org*) allow_fallback=1 ;;
+  esac
+  [ -n "$NPM_REGISTRY" ] && allow_fallback=0
+  REG_TRY="$reg"
+  if [ "$allow_fallback" = 1 ]; then
+    for c in $REGISTRY_CANDIDATES; do
+      [ "$c" = "$reg" ] || REG_TRY="$REG_TRY $c"
+    done
+  fi
+  ntry=0
+  for t in $REG_TRY; do ntry=$((ntry + 1)); done
+
+  say "安装 Node 依赖（源：$(short_reg "$reg")，通常 1~3 分钟；已装好的目录会跳过）"
+  # 长步骤：页面上会持续显示已用秒数 + npm 输出的尾巴（心跳每秒重绘）。
+  ui_busy '安装 Node 依赖' "$NPM_LOG"
+  ui_step "依赖源：$(short_reg "$reg")" ok
+  TRIED_REGS=''
+  ndir=0
+  need_dirs > "$RUNTIME/needs.txt"
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    ndir=$((ndir + 1))
+    drel=${d#"$ROOT"/}; drel=${drel%/}
+    installed=0
+    i=0
+    for try_reg in $REG_TRY; do
+      i=$((i + 1))
+      say "  npm install → ${drel}（$(short_reg "$try_reg")，第 $i/$ntry 次）"
+      ui_busy_relabel "安装依赖：${drel}（$(short_reg "$try_reg")，第 $i/$ntry 次）" "$NPM_LOG"
+      # 上一轮失败会留下半成品，不清掉重试大概率还是失败
+      [ "$i" -gt 1 ] && rm -rf "$d/node_modules"
+      npm_install_into "$d" "$try_reg"
+      TRIED_REGS="$TRIED_REGS $try_reg"
+      if deps_resolvable "$d"; then
+        installed=1
+        # 换源成功就记住它，下次不用再探测
+        [ -n "$NPM_REGISTRY" ] || registry_remember "$try_reg"
+        break
+      fi
+    done
+    if [ "$installed" != 1 ]; then
+      install_failed "$drel"
       return 1
     fi
     # 打时间戳：npm 在「已经是最新」时不会更新 node_modules 的 mtime，
     # 只看目录 mtime 会导致每次启动都白跑一次 install。
     touch "$d/node_modules/.agent-installed"
-  done
+  done < "$RUNTIME/needs.txt"
   ui_idle
   ui_step "Node 依赖已装好（$ndir 个目录）" ok
+  cache_save
   return 0
 }
 
-# 安装失败时把「怎么再试」写进自检页。npm 自己在这种网络错误下只会吐一句
+# 把 npm 的输出翻译成一句人话：用户不该去读 gyp / ETIMEDOUT 这些字眼。
+# 原文仍然完整落在 npm-install.log，状态页只在尾巴里展示。
+npm_hint() {
+  tail -n 300 "$NPM_LOG" 2>/dev/null > "$RUNTIME/npm-tail.txt"
+  if grep -qiE 'gyp ERR!|xcrun: error|Command Line Tools|clang: error|cannot find Python' "$RUNTIME/npm-tail.txt"; then
+    printf '%s' '<b>本机缺少编译工具链</b>：某个依赖要现场编译原生模块。装一下 Xcode 命令行工具再重跑：<code>xcode-select --install</code>。'
+  elif grep -qiE 'EAI_AGAIN|ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|Exit handler never called|CERT_|self.signed|socket hang up|network' "$RUNTIME/npm-tail.txt"; then
+    printf '%s' '<b>网络没通</b>：npm 连不上源（已自动换源重试过）。多半是代理 / VPN，或公司网络拦截了 registry。'
+  elif grep -qiE 'EACCES|EPERM|permission denied' "$RUNTIME/npm-tail.txt"; then
+    printf '%s' '<b>没有写权限</b>：常见于以前用 <code>sudo</code> 装过依赖（目录属主变成 root）。删掉这些 <code>node_modules</code> 后重跑。'
+  elif [ "${NPM_TIMED_OUT:-0}" = 1 ]; then
+    printf '%s' '<b>源没有响应</b>：npm 卡住超过上限被终止（已自动换源重试）。多半是网络 / 代理 / 被墙。'
+  else
+    printf '%s' '依赖没有装成功，原因见下面的 npm 输出。'
+  fi
+}
+
+# 安装失败时把「怎么再试」写进自检页。npm 在断网时只会吐一句
 # "Exit handler never called!"（npm 10 + Node 22 的已知毛病），不提源就无从下手。
 install_failed() {
   SETUP_TITLE='依赖安装失败'
-  SETUP_HINT="<code>${1#$ROOT/}</code> 的 npm install 没装成功，绝大多数是 npm 源不可达。先确认源：<code>npm config get registry</code>；如果指向你环境里解析不了的地址，换源重试：<code>NPM_REGISTRY=https://registry.npmjs.org ./local/start.sh</code>。半成品 node_modules 不用手删，下次启动会重新检测缺失的包。下面是 npm 自己的输出（完整日志见本页底部路径）。"
+  tried=''
+  for t in ${TRIED_REGS:-}; do
+    [ -n "$tried" ] && tried="${tried}、"
+    tried="$tried<code>$(short_reg "$t" | esc)</code>"
+  done
+  [ -n "$tried" ] || tried='（默认配置）'
+  SETUP_HINT="<code>$(printf '%s' "$1" | esc)</code>：$(npm_hint)<br>已尝试的源：${tried}。也可以自己指定：<code>NPM_REGISTRY=https://registry.npmmirror.com ./local/start.sh</code>。下面是 npm 的原始输出。"
 }
 
 # ---------- 子进程 ----------
@@ -503,12 +743,22 @@ CORE_PID=''
 STOPPING=0
 
 kill_tree() {
-  pid=$1
-  [ -n "$pid" ] || return 0
+  # 只用 $1，不先赋给变量：POSIX sh 没有局部变量，递归会覆盖它，回到外层时
+  # kill 的就不是原本那个进程（踩过：看门狗杀了子进程，父进程和 npm 都留着）。
+  [ -n "${1:-}" ] || return 0
   if command -v pgrep >/dev/null 2>&1; then
-    for c in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$c"; done
+    for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$c"; done
   fi
-  kill "$pid" 2>/dev/null || true
+  kill "$1" 2>/dev/null || true
+}
+
+# 彻底送走（SIGKILL）：npm 卡死时会忽略 TERM（就是 "Exit handler never called" 那个毛病）。
+kill_tree_hard() {
+  [ -n "${1:-}" ] || return 0
+  if command -v pgrep >/dev/null 2>&1; then
+    for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree_hard "$c"; done
+  fi
+  kill -KILL "$1" 2>/dev/null || true
 }
 
 do_cleanup() {
