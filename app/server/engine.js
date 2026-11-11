@@ -53,8 +53,41 @@ function genTaskId() {
   return id;
 }
 
+// 会话级工作目录：本地桌面端新建会话时可手选一个真实目录（DB 列 work_dir，见 db.js 迁移）。
+// 空串 = 沿用 workspace_root/<会话id>，服务器形态永远走这条，行为与 v2.5.0 完全一致。
+// 用缓存的 prepared statement：taskDirOf 在文件 API / 工具链里被高频调用，每次现 prepare 没必要。
+let stmtWorkDir = null;
+function sessionWorkDir(sessionId) {
+  try {
+    if (!stmtWorkDir) stmtWorkDir = db.prepare('SELECT work_dir FROM sessions WHERE id = ?');
+    const row = stmtWorkDir.get(sessionId);
+    return String((row && row.work_dir) || '');
+  } catch (_) { return ''; }
+}
+
 function taskDirOf(sessionId) {
-  return path.join(cfg.workspace_root, sessionId);
+  return sessionWorkDir(sessionId) || path.join(cfg.workspace_root, sessionId);
+}
+
+// 校验并归一化「手选工作目录」：必须已存在的真实目录（不替用户 mkdir），且不能是根目录 /
+// 或平台数据目录——后者存着 SQLite（.agent.db）和 prompt dump，让会话目录指过去等于让 AI
+// 直接动运行数据库。用户主目录/Linux 根下子目录不拦（本地模式本来就没沙箱，README 已提示
+// 选专用目录），但选到根目录本身无意义。
+function normalizeWorkDir(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  if (!path.isAbsolute(raw)) throw Object.assign(new Error('工作目录必须是绝对路径：' + raw), { status_code: 400 });
+  let real;
+  try { real = fs.realpathSync(raw); } catch (_) { throw Object.assign(new Error('工作目录不存在：' + raw), { status_code: 400 }); }
+  let st;
+  try { st = fs.statSync(real); } catch (_) { throw Object.assign(new Error('工作目录不可访问：' + raw), { status_code: 400 }); }
+  if (!st.isDirectory()) throw Object.assign(new Error('不是目录：' + raw), { status_code: 400 });
+  if (real === path.parse(real).root) throw Object.assign(new Error('不能把根目录作为工作目录'), { status_code: 400 });
+  const dataRoot = String(cfg.data_root || '');
+  if (dataRoot && (real === dataRoot || real.startsWith(dataRoot + path.sep))) {
+    throw Object.assign(new Error('不能选择平台数据目录作为工作目录'), { status_code: 400 });
+  }
+  return real;
 }
 
 function getSession(sessionId) {
@@ -842,7 +875,7 @@ async function runLoopInner(sessionId, run) {
         isError = true;
       } else {
         try {
-          output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), run, cfg, db, vision,
+          output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), workDir: sessionWorkDir(sessionId), run, cfg, db, vision,
             onTaskCreated: () => { run.taskWrap = true; }, onCard: (card) => bus.emit(sessionId, 'ui_card', card),
             onDeepThink: (info) => {
               const m = (cfg.models || []).find(x => x.id === session.model_id);
@@ -1116,7 +1149,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ---------- 对外 API ----------
 // 新建即绑模（无排队）：指定了优先模型（welcome 预选）就取其平台「最不 active」的 key；
 // 模型无效或平台无槽位退回全局优先级选。池完全为空直接报错（配置问题），不建吊儿郎当的会话。
-function createSession(title, preferModelId, assistantType, user) {
+function createSession(title, preferModelId, assistantType, user, workDir) {
   // 用户锁定模型（auth.users[].model）优先于前端预选；锁定值无效/被禁用时退回原逻辑（用前端预选或全局自动选择）。
   const lock = lockedModelOf(user);
   const lockValid = !!lock && platformModels(platformOf(lock)).includes(lock);
@@ -1137,11 +1170,14 @@ function createSession(title, preferModelId, assistantType, user) {
     if (!modelId) throw Object.assign(new Error('无可用模型：请检查配置并重启服务'), { status_code: 503 });
   }
   const id = genTaskId();
-  const dir = taskDirOf(id);
-  fs.mkdirSync(dir, { recursive: true });
+  // 手选目录：直接当作会话工作目录（不建 task-* 子目录）；未选 = 老行为，在 workspace_root 下按 id 建档。
+  // 选中的目录必须已存在（normalizeWorkDir 已校验），绝不在用户目录里替它 mkdir。
+  const wd = normalizeWorkDir(workDir);
+  const dir = wd || path.join(cfg.workspace_root, id);
+  if (!wd) fs.mkdirSync(dir, { recursive: true });
   db.prepare(
-    "INSERT INTO sessions (id, title, status, model_id, model_slot, last_model_id, held_at, assistant_type, user, created_at, updated_at) VALUES (?,?,'held',?,?,?,?,?,?,?,?)"
-  ).run(id, title || '', modelId, key.id, modelId, now(), assistantType || 'secretary', user || '', now(), now());
+    "INSERT INTO sessions (id, title, status, model_id, model_slot, last_model_id, held_at, assistant_type, user, work_dir, created_at, updated_at) VALUES (?,?,'held',?,?,?,?,?,?,?,?,?)"
+  ).run(id, title || '', modelId, key.id, modelId, now(), assistantType || 'secretary', user || '', wd, now(), now());
   db.prepare('UPDATE model_pool SET last_used_at = ? WHERE id = ?').run(now(), key.id);
   profile.freezeSnapshot(db, id); // 冻结画像快照：仅创建/清空时点注入，会话内恒定（见 user-profile.js）
   // 新建会话默认走模型配置的 profile（未配 = 全量默认组合 + profile-default.txt），不再有顾问阶段
@@ -1358,6 +1394,9 @@ function renameSession(sessionId, title) {
 function deleteSession(sessionId, deleteDir) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  // 删行前先取目录：行没了 taskDirOf 会退回默认路径，且手选目录根本不归平台管。
+  const sessionDir = taskDirOf(sessionId);
+  const ownWorkDir = String(session.work_dir || '');
   stop(sessionId);
   // 尽力清理该会话在 executor 侧的预览槽（officecli 预览已迁 executor/preview.js；未配 executor 静默，失败只记日志不阻断删除）
   try { rexec.killPreviewSession(cfg, sessionId); } catch (_) {}
@@ -1367,8 +1406,10 @@ function deleteSession(sessionId, deleteDir) {
   const frags = memory.dropFragment(db, sessionId); // 日记随会话一并销毁：删掉的会话不该还活在长期记忆里
   if (frags) log.info('task', sessionId + ' 连带删除日记碎片 ' + frags + ' 条');
   autoCompressProposed.delete(sessionId); // 提议闸门随会话销毁
-  if (deleteDir) {
-    try { fs.rmSync(taskDirOf(sessionId), { recursive: true, force: true }); } catch (_) {}
+  if (deleteDir && !ownWorkDir) {
+    // 只删平台自己建的会话目录（workspace_root/<会话id>）。手选工作目录是用户的资产，
+    // 多个会话可以共用同一个目录，删会话绝不能连带删用户的项目。
+    try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch (_) {}
   }
   bus.closeAll(sessionId);
   return { ok: true };

@@ -84,7 +84,9 @@ router.post('/', wrap((req, res) => {
   const assistantType = String((req.body && req.body.assistant_type) || 'secretary').trim().slice(0, 32) || 'secretary';
   // 创建者取认证中间件的 req.user(不信客户端传参);未启用认证时为空串
   const user = String(req.user || '').trim().slice(0, 64);
-  const session = engine.createSession(title, modelId, assistantType, user);
+  // 手选工作目录（仅本地端前端会传，服务器前端从不带；不传/空串 = 老行为，见 engine.createSession）
+  const workDir = String((req.body && req.body.work_dir) || '').trim();
+  const session = engine.createSession(title, modelId, assistantType, user, workDir);
   log.info('task', (req.user || '-') + ' 新建任务 ' + session.id + '「' + (session.title || '未命名') + '」model=' + (modelId || '自动') + ' type=' + (session.assistant_type || 'secretary'));
   res.json(session);
 }));

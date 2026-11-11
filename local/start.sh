@@ -818,6 +818,7 @@ start_core() {
       HOST="$HOST_ADDR" \
       AGENT_CONFIG="$CONFIG" \
       AGENT_FILE_SCOPE=workspace \
+      AGENT_LOCAL_PICK=1 \
       ASR_URL="$ASR_URL" \
       PYTHONPATH="$ROOT/skills/deps" \
       node server/server.js >>"$LOG" 2>&1 ) &

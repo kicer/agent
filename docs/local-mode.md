@@ -329,3 +329,27 @@ rm -rf local/   # 或保留脚本、只是不用
 `local/config.local.yml`、`~/AgentWork/`、`app/node_modules/`、`mcp/image_task|video_task/node_modules/`。
 全部在 gitignore 内，不影响仓库；想彻底重来就把它们删掉再跑脚本（会话产出在 `data/` 与
 工作目录下的 `task-*` 里，不会被清）。
+
+## 10. 新建会话手选工作目录（本地端）
+
+默认每个会话落在 `workspace_root/<会话id>`（形如 `task-YYYYMMDD-NNN`）。本地端希望「给它一个
+目录就放开手脚」，所以新建会话时可以手选一个真实目录，这个会话的 AI 一切操作都在那儿。
+
+**后端只动 `taskDirOf` 一处**（`engine.js`）：
+
+```js
+taskDirOf(sessionId) = sessions.work_dir || path.join(workspace_root, sessionId)
+```
+
+全仓库的会话路径（文件 API、上传、`terminal` 的 cwd、`resolveInTask` 基准、data-page、
+`@会话` 只读）都经由它，所以改这一处即全线生效，不必逐个路由改。
+
+- 选择只存前端（`pendingWorkDir`），建档时随 `POST /api/sessions` 提交一次；不选 = 空串 = 老行为。
+- **不建 `task-*` 子目录**，直接以所选目录为工作目录（隐藏产物 `.tmp`/`.imgcache`/`.app`/`data.db` 落在这里）。
+- 允许多个会话选同一目录；**删会话绝不删该目录**（`deleteSession` 只在 `work_dir` 为空时才 `rmSync`）。
+- `fsRoot` 优先返回 `ctx.workDir`；`@<会话>` 也按目标会话的 `work_dir` 解析（`resolvePastPath`）。
+- 目录选择器：`routes/local.js` 用 `osascript`（mac）/ `zenity`/`kdialog`（Linux）弹原生窗口，
+  **仅 `AGENT_LOCAL_PICK=1` 时挂载**（`server.js`），服务器形态 `/api/local/*` 一律 404，前端整条入口隐藏。
+  必须 `execFile` 异步：同步会阻塞事件循环、卡住所有 SSE。
+- 只接受已存在的目录（`normalizeWorkDir` 校验真实路径），并拒绝根目录 `/` 与平台数据目录。
+- 服务器形态：前端从不传 `work_dir`，`work_dir` 列恒为空，行为与旧版完全一致。

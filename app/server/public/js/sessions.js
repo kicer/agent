@@ -231,7 +231,7 @@
   // welcome 经弹窗预选的模型在这里兑现：model_id 建档透传。
   async function ensureSession() {
     if (state.sessionId) return state.sessionId;
-    const s = await req('POST', '/api/sessions', { title: '', model_id: state.pendingModel || '', assistant_type: state.mode });
+    const s = await req('POST', '/api/sessions', { title: '', model_id: state.pendingModel || '', assistant_type: state.mode, work_dir: pendingWorkDir || undefined });
     state.sessionId = s.id;
     state.sessionTitle = (s && s.title) || '';
     state.sessionType = (s && s.assistant_type) || state.mode;
@@ -242,6 +242,49 @@
     connectStream();
     return s.id;
   }
+
+  // ---------- 本地端：新建会话时手选工作目录 ----------
+  // 只在 local/ 启动器（AGENT_LOCAL_PICK=1）下可用：探测 /api/local/info，拿不到就把整条
+  // chip 隐藏，服务器形态完全看不见这个入口。选择只暂存在前端，真正建档时随
+  // POST /api/sessions 提交一次；不选 = work_dir 空串 = 老行为（workspace_root/<会话id>）。
+  let pendingWorkDir = '';
+
+  function renderWelcomeDir() {
+    const pathEl = $('welcome-dir-path');
+    if (!pathEl) return;
+    const chip = $('welcome-dir');
+    pathEl.textContent = pendingWorkDir || '默认（工作区内）';
+    pathEl.title = pendingWorkDir || '默认：每个会话在系统工作目录下单独建档';
+    chip.classList.toggle('is-set', !!pendingWorkDir);
+    $('welcome-dir-clear').classList.toggle('hidden', !pendingWorkDir);
+  }
+
+  async function pickWelcomeDir() {
+    const btn = $('welcome-dir-pick');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+      // 超时给足 130s：后端对话框上限 120s，这里多留余量，别让前端先断
+      const r = await req('POST', '/api/local/pick-dir', {}, false, 130000);
+      if (r && r.path) { pendingWorkDir = r.path; renderWelcomeDir(); }
+    } catch (e) {
+      toast('选择目录失败：' + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  (function initWelcomeDir() {
+    const chip = $('welcome-dir');
+    if (!chip) return;
+    req('GET', '/api/local/info').then(info => {
+      if (!info || !info.enabled) return;
+      chip.classList.remove('hidden');
+      renderWelcomeDir();
+    }).catch(() => { /* 服务器形态：接口 404，整条隐藏 */ });
+    $('welcome-dir-pick').addEventListener('click', pickWelcomeDir);
+    $('welcome-dir-clear').addEventListener('click', () => { pendingWorkDir = ''; renderWelcomeDir(); });
+  })();
 
   function newChat() {
     closeStream();
@@ -257,6 +300,8 @@
     renderSendQueue();
     state.pendingModel = '';
     state.attachments = [];
+    pendingWorkDir = ''; // 新建会话把上次手选的工作目录也归零（回到默认）
+    renderWelcomeDir();
     if (typeof clearEditState === 'function') clearEditState();
     state.streamEl = null;
     state.streamText = '';

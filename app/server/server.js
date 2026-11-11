@@ -67,6 +67,12 @@ require('./routes/preview-proxy').earlyGuard(app);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// 本地桌面端（local/ 启动器）专用：原生目录选择器。AGENT_LOCAL_PICK=1 才挂，
+// 服务器形态零影响（不加载 routes/local.js，/api/local/* 一律 404）。
+if (String(process.env.AGENT_LOCAL_PICK || '') === '1') {
+  app.use('/api/local', require('./routes/local'));
+}
+
 app.use('/api/sessions', require('./routes/sessions'));
 app.use('/api/sessions', require('./routes/messages'));
 app.use('/api/sessions', require('./routes/files'));

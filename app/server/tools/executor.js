@@ -58,6 +58,9 @@ function resolveInTask(taskDir, p, rootDir) {
 // 工具层允许的根：session 形态 = 会话目录；workspace 形态 = workspace_root。
 // 只给「业务工具」用；路由层（文件 API/公网短链/data-page）与 @历史会话仍按会话目录校验。
 function fsRoot(ctx) {
+  // 手选工作目录的会话：AI 的一切文件操作都在这个真实目录里（本地端，不建 task-* 子目录）。
+  // 优先于 WIDE_SCOPE 的 workspace_root 兜底。
+  if (ctx.workDir) return ctx.workDir;
   if (!WIDE_SCOPE) return ctx.taskDir;
   return (ctx.cfg && ctx.cfg.workspace_root) || ctx.taskDir;
 }
@@ -90,13 +93,15 @@ function resolvePastPath(ctx, p) {
   const sid = m[1];
   const rel = m[2] || '.';
   if (!/^task-[0-9A-Za-z_\-]+$/.test(sid)) throw new Error('@ 后需会话 id, 形如 task-YYYYMMDD-NNN: ' + sid);
-  const s = ctx.db.prepare('SELECT id, user, title FROM sessions WHERE id = ?').get(sid);
+  const s = ctx.db.prepare('SELECT id, user, title, work_dir FROM sessions WHERE id = ?').get(sid);
   if (!s) throw new Error('会话不存在: ' + sid);
   const me = ctx.db.prepare('SELECT user FROM sessions WHERE id = ?').get(ctx.sessionId);
   if (String(s.user || '') !== String((me && me.user) || '')) throw new Error('无权访问该会话: ' + sid);
+  // 目标会话若手选了工作目录，@<会话> 也必须指向那个真实目录，而不是 workspace_root/<id>。
+  const wd = String(s.work_dir || '');
   const root = String((ctx.cfg && ctx.cfg.workspace_root) || '');
-  if (!root) throw new Error('workspace_root 未配置');
-  const dir = path.join(root, sid);
+  const dir = wd || (root ? path.join(root, sid) : '');
+  if (!dir) throw new Error('workspace_root 未配置');
   return { sid: sid, title: s.title || sid, dir: dir, abs: resolveInTask(dir, rel) };
 }
 

@@ -151,6 +151,18 @@
           </div>
           <div class="welcome-slogan">随时开始吧</div>
         </div>
+        <!-- 本地端：新建会话时手选工作目录（服务器形态由 JS 整块隐藏）。
+             只暂存在前端，真正建档时随 POST /api/sessions 提交一次；不选 = 老行为。 -->
+        <div class="welcome-dir hidden" id="welcome-dir">
+          <span class="welcome-dir-cap">工作目录</span>
+          <button type="button" class="welcome-dir-pick" id="welcome-dir-pick" title="选择本会话的工作目录">
+            <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+            <span class="welcome-dir-path" id="welcome-dir-path">默认</span>
+          </button>
+          <button type="button" class="welcome-dir-clear hidden" id="welcome-dir-clear" title="恢复默认目录" aria-label="恢复默认目录">
+            <svg class="ic sm" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+          </button>
+        </div>
       </section>
 
       <!-- ================= 对话状态:对话内容区 ================= -->

@@ -127,6 +127,61 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   gap: 14px;
 }
 
+/* 本地端：新建会话手选工作目录（服务器形态由 JS 整块隐藏）。 */
+.welcome-dir {
+  margin-top: 18px;
+  max-width: min(90vw, 560px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--ink);
+}
+.welcome-dir-cap { flex: 0 0 auto; opacity: .6; }
+.welcome-dir-pick {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.welcome-dir-pick:disabled { opacity: .6; cursor: default; }
+.welcome-dir-pick .ic { flex: 0 0 auto; color: var(--active); }
+.welcome-dir-path {
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome-dir.is-set .welcome-dir-path { color: var(--active); }
+.welcome-dir-clear {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink);
+  opacity: .5;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.welcome-dir-clear:hover { opacity: 1; background: var(--border); }
+.welcome-dir-clear .ic { width: 12px; height: 12px; }
+
 /* ---------- 对话状态:对话内容区 ---------- */
 /* overflow-x 显式 hidden:overflow-y:auto 会把 visible 的 overflow-x 计算成 auto,
    宽代码块/表格自带横向滚动,不该再让消息流整体横向溢出 */
