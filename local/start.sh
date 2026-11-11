@@ -1022,7 +1022,7 @@ SKILLS_DIR=$(skills_dir)
 [ -n "$SKILLS_DIR" ] || SKILLS_DIR="$ROOT/skills"   # 配置里两个键都被删掉时的兼底
 if sync_skills "$SKILLS_DIR"; then
   if [ "$PY_OK" = 1 ]; then ui_step "技能：$SKILLS_DIR" ok
-  else ui_step "技能：$SKILLS_DIR（python3 未安装，Python 技能会失败）" warn; fi
+  else ui_step "技能：${SKILLS_DIR}（python3 未安装，Python 技能会失败）" warn; fi
 else
   ui_step '技能目录不可用（检查配置里的 skills_root）' warn
 fi
@@ -1033,7 +1033,7 @@ TASKS_DIR=$(cfg_get workspace_root)
 
 if PREVIEW_PORT=$(pick_preview_port); then
   start_preview
-  ui_step "预览网关：$HOST_ADDR:$PREVIEW_PORT（office 文档）" ok
+  ui_step "预览网关：$HOST_ADDR:${PREVIEW_PORT}（office 文档）" ok
 else
   PREVIEW_PORT=''
   warn '找不到空闲的预览端口（3100-3109），office 文档的预览将不可用'
@@ -1088,7 +1088,7 @@ while :; do
       [ "$FF_OK" = 1 ] && check_mcp "$MCP_ASR_PORT" asr
       # 预览网关挂了不会影响别的功能，但它静默失败时用户只会看到空白预览，所以点名。
       if [ -n "${PREVIEW_PORT:-}" ] && ! port_open "$PREVIEW_PORT"; then
-        warn "预览网关没起来（端口 $PREVIEW_PORT）——日志：local/.runtime/preview.log"
+        warn "预览网关没起来（端口 ${PREVIEW_PORT}）——日志：local/.runtime/preview.log"
       fi
       if [ "$FIRST_RUN" = 1 ]; then
         # 首次安装：停在状态页，给一个按钮让用户自己点（先看完「首次使用」提示再进去）。

@@ -101,5 +101,5 @@ done
 if [ "$stopped" = 1 ]; then
   say '已停止'
 else
-  say "没有在运行（$PORT、MCP 端口 $MCP_PORTS、预览端口 $pv_port 都空闲）"
+  say "没有在运行（${PORT}、MCP 端口 ${MCP_PORTS}、预览端口 $pv_port 都空闲）"
 fi
