@@ -1370,7 +1370,7 @@ label.icon-btn { cursor: pointer; }
 .modal .mpe-unit { position: relative; flex: none; width: 118px; }
 .modal .mpe-unit input { width: 100%; margin: 0; padding: 8px 30px 8px 10px; }
 .modal .mpe-unit i { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-style: normal; font-size: 11.5px; color: var(--gray-light); pointer-events: none; }
-/* 预设模式下 name/url 是契约值（只读），压暗以区别于可编辑输入框 */
+/* 预设模式下 name 是契约值（只读），压暗以区别于可编辑输入框 */
 .modal input[readonly] { background: #f1f3f7; color: var(--gray); }
 .modal .mpe-ck { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--gray); }
 .modal .mpe-ck input { width: 15px; height: 15px; padding: 0; margin: 0; border: none; background: none; accent-color: var(--active); cursor: pointer; }

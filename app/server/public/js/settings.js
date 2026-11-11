@@ -1685,13 +1685,17 @@
       const txt = f.secret ? (v ? '已配置' : '--') : (v ? String(v) : '--');
       return '<div class="cfg-kv"><label>' + esc(f.label || f.header) + '</label><b>' + esc(txt) + '</b></div>';
     }).join('');
+    // 地址一律显示真实配置:预设地址只是容器形态的缺省值,本地形态是 127.0.0.1:809x,
+    // 照抄预设会与「已连接」徽章自相矛盾。与预设不同时标一句,免得用户以为配错了。
+    const urlTxt = (s ? (s.url || '') : p.url) || '';
+    const urlMark = s && p.url && urlTxt !== p.url ? ' （自定义）' : '';
     return '<div class="model-card' + (mode === 'disable' ? ' off' : '') + '"' +
       ' onclick="mcpUI.' + (s ? 'editPreset' : 'addPreset') + '(\'' + att(p.key) + '\')">' +
       '<div class="model-card-head">' +
         '<span class="model-card-name">' + esc(p.label || p.key) + '</span>' +
         state +
       '</div>' +
-      '<div class="cfg-kv"><label>地址</label><b>' + esc(p.url) + '</b></div>' + kv +
+      '<div class="cfg-kv"><label>地址</label><b>' + esc(urlTxt + urlMark) + '</b></div>' + kv +
     '</div>';
   }
   // MCP 卡:头部 = 名称 + url + mode 状态;体内 = headers 键值列表。整卡点击进入编辑。
@@ -1720,7 +1724,8 @@
     '</div>';
   }
   // 弹窗打开：add 模式 (idx=null) → 空工作态;edit 模式 → 从当前配置复制。
-  // presetKey 有值 = 内置服务模式：url/name/mode 是契约(只读)，表单由预设的 fields 生成。
+  // presetKey 有值 = 内置服务模式：name/mode 是契约(只读)，url 可改（地址随部署形态变，预设只给缺省值），
+  // 表单由预设的 fields 生成。
   function openMcpEditor(idx, presetKey) {
     const preset = presetKey ? (presetMcpList().find(p => p.key === presetKey) || null) : null;
     const add = idx == null;
@@ -1753,9 +1758,11 @@
     }
     $('mce-title').textContent = (add ? '添加 ' : '编辑 ') + (preset ? preset.label : 'MCP 服务');
     $('mce-name').value = preset ? preset.key : (add ? '' : (s.name || ''));
-    $('mce-url').value = preset ? preset.url : (add ? '' : (s.url || ''));
+    // 预填优先级:当前配置 > 预设缺省值。url 不锁只读——容器形态是 mcp_*:3000，本地形态是
+    // 127.0.0.1:809x，漏改这里用户就看不到也改不了真实地址。
+    $('mce-url').value = add ? (preset ? preset.url : '') : (s.url || (preset ? preset.url : ''));
     $('mce-name').readOnly = !!preset;
-    $('mce-url').readOnly = !!preset;
+    $('mce-url').readOnly = false;
     // 运行配置里的 timeout_ms 已被 config.js 填上缺省值,所以这里显示的就是当前生效值(没配则为 60000)。
     $('mce-timeout').value = add || s.timeout_ms == null ? '' : String(s.timeout_ms);
     // 预设的 mode 是契约（asr / image_task 必须 skill 才不会把一堆转写/生成工具塞进每轮工具表），
@@ -1888,11 +1895,13 @@
       if (!Number.isFinite(tmo) || tmo < 1000 || tmo > 600000) throw new Error('超时要填 1000 ~ 600000 毫秒（留空 = 默认 60s）');
       tmo = Math.round(tmo);
     }
-    // 内置服务的 name/url 是契约（表单只读），只有自定义服务才从输入框取
-    const name = preset ? preset.key : $('mce-name').value.trim();
-    const url = preset ? preset.url : $('mce-url').value.trim();
-    const headers = preset ? presetHeaders() : plainHeaders();
+    // name 是契约（预设的服务名固定）；url 不再是契约——展示与写盘均以 config 为准，
+    // 输入框里默认的就是预设值，改了就存。
     const add = mcpEdit.idx < 0;
+    const cur = add ? {} : (SET.cfgMcp[mcpEdit.idx] || {});
+    const name = preset ? preset.key : $('mce-name').value.trim();
+    const url = $('mce-url').value.trim();
+    const headers = preset ? presetHeaders() : plainHeaders();
     if (add) {
       if (!url) throw new Error('请填写 url');
       const obj = { url };
@@ -1902,12 +1911,10 @@
       if (Object.keys(headers).length) obj.headers = headers;
       edits.push({ op: 'append', path: ['mcp_servers'], value: obj });
     } else {
-      const cur = SET.cfgMcp[mcpEdit.idx] || {};
-      if (!preset) {
-        if (!url) throw new Error('请填写 url');
-        if (name !== (cur.name || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'name'], value: name });
-        if (url !== (cur.url || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'url'], value: url });
-      }
+      // 自定义服务：name/url 都能改；内置服务只允许改 url（name/mode 是契约）
+      if (!url) throw new Error('请填写 url');
+      if (!preset && name !== (cur.name || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'name'], value: name });
+      if (url !== (cur.url || '')) edits.push({ path: ['mcp_servers', mcpEdit.idx, 'url'], value: url });
       // mode:默认值不写进文件(选 advertise 就删键)
       if ((cur.mode || 'advertise') !== mode) edits.push(mode === 'advertise'
         ? { path: ['mcp_servers', mcpEdit.idx, 'mode'], op: 'delete' }
