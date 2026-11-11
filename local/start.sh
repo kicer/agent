@@ -889,6 +889,7 @@ start_core() {
       PYTHONPATH="$SKILLS_DIR/deps" \
       AGENT_SKILLS_DEPS="$SKILLS_DIR/deps" \
       PREVIEW_PROXIES="[{\"name\":\"office\",\"prefix\":\"/preview\",\"host\":\"$HOST_ADDR\",\"port\":${PREVIEW_PORT:-3100}}]" \
+      OFFICE_GATEWAY_PORT="${PREVIEW_PORT:-3100}" \
       node server/server.js >>"$LOG" 2>&1 ) &
   CORE_PID=$!
 }
