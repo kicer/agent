@@ -20,12 +20,13 @@
 
 ```
 skills/
+├── AGENTS.md          # 技能排错与国内网络换源（可选参考；core 不读）
 └── <skill-name>/
     ├── SKILL.md          # 技能描述文件（必须）
     ├── run.py            # 技能主入口（Python 脚本，推荐）或 run.sh
     ├── requirements.txt  # Python 依赖（可选，若需要第三方包）
     ├── install.sh        # 系统级依赖安装脚本（可选，如 apt-get）
-    ├── AGENTS.md         # 本机排错命令（可选；core 不读，只在技能报错信息里被指向）
+    ├── AGENTS.md         # 该技能的排错命令（可选；core 不读，只在报错信息里被指向）
     └── ...               # 其他技能相关文件（如字体、模板等）
 ```
 

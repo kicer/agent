@@ -289,6 +289,10 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 （报什么错、敲什么），不写背景、不提服务器。起点是 `env-local` 提示词的一句话：技能失败就读
 `"$(dirname "$AGENT_SKILLS_DEPS")/<技能>/AGENTS.md"`。装完不需要重启，旧进程不影响。
 
+分两层写，避免四份重复漂移：技能目录的 `AGENTS.md` 只写该技能特有的（缺哪个包、缺什么系统库）；
+网络类的（pip / npm / GitHub / brew 换源）全局只需要一份，放在技能根目录
+`"$(dirname "$AGENT_SKILLS_DEPS")/AGENTS.md"`，各技能的清单末尾指过去。
+
 代价明写：`office` 的命令入口在本地不在 PATH 上，按次 `PATH="$SK/scripts:$PATH" office ...` 即可
 （这是它 `AGENTS.md` 的第一条）。
 
@@ -299,6 +303,7 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
 | `office` 封装层 ENOENT | 本技能 `AGENTS.md` 绝对路径 |
 | `x2pdf` 缺包 / 无渲染后端 | 同上 |
 | `image-process` 缺中文字体 | 同上（并提示传 `font`） |
+| 网络类（pip / npm / GitHub / brew） | 由技能清单指到技能根目录的 `AGENTS.md`（只有一份） |
 
 唯一保留的环境相关代码是 `x2pdf` 的 `find_soffice()`：`brew install --cask libreoffice` 后
 `soffice` 不在 PATH（在 app bundle 内），不探这几个默认位置，“装 LibreOffice 即可”就是假的。
