@@ -3,16 +3,19 @@
 x2pdf 技能主入口:通用 PDF 转换。
 
 分派策略(按输入文件扩展名):
-- .md / .markdown / .txt / .html / .htm → WeasyPrint 渲染;本机没有 WeasyPrint
-  (缺包,或缺它要 dlopen 的 pango/cairo)时回落 LibreOffice,保真度略低但不缺库
+- .md / .markdown / .txt / .html / .htm → 依次尝试 WeasyPrint / 无头浏览器 / LibreOffice
+  三者都是本机可能没有的渲染后端:WeasyPrint 缺包或缺 pango/cairo 时不可用,
+  浏览器(Chrome/Chromium/Edge)不需要任何 Python 依赖,保真度介于两者之间
 - .docx / .xlsx / .pptx / .odt / .ods / .odp → LibreOffice headless 转换
 
 依赖不假设镜像预烘:Python 包由 requirements.txt 声明,系统库由 install.sh 就绪校验。
-LibreOffice 的定位不只看 PATH:macOS 的 app bundle 与 Windows 的安装目录都不进 PATH,
-which() 找不到不等于没装(见 find_soffice)。
+LibreOffice 与浏览器的定位不只看 PATH:macOS 的 app bundle 与 Windows 的安装目录都不进 PATH,
+which() 找不到不等于没装(见 find_soffice / find_browser)。
 中文字体走 fontconfig(系统文泉驿/Noto),技能不携带字体文件。
 """
+import contextlib
 import html as html_mod
+import io
 import json
 import os
 import re
@@ -45,6 +48,28 @@ def find_soffice():
               str(Path.home() / 'Applications/LibreOffice.app/Contents/MacOS/soffice'),
               r'C:\Program Files\LibreOffice\program\soffice.exe',
               r'C:\Program Files (x86)\LibreOffice\program\soffice.exe'):
+        if Path(c).is_file():
+            return c
+    return None
+
+
+def find_browser():
+    """定位支持 --headless --print-to-pdf 的浏览器(Chrome / Chromium / Edge)。
+    不要求用户为了转 PDF 装 Python 侧渲染栈:pango 在老系统上只能现编。
+    同 find_soffice:macOS app bundle 与 Windows 安装目录都不进 PATH。"""
+    for name in ('google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser',
+                 'microsoft-edge', 'msedge'):
+        p = shutil.which(name)
+        if p:
+            return p
+    for c in ('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+              '/Applications/Chromium.app/Contents/MacOS/Chromium',
+              '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+              str(Path.home() / 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
+              r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+              r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+              r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+              r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'):
         if Path(c).is_file():
             return c
     return None
@@ -200,10 +225,18 @@ def convert_text_pdf(input_path, output_path, css_arg, page_arg):
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        from weasyprint import CSS, HTML
+        # 导入失败时 WeasyPrint 会往 stdout 打一大段「could not import some external libraries」
+        # (text/ffi.py 里裸 print),模型会把这段当成真错。降级是预期行为,噪声吞掉,
+        # 由返回值那句 note 告知实际后端。
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            from weasyprint import CSS, HTML
     except (ImportError, OSError):
         # 缺 Python 包是 ImportError;装了包但缺它要 dlopen 的 libpango/libgobject 时是 OSError。
-        # 两种都当作「本机没有 WeasyPrint」,回落 LibreOffice(Office 分支本来也要它)。
+        # 两种都当作「本机没有 WeasyPrint」:先试浏览器(只需装了 Chrome 系),再回落 LibreOffice。
+        browser = find_browser()
+        if browser:
+            return convert_html_browser(browser, document, output_path, base_url, sheets, ext)
         return convert_html_pdf(document, output_path, ext)
     # 注:stylesheets 参数只接受 CSS 对象,传字符串会被当成文件路径
     HTML(string=document, base_url=base_url).write_pdf(
@@ -211,14 +244,56 @@ def convert_text_pdf(input_path, output_path, css_arg, page_arg):
     return ''
 
 
+def inject_styles(document, sheets, base_url):
+    """把 CSS 与 base 标签塞进已有 HTML:浏览器后端只能吃单个文件。
+    注入点是 </head>(其次 <body>),绝不能落到 doctype 前面——那会触发怪异模式。"""
+    head = ''
+    if base_url:
+        head += '<base href="%s/">\n' % Path(base_url).resolve().as_uri()
+    if sheets:
+        head += '<style>\n%s\n</style>\n' % '\n'.join(sheets)
+    if not head:
+        return document
+    m = re.search(r'</head\s*>', document, re.I) or re.search(r'<body[^>]*>', document, re.I)
+    if m:
+        return document[:m.start()] + head + document[m.start():]
+    d = re.match(r'\s*<!doctype[^>]*>', document, re.I)
+    if d:
+        return document[:d.end()] + '\n' + head + document[d.end():]
+    return head + document
+
+
+def convert_html_browser(browser, document, output_path, base_url, sheets, ext):
+    """HTML → 无头浏览器打印:WeasyPrint 不可用时的中间档。
+    浏览器能完整解析 CSS(表格边框/底纹/分页),但页码是 WeasyPrint 的 CSS 计数器特性,
+    这里不生效;@page 的 size/margin 视浏览器版本部分生效。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_root = Path(tempfile.mkdtemp(prefix='x2pdf-browser-'))
+    try:
+        # 浏览器默认纸张是 Letter,WeasyPrint 默认 A4。文档自己没写 @page 时补上 A4,
+        # 否则同一份 html 换后端就换纸型。
+        if not any('@page' in s for s in sheets) and '@page' not in document:
+            sheets = list(sheets) + ['@page { size: A4; }']
+        src = tmp_root / 'document.html'
+        src.write_text(inject_styles(document, sheets, base_url), encoding='utf-8')
+        cmd = [browser, '--headless', '--disable-gpu', '--no-pdf-header-footer',
+               '--virtual-time-budget=2000',
+               '--print-to-pdf=%s' % str(output_path.resolve()), src.as_uri()]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if not output_path.is_file() or output_path.stat().st_size == 0:
+            detail = (proc.stderr or proc.stdout or '').strip().replace('\n', ' ')[:300]
+            raise RuntimeError('PDF 生成失败(exit=%s):%s' % (proc.returncode, detail or '无输出'))
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+    return '排版降级:无页码,尺寸/边距可能与预期有偏差'
+
+
 def convert_html_pdf(document, output_path, ext):
-    """HTML → LibreOffice:WeasyPrint 不可用时的回落路径。
+    """HTML → LibreOffice:最后一道回落(浏览器也没有时)。
     代价是保真度:@page 的边距/页码与大部分 CSS 在 LibreOffice 的 HTML 导入里不生效,
     适合「拿到一份能看的 PDF」,不适合精确排版。"""
     if not find_soffice():
-        raise RuntimeError('这台机器没有可用的 PDF 渲染后端:%s 需 WeasyPrint,但 WeasyPrint 不可用'
-                           '(缺 Python 包,或缺系统库 pango/cairo);也没找到 LibreOffice。%s'
-                           % (ext, req_hint()))
+        raise RuntimeError('这台机器没有可用的 PDF 排版能力,无法转换 %s;%s' % (ext, req_hint()))
     tmp_root = Path(tempfile.mkdtemp(prefix='x2pdf-html-'))
     try:
         src = tmp_root / 'document.html'
@@ -226,7 +301,7 @@ def convert_html_pdf(document, output_path, ext):
         convert_office_pdf(src, output_path)
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)
-    return '用 LibreOffice 渲染(WeasyPrint 不可用):@page 边距/页码与部分 CSS 不生效'
+    return '排版降级:边距/页码与部分 CSS 不生效'
 
 
 def convert_office_pdf(input_path, output_path):
@@ -234,8 +309,7 @@ def convert_office_pdf(input_path, output_path):
     每次用独立临时 UserInstallation/HOME,避免并发实例互踩共享配置。"""
     soffice = find_soffice()
     if not soffice:
-        raise FileNotFoundError('未找到 LibreOffice(soffice),无法转换 Office 文档。'
-                                '服务器镜像已预装;本机装一个 LibreOffice 即可。')
+        raise FileNotFoundError('这台机器没有可用于转换 Office 文档的组件;%s' % req_hint())
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_root = Path(tempfile.mkdtemp(prefix='x2pdf-office-'))
@@ -256,7 +330,7 @@ def convert_office_pdf(input_path, output_path):
         generated = pdf_dir / (input_path.stem + '.pdf')
         if not generated.exists():
             detail = (proc.stderr or proc.stdout or '').strip().replace('\n', ' ')[:300]
-            raise RuntimeError('LibreOffice 转换失败(exit=%s):%s' % (proc.returncode, detail or '无输出'))
+            raise RuntimeError('文档转换失败(exit=%s):%s' % (proc.returncode, detail or '无输出'))
         shutil.move(str(generated), str(output_path))
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)

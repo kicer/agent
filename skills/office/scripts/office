@@ -2,22 +2,28 @@
 // office: officecli 的封装层（技能唯一入口）。
 // - 二进制不进 PATH、SKILL.md 不提及：可见面 = 可调用面，模型只认识本脚本；路径可用 OFFICECLI_BIN 覆盖。
 // - 命令治理移植自原 MCP 桥：隐去命令报原生风格 unrecognized；view 渲染族拦截给替代路径；
-//   watch 族不透传（预览由平台托管）。
+//   watch 族在服务器形态不透传（预览由平台网关托管），本地直跑放行（见 LOCAL 分支）。
 // - create/open 成功在 stdout 尾行发 ui_card marker（::ui_card {json}::）：core 剥离后转聊天流卡片，
-//   模型面不感知 marker；arg 为相对 cwd（会话目录）的文件路径。
+//   模型面不感知 marker；arg 为相对 cwd（会话目录）的文件路径。本地没有预览网关，不发卡片。
 'use strict';
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
 const http = require('node:http');
+const fs = require('node:fs');
+const net = require('node:net');
+const os = require('node:os');
 
 const BIN = process.env.OFFICECLI_BIN || path.resolve(__dirname, '..', 'bin', 'officecli');
+// 本地直跑（local/start.sh 注入）：没有 executor，也没有 /preview 网关，
+// 预览卡片必然是死链、__pv-touch 打不通，watch 也就没有平台托管可言。
+const LOCAL = process.env.AGENT_LOCAL_PICK === '1';
 
 // 本部署不合适的命令（自锁死 / 装配环境族）：原生风格报错，help 清单同步删行（见 help 段）。
 const unrecognized = (v) => "Unrecognized command or argument '" + v + "'.";
 const HIDDEN_TOP = /^(mcp|skills|install|plugins)(?:\s|$)/;
 const HIDDEN_LINE = /^ {2}(?:mcp|skills|install|plugins)\b/; // '\b' 绝不能用字符串拼 RegExp（会变退格符）
 const HELP_STRIP = /^ {2}(?:watch|unwatch)\b/;
-const HIDDEN_SUBS = new Set(['mark', 'unmark', 'marks', 'goto']); // 标注/滚动族：预览交互由 get-pos 单点覆盖
+const HIDDEN_SUBS = new Set(['mark', 'unmark', 'marks', 'goto']); // 标注/滚动族：预览交互由 get-pos 单点覆盖（本地有真实 watch，放行）
 const VIEW_BLOCKED = new Set(['html', 'screenshot', 'svg', 'pdf', 'forms']); // 需无头浏览器/导出插件，本环境没有
 const OFFICE_EXT_RE = /\.(?:docx|xlsx|pptx)$/i;
 const EDIT_RE = /^(set|add|remove|move|swap|raw-set|add-part|batch|import|merge|refresh)$/;
@@ -60,8 +66,8 @@ const first = String(argv[0] || '');
 // ---------- 命令面闸门 ----------
 let m = HIDDEN_TOP.exec(cmd);
 if (m || (first === 'help' && HIDDEN_TOP.test(argv.slice(1).join(' ')))) err(unrecognized(m ? m[1] : argv[1]));
-if (HIDDEN_SUBS.has(first)) err(unrecognized(first));
-if (first === 'watch' || first === 'unwatch') {
+if (!LOCAL && HIDDEN_SUBS.has(first)) err(unrecognized(first));
+if (!LOCAL && (first === 'watch' || first === 'unwatch')) {
   err('Preview slots are managed by the platform: create/open a document, then click the preview card in the chat.');
 }
 
@@ -83,6 +89,63 @@ if (first === 'get-pos') {
   argv = ['get', file, 'selected', '--json'];
 }
 
+// watch：原生是常驻 HTTP 预览服务，前台透传会一直阻塞到 terminal 超时。
+// 本地改成后台拉起 → 等端口就绪 → 报地址 → 立刻退出，预览页留在后台刷新（编辑通知走原生管道，同机可用）。
+function startWatch() {
+  const file = argv[1];
+  if (!file) err('Usage: watch <file> [--port <port>]');
+  let port = 26315;
+  for (let i = 2; i < argv.length; i++) {
+    const a = String(argv[i]);
+    if (a === '--port') { port = Number(argv[i + 1]); break; }
+    if (a.startsWith('--port=')) { port = Number(a.slice(7)); break; }
+  }
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) err('watch: --port 需要合法端口号');
+  const url = 'http://127.0.0.1:' + port + '/';
+  const report = () => {
+    process.stdout.write('预览地址：' + url + '\n停止预览：unwatch ' + file + '\n');
+    process.exit(0);
+  };
+  const probe = (cb) => {
+    const s = net.connect({ host: '127.0.0.1', port });
+    s.setTimeout(300);
+    s.once('connect', () => { s.destroy(); cb(true); });
+    s.once('timeout', () => { s.destroy(); cb(false); });
+    s.once('error', () => cb(false));
+  };
+  probe((up) => {
+    if (up) return report();
+    const logf = path.join(os.tmpdir(), 'officecli-watch-' + port + '.log');
+    let fd;
+    try { fd = fs.openSync(logf, 'a'); } catch (e) { err('watch: 无法写日志 ' + logf + ': ' + (e && e.message || e)); }
+    const child = spawn(BIN, argv, {
+      cwd: process.cwd(), env: vendorEnv(), detached: true, stdio: ['ignore', fd, fd],
+    });
+    try { fs.closeSync(fd); } catch (_) {}
+    child.on('error', (e) => { err('watch 启动失败：' + (e && e.message || e)); });
+    child.unref();
+    let tries = 0;
+    const tick = () => {
+      probe((ok) => {
+        if (ok) return report();
+        if (++tries > 50) {
+          let tail = '';
+          try { tail = fs.readFileSync(logf, 'utf8').split('\n').slice(-5).join('\n').trim(); } catch (_) {}
+          err('watch 未能在 5s 内就绪；日志：' + logf + (tail ? '\n' + tail : ''));
+        }
+        setTimeout(tick, 100);
+      });
+    };
+    setTimeout(tick, 100);
+  });
+}
+
+if (LOCAL && first === 'watch' && !helpCmd && !(argv[2] && HIDDEN_SUBS.has(String(argv[2])))) {
+  startWatch();
+  // 不能落到下面的同步透传：spawnSync 会堵住事件循环，端口就绪的回调就再也跑不到
+  return;
+}
+
 // ---------- 透传 ----------
 let r;
 try {
@@ -101,13 +164,14 @@ if (r.error) {
 let outRaw = scrub(r.stdout || '');
 // help 文本对齐可调用面：隐去的命令删行（原生 cwd 已是会话目录，无扩展命令需补录）
 if (helpCmd && outRaw.includes('Commands:')) {
-  outRaw = outRaw.split('\n').filter((ln) => !HIDDEN_LINE.test(ln) && !HELP_STRIP.test(ln)).join('\n');
+  outRaw = outRaw.split('\n')
+    .filter((ln) => !HIDDEN_LINE.test(ln) && (LOCAL || !HELP_STRIP.test(ln))).join('\n');
 }
 if (outRaw) process.stdout.write(outRaw);
 if (r.stderr) process.stderr.write(scrub(r.stderr || ''));
 
 // create/open 成功尾行发预览卡片 marker（core 解析后剥离；模型面无感）
-if (r.status === 0 && /^(create|open)$/.test(first)) {
+if (r.status === 0 && !LOCAL && /^(create|open)$/.test(first)) {
   let file = null;
   for (const t of argv) {
     const s = String(t);
@@ -130,7 +194,7 @@ if (r.status === 0 && /^(create|open)$/.test(first)) {
 // 网关命中活槽位后 POST watch /api/switch 就地重读，页面靠 vendor 自带的 doc-switched 监听自刷。
 // fire-and-forget：800ms 封顶，一切失败静默——预览永远不是命令成功的前提。
 const CODE = r.status === null ? 1 : r.status;
-if (CODE === 0 && !process.env.OFFICE_JAIL && EDIT_RE.test(first) && argv[1]) {
+if (CODE === 0 && !LOCAL && !process.env.OFFICE_JAIL && EDIT_RE.test(first) && argv[1]) {
   let done = false;
   const finish = () => { if (done) return; done = true; process.exit(CODE); };
   try {

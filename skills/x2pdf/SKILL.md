@@ -37,10 +37,8 @@ output_schema:
 
 统一 PDF 转换入口,按扩展名自动分派两条渲染路径:
 
-- **md / txt / html → WeasyPrint**(CSS 排版,字体走 fontconfig,中文用系统文泉驿/Noto,无需字体文件);
-  本机没有 WeasyPrint(缺包,或缺它依赖的 pango/cairo)时自动回落 LibreOffice——
-  能出件,但 `page`/`css` 只部分生效,不适合精确排版
-- **docx / xlsx / pptx / odt / ods / odp → LibreOffice headless**(忠于原文档版式,`page`/`css` 参数不生效)
+- **md / txt / html → 渲染成 PDF**(CSS 排版,字体走系统 fontconfig,中文用系统文泉驿/Noto,无需字体文件)
+- **docx / xlsx / pptx / odt / ods / odp → 按原文档版式转换**(`page`/`css` 参数不生效)
 
 ### Markdown 输入(`.md` / `.markdown`)
 - 标准语法之外,支持表格(管道语法)、围栏代码块(```/~~~)、脚注、定义列表、
