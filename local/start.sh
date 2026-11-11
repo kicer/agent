@@ -353,10 +353,10 @@ ui_checks() {
   else ui_step "Node.js 缺失或版本过低：$NODE_HINT" bad; fi
   if [ "$NPM_OK" = 1 ]; then ui_step 'npm 可用（装依赖用）' ok
   else ui_step 'npm 缺失：随 Node.js 一起装，重装 Node 即可' bad; fi
-  if [ "$PY_OK" = 1 ]; then ui_step "python3 ${PY_VER}（Python 技能可用）" ok
-  else ui_step 'python3 未安装（Python 技能会失败；office 等非 Python 技能不受影响）' warn; fi
-  if [ "$FF_OK" = 1 ]; then ui_step "ffmpeg ${FF_VER}（语音可用）" ok
-  else ui_step 'ffmpeg 未安装（可选，麦克风入口隐藏）' warn; fi
+  if [ "$PY_OK" = 1 ]; then ui_step "python3 ${PY_VER}" ok
+  else ui_step 'python3 未安装（Python 技能会失败）' warn; fi
+  if [ "$FF_OK" = 1 ]; then ui_step "ffmpeg ${FF_VER}" ok
+  else ui_step 'ffmpeg 未安装（语音不可用）' warn; fi
   if [ "$PORT_FREE" = 1 ]; then ui_step "端口 $PORT 可用" ok
   else ui_step "端口 $PORT 已被占用（换 PORT=8099）" bad; fi
 }
@@ -961,8 +961,8 @@ if ! ensure_deps; then
 fi
 
 if link_skills; then
-  if [ "$PY_OK" = 1 ]; then ui_step '技能：已启用（python3 就绪）' ok
-  else ui_step '技能已暴露，但 python3 未安装：Python 技能会执行失败' warn; fi
+  if [ "$PY_OK" = 1 ]; then ui_step '技能：已启用' ok
+  else ui_step '技能：python3 未安装（Python 技能会失败）' warn; fi
 else
   ui_step '技能目录软链创建失败，技能不可用' warn
 fi
@@ -1026,14 +1026,14 @@ while :; do
       say "已启动：http://$HOST_ADDR:$PORT"
       sleep 1
       if [ "$FF_OK" = 1 ]; then
-        say '语音：可用（ffmpeg 已就绪；还需在设置页给 asr 填上游地址与模型）'
+        say '语音：可用'
       else
-        say '语音：不可用（未装 ffmpeg，麦克风入口隐藏、asr 子进程未启动；core 日志里的 asr 发现失败是预期的）'
+        say '语音：未启用（缺 ffmpeg）'
       fi
       if [ "$PY_OK" = 1 ]; then
-        say '技能：已启用（python3 就绪）'
+        say '技能：已启用'
       else
-        say '技能：已暴露，但 python3 未安装——Python 技能调用会失败，其余照常'
+        say '技能：python3 未安装（Python 技能暂不可用）'
       fi
       if [ "$FIRST_RUN" = 1 ]; then
         printf '\n首次使用：左下角「用户区」→ 设置 → 模型池，添加平台和 API Key，然后点「重启」。\n'

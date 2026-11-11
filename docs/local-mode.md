@@ -127,8 +127,8 @@
 1. **技能不一定是 Python 的**。`office` 只有 `SKILL.md` + `scripts/office`，模型在 `terminal` 里调
    `office <cmd>`，完全不需要 python3——一刀切会把这类技能一并藏掉。
 2. **没必要防**。`skills.js` 的 `runEntry` 对 `spawn` 的 `error` 有处理，缺解释器时模型拿到的是
-   「技能入口启动失败：spawn python3 ENOENT」，干净可读、不崩不挂。模型能据此自己决定：装模块、
-   问你装运行时，或者放弃。
+   「技能入口启动失败：spawn python3 ENOENT」，干净可读、不崩不挂。模型据此自己装解释器或模块，
+   装完继续跑即可。
 
 所以现在只有一种行为：技能总是可见；python3 缺失只影响 `run.py` 类技能能否执行。装好 python3 后
 （若在 core 启动时 `PATH` 已有的目录里，如 brew 的 `/opt/homebrew/bin`）无需重启即生效，否则重跑脚本。
@@ -267,10 +267,9 @@ health 只作为「端口上有服务但不是本启动器拉起的」兜底提�
   import；而不指定位置的话，它很可能装到别处（或去改系统 Python）。pip 对 `--target` 的
   PEP 668 拦截明确豁免（`pip/_internal/commands/install.py`），所以这条路在 Homebrew 那种
   externally-managed 解释器上也走得通——但这话不写进提示词，交给模型自己判断。
-- 缺 `python3` 本体时：提示词允许模型装运行时，但**必须先问用户**（`ask the user before
-  installing a runtime`）。理由：macOS 的 `/usr/bin/python3` 是 Xcode CLT 的桩，真装要走 brew
-  或官方安装器，耗时长且可能改 `PATH`/要管理员权限——这种级别的改动不能默许模型自主做。
-  同时仍然禁止 `sudo` 与装系统包。
+- 缺 `python3` 本体时也放给模型自己处理：本地形态是「用户自己的机器 + 用户自己的 agent」，
+  目标是把事做成，而不是把它当生产环境保护。提示词只说「需要什么就装、装完继续；只有需要
+  用户密码时才停下来问」——`sudo` 本来就会卡在密码上，不必再用规则去禁。
 - 技能自己的 `requirements.txt` 一律**不写版本号**：服务端 init 用
   `pip install --no-index --dry-run` 探测，pin 到与镜像不同的版本会让探测失败 → 真的往
   `skills/deps` 装一份旧的，而 `PYTHONPATH` 优先于系统 site-packages，等于反向遮蔽镜像包。
@@ -348,7 +347,7 @@ tail -f local/.runtime/core.log             # 以及 npm-install.log / mcp-*.log
 | `mcp_asr` 监听 `0.0.0.0` | 它只认 `PORT` 环境变量、`listen` 不带 host（已启动时才是问题）。不存密钥（上游参数随请求带入），暴露面有限；要收紧需给 `mcp/asr` 加 `--host` 支持 |
 | Windows 不支持 | `spawn('/bin/sh')`、`process.kill(-pid)`、模型写的 bash 语法都是 POSIX 语义 |
 | `mint_public_link` 不可用 | 本地 `public_link.base_url` 为空，工具会回明确的「未配置」错误 |
-| 技能依赖 | 本地不预装：缺包时模型会把包装进 `skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）。怎么装由模型自己决定。缺 `python3` 本体时它会先问你，同意后才装。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
+| 技能依赖 | 本地不预装：缺包时模型会把包装进 `skills/deps`（`$AGENT_SKILLS_DEPS`，已在该进程 `PYTHONPATH` 里，装完下次运行即生效）；连 `python3` 都没有时也由它自己装。怎么装由模型自己决定。需要系统库的包（`weasyprint`→pango/cairo）pip 装不了，仍需手工 `brew install`。服务器上由 `agent-executor-init` 处理 |
 | 首个 `npm install` 要联网 | 支持 `NPM_REGISTRY` 覆盖源；`app/package-lock.json` 的 `resolved` 已改指向公共 registry（原来钉在内网镜像，外部机器必失败） |
 
 ## 8. 回滚

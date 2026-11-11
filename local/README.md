@@ -142,7 +142,7 @@ git pull
 - **技能依赖不预装**：本地没有 `agent-executor-init`，`skills/*/requirements.txt` 不会在启动时
   自动安装。技能缺包时会报 `ModuleNotFoundError`，模型会把缺的包装进 `skills/deps`
   （`AGENT_SKILLS_DEPS` 指向它，且已在该进程的 `PYTHONPATH` 里，装完下次运行即生效）。
-  连 `python3` 都没有时，技能清单仍是完整的，模型会先问你、得到同意后才装解释器。
+  连 `python3` 都没有时技能清单依旧完整，模型会自己把它装上再继续。
   需要系统库的包（如 `weasyprint` 依赖 pango/cairo）pip 装不了，得自己 `brew install`。
 - **首个 `npm install` 要联网**：启动器会自动选源、换源重试、并把装好的依赖缓存到
   `~/.cache/agent-local/`；之后重启 / 换 clone 都是本地解压，不需要网络。真要手动指定源：
