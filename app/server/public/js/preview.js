@@ -148,7 +148,10 @@ function pvSyncBtn() {
 // 同一个图标开/关预览：已开 → 关；未开 → 优先重开上次看过的文件，没有就开空面板给个提示。
 function pvTogglePane() {
   if (!pvDesktop()) return; // 移动端预览走全屏 #fs-viewer，不维护分栏
+  // 已开着的先允许关：新建会话后 sessionId 会变空，不能让开了的窗关不掉
   if (document.body.classList.contains('pv-open')) { pvCloseDoc(); return; }
+  // 还没开始会话：没有任务目录可看，点了就什么都别做（不弹提示、不开空窗、不切侧栏）
+  if (!state.sessionId) return;
   if (pvState.lastName) { openFilePreview(pvState.lastName); return; }
   pvOpenPane(); pvClearBody(); pvHeader('', '');
   const body = document.getElementById('pv-body');
