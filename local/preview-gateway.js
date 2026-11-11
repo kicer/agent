@@ -137,7 +137,8 @@ function killSlot(abs) {
   const s = slots.get(abs);
   if (!s) return;
   slots.delete(abs);
-  killTree(s.child);
+  // 已退出的进程不再按 pid 杀：pid 可能已被系统回给别的进程组（POSIX 上是 -pid）
+  if (s.child && s.child.exitCode === null && s.child.signalCode === null) killTree(s.child);
 }
 
 function evictOne(keep) {
@@ -278,7 +279,13 @@ async function spawnWatch(abs, dir) {
 
 async function ensureWatch(abs, dir) {
   const have = slots.get(abs);
-  if (have) { have.lastUsed = Date.now(); return have; }
+  if (have) {
+    // watch 可能自己退了（vendor 崩溃、被外部 kill）：槽位留着就会一直往死端口转发，
+    // 面板上只看得到一个 502。每次拿槽位前探活，死了就丢掉重起。
+    if (await portListening(have.port)) { have.lastUsed = Date.now(); return have; }
+    log('槽位失效，重起 watch ' + path.basename(abs));
+    killSlot(abs);
+  }
   const cool = cooldown.get(abs);
   if (cool && Date.now() < cool) {
     const e = new Error('刚才启动失败，稍后再试');
@@ -303,7 +310,7 @@ async function ensureWatch(abs, dir) {
 const PASS_HEADERS = new Set(['accept', 'accept-encoding', 'cache-control', 'pragma', 'content-type',
   'content-length', 'if-modified-since', 'if-none-match', 'last-event-id', 'referer', 'user-agent']);
 
-function forward(port, req, res, outPath) {
+function forward(port, req, res, outPath, abs) {
   const headers = {};
   for (const k of Object.keys(req.headers)) if (PASS_HEADERS.has(k)) headers[k] = req.headers[k];
   // watch 的同源校验只认回环：从别的名字（host 名解析到 127.0.0.1）打开 core 时会被 403。
@@ -321,7 +328,10 @@ function forward(port, req, res, outPath) {
     up.pipe(res);
   });
   upstream.on('error', () => {
-    if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('预览服务不可达');
+    // 上游已死：立刻把槽位扔掉，下一次导航（面板重开 / 刷新）会重新拉起，
+    // 而不是让这个会话在槽位闲置回收（6h）之前一直 502。
+    if (abs) killSlot(abs);
+    if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('预览服务不可达，刷新可重新拉起');
     else res.destroy();
   });
   req.pipe(upstream);
@@ -382,7 +392,7 @@ const server = http.createServer((req, res) => {
         return htmlPage(res, '正在准备预览…', '<p>首次打开需要启动预览进程（大文档要几秒）。</p>', 1);
       }
       entry.lastUsed = Date.now();
-      return forward(entry.port, req, res, rawPath.slice(PREFIX.length) || '/');
+      return forward(entry.port, req, res, rawPath.slice(PREFIX.length) || '/', target.abs);
     }
 
     // ---- 页内数据面：/events（SSE）与 /api/* 都是根绝对路径 ----
@@ -394,7 +404,7 @@ const server = http.createServer((req, res) => {
       const entry = slots.get(target.abs);
       if (!entry) return notFound(res); // 槽位已被回收：页面下次导航会重新起
       entry.lastUsed = Date.now();
-      return forward(entry.port, req, res, req.url);
+      return forward(entry.port, req, res, req.url, target.abs);
     }
 
     return notFound(res);
