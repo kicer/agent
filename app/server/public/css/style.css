@@ -440,7 +440,11 @@ footer { position: relative; flex: none; padding: 8px 12px calc(10px + var(--sab
 
 /* 录音期间：输入卡内容整体让位给遮罩（遮罩不再透光，按钮/文字留着会和提示叠字） */
 body.voice-active .input-shell { border-color: transparent; box-shadow: none; }
-body.voice-active .input-shell > *:not(#voice-overlay) { visibility: hidden; }
+/* #voice-hold 不能一起藏：它是 pointerdown 时 setPointerCapture 的持有者，一按下就变成
+   visibility:hidden 时鸿蒙 ArkWeb 会释放捕获并补一个 pointercancel，页面把它当成“松手”
+   → 按住不到 500ms → 误报“说话时间太短”。遮罩覆盖这一段本来就不透明（var(--page)），
+   留着按住区视觉上没有差别。 */
+body.voice-active .input-shell > *:not(#voice-overlay):not(#voice-hold) { visibility: hidden; }
 body.voice-active .attach-chips { visibility: hidden; }
 body.voice-active .scroll-bottom-btn { display: none; }
 
