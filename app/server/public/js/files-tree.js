@@ -134,7 +134,13 @@
   async function renderBody() {
     const body = $('tree-body');
     if (!body) return;
-    if (!sid()) { body.innerHTML = ''; tip(body, '尚未开始会话'); return; }
+    // 没有会话就没有任务目录：不写提示，直接把侧栏退回会话列表。
+    // 这条会兜住「在文件页里点了新建会话 / 删掉了当前会话」——那时卡片不该停在一个空树里。
+    if (!sid()) {
+      body.innerHTML = '';
+      if (typeof setDrawerPane === 'function') setDrawerPane(false);
+      return;
+    }
     const sc = body.scrollTop;
     body.innerHTML = '';
     const root = document.createElement('div');

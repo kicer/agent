@@ -1239,6 +1239,8 @@
   function setDrawerPane(files) {
     // 窄屏没有文件树（只有输入行右侧的旧文件面板），任何调用方都不允许切过去
     if (files && !drawerMQ.matches) return;
+    // 还没开始会话 = 没有任务目录：不切过去（否则只能切出一个写着「尚未开始会话」的空面板）
+    if (files && !state.sessionId) return;
     // 文件树模块没加载成功时不要把一个空面板切出来
     if (files && typeof window.showFileTree !== 'function') return;
     const drawer = $('drawer');
