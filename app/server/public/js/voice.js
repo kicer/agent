@@ -76,6 +76,10 @@
   let segLen = 0;              // 当前段总采样数
   let silLen = 0;              // 段尾连续静音采样数
   let textParts = [];          // 各段识别结果（按顺序）
+  let segSent = 0;             // 本轮已提交转写的段数（进度分母）
+  let segDone = 0;             // 已返回（含失败）的段数（进度分子）
+  let busyTimer = null;        // 「识别中」提示的秒表（1s 一跳）
+  let busyStartAt = 0;
   let chain = Promise.resolve(); // 串行上传链：保证拼接顺序 = 说话顺序
   let gen = 0;                 // 会话代号：取消/重录后迟到结果直接丢弃
   let streamOn = false;        // 是否接受 PCM 分片
@@ -115,8 +119,33 @@
     if (overlay) overlay.classList.toggle('cancel', m === 'cancel');
     if (hintEl) {
       hintEl.textContent = m === 'cancel' ? '松开取消'
-        : m === 'busy' ? '正在识别…' : '松手传送，上滑取消';
+        : m === 'busy' ? busyHintText() : '松手传送，上滑取消';
     }
+  }
+
+  // 「识别中」的进度提示：段数是真实进度（一段一次转写），秒数让长时间等待时数字也在动，
+  // 不至于看着像卡住。只有一段时不显示 0/1（那看着也像没进展），只留秒数。
+  function busyHintText() {
+    const sec = Math.max(0, Math.floor((Date.now() - busyStartAt) / 1000));
+    if (segSent > 1) {
+      return '正在识别 ' + Math.min(segDone, segSent) + '/' + segSent + ' 段 · ' + sec + 's';
+    }
+    return '正在识别… ' + sec + 's';
+  }
+
+  function refreshBusyHint() {
+    if (hintEl && phase === 'busy') hintEl.textContent = busyHintText();
+  }
+
+  function stopBusyTicker() {
+    if (busyTimer) { clearInterval(busyTimer); busyTimer = null; }
+  }
+
+  function startBusyTicker() {
+    stopBusyTicker();
+    busyStartAt = Date.now();
+    refreshBusyHint();
+    busyTimer = setInterval(refreshBusyHint, 1000);
   }
 
   function renderBars(level, animate) {
@@ -260,6 +289,7 @@
     pressing = false;
     pressY = 0;
     discard = false;
+    stopBusyTicker();
     abortStream();
     if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
     hold.classList.remove('recording');
@@ -302,6 +332,8 @@
     if (phase !== 'idle') return;
     pressing = true;
     discard = false;
+    segSent = 0;
+    segDone = 0;
     hold.classList.add('recording');
     setHoldText('松开 结束');
     showOverlay();
@@ -371,7 +403,7 @@
     phase = 'busy';
     hold.classList.remove('recording');
     setHoldText(discard ? '按住 说话' : '正在识别…');
-    // 遮罩留着，文案换成「正在识别…」；柱子停在低位，等结果回来再收
+    // 遮罩留着，文案换成动态识别进度；柱子停在低位，等结果回来再收
     setOverlayMode(discard ? 'send' : 'busy');
     stopMeter();
 
@@ -387,6 +419,7 @@
     // 两条路收口完全一样：把不足一个停顿的尾巴发走（纯静音的尾巴不发），再等所有段回来。
     // 大部分段在说话过程中已经识别完了，这里通常只等最后一段。
     flushTail();
+    startBusyTicker(); // 尾巴已进队列：现在才有准确的总段数，从这一刻开始计时
     if (native) {
       try {
         native.stopVoice();
@@ -547,15 +580,23 @@
   // 串行上传：一段没回来不发下一段（2 vCPU 上并发只会互相拖慢，而且顺序也没法保证）
   function emit(blob) {
     const my = gen;
+    segSent++;   // 分母：已提交的段数（含排队中的）
     chain = chain.then(function () {
       if (my !== gen) return;   // 已取消/重录：不再发
       return req('POST', '/api/asr/transcribe', blob, true, 120000)
         .then(function (r) {
           if (my !== gen) return;
+          segDone++;
           const t = String((r && r.text) || '').replace(/\s+/g, ' ').trim();
           if (t) textParts.push(t);
+          refreshBusyHint();
         })
-        .catch(function () { /* 单段失败不连坐，其余段照常出字 */ });
+        .catch(function () {
+          /* 单段失败不连坐，其余段照常出字；失败也算走完一段，进度才不会停在半路 */
+          if (my !== gen) return;
+          segDone++;
+          refreshBusyHint();
+        });
     });
   }
 
