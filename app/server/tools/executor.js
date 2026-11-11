@@ -19,24 +19,47 @@ const memory = require('../memory'); // recall 工具的数据面（日记翻阅
 const BUILTIN_TOOL_DEFS = require('./definitions.json');
 
 // ---------- 路径沙箱 ----------
-function resolveInTask(taskDir, p) {
+// 文件工具的可见范围（AGENT_FILE_SCOPE，默认 session）：
+//   session  = 锁在会话目录。与 executor 容器里的物理视图一致，是服务器形态。
+//   workspace= 放宽到 workspace_root。本地桌面端形态（不起 executor、单机单用户）：
+//              AI 要能操作你指定的整个工作目录，而不是它的一个子目录。
+// 纯 env 接线与 EXECUTOR_URL/ASR_URL 同类：这是部署形态，不是平台配置。
+const WIDE_SCOPE = String(process.env.AGENT_FILE_SCOPE || '').trim().toLowerCase() === 'workspace';
+
+function resolveInTask(taskDir, p, rootDir) {
   if (typeof p !== 'string' || !p.trim()) throw new Error('路径不能为空');
+  const taskRoot = path.resolve(taskDir);
   let abs;
   if (path.isAbsolute(p)) {
     abs = path.normalize(p);
     // /tmp → <taskDir>/.tmp：与 executor 容器的 bind 对齐（容器内 /tmp 即会话 .tmp，
     // terminal 写 /tmp/x，core 侧实体在 <taskDir>/.tmp/x）。先 normalize 再重写，
     // 重写后仍走下方越界校验，无穿越风险。
-    if (abs === '/tmp') abs = path.join(path.resolve(taskDir), '.tmp');
-    else if (abs.startsWith('/tmp/')) abs = path.join(path.resolve(taskDir), '.tmp', abs.slice(5));
+    // workspace 形态【不重写】：本地 terminal 是真 spawn，写的就是本机 /tmp，
+    // 两边必须指向同一处——否则 AI 自己刚写到 /tmp 的文件，自己 read_file 读不到。
+    if (!WIDE_SCOPE) {
+      if (abs === '/tmp') abs = path.join(taskRoot, '.tmp');
+      else if (abs.startsWith('/tmp/')) abs = path.join(taskRoot, '.tmp', abs.slice(5));
+    }
   } else {
-    abs = path.resolve(taskDir, p);
+    // 相对路径永远相对会话目录（AI 的 cwd 就在那里），不随 rootDir 漂移。
+    abs = path.resolve(taskRoot, p);
   }
-  const root = path.resolve(taskDir);
-  if (abs !== root && !abs.startsWith(root + path.sep)) {
-    throw new Error('路径越界（只允许任务目录内操作）：' + p);
+  const root = path.resolve(rootDir || taskRoot);
+  const inRoot = abs === root || abs.startsWith(root + path.sep);
+  // workspace 形态额外放行本机 /tmp：AI 与 terminal 共用的临时区。
+  const inTmp = WIDE_SCOPE && (abs === '/tmp' || abs.startsWith('/tmp/'));
+  if (!inRoot && !inTmp) {
+    throw new Error((rootDir ? '路径越界（只允许工作目录内操作）：' : '路径越界（只允许任务目录内操作）：') + p);
   }
   return abs;
+}
+
+// 工具层允许的根：session 形态 = 会话目录；workspace 形态 = workspace_root。
+// 只给「业务工具」用；路由层（文件 API/公网短链/data-page）与 @历史会话仍按会话目录校验。
+function fsRoot(ctx) {
+  if (!WIDE_SCOPE) return ctx.taskDir;
+  return (ctx.cfg && ctx.cfg.workspace_root) || ctx.taskDir;
 }
 
 function relOf(taskDir, abs) {
@@ -284,7 +307,7 @@ async function toolReadFile(ctx, args) {
     const inner = relOf(past.dir, abs);
     disp = inner === '.' ? '@' + past.sid : '@' + past.sid + '/' + inner;
   } else {
-    abs = resolveInTask(ctx.taskDir, args.path);
+    abs = resolveInTask(ctx.taskDir, args.path, fsRoot(ctx));
     // 本会话沿用绝对路径做展示（大纲/首 1KB 头，历史行为不变）；历史会话只暴露 @<sid>/<rel> 形，
     // 不把别的会话的 workspace_root 绝对路径喂进上下文。
     disp = abs;
@@ -370,7 +393,7 @@ async function toolListDirectory(ctx, args) {
     const inner = relOf(past.dir, abs);
     prefix = '@' + past.sid + (inner === '.' ? '/' : '/' + inner + '/');
   } else {
-    abs = resolveInTask(ctx.taskDir, p || '.');
+    abs = resolveInTask(ctx.taskDir, p || '.', fsRoot(ctx));
     const inner = relOf(ctx.taskDir, abs);
     prefix = inner === '.' ? '' : inner + '/';
   }
@@ -408,14 +431,15 @@ async function toolCopyPath(ctx, args) {
   const dp = String(args.destination_path || '').trim();
   if (!sp || !dp) throw new Error('source_path 与 destination_path 都必填');
   if (dp.startsWith('@')) throw new Error('destination_path 不支持 @ (历史只读)');
-  const dst = resolveInTask(ctx.taskDir, dp);
-  if (path.resolve(dst) === path.resolve(ctx.taskDir)) throw new Error('destination_path 不能是任务目录本身');
+  const root = fsRoot(ctx);
+  const dst = resolveInTask(ctx.taskDir, dp, root);
+  if (path.resolve(dst) === path.resolve(root)) throw new Error('destination_path 不能是任务目录本身');
   let src;
   if (sp.startsWith('@')) {
     const past = resolvePastPath(ctx, sp);
     src = past.abs;
   } else {
-    src = resolveInTask(ctx.taskDir, sp);
+    src = resolveInTask(ctx.taskDir, sp, root);
   }
   if (path.resolve(src) === path.resolve(dst)) throw new Error('源与目标相同');
   let lst;
@@ -445,7 +469,7 @@ async function toolCopyPath(ctx, args) {
 
 async function toolWriteFile(ctx, args) {
   if (String(args.path || '').trim().startsWith('@')) throw new Error('write_file 不支持 @ 路径（历史只读；要改旧成果先 copy_path 导入本会话）');
-  const abs = resolveInTask(ctx.taskDir, args.path);
+  const abs = resolveInTask(ctx.taskDir, args.path, fsRoot(ctx));
   // 纵深防御：引擎 checkToolArgs 已把 null 判缺，但直调 executor（测试等）不经过它；
   // 旧版 `?? ''` 会把 null 洗成空串静默清空已有文件，这里显式拒绝。
   if (args.content == null) throw new Error('write_file 缺少参数 content（写空文件请显式传空字符串 ""）');
@@ -686,7 +710,7 @@ function applyEdit(text, edit, i) {
 // 错误信息告知模型已应用了多少、需重新 read_file。
 async function toolEditFile(ctx, args) {
   if (String(args.path || '').trim().startsWith('@')) throw new Error('edit_file 不支持 @ 路径（历史只读；要改旧成果先 copy_path 导入本会话）');
-  const abs = resolveInTask(ctx.taskDir, args.path);
+  const abs = resolveInTask(ctx.taskDir, args.path, fsRoot(ctx));
   let st;
   try { st = await fsp.stat(abs); }
   catch (_) { throw new Error('文件不存在：' + args.path); }
@@ -751,7 +775,7 @@ async function toolTerminal(ctx, args) {
   const timeout = args.timeout_ms || cfg.terminal.default_timeout_ms;
   const maxChars = cfg.terminal.max_output_chars;
   let cwd = ctx.taskDir;
-  if (args.cd) cwd = resolveInTask(ctx.taskDir, args.cd);
+  if (args.cd) cwd = resolveInTask(ctx.taskDir, args.cd, fsRoot(ctx));
   if (!fs.existsSync(cwd)) throw new Error('工作目录不存在：' + cwd);
 
   // 配了 executor.url（或 env EXECUTOR_URL）：命令交给远端 agent-executor 执行，文本拼回与本地完全一致。
@@ -1166,9 +1190,13 @@ function recordFile(ctx, abs) {
   try {
     const st = fs.statSync(abs);
     if (!st.isFile()) return;
+    // 宽根模式（本地）下写在会话目录之外的文件不进附件表：表里的 filename 是会话相对路径，
+    // 存个 '../x' 会让前端按会话去取，最终只能拿到 400。
+    const rel = relOf(ctx.taskDir, abs);
+    if (rel === '..' || rel.startsWith('..' + path.sep)) return;
     ctx.db.prepare(
       'INSERT INTO files (session_id, filename, size, created_at) VALUES (?,?,?,?)'
-    ).run(ctx.sessionId, relOf(ctx.taskDir, abs), st.size, Date.now());
+    ).run(ctx.sessionId, rel, st.size, Date.now());
   } catch (_) { /* 文件表仅用于展示，失败不影响主流程 */ }
 }
 

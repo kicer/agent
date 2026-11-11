@@ -1,0 +1,107 @@
+# 本地端（local 模式）
+
+把同一个 `agent-core` 直接跑在本机（macOS / Linux），不装 Docker、不起 executor。
+
+它和服务器版是**同一份代码**，差别只在三件事，全部由 `local/start.sh` 注入：
+
+| 差异 | 服务器 | 本地 |
+|---|---|---|
+| 命令在哪跑 | `agent-executor` 容器（mount/pid namespace 隔离） | 直接在本机 `spawn`（无沙箱） |
+| 文件工具的根 | 会话目录 `tasks/<会话id>/` | 你指定的工作目录 `workspace_root` |
+| 监听地址 | `0.0.0.0`（靠宿主机端口映射对外） | `127.0.0.1`（只有本机能访问） |
+
+后两项分别由环境变量 `AGENT_FILE_SCOPE=workspace` 和 `HOST=127.0.0.1` 控制，容器部署不设置，
+行为与以前完全一致。
+
+## 快速开始
+
+```bash
+git clone <本仓库> agent && cd agent
+./local/start.sh          # macOS 也可以在 Finder 里双击 local/start.command
+```
+
+首次运行会：
+
+1. 自检环境（Node 20+ 必需；ffmpeg / python3 可选）
+2. 弹窗让你选一个**工作目录**（AI 会在这个目录里干活）
+3. 生成 `local/config.local.yml`
+4. 装一次 `app/` 的 Node 依赖（需要联网）
+5. 起 core + 4 个 MCP 子进程，就绪后自动打开浏览器
+6. 停在那儿守护：core 退出就自动拉起
+
+浏览器里首次使用：**左下角「用户区」→ 设置 → 模型池**，添加平台和 API Key，然后点「重启」。
+
+> 「重启」能用是因为启动器在守护。`routes/system.js` 的重启实现是 `process.exit(0)`，
+> 原本靠 Docker 的 restart 策略拉起；本地没有 Docker，没有守护的话点一次服务就回不来了。
+
+关闭：在终端按 `Ctrl-C`，子进程会一起收掉。
+
+## 可选能力
+
+| 能力 | 需要 | 没有时的表现 |
+|---|---|---|
+| 语音输入 | `ffmpeg` + 设置页给 `asr` 填上游（`X-ASR-Base-Url` / `X-ASR-Model`） | 麦克风入口自动隐藏（`/api/asr/status` 返回 `enabled:false`） |
+| 技能 | `python3` | 技能清单为空，其余功能不受影响 |
+| 网页搜索 | 无 | 装了 Node 就有（内置免费后端） |
+| 图片 / 视频生成 | 设置页给对应 MCP 填上游 key | 调用时报明确的缺参错误 |
+
+装完 `ffmpeg` / `python3` 之后**重跑一次 `./local/start.sh`** 即可生效——这两项都不写进配置，
+靠「起不起子进程 / 软链指向哪 / 注入什么环境变量」切换。
+
+## 配置放哪
+
+- 生成的配置：`local/config.local.yml`（**首次生成，之后永不覆盖**，避免冲掉你在网页里配的模型与密钥）
+- 会话数据：`data/`（SQLite + prompt dump）与工作目录下的 `task-YYYYMMDD-NNN/`
+- 运行期产物：`local/.runtime/`（`core.log`、各 MCP 日志、自检页、技能软链）
+
+想彻底重来：删掉 `local/config.local.yml`（以及可选的 `data/`）再启动。会话目录里的产出不会被删。
+
+## 常用环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PORT` | `8090` | core 端口 |
+| `NPM_REGISTRY` | 空 | 首次装依赖时用的 npm 源，如 `https://registry.npmmirror.com` |
+| `MCP_WEB_PORT` / `MCP_IMAGE_PORT` / `MCP_VIDEO_PORT` / `MCP_ASR_PORT` | 3101~3104 | 四个 MCP 的端口（同机跑必须各占一个） |
+
+## 更新
+
+```bash
+git pull
+./local/start.sh     # package.json 变了会自动重装依赖
+```
+
+`app/server` 是直接跑源码，前端也是免构建的，所以改完代码重启（或在网页点「重启」）即生效。
+
+## 安全边界（务必知情）
+
+本地模式**没有沙箱**：AI 的 `terminal` 就是本机 shell，能读写你账号有权限的任何文件，
+包括 `~/.ssh`、浏览器数据、其它项目。这不是配置疏漏，而是「给它一个目录就放开手脚」的代价。
+
+两条低成本保险：
+
+1. 工作目录选一个**专用**目录，别直接选 `$HOME` 或整个代码仓库根
+2. 那个目录先 `git init` 一下，改坏了能回滚
+
+另外，`core` 只监听 `127.0.0.1`，同一局域网的人访问不到。
+
+## 已知限制
+
+- **MCP 子进程里 `mcp_asr` 仍然监听 `0.0.0.0`**：它只认 `PORT` 环境变量，没有 `--host` 参数
+  （另外三个服务都传了 `--host 127.0.0.1`）。它不存任何密钥（上游参数随请求带入），
+  暴露面有限，但严格起见可以给 `mcp/asr` 补一个 `--host` 支持。
+- **Windows 暂不支持**：本机执行走 `spawn('/bin/sh')` 与 `process.kill(-pid)`，都是 POSIX 语义。
+- **`mint_public_link` 不可用**：`public_link.base_url` 未配置（本地生成的链接只有本机能打开），
+  模型调用该工具会得到明确的「未配置」错误。
+- **技能依赖**：有 `requirements.txt` 的技能需要自己把包装进 `skills/deps`
+  （服务器上这一步由 `agent-executor-init` 在构建期完成）。默认只保证纯标准库技能可用。
+
+## 排查
+
+```bash
+tail -f local/.runtime/core.log        # core 日志（含 prompt dump 路径、MCP 发现结果）
+tail -f local/.runtime/mcp-asr.log     # 单个 MCP 的日志
+```
+
+启动前自检不通过时，会生成并打开 `local/.runtime/setup.html`——那是个静态页，
+所以改完环境要自己重跑脚本（它不会自动重试）。

@@ -169,6 +169,9 @@ app.get('/api/health', (req, res) => {
 });
 
 const PORT = process.env.PORT || cfg.port;
+// 监听地址：不设 = 0.0.0.0（容器/服务器形态，宿主机端口映射靠它）。
+// 本机 local 模式由 local/start.sh 注入 HOST=127.0.0.1：单机自用不该让同一局域网的人直接访问。
+const HOST = String(process.env.HOST || '').trim();
 
 // 启动成功后把模型实际收到的各部分 dump 到文件方便人工核对（data_root 默认 ./data，
 // 宿主机对应 <repo>/data/prompt.txt，已被 gitignore）。包含：
@@ -211,8 +214,8 @@ mcp.init(cfg).then(async () => {
   } catch (e) {
     log.warn('startup', '技能列表生成失败：' + e.message);
   }
-  server.listen(PORT, () => {
-      log.info('startup', 'Agent server listening on ' + PORT);
+  const onListening = () => {
+      log.info('startup', 'Agent server listening on ' + (HOST ? HOST + ':' : '') + PORT);
       log.info('startup', '  public_link=' + ((cfg.public_link || {}).base_url || '未配置（mint_public_link 不可用）'));
       log.info('startup', '  workspace_root=' + cfg.workspace_root);
       log.info('startup', '  data_root=' + cfg.data_root);
@@ -231,7 +234,9 @@ mcp.init(cfg).then(async () => {
       } catch (e) {
         log.warn('startup', 'prompt dump 失败：' + e.message);
       }
-    });
+    };
+  if (HOST) server.listen(PORT, HOST, onListening);
+  else server.listen(PORT, onListening);
 });
 
 // 优雅退出（照抄 executor/server.js 的 shutdown 形态）：node 在容器里是 PID 1，
