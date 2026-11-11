@@ -66,7 +66,7 @@ cd agent
 |---|---|---|
 | 语音输入 | `ffmpeg` + 设置页给 `asr` 填上游（`X-ASR-Base-Url` / `X-ASR-Model`） | 麦克风入口自动隐藏（`/api/asr/status` 返回 `enabled:false`），`mcp_asr` 子进程也不启动 |
 | 技能 | `python3`（仅 Python 类技能需要） | 技能清单照常显示；调 `run.py` 类技能报「入口启动失败」，`office` 这类非 Python 技能不受影响 |
-| Office 文档（docx/xlsx/pptx） | 首次用到时下载一次 officecli 二进制（约 34MB） | `office` 命令报「binary missing」并给出 `skills/office/install.sh` 绝对路径，按提示跑一次即可（不需要 root、不需重启） |
+| Office 文档（docx/xlsx/pptx） | 首次用到时下载一次 officecli 二进制（约 34MB） | `office` 命令报「binary missing」并给出同目录 `INSTALL.md` 的路径，按它下载即可（不需 root、不需重启） |
 | 网页搜索 | 无 | 装了 Node 就有（内置免费后端） |
 | 图片 / 视频生成 | 设置页给对应 MCP 填上游 key | 调用时报明确的缺参错误 |
 

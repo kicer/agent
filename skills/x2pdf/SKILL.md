@@ -90,3 +90,8 @@ output_schema:
 ```json
 {"input": "layout.html", "css": "print-override.css"}
 ```
+
+## 环境
+
+缺渲染后端时按同目录 `INSTALL.md` 自己装（文本类 WeasyPrint/或 LibreOffice；Office 类必须 LibreOffice）。
+服务器由镜像 + `requirements.txt` / `install.sh` 提供，本机不要跑 `install.sh`。

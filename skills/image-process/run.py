@@ -34,16 +34,8 @@ NAMED_COLORS = {
     'purple': (128, 0, 128), 'cyan': (0, 255, 255),
 }
 CJK_FONT_CANDIDATES = [
-    # 服务端镜像：文泉驿优先（Pillow 优先若用 Noto 的 ttc，索引 0 是 JP 字型）
     '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
     '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
-    # 本地端：macOS/Windows 的中文字体不在上面这些路径里。
-    # 索引 0 的字面不同：Hiragino Sans GB 是简体（W3 常规），PingFang.ttc 是 HK 字形，Songti 是 Black。
-    '/System/Library/Fonts/Hiragino Sans GB.ttc',
-    '/System/Library/Fonts/PingFang.ttc',
-    '/System/Library/Fonts/Supplemental/Songti.ttc',
-    r'C:\Windows\Fonts\msyh.ttc',
-    r'C:\Windows\Fonts\simsun.ttc',
 ]
 # Noto 只作最后兑底：Pillow(FreeType) 能读它的 CFF 轮廓，但 ttc 默认字型（索引 0）是 JP 字形，
 # 中文水印会出日式写法；因此系统文泉驿（CJK_FONT_CANDIDATES）排在它前面。
@@ -257,7 +249,8 @@ def action_watermark(img, fmt, args):
     if font_path:
         font = ImageFont.truetype(font_path, font_size)
     elif need_cjk:
-        raise ValueError('中文水印缺少字体：传 font 参数指定 TTF/TTC 路径即可（系统字体列表里没找到中文字体）')
+        raise ValueError('中文水印缺少字体：传 font 参数（TTF/TTC 路径）；各平台常见字体路径见 %s'
+                         % (Path(__file__).resolve().parent / 'INSTALL.md'))
     else:
         try:
             font = ImageFont.load_default(size=font_size)
