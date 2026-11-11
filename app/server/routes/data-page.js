@@ -47,9 +47,19 @@ router.use('/app', (req, res) => {
     if (!sessionId) return notFound(res, '会话不存在');
     if (!engine.getSession(sessionId)) return notFound(res, '会话不存在');
     const appRoot = path.join(engine.taskDirOf(sessionId), '.app');
+    // 页面根目录的地址必须带尾斜杠：浏览器按「最后一段是否目录」算相对链接的基址，
+    // /app/<会话> 会把 ./table.html 解析成 /app/table.html（白屏）。
+    // 空余路径 = 就是在要根目录 → 补斜杠再跳转；比让每个技能模板改绝对链接可靠。
+    // 注意不能靠 stat 判断：下面空余路径会先被映射成 index.html，永远不是目录。
+    const rest = segs.slice(1).join('/');
+    if (!rest && !req.path.endsWith('/')) {
+      const q = req.originalUrl.indexOf('?');
+      return res.redirect(302, (q < 0 ? req.originalUrl : req.originalUrl.slice(0, q)) + '/'
+        + (q < 0 ? '' : req.originalUrl.slice(q)));
+    }
     let abs;
     try {
-      abs = resolveInTask(appRoot, segs.slice(1).join('/') || 'index.html'); // 越界即挡，限 .app/ 子树
+      abs = resolveInTask(appRoot, rest || 'index.html'); // 越界即挡，限 .app/ 子树
     } catch (_) {
       return notFound(res, '非法路径');
     }
