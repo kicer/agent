@@ -161,7 +161,7 @@
     view: 'welcome',          // welcome | chat
     mode: 'secretary',          // 新建会话默认助手类型（欢迎页已去掉模式切换，不再可变）
     sessionType: 'secretary',   // 当前会话的助手类型（建档时锁定，后续不随模式切换变更）
-    deepThink: false,           // 深度思考开关(仅本地视觉状态,无后端参数)
+    deepThink: false,           // 深度思考开关（发消息时落库到 sessions.deep_think，重进会话回填）
     pendingModel: '',           // welcome 预选模型（ensureSession 建档时透传 model_id）
     sessionId: null,            // 当前会话
     sessionTitle: '',           // 当前会话标题

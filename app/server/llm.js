@@ -683,19 +683,22 @@ async function callModel(cfg, modelId, messages, tools, options) {
   if (opts.deepThink && modelCfg.thinking_params && Object.keys(modelCfg.thinking_params).length) {
     deepMergeInto(body, modelCfg.thinking_params);
   }
-  // 思维链回传（逐模型 opt-in，纯配置闸门不看 tools）：reasoning_ack_field 非空时，把
-  // buildMessages 挂的内部键 __reasoning 按该字段名写回 assistant 行（对话/压缩/标题回合同规则；
-  // 没配/无思考的行零变化）。无论配与否都剥一遍 __reasoning，内部键不出仓库。
+  // 思维链回传（逐模型 opt-in）：开思考时把 buildMessages 挂的内部键 __reasoning 按
+  // reasoning_ack_field 写回 assistant 行；关思考时整段不发。带 tool_calls 的行缺思维链
+  // 时用空串占位（缺失会被上游 400，空串实测通过）。__reasoning 是内部键，任何情况都剥。
   if (body.messages && body.messages.length) {
     const ack = modelCfg.reasoning_ack_field;
-    // 思考模式下带 tool_calls 的 assistant 行必须回传 reasoning_content：中途开启思考时，
-    // 本轮早先的调用没有思维链，用空串占位（缺失会被上游 400，空串实测通过）。
+    const send = !!(ack && opts.deepThink);
     body.messages = body.messages.map(mm => {
       if (!mm || mm.role !== 'assistant') return mm;
-      const fill = !!(opts.deepThink && ack && mm.tool_calls && !mm.__reasoning);
-      if (!mm.__reasoning && !fill) return mm;
+      if (!mm.__reasoning) {
+        if (!send || !mm.tool_calls) return mm;
+        const c = Object.assign({}, mm);
+        c[ack] = '';
+        return c;
+      }
       const c = Object.assign({}, mm);
-      if (ack) c[ack] = c.__reasoning || '';
+      if (send) c[ack] = mm.__reasoning;
       delete c.__reasoning;
       return c;
     });

@@ -223,6 +223,9 @@
       const detail = await req('GET', '/api/sessions/' + id + '?limit=' + CHAT_INIT_PAGE_SIZE);
       if (state.sessionId !== id) return; // 期间已切到别的会话
       renderDetail(detail);
+      // 深度思考跟随会话（发消息时落库）：只在这里回填，软刷新不动用户未发出的切换
+      state.deepThink = !!(detail.session && detail.session.deep_think);
+      $('deep-think-btn').classList.toggle('on', state.deepThink);
       connectStream();
       if (window.refreshFileTree) window.refreshFileTree();
     } catch (e) {

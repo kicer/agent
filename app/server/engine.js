@@ -726,7 +726,7 @@ async function runLoopInner(sessionId, run) {
     for (const m of session.history) if (m.id > lastIncludedId) lastIncludedId = m.id;
     // 自动压缩：本回合已用到的 In token 峰值（上一轮上游实报值）达到模型配的 max_context，
     // 就地把握回合切成压缩回合——不新开 run、不发 auto_compress 提议，前端无感（产物就是摘要卡片，
-    // 与手点「压缩」完全同一条路径：下一圈的 compressing 分支换 prompt、去 tools、摘要落库归档）。
+    // 与手点「压缩」完全同一条路径：下一圈的 compressing 分支换 prompt、摘要落库归档）。
     // 检查点必须在请求发出之前：这个数字是上一轮的真实值，下一轮只会更大。
     // 压缩回合自身不再判（run.summarizing 已真），否则会把自己再压一遍。
     const maxCtx = modelMaxContext(session);
@@ -735,8 +735,8 @@ async function runLoopInner(sessionId, run) {
       run.summarizing = true;
     }
     // 压缩回合（run.summarizing = 由「压缩」按钮发起、尚未产出摘要）：
-    // 沿用默认 system prompt + 正常历史，末尾追加一条压缩指令 user（见 llm.compressMessages）；
-    // 且不传 tools，模型只能输出摘要文本。
+    // 沿用默认 system prompt + 正常历史 + 同一套 tools，末尾追加一条压缩指令 user（见 llm.compressMessages），
+    // 请求与上一发常规请求只差尾部这一段，前缀缓存整段命中。
     // 发送前为历史里的 image_ref 块现签公网外链（GET /p/<id>，同 mint_public_link）：
     // 每次请求重签，回合内多轮迭代/重试永不过期；DB 只存几十字符的 rel，base64 不进库不进请求体。
     // base_url 未配/校验不过/mint 异常时返回 null，buildMessages 降级为文字占位；本地形态
@@ -779,8 +779,9 @@ async function runLoopInner(sessionId, run) {
           + (txt.includes('"already_delivered"') ? '[图重复读挡回]' : '');
       }).join(' '));
     }
-    // 内置工具 + 启动时发现的 MCP 工具（按 profile 白名单过滤），一起随 system prompt 发给模型（压缩回合不发）
-    const tools = compressing ? [] : effectiveTools(profileName);
+    // 内置工具 + 启动时发现的 MCP 工具（按 profile 白名单过滤），一起随 system prompt 发给模型。
+    // 压缩回合也照发：tools 段在最前，删掉等于断整段前缀缓存（尾部指令已写明不要调用工具）。
+    const tools = effectiveTools(profileName);
 
     let result = null;
     let lastErr = null;
@@ -1401,6 +1402,8 @@ function postUserMessage(sessionId, content, opts) {
   // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
   const run = getRun(sessionId, true);
   run.deepThink = !!(opts && opts.deepThink);
+  // 随消息落库：重进会话按它回填按钮，压缩回合也读它
+  db.prepare('UPDATE sessions SET deep_think = ? WHERE id = ?').run(run.deepThink ? 1 : 0, sessionId);
   // 真实用户消息到达：若还有个「尚未开跑」的压缩回合（见 summarizeContext），
   // 让它作废，避免新消息被误当成压缩回合处理；已在跑（looping）的不动，
   // 由其收尾时自行清空 summarizing。
@@ -1504,10 +1507,10 @@ function summarizeContext(sessionId) {
   }
   const prompt = '正在压缩上下文：AI 将基于完整对话记录生成摘要…';
   // 与 postUserMessage 同样的唤醒语义（不再排队、不落消息行）；run.summarizing 标记本回合为压缩回合，摘要产出后由 runLoopInner 清空。
-  // 状态流转时顺带重置 deepThink：压缩回合不需要思考参数，避免沿用上一轮的残留值。
+  // 思考参数跟会话当前状态（由发消息时落库），换开关就换请求体，历史字节不受影响。
   const r = getRun(sessionId, true);
   r.summarizing = true;
-  r.deepThink = false;
+  r.deepThink = !!session.deep_think;
   ensureBinding(session);
   touch(sessionId, { status: 'active', held_at: null, completed_at: null, cancelled_at: null });
   emitStatus(sessionId);

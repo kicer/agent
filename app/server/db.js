@@ -20,6 +20,7 @@ function initDb(dbPath) {
       assistant_type TEXT DEFAULT 'secretary',
       user TEXT DEFAULT '',
       profile TEXT DEFAULT '',
+      deep_think INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       completed_at INTEGER,
@@ -234,6 +235,8 @@ function initDb(dbPath) {
   // 迁移：会话级工作目录（本地桌面端新建会话时手选一个真实目录）。空串 = 沿用
   // workspace_root/<会话id>；服务器形态永远为空，行为与旧版完全一致（见 engine.taskDirOf）。
   if (!cols.some(c => c.name === 'work_dir')) db.exec("ALTER TABLE sessions ADD COLUMN work_dir TEXT NOT NULL DEFAULT ''");
+  // 迁移：会话级深度思考开关（发消息时按请求体落库；重进会话回填按钮，压缩回合也以它为准）。
+  if (!cols.some(c => c.name === 'deep_think')) db.exec('ALTER TABLE sessions ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 0');
   // 迁移：wechat_bindings 补 deep_think 列——微信端全局深度思考开关（routes/channel.js /think 读写，
   // 投递时作为既有 deepThink 参数的取值来源）；默认 0=关（与 H5 按钮初始态一致，/think on 手动开）。
   // 旧库若曾按 DEFAULT 1 补过列（当时默认开，存量行都是默认值回填而非用户显式选择），
