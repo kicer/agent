@@ -1798,6 +1798,8 @@ const HANDLERS = {
 // （见 imageReceipt），image_rel 缺省表示本次不投递像素。
 // 内置工具优先；未命中时交给 MCP 注册表（启动时发现的服务工具）。
 async function executeTool(baseCtx, name, args) {
+  // 会话目录懒建：会话创建时不再占坑，第一次真用到工具才建（纯文本对话不留空目录）。
+  try { if (baseCtx && baseCtx.taskDir) fs.mkdirSync(baseCtx.taskDir, { recursive: true }); } catch (_) {}
   const handler = HANDLERS[name];
   if (handler) return handler(baseCtx, args || {});
   if (mcp.hasTool(name)) return mcp.callTool(name, args || {}, baseCtx); // baseCtx.taskDir → X-Session-Dir 头下发给 MCP 服务

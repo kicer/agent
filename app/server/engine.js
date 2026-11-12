@@ -1238,11 +1238,10 @@ function createSession(title, preferModelId, assistantType, user, workDir) {
     if (!modelId) throw Object.assign(new Error('无可用模型：请检查配置并重启服务'), { status_code: 503 });
   }
   const id = genTaskId();
-  // 手选目录：直接当作会话工作目录（不建 task-* 子目录）；未选 = 老行为，在 workspace_root 下按 id 建档。
+  // 手选目录：直接当作会话工作目录（不建 task-* 子目录）；未选 = 沿用 workspace_root/<会话id>。
   // 选中的目录必须已存在（normalizeWorkDir 已校验），绝不在用户目录里替它 mkdir。
+  // 两种情况下目录都由工具执行时懒建（见 tools/executor.js 的 executeTool），纯文本对话不留空目录。
   const wd = normalizeWorkDir(workDir);
-  const dir = wd || path.join(cfg.workspace_root, id);
-  if (!wd) fs.mkdirSync(dir, { recursive: true });
   db.prepare(
     "INSERT INTO sessions (id, title, status, model_id, model_slot, last_model_id, held_at, assistant_type, user, work_dir, created_at, updated_at) VALUES (?,?,'held',?,?,?,?,?,?,?,?,?)"
   ).run(id, title || '', modelId, key.id, modelId, now(), assistantType || 'secretary', user || '', wd, now(), now());
