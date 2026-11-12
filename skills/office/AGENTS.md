@@ -1,12 +1,19 @@
 # office
 
-`office: command not found`：用技能自带入口
+以下命令仅为示例，具体以本机平台实际情况为准（自行判断路径、可执行名、分隔符）。
+
+## office: command not found
+
+入口不在 PATH：建一次软链，之后一直能用。
 
 ```sh
-PATH="$(dirname "$AGENT_SKILLS_DEPS")/office/scripts:$PATH" office help
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$(dirname "$AGENT_SKILLS_DEPS")/office/scripts/office" "$HOME/.local/bin/office"
 ```
 
-`office.core binary missing`：按本机平台下载对应资产到 `bin/officecli`（Windows 存成 `bin/officecli.exe`），再 `chmod +x`
+## office.core binary missing
+
+按本机平台下载对应资产到 `bin/officecli`（Windows 存成 `bin/officecli.exe`），再 `chmod +x`。
 
 ```sh
 SK="$(dirname "$AGENT_SKILLS_DEPS")/office"
