@@ -897,14 +897,6 @@ body.voice-active .scroll-bottom-btn { display: none; }
 .tree-row:hover { background: var(--surface); }
 .tree-row.is-ignored { color: var(--gray-light); cursor: default; }
 .tree-row.is-link { color: var(--gray); }
-.tree-caret { flex: none; width: 12px; height: 12px; position: relative; }
-.tree-row.is-dir .tree-caret::before {
-  content: ""; position: absolute; left: 3px; top: 3px;
-  border-left: 5px solid var(--gray);
-  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
-  transition: transform .12s;
-}
-.tree-row.is-dir.open .tree-caret::before { transform: rotate(90deg); }
 .tree-ico { flex: none; width: 16px; height: 16px; display: inline-flex; color: var(--gray); }
 .tree-ico svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tree-row.is-dir .tree-ico { color: var(--active); }
@@ -918,6 +910,63 @@ body.voice-active .scroll-bottom-btn { display: none; }
 .tree-act.danger:hover { background: #fdf3f2; color: #c0392b; }
 .tree-act svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tree-empty, .tree-loading, .tree-more { padding: 10px 12px; font-size: 12px; color: var(--gray); }
+
+/* 行内勾选框：hover 或已选中才淡入；但占位始终在，hover 时文件名不会左右跳。
+   目录行同样可勾：勾中 = 整个目录参加批量下载（打包成 zip）/ 批量删除。 */
+.tree-check {
+  flex: none; width: 14px; height: 14px; border-radius: 50%;
+  border: 1px solid #c8cee0; background: var(--page);
+  display: inline-flex; align-items: center; justify-content: center;
+  box-sizing: border-box; cursor: pointer;
+  opacity: 0; transition: opacity .12s, border-color .15s, background .15s;
+}
+.tree-check::after {
+  content: ''; display: block; width: 4px; height: 8px;
+  border-right: 2px solid #fff; border-bottom: 2px solid #fff;
+  transform: rotate(45deg) translate(-1px, -1px); opacity: 0;
+}
+.tree-row:hover .tree-check, .tree-row.selected .tree-check { opacity: 1; }
+.tree-check[aria-checked="true"] { background: var(--active); border-color: var(--active); opacity: 1; }
+.tree-check[aria-checked="true"]::after { opacity: 1; }
+.tree-row.selected { background: var(--surface); }
+
+/* 底部批量条：全选框 + 计数 + 下载/删除 */
+.tree-foot {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-top: 1px solid var(--border);
+}
+.tree-check-all {
+  flex: none; width: 14px; height: 14px; border-radius: 4px;
+  border: 1px solid #c8cee0; background: var(--page);
+  display: inline-flex; align-items: center; justify-content: center;
+  box-sizing: border-box; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.tree-check-all::after {
+  content: ''; display: block; width: 4px; height: 8px;
+  border-right: 2px solid #fff; border-bottom: 2px solid #fff;
+  transform: rotate(45deg) translate(-1px, -1px); opacity: 0;
+}
+.tree-check-all[aria-checked="true"],
+.tree-check-all[aria-checked="mixed"] { background: var(--active); border-color: var(--active); }
+.tree-check-all[aria-checked="true"]::after { opacity: 1; }
+.tree-check-all[aria-checked="mixed"]::after {
+  width: 7px; height: 0; opacity: 1;
+  border-right: 0; border-bottom: 2px solid #fff; transform: none;
+}
+.tree-sel-count {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--gray);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tree-foot-btn {
+  flex: none; width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; color: var(--gray); cursor: pointer; border-radius: 6px;
+}
+.tree-foot-btn:hover { background: var(--border); color: var(--active); }
+.tree-foot-btn.danger:hover { background: #fdf3f2; color: #c0392b; }
+.tree-foot-btn:disabled { opacity: .35; cursor: default; background: none; color: var(--gray); }
+.tree-foot-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 /* 桌面端：文件浏览交给左栏文件树，隐藏输入行右侧的旧「任务文件」浮层入口。
    手机端仍用它（窄屏放不下树）。 */

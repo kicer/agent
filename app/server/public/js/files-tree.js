@@ -25,13 +25,16 @@
   let cache = new Map();        // rel -> /tree 响应
   let loading = new Map();      // rel -> Promise（并发去重）
   let gen = 0;                  // 会话切换/刷新时自增，防止旧请求回填到新树的缓存
+  // 多选：rel -> 'dir' | 'file'。勾目录表示整个目录（下载打成一个 zip、删除递归），
+  // 所以勾目录会吃掉子项，勾子项会把祖先目录降级掉，见 toggleSel。
+  let sel = new Map();
 
   // 失效缓存。gen 自增让在飞的旧请求回来时不再写缓存（否则切会话会闪旧目录）。
   function invalidate(keepExpanded) {
     gen++;
     cache = new Map();
     loading = new Map();
-    if (!keepExpanded) expanded = new Set(['']);
+    if (!keepExpanded) { expanded = new Set(['']); sel.clear(); }
   }
 
   function sid() { return (state && state.sessionId) || ''; }
@@ -85,9 +88,20 @@
     if (ent.type === 'link') row.classList.add('is-link');
     if (ent.ignored) row.classList.add('is-ignored');
 
-    const caret = document.createElement('span');
-    caret.className = 'tree-caret';
-    row.appendChild(caret);
+    // 不画展开箭头：文件夹图标已经说明可以点，点行任意位置都能展开/收起。
+
+    // 勾选框：hover 或已选中时淡入，但占位始终在，避免 hover 时文件名左右跳。
+    // 忽略的大目录和软链不参与批量操作（后端也不让删），所以不给勾选框。
+    if (!ent.ignored && ent.type !== 'link') {
+      const chk = document.createElement('span');
+      chk.className = 'tree-check';
+      chk.setAttribute('role', 'checkbox');
+      chk.setAttribute('aria-label', '选择');
+      const on = sel.has(ent.rel);
+      chk.setAttribute('aria-checked', on ? 'true' : 'false');
+      if (on) row.classList.add('selected');
+      row.appendChild(chk);
+    }
 
     const ico = document.createElement('span');
     ico.className = 'tree-ico';
@@ -152,6 +166,7 @@
       tip(root, '加载失败：' + e.message);
     }
     body.scrollTop = sc;
+    syncSelUI();
   }
 
   async function localAction(kind, rel) {
@@ -176,10 +191,164 @@
       await req('DELETE', '/api/sessions/' + sid() + '/files?path=' + encodeURIComponent(rel));
       // 预览里正开着被删的文件 → 一起关掉，别留一份已不存在的内容
       if (typeof pvState === 'object' && pvState && pvState.name === rel && typeof pvCloseDoc === 'function') pvCloseDoc();
+      sel.delete(rel);
       invalidate(true);
       renderBody();
       toast('已删除');
     } catch (e) { toast('删除失败：' + e.message); }
+  }
+
+  // ---- 多选与批量操作 ----
+
+  // 有效选中：自身被勾，或某个祖先目录被勾（勾目录=整目录）。
+  // 注意 UI 上只给 sel 里显式存在的行打勾：目录打勾就代表整目录，子行不再重复显示勾。
+  function isSel(rel) {
+    if (sel.has(rel)) return true;
+    let p = rel;
+    while (p.lastIndexOf('/') > 0) {
+      p = p.slice(0, p.lastIndexOf('/'));
+      if (sel.has(p)) return true;
+    }
+    return false;
+  }
+
+  function toggleSel(rel, type) {
+    if (sel.has(rel)) {
+      sel.delete(rel);
+    } else {
+      // 选子项时祖先目录降级为部分选择，否则一个目录会既「全选」又「只选一部分」
+      let p = rel;
+      while (p.lastIndexOf('/') > 0) {
+        p = p.slice(0, p.lastIndexOf('/'));
+        sel.delete(p);
+      }
+      sel.set(rel, type);
+    }
+    syncSelUI();
+  }
+
+  // 当前可见（已展开）的可选行
+  function visibleRows() {
+    const body = $('tree-body');
+    if (!body) return [];
+    return Array.from(body.querySelectorAll('.tree-row')).filter(function (r) {
+      return !r.classList.contains('is-ignored') && r.dataset.type !== 'link';
+    });
+  }
+
+  // 提交给后端前折叠：目录已选时，它下面的路径不再单独出现（否则 zip 里会重复）
+  function effectiveSel() {
+    const keys = Array.from(sel.keys()).sort(function (a, b) {
+      return a.split('/').length - b.split('/').length;
+    });
+    const out = [];
+    for (const k of keys) {
+      if (!out.some(function (p) { return k.startsWith(p + '/'); })) out.push(k);
+    }
+    return out;
+  }
+
+  function syncSelUI() {
+    const body = $('tree-body');
+    if (body) {
+      body.querySelectorAll('.tree-row').forEach(function (row) {
+        const chk = row.querySelector('.tree-check');
+        if (!chk) return;
+        const on = sel.has(row.dataset.rel);
+        chk.setAttribute('aria-checked', on ? 'true' : 'false');
+        row.classList.toggle('selected', on);
+      });
+    }
+    const n = sel.size;
+    const cnt = $('tree-sel-count'), dl = $('tree-bulk-download'), del = $('tree-bulk-delete');
+    if (cnt) cnt.textContent = n ? '已选 ' + n + ' 项' : '未选择';
+    if (dl) dl.disabled = !n;
+    if (del) del.disabled = !n;
+    const all = $('tree-check-all');
+    if (all) {
+      const rows = visibleRows();
+      const every = rows.length > 0 && rows.every(function (r) { return isSel(r.dataset.rel); });
+      all.setAttribute('aria-checked', every ? 'true' : (n ? 'mixed' : 'false'));
+    }
+  }
+
+  function toggleSelAll() {
+    const rows = visibleRows();
+    const every = rows.length > 0 && rows.every(function (r) { return isSel(r.dataset.rel); });
+    sel.clear();
+    if (!every) {
+      // 浅的先加：父目录已经覆盖的子项不再重复记
+      rows.map(function (r) { return [r.dataset.rel, r.dataset.type]; })
+        .sort(function (a, b) { return a[0].split('/').length - b[0].split('/').length; })
+        .forEach(function (it) { if (!isSel(it[0])) sel.set(it[0], it[1]); });
+    }
+    syncSelUI();
+  }
+
+  async function bulkDownload() {
+    if (!sid() || !sel.size) return;
+    const paths = effectiveSel();
+    const hasDir = paths.some(function (p) { return sel.get(p) === 'dir'; });
+    // 含目录 → 后端打成一个 zip；纯文件 → 逐个签名直链。
+    // 先把 token 全取完再逐个触发，边取边点会让浏览器把后面的当弹窗拦掉。
+    if (hasDir) {
+      try {
+        const r = await req('GET', '/api/sessions/' + sid() + '/files/zip-token?paths=' +
+          encodeURIComponent(JSON.stringify(paths)));
+        if (!r || !r.url) throw new Error('未拿到打包链接');
+        const a = document.createElement('a');
+        a.href = r.url;
+        if (r.name) a.download = r.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (e) { toast('打包下载失败：' + e.message); }
+      return;
+    }
+    const items = [];
+    for (const p of paths) {
+      try {
+        const r = await req('GET', '/api/sessions/' + sid() + '/files/download-token?path=' +
+          encodeURIComponent(p));
+        if (r && r.url) items.push({ name: p.split('/').pop(), url: r.url });
+      } catch (e) { /* 单个取票失败不拖累其余 */ }
+    }
+    if (!items.length) { toast('下载失败'); return; }
+    items.forEach(function (it, i) {
+      setTimeout(function () {
+        const a = document.createElement('a');
+        a.href = it.url;
+        a.download = it.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }, i * 250);
+    });
+  }
+
+  async function bulkDelete() {
+    if (!sid() || !sel.size) return;
+    const paths = effectiveSel();
+    const ok = typeof confirmModal === 'function'
+      ? await confirmModal('批量删除', '删除选中的 ' + paths.length + ' 项？文件夹会连同内容一起删除。', '删除', true)
+      : true;
+    if (!ok) return;
+    let done = 0, fail = 0;
+    for (const p of paths) {
+      try {
+        await req('DELETE', '/api/sessions/' + sid() + '/files?path=' + encodeURIComponent(p));
+        done++;
+      } catch (e) { fail++; }
+    }
+    // 预览里正开着被删的文件就一起关掉，别留一份已不存在的内容
+    if (typeof pvState === 'object' && pvState && pvState.name && typeof pvCloseDoc === 'function') {
+      const cur = pvState.name;
+      if (paths.some(function (p) { return cur === p || cur.startsWith(p + '/'); })) pvCloseDoc();
+    }
+    sel.clear();
+    invalidate(true);
+    renderBody();
+    toast(fail ? ('已删除 ' + done + ' 项，' + fail + ' 项失败') : ('已删除 ' + done + ' 项'));
   }
 
   function onTreeClick(e) {
@@ -187,6 +356,12 @@
     if (!row) return;
     const rel = row.dataset.rel;
     const isDir = row.dataset.type === 'dir';
+    // 勾选框只切换选中，不展开、不预览（树里点错行代价大，整行不承担选中）
+    if (e.target.closest('.tree-check')) {
+      e.stopPropagation();
+      toggleSel(rel, row.dataset.type);
+      return;
+    }
     const act = e.target.closest('.tree-act');
     if (act) {
       e.stopPropagation();
@@ -212,6 +387,9 @@
     const rv = $('tree-reveal'), tm = $('tree-terminal');
     if (rv) rv.classList.toggle('hidden', !localCapable);
     if (tm) tm.classList.toggle('hidden', !localCapable);
+    // 本地端文件就在本机，批量下载是多余的，底栏只留删除；服务器端才需要
+    const bulkDl = $('tree-bulk-download');
+    if (bulkDl) bulkDl.classList.toggle('hidden', localCapable);
     if (localCapable && $('tree-body')) renderBody(); // 行内 reveal 按钮也要重新生成
   }
 
@@ -238,8 +416,18 @@
     body.className = 'tree-body';
     body.id = 'tree-body';
 
+    // 底部批量条：全选框、计数、下载/删除。未选时两个按钮禁用。
+    const foot = document.createElement('div');
+    foot.className = 'tree-foot';
+    foot.innerHTML =
+      '<span class="tree-check-all" id="tree-check-all" role="checkbox" aria-checked="false" title="全选当前可见" aria-label="全选"></span>' +
+      '<span class="tree-sel-count" id="tree-sel-count">未选择</span>' +
+      '<button class="tree-foot-btn" type="button" id="tree-bulk-download" title="下载所选" aria-label="下载所选" disabled>' + SVG_DL + '</button>' +
+      '<button class="tree-foot-btn danger" type="button" id="tree-bulk-delete" title="删除所选" aria-label="删除所选" disabled>' + SVG_DEL + '</button>';
+
     box.appendChild(head);
     box.appendChild(body);
+    box.appendChild(foot);
 
     head.querySelector('#tree-hidden').addEventListener('click', function () {
       showHidden = !showHidden;
@@ -253,6 +441,9 @@
     });
     head.querySelector('#tree-reveal').addEventListener('click', function () { localAction('reveal', ''); });
     head.querySelector('#tree-terminal').addEventListener('click', function () { localAction('terminal', ''); });
+    foot.querySelector('#tree-check-all').addEventListener('click', toggleSelAll);
+    foot.querySelector('#tree-bulk-download').addEventListener('click', bulkDownload);
+    foot.querySelector('#tree-bulk-delete').addEventListener('click', bulkDelete);
     body.addEventListener('click', onTreeClick);
 
     syncLocalButtons();
