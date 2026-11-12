@@ -352,6 +352,32 @@ function modelVision(session) {
   return !!(m && m.vision);
 }
 
+// 会话绑定模型的自动压缩阈值（models[].max_context，0=未配→不自动压缩）。
+// 它不是模型真实上下文窗口，而是用户自己设的「用量线」——到线就压，与真实窗口多大无关。
+function modelMaxContext(session) {
+  const m = session.model_id && (cfg.models || []).find(x => x.id === session.model_id);
+  return (m && Number(m.max_context)) || 0;
+}
+
+// 回合起点播种回合一开局的 In token：取「上一回合最后一次上游实报的 prompt_tokens」。
+// 不播种的话新回合第一个判据永远是 0（run.turnMaxPt 在 runLoop 里清零），
+// 历史早就超线也照样把整段再发一遍，只有等到本回合内出现工具迭代才补判——
+// 实测 123903 ≥ 120000 的那一发就是白打的（无 tool_calls 的回合到头来一发都不压）。
+// 摘要行的 usage 是「压缩请求自身」的用量（含被截断的旧转写），不代表压缩后的上下文，
+// 拿它播种会让刚压完立刻再压，故只认最新摘要之后的行。
+function seedTurnMaxPt(sessionId) {
+  const last = db.prepare("SELECT MAX(id) AS id FROM messages WHERE session_id = ? AND type = 'summary'").get(sessionId);
+  const row = db.prepare(
+    "SELECT usage FROM messages WHERE session_id = ? AND role = 'assistant' AND usage IS NOT NULL" +
+    " AND id > ? ORDER BY id DESC LIMIT 1"
+  ).get(sessionId, (last && last.id) || 0);
+  if (!row || !row.usage) return 0;
+  try {
+    const u = JSON.parse(row.usage);
+    return Math.max(0, Number(u && u.pt) || 0);
+  } catch (_) { return 0; }
+}
+
 // ---------- 模型 profile（prompt+tools 组合） ----------
 // 把 cfg 里预加载的自定义 prompt 文本注册给 llm（配置加载时已读入，见 config.js）；
 // engine.init 调一次，运行期只按名选取，零 IO。
@@ -546,7 +572,7 @@ async function runLoop(sessionId) {
   if (run.looping) return; // 已有循环在跑（下一轮迭代会自动带上最新消息）
   run.looping = true;
   // 回合级 In token 峰值（整轮结束后供自动压缩检查）；记录本回合是否为压缩回合，压缩回合不再自启压缩防递归
-  run.turnMaxPt = 0;
+  run.turnMaxPt = seedTurnMaxPt(sessionId);
   const wasCompressTurn = !!run.summarizing;
   try {
     await runLoopInner(sessionId, run);
@@ -698,6 +724,16 @@ async function runLoopInner(sessionId, run) {
     if (!session || session.status !== 'active' || !session.model_id) break;
     session.history = loadHistory(sessionId);
     for (const m of session.history) if (m.id > lastIncludedId) lastIncludedId = m.id;
+    // 自动压缩：本回合已用到的 In token 峰值（上一轮上游实报值）达到模型配的 max_context，
+    // 就地把握回合切成压缩回合——不新开 run、不发 auto_compress 提议，前端无感（产物就是摘要卡片，
+    // 与手点「压缩」完全同一条路径：下一圈的 compressing 分支换 prompt、去 tools、摘要落库归档）。
+    // 检查点必须在请求发出之前：这个数字是上一轮的真实值，下一轮只会更大。
+    // 压缩回合自身不再判（run.summarizing 已真），否则会把自己再压一遍。
+    const maxCtx = modelMaxContext(session);
+    if (maxCtx > 0 && !run.summarizing && (run.turnMaxPt || 0) >= maxCtx) {
+      log.info('msg', sessionId + ' 自动压缩：回合 In ' + run.turnMaxPt + ' ≥ max_context ' + maxCtx);
+      run.summarizing = true;
+    }
     // 压缩回合（run.summarizing = 由「压缩」按钮发起、尚未产出摘要）：
     // 沿用默认 system prompt + 正常历史，末尾追加一条压缩指令 user（见 llm.compressMessages）；
     // 且不传 tools，模型只能输出摘要文本。
@@ -849,6 +885,9 @@ async function runLoopInner(sessionId, run) {
               //   后续对话从这条摘要开始，旧历史不再烧 token。
               // 旧摘要行（多轮压缩）一并存档：被新摘要覆盖替代，不再进上下文。
               run.summarizing = null;
+              // 摘要已落地：清掉本回合的 In 峰值，后续轮次按压缩后的新上下文重新计量。
+              // 不清就会拿旧值立刻再触发一次（死循环）；清了则压完仍超还能再压（支持连续压缩）。
+              run.turnMaxPt = 0;
               if ((msgRow.content || '').trim()) {
                 db.prepare("UPDATE messages SET type = 'summary' WHERE id = ?").run(assistantId);
                 const n = db.prepare(

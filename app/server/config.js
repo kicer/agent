@@ -236,6 +236,9 @@ function normalizePlatforms(rawPlatforms, profileNames) {
         // 非空时发请求前给历史 assistant 行挂该字段；空（缺省）= 不回传。纯发送侧旋钮，
         // 与接收解析无关（接收早已兼容 reasoning/reasoning_content 双名）。
         reasoning_ack_field: typeof m.reasoning_ack_field === 'string' ? m.reasoning_ack_field.trim() : '',
+        // 选填：自动压缩阈值（用户自定义的「上下文用量线」，**不是**模型真实窗口）。
+        // 回合内 In token 峰值达到它即自动压缩上下文（见 engine.runLoopInner 循环顶部）；0/未配 = 不启用。
+        max_context: Math.max(0, parseInt(m.max_context, 10) || 0),
         profile,
       });
     }
@@ -359,6 +362,7 @@ function parseAndValidate(rawText, configPath) {
       display_name: m.display_name, vision: m.vision, enable: m.enable,
       extra_params: m.extra_params, thinking_params: m.thinking_params,
       reasoning_ack_field: m.reasoning_ack_field,
+      max_context: m.max_context,
       profile: m.profile,
       url: p.url, api_key: k.api_key, platform: p.name, type: p.type, concurrency: k.concurrency,
       platform_index: pi, key_index: ki, model_index: mi,

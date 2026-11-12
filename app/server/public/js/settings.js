@@ -1260,7 +1260,7 @@
   }
   function pfNewModel() {
     const r = { ref: null, id: '', vision: true, enable: true, display_name: '', profile: '',
-      extra_params: '', thinking_params: '', reasoning_ack_field: '', adv: false };
+      extra_params: '', thinking_params: '', reasoning_ack_field: '', max_context: 0, adv: false };
     if (pfEdit) applyModelDefaults(r, pfEdit.preset);
     return r;
   }
@@ -1283,6 +1283,7 @@
         extra_params: pfJsonText(m.extra_params),
         thinking_params: pfJsonText(m.thinking_params),
         reasoning_ack_field: m.reasoning_ack_field || '',
+        max_context: Number(m.max_context) || 0,
         adv: false,
       })),
     };
@@ -1363,6 +1364,7 @@
       '<label class="mpe-line"><span>请求参数</span><textarea rows="2" spellcheck="false" placeholder=\'{"key":"value"}\' oninput="sUI.mModField(' + i + ',\'extra_params\',this.value)">' + esc(r.extra_params) + '</textarea></label>' +
       '<label class="mpe-line"><span>思考参数</span><textarea rows="2" spellcheck="false" placeholder=\'{"reasoning_effort":"max"}\' oninput="sUI.mModField(' + i + ',\'thinking_params\',this.value)">' + esc(r.thinking_params) + '</textarea></label>' +
       '<label class="mpe-line"><span>思考链回传</span><input type="text" placeholder="回传字段名" value="' + att(r.reasoning_ack_field) + '" oninput="sUI.mModField(' + i + ',\'reasoning_ack_field\',this.value)"></label>' +
+      '<label class="mpe-line"><span>压缩阈值</span><input type="number" min="0" step="1000" placeholder="0=不自动压缩" value="' + att(r.max_context || 0) + '" oninput="sUI.mModField(' + i + ',\'max_context\',this.value)"></label>' +
     '</div>' : '';
     return '<div class="mpe-mcard">' +
       '<div class="mpe-row">' +
@@ -1426,6 +1428,8 @@
     if (Object.keys(tp).length) nv.thinking_params = tp;
     const ra = String(r.reasoning_ack_field || '').trim();
     if (ra) nv.reasoning_ack_field = ra;
+    const mc = Math.max(0, parseInt(r.max_context, 10) || 0);
+    if (mc) nv.max_context = mc;
     return nv;
   }
   // 根据工作态算批量编辑:原地改(值变更项) → 删行(降序) → 新增行(append)。
@@ -1501,6 +1505,12 @@
           if (curRa) edits.push({ path: mp.concat('reasoning_ack_field'), op: 'delete' });
         } else if (ra !== curRa) {
           edits.push({ path: mp.concat('reasoning_ack_field'), value: ra });
+        }
+        // 压缩阈值：0 = 删键（缺省不写），避免无意义重写文件
+        const curMc = Number(om.max_context) || 0;
+        const mc = Math.max(0, parseInt(r.max_context, 10) || 0);
+        if (mc !== curMc) {
+          edits.push(mc ? { path: mp.concat('max_context'), value: mc } : { path: mp.concat('max_context'), op: 'delete' });
         }
       } else {
         edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'models'], value: pfModelValue(r) });
