@@ -902,7 +902,7 @@ open_browser() {
 }
 
 # ============ 后台化 ============
-# start.sh 只做入口：把真正的启动器 nohup 到后台就返回，所以终端里跑完就能关窗口/做别的事。
+# start.sh 只做入口：把真正的启动器甩到后台（独立会话）就返回，所以终端里跑完就能关窗口/做别的事。
 # 停止统一走 ./local/stop.sh（或状态页上写的命令）。
 #   前台模式（看实时日志、Ctrl-C 停）：AGENT_LOCAL_DETACH=0 ./local/start.sh
 # AGENT_LOCAL_DETACHED 是子进程标记，防自己无限重入。
@@ -938,10 +938,23 @@ if [ "${AGENT_LOCAL_DETACH:-1}" = 1 ] && [ "${AGENT_LOCAL_DETACHED:-0}" != 1 ]; 
     generate_config "$WS"
     first_run=1
   fi
-  nohup env AGENT_LOCAL_DETACHED=1 AGENT_LOCAL_FIRST_RUN="$first_run" "$HERE/start.sh" >>"$LOG" 2>&1 </dev/null &
-  child=$!
+  # 用 node 起而不是 nohup：detached 会 setsid，子进程脱离终端的会话与进程组，关窗口/杀终端
+  # 都碰不到它。只靠 nohup 不行——子进程里 trap HUP 覆盖了 nohup 的忽略位，终端一关
+  # 就走到 on_signal，把 core 和 MCP 一起收掉（Terminal 上实测会挂，iTerm2 不断只是因为
+  # 它送信号的方式不同，不能指望）。
+  child=$(node -e '
+    const fs = require("fs");
+    const [log, script, first] = process.argv.slice(1);
+    const fd = fs.openSync(log, "a");
+    const c = require("child_process").spawn("/bin/sh", [script], {
+      detached: true, stdio: ["ignore", fd, fd],
+      env: Object.assign({}, process.env, { AGENT_LOCAL_DETACHED: "1", AGENT_LOCAL_FIRST_RUN: first })
+    });
+    c.unref();
+    process.stdout.write(String(c.pid));
+  ' "$LOG" "$HERE/start.sh" "$first_run" 2>>"$LOG")
   sleep 1
-  if kill -0 "$child" 2>/dev/null; then
+  if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then
     printf '\n已转到后台运行（pid %s）\n' "$child"
     printf '应用：http://%s:%s\n' "$HOST_ADDR" "$PORT"
     printf '进度/日志：%s/status.html · %s\n' "$RUNTIME" "$LOG"
