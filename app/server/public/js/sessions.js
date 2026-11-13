@@ -31,6 +31,9 @@
         '<button class="conv-item' + (s.id === state.sessionId ? ' active' : '') + '" data-id="' + esc(s.id) + '">' +
           '<span class="conv-title">' + esc(s.title || s.id) + '</span>' + drawerStatusDot(s) +
         '</button>' +
+        '<button class="conv-pop" data-pop="' + esc(s.id) + '" title="在新窗口打开" aria-label="在新窗口打开">' +
+          '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
+        '</button>' +
         '<button class="conv-del" data-del="' + esc(s.id) + '" title="删除会话" aria-label="删除会话">' +
           '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
         '</button>' +
@@ -90,6 +93,7 @@
         state.renderedSigs = {};
         state.streaming = false;
         if (typeof clearEditState === 'function') clearEditState();
+        syncUrl(null);
         setView('welcome'); // 复用 newChat 同样的视图切换路径
       }
       toast('已删除会话');
@@ -184,6 +188,11 @@
     if (Date.now() - state.lastSseAt > 45000) probeSseAlive();
   });
 
+  // 地址栏跟随当前会话（?s=<id>）：刷新/收藏/分享都能回到同一会话；没有会话时回到干净的 /
+  function syncUrl(id) {
+    try { history.replaceState(null, '', id ? '/?s=' + encodeURIComponent(id) : '/'); } catch (_) {}
+  }
+
   async function openSession(id) {
       closeStream();
       removeTyping();
@@ -228,8 +237,15 @@
       $('deep-think-btn').classList.toggle('on', state.deepThink);
       connectStream();
       if (window.refreshFileTree) window.refreshFileTree();
+      syncUrl(id); // 详情拿到才写地址栏：坏链接不会把刷新后的页面也钉死在坏会话上
     } catch (e) {
-      if (state.sessionId === id) toast('打开会话失败:' + e.message);
+      if (state.sessionId === id) {
+        toast('打开会话失败:' + e.message);
+        state.sessionId = null;
+        state.sessionTitle = '';
+        syncUrl(null);
+        setView('welcome'); // 会话已被删/链接失效：别把「加载中…」留在屏幕上（同时把顶部按钮置灰）
+      }
     }
   }
 
@@ -247,6 +263,7 @@
     renderHeader();
     updateHeaderActions();
     connectStream();
+    syncUrl(s.id);
     return s.id;
   }
 
@@ -321,6 +338,7 @@
     userPaused = false;
     renderAttachChips();
     clearUploadCards();
+    syncUrl(null);
     setView('welcome');
     $('chat-view').innerHTML = '';
     $('msg-input').value = '';

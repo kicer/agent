@@ -1093,7 +1093,10 @@
     searchTimer = setTimeout(loadSessionList, 250);
   });
   $('drawer-list').addEventListener('click', e => {
-    // 桌面端 hover 删除按钮:先于打开会话处理,点击弹删除确认 modal
+    // 桌面端 hover 行内按钮:先于打开会话处理
+    const popBtn = e.target.closest('.conv-pop');
+    if (popBtn) { e.stopPropagation(); window.open('/?s=' + encodeURIComponent(popBtn.dataset.pop), '_blank', 'noopener'); return; }
+    // 删除按钮:点击弹删除确认 modal
     const delBtn = e.target.closest('.conv-del');
     if (delBtn) { e.stopPropagation(); deleteSession(delBtn.dataset.del); return; }
     const item = e.target.closest('.conv-item');

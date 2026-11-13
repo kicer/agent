@@ -2085,11 +2085,8 @@
     loadSessionList();
     // 侧栏底部已是纯图标操作栏（不展示用户信息），不再需要 loadDrawerUser
     // 会话深链 /?s=<session_id>：数据页面（/app/{task_id}/...）的「返回会话」FAB 用——
-    // task_id 即会话 id（engine 里 1:1），启动时消费一次即 replaceState 抹掉参数，
-    // 避免刷新/分享时被钉回该会话；会话已删则 openSession 自行报错，落在 welcome。
+    // task_id 即会话 id（engine 里 1:1）。地址栏常驻 ?s= 不抹掉，刷新/收藏/分享都能回到同一会话；
+    // 会话已删时 openSession 会自己回落到 welcome 并把 URL 清回 /。
     const deep = new URLSearchParams(location.search).get('s');
-    if (deep) {
-      history.replaceState(null, '', '/');
-      openSession(deep);
-    }
+    if (deep) openSession(deep);
   })();

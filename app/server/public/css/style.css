@@ -1015,22 +1015,26 @@ body.voice-active .scroll-bottom-btn { display: none; }
 }
 .conv-item {
   position: relative;
-  transition: background .12s;
+  transition: background .12s, padding-right .12s;
   width: 100%;
 }
 
-/* 桌面端 hover 删除按钮:鼠标经过会话行时右侧显示,点击弹删除确认 modal
-   (触屏设备不显示,移动端删除仍走左滑手势) */
-.conv-del {
-  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+/* 桌面端 hover 行内按钮:右侧两个并排（新窗口 / 删除），触屏设备不显示（移动端删除走左滑手势） */
+.conv-pop, .conv-del {
+  position: absolute; top: 50%; transform: translateY(-50%);
   width: 24px; height: 24px; border-radius: 7px;
   display: none; align-items: center; justify-content: center;
   color: var(--gray); background: var(--surface); border: 1px solid var(--border);
   z-index: 2;
 }
+.conv-pop { right: 8px; }
+.conv-del { right: 36px; }
 @media (hover: hover) and (pointer: fine) {
   .conv-wrap:hover .conv-item:not(.active) { background: #f5f6f8; }
-  .conv-wrap:hover .conv-del { display: flex;  }
+  /* hover 时标题让出右侧按钮位，防两个按钮压住文字 */
+  .conv-wrap:hover .conv-item { padding-right: 68px; }
+  .conv-wrap:hover .conv-pop, .conv-wrap:hover .conv-del { display: flex; }
+  .conv-pop:hover { color: var(--active); background: var(--active-soft); border-color: currentColor; }
   .conv-del:hover { color: #c0392b; background: #fdf3f2; border-color: #eac2bd;  }
 }
 .drawer-empty { padding: 24px 10px; font-size: 13px; color: var(--gray-light); text-align: center; }
