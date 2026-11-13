@@ -1107,9 +1107,9 @@ body.voice-active .scroll-bottom-btn { display: none; }
 }
 .scroll-bottom-btn:active { opacity: 1; }
 .scroll-bottom-btn svg { width: 20px; height: 20px; fill: none; stroke: #556; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.scroll-bottom-btn .sb-spinner { animation: sb-spin 0.8s linear infinite; }
-.scroll-bottom-btn .sb-spinner circle { stroke: #dde; stroke-width: 2.5; fill: none; }
-.scroll-bottom-btn .sb-spinner path { stroke: #3964FE; stroke-width: 2.5; stroke-linecap: round; fill: none; }
+.scroll-bottom-btn .sb-spinner { --sb-ring: #dde; --sb-arc: #3964FE; animation: sb-spin 0.8s linear infinite; }
+/* 圆环与蓝色进度弧的颜色用自定义属性传进 <use> 的 shadow tree：
+   后代选择器（.sb-spinner circle）选不中 symbol 里的元素，只有 CSS 变量能继承穿透。 */
 @keyframes sb-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
 
