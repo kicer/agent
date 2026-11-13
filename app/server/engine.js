@@ -733,6 +733,9 @@ async function runLoopInner(sessionId, run) {
     if (maxCtx > 0 && !run.summarizing && (run.turnMaxPt || 0) >= maxCtx) {
       log.info('msg', sessionId + ' 自动压缩：回合 In ' + run.turnMaxPt + ' ≥ max_context ' + maxCtx);
       run.summarizing = true;
+      // 标记「这是回合内自动压缩」：摘要落地后要接着跑完原任务（见 isSummary 分支），
+      // 与用户手点「压缩」发起的独立压缩回合区分开（那种压完就该停）。
+      run.compactAuto = true;
     }
     // 压缩回合（run.summarizing = 由「压缩」按钮发起、尚未产出摘要）：
     // 沿用默认 system prompt + 正常历史 + 同一套 tools，末尾追加一条压缩指令 user（见 llm.compressMessages），
@@ -896,6 +899,16 @@ async function runLoopInner(sessionId, run) {
                   " AND (type IS NULL OR type != 'archived')"
                 ).run(sessionId, assistantId).changes;
                 log.info('msg', sessionId + ' 压缩摘要 ' + assistantId + ' 落库，存档之前 ' + n + ' 条消息（不再发给模型）');
+              }
+              // 回合内自动压缩把正在跑的任务切成了摘要，摘要一落地就地续跑：
+              // 补一条 user 指令接回原任务，否则会直接走到下面的 !hasTools 收尾，
+              // 任务停在半路，要用户再喊一声才动。
+              if (run.compactAuto) {
+                run.compactAuto = false;
+                const resumeText = '上下文已压缩，请继续完成原任务。';
+                const resumeId = saveMessage(sessionId, { role: 'user', content: resumeText });
+                bus.emit(sessionId, 'user_message', { id: resumeId, content: resumeText, created_at: now() });
+                continue;
               }
             }
 
