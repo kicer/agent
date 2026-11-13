@@ -1095,7 +1095,12 @@
   $('drawer-list').addEventListener('click', e => {
     // 桌面端 hover 行内按钮:先于打开会话处理
     const popBtn = e.target.closest('.conv-pop');
-    if (popBtn) { e.stopPropagation(); window.open('/?s=' + encodeURIComponent(popBtn.dataset.pop), '_blank', 'noopener'); return; }
+    if (popBtn) {
+      e.stopPropagation();
+      // files=1 让新窗口开局直接把侧栏切到文件树（打开后即被 syncUrl 抹掉）
+      window.open('/?s=' + encodeURIComponent(popBtn.dataset.pop) + '&files=1', '_blank', 'noopener');
+      return;
+    }
     // 删除按钮:点击弹删除确认 modal
     const delBtn = e.target.closest('.conv-del');
     if (delBtn) { e.stopPropagation(); deleteSession(delBtn.dataset.del); return; }

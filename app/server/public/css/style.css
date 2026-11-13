@@ -1027,8 +1027,8 @@ body.voice-active .scroll-bottom-btn { display: none; }
   color: var(--gray); background: var(--surface); border: 1px solid var(--border);
   z-index: 2;
 }
-.conv-pop { right: 8px; }
-.conv-del { right: 36px; }
+.conv-pop { right: 36px; }
+.conv-del { right: 8px; }
 @media (hover: hover) and (pointer: fine) {
   .conv-wrap:hover .conv-item:not(.active) { background: #f5f6f8; }
   /* hover 时标题让出右侧按钮位，防两个按钮压住文字 */

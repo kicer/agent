@@ -2087,6 +2087,13 @@
     // 会话深链 /?s=<session_id>：数据页面（/app/{task_id}/...）的「返回会话」FAB 用——
     // task_id 即会话 id（engine 里 1:1）。地址栏常驻 ?s= 不抹掉，刷新/收藏/分享都能回到同一会话；
     // 会话已删时 openSession 会自己回落到 welcome 并把 URL 清回 /。
-    const deep = new URLSearchParams(location.search).get('s');
-    if (deep) openSession(deep);
+    const params = new URLSearchParams(location.search);
+    const deep = params.get('s');
+    if (deep) {
+      openSession(deep).then(() => {
+        // 从侧栏「在新窗口打开」进来（带 files=1）：开局直接把侧栏切到文件树；
+        // 窄屏/无会话/文件树未加载时 setDrawerPane 内部会自行忽略
+        if (params.get('files') === '1' && typeof setDrawerPane === 'function') setDrawerPane(true);
+      });
+    }
   })();
