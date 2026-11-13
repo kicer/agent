@@ -302,6 +302,11 @@
         <div id="voice-overlay" class="hidden" aria-hidden="true">
           <div class="vo-hint" id="voice-hint">松手传送，上滑取消</div>
           <div class="vo-wave" id="voice-wave"></div>
+          <!-- 桌面点击模式的操作行：手机端按住说话用不到，CSS 里默认隐藏 -->
+          <div class="vo-actions" id="voice-actions">
+            <button type="button" class="vo-btn ghost" id="voice-cancel">取消</button>
+            <button type="button" class="vo-btn primary" id="voice-send">发送</button>
+          </div>
         </div>
       </div>
       <!-- 回到底部浮动按钮(搬自 index;上翻历史时出现、AI 输出中常驻转圈)。

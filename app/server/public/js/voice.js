@@ -36,6 +36,11 @@
   const MAX_MS = 180000;       // 单次录音上限（流式上传后不再受 60s 限制）
   const MIN_MS = 500;          // 短于这个时长按误触处理，不上传
   const FLUSH_MS = 60000;      // 松手后等尾段识别完的上限（超过就当失败）
+  // 桌面用鼠标就用「点一下开始、再点一下发送」；手机（触屏）继续按住说话。
+  // 桌面一直压着鼠标键说话手累，上滑取消也没意义；两个平台各自按自己的习惯来。
+  const POINT_FINE = !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+  const HOLD_IDLE = POINT_FINE ? '点击 说话' : '按住 说话';
+  const HOLD_REC = POINT_FINE ? '说完 点击发送' : '松开 结束';
   // 转写请求的并发上限：段一碎（6s 软切）并发就会很多，全放出去会把上游压垮、
   // 也可能被限流。超过就排到后面，等前面的落定再发。改完刷新页面即生效。
   const ASR_MAX_CONCURRENCY = 3;
@@ -125,10 +130,14 @@
   // ---------- 遮罩 / 声波 ----------
   function setOverlayMode(m) { // 'send' | 'cancel' | 'busy'
     cancelArmed = m === 'cancel';
-    if (overlay) overlay.classList.toggle('cancel', m === 'cancel');
+    if (overlay) {
+      overlay.classList.toggle('cancel', m === 'cancel');
+      overlay.classList.toggle('busy', m === 'busy'); // 识别中把操作行藏起来，避免空点
+    }
     if (hintEl) {
-      hintEl.textContent = m === 'cancel' ? '松开取消'
-        : m === 'busy' ? busyHintText() : '松手传送，上滑取消';
+      hintEl.textContent = m === 'cancel' ? '松手取消'
+        : m === 'busy' ? busyHintText()
+          : (POINT_FINE ? '' : '松手传送，上滑取消');
     }
   }
 
@@ -302,7 +311,7 @@
     abortStream();
     if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
     hold.classList.remove('recording');
-    setHoldText('按住 说话');
+    setHoldText(HOLD_IDLE);
     hideOverlay();
     updateSendBtn();
   }
@@ -344,7 +353,7 @@
     segSent = 0;
     segDone = 0;
     hold.classList.add('recording');
-    setHoldText('松开 结束');
+    setHoldText(HOLD_REC);
     showOverlay();
 
     if (native) {
@@ -413,7 +422,7 @@
     if (held < MIN_MS) discard = true;
     phase = 'busy';
     hold.classList.remove('recording');
-    setHoldText(discard ? '按住 说话' : '正在识别…');
+    setHoldText(discard ? HOLD_IDLE : '正在识别…');
     // 遮罩留着，文案换成动态识别进度；柱子停在低位，等结果回来再收
     setOverlayMode(discard ? 'send' : 'busy');
     stopMeter();
@@ -464,15 +473,15 @@
     resetUI();
   }
 
-  // ---------- 按住 / 滑动 / 松开 ----------
-  hold.addEventListener('pointerdown', function (e) {
+  // ---------- 按住 / 滑动 / 松开（手机）或点击切换（桌面）----------
+  function onPointerDown(e) {
     if (e && e.button != null && e.button !== 0) return; // 只响应左键/触摸
     e.preventDefault();
     if (phase !== 'idle') return;
     pressY = e.clientY || 0;
     try { hold.setPointerCapture(e.pointerId); } catch (_) { /* 忽略 */ }
     startHold();
-  });
+  }
 
   function onMove(e) {
     if (!pressing) return;
@@ -503,13 +512,39 @@
     else if (phase === 'arming') cancelHold(); // 还没真正开录：当误触
   }
 
-  hold.addEventListener('pointerup', onRelease);
-  hold.addEventListener('pointercancel', onRelease);
-  hold.addEventListener('pointermove', onMove);
-  // 兜底：个别环境下 setPointerCapture 不生效，手指移出按钮后也要跟手
-  window.addEventListener('pointerup', onRelease);
-  window.addEventListener('pointercancel', onRelease);
-  window.addEventListener('pointermove', onMove);
+  if (POINT_FINE) {
+    // 桌面：点一下开始，再点一下发送（pressing 由 startHold 置 true 后一直保持，不会自己松）
+    hold.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (phase === 'idle') startHold();
+      else if (phase === 'recording') finishHold();
+      else if (phase === 'arming') cancelHold(); // 等麦克风授权时再点一下 = 取消
+    });
+  } else {
+    hold.addEventListener('pointerdown', onPointerDown);
+    hold.addEventListener('pointerup', onRelease);
+    hold.addEventListener('pointercancel', onRelease);
+    hold.addEventListener('pointermove', onMove);
+    // 兜底：个别环境下 setPointerCapture 不生效，手指移出按钮后也要跟手
+    window.addEventListener('pointerup', onRelease);
+    window.addEventListener('pointercancel', onRelease);
+    window.addEventListener('pointermove', onMove);
+  }
+
+  // 桌面点击模式：遮罩底部那行「取消 / 发送」的点击绑定
+  if (POINT_FINE) {
+    const sendBtn = $('voice-send');
+    const cancelBtn = $('voice-cancel');
+    if (sendBtn) sendBtn.addEventListener('click', function (e) { e.stopPropagation(); if (phase === 'recording') finishHold(); });
+    if (cancelBtn) cancelBtn.addEventListener('click', function (e) { e.stopPropagation(); cancelHold(); });
+  }
+
+  // 录音中 Esc 取消（两端都可用，桌面端尤其需要一个键盘出口）
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || phase === 'idle') return;
+    e.preventDefault();
+    cancelHold();
+  });
 
   // 长按不弹系统菜单（移动端）
   hold.addEventListener('contextmenu', function (e) { e.preventDefault(); });

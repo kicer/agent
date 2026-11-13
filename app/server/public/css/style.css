@@ -724,6 +724,8 @@ footer { position: relative; flex: none; padding: 8px 12px calc(10px + var(--sab
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   touch-action: none; transition: background .12s;
 }
+/* 桌面点击模式：遮罩里自带一行「取消 / 发送」（.vo-actions），输入卡那个按钮不必浮上来。
+   手机端按住说话时看不到按钮也不影响（松手即发送）。 */
 /* 按住区与下方操作栏之间的分隔线（用伪元素画，避开录音态底色的圆角） */
 #voice-hold::after {
   content: '';
@@ -786,6 +788,25 @@ body.voice-active .scroll-bottom-btn { display: none; }
 /* 上滑取消态：声波与文案统一转警示色 */
 #voice-overlay.cancel .vo-hint { color: var(--fg-c0392b); }
 @media (prefers-reduced-motion: reduce) { .vo-wave i { transition: none; } }
+/* 桌面点击模式：遮罩底部自带「取消 / 发送」一行（手机端按住说话用不到，默认不显示）。
+   波形在上、按钮在下由遮罩的 flex 布局自然排开，不再把输入卡那个按钮浮上来压住波形。 */
+.vo-actions { display: none; gap: 12px; }
+.vo-btn {
+  padding: 9px 24px; border-radius: 10px; font-size: 14px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--page); color: var(--ink);
+}
+.vo-btn.ghost { background: var(--bg-e8eaf0); border-color: transparent; color: var(--ink); }
+/* 桌面端休息态不显示 hint（文案为空），别白占一行高度 */
+.vo-hint:empty { display: none; }
+.vo-btn.primary { background: var(--active); border-color: var(--active); color: var(--fg-fff); }
+.vo-btn:active { opacity: .88; }
+@media (hover: hover) and (pointer: fine) {
+  .vo-actions { display: flex; }
+  /* 有按钮行了，底部不再留出对齐输入卡那 70px 的空 */
+  #voice-overlay { padding-bottom: calc(24px + var(--sab)); }
+}
+/* 识别中：操作行隐身（此时点发送/取消都没意义） */
+#voice-overlay.busy .vo-actions { visibility: hidden; }
 
 /* 发送键四态：发送 / 停止 / 语音 / 键盘。语音与键盘用中性底色，和蓝色「发送」区分开 */
 .send-btn > svg { display: none; }
