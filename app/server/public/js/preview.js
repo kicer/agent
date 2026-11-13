@@ -204,6 +204,52 @@ async function pvOpenOffice(name, sizeText) {
   pvState.url = url;
 }
 
+// ---------- 站内地址预览：会话流里的链接 / 地址条回车 → 直接挂进预览窗 ----------
+// 「本机」判定：完全同源，或两端都是本机别名(localhost/127.0.0.1/[::1]/0.0.0.0，端口不究)。
+// 外链、锚点、mailto、相对路径都不算，调用方自行放行。
+function pvLocalHost(h) { return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]' || h === '0.0.0.0'; }
+function pvSameHost(target) {
+  let u;
+  try { u = new URL(target, location.href); } catch (_) { return null; }
+  if (u.origin === location.origin) return u;
+  if (pvLocalHost(u.hostname) && pvLocalHost(location.hostname)) return u;
+  return null;
+}
+function pvUrlTitle(url) {
+  try {
+    const u = new URL(url, location.href);
+    return decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '') || u.host;
+  } catch (_) { return String(url); }
+}
+// iframe 直挂，不走文件读取链路：桌面进右侧分栏，窄屏进全屏浮层。
+// sandbox 与现有 HTML 预览一致——data-page 页面要靠脚本渲染表格。
+function pvOpenUrl(url, title) {
+  const desk = pvDesktop();
+  const name = title || pvUrlTitle(url);
+  ++pvSeq; // 在途的文件预览请求就此作废，别回来抢 DOM
+  const mkFrame = () => {
+    const fr = document.createElement('iframe');
+    fr.className = desk ? 'pv-frame' : 'fs-html-frame';
+    fr.title = name;
+    fr.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+    fr.src = url;
+    return fr;
+  };
+  if (desk) {
+    pvOpenPane(); pvClearBody();
+    pvHeader(name, '');
+    pvState.name = null; // 不是文件：下载钮收起(按名下载会拼错路径)
+    document.getElementById('pv-download').classList.add('hidden');
+    pvToolbar({ refresh: true, popup: true, reload: () => pvOpenUrl(url, title), url });
+    const t = document.getElementById('pv-title'); // 地址条显示完整地址，可选中复制
+    t.value = url; t.title = url;
+    document.getElementById('pv-body').appendChild(mkFrame());
+  } else {
+    pvOverlayShow(mkFrame(), { bar: true, name });
+    if (!pvState.mobilePush) { try { history.pushState({ pvOffice: 1 }, ''); pvState.mobilePush = true; } catch (_) {} }
+  }
+}
+
 // ---------- 统一入口：所有文件点击都走这 ----------
 async function openFilePreview(name, sizeText) {
   if (!state.sessionId) return;
@@ -481,11 +527,16 @@ document.getElementById('pv-popup').addEventListener('click', () => {
 });
 // 地址条：点击/聚焦全选——长路径被截断时可选中看全文、直接 Ctrl+C 复制
 document.getElementById('pv-title').addEventListener('focus', (e) => e.target.select());
-// 地址条回车跳转：http(s) 网址新标签打开，其余按任务目录相对路径进预览
+// 地址条回车跳转：本机地址(含 /app/... 这类站内绝对路径)进预览窗，外部网址新开标签，
+// 其余按任务目录相对路径当文件预览。
 function pvClean(s) { return String(s || '').trim().replace(/^["']+|["']+$/g, ''); }
 function pvAddrGo(v) {
-  if (/^https?:\/\//i.test(v)) { window.open(v, '_blank', 'noopener'); return; }
+  if (/^https?:\/\//i.test(v)) {
+    if (pvSameHost(v)) { document.getElementById('pv-title').blur(); pvOpenUrl(v); return; }
+    window.open(v, '_blank', 'noopener'); return;
+  }
   document.getElementById('pv-title').blur();
+  if (v.charAt(0) === '/' && v.charAt(1) !== '/') { pvOpenUrl(v); return; }
   openFilePreview(v);
 }
 // ---------- 地址条文件名补全：候选取自 files.js 缓存的目录树(filesNodeAt)，零请求 ----------
@@ -570,11 +621,11 @@ document.getElementById('pv-pane').addEventListener('click', (e) => {
   const b = e.target.closest('.act-copy');
   if (b && typeof onCopyClick === 'function') onCopyClick(e);
 });
-// 移动端系统返回键：先收起 office 全屏预览
+// 移动端系统返回键：先收起 iframe 类全屏预览(office 网关 / 站内地址)
 window.addEventListener('popstate', () => {
   pvState.mobilePush = false;
   const fs = document.getElementById('fs-viewer');
-  if (!fs.classList.contains('hidden') && fs.querySelector('.fs-html-frame[src^="/preview/"]')) closeFullscreen();
+  if (!fs.classList.contains('hidden') && fs.querySelector('.fs-html-frame')) closeFullscreen();
 });
 // Esc 关闭预览分栏(未开全屏查看器时)
 window.addEventListener('keydown', (e) => {

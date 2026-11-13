@@ -705,6 +705,21 @@
   $('chat-view').addEventListener('click', imgViewerDelegate);
   $('fs-viewer').addEventListener('click', imgViewerDelegate);
 
+  // ---------- 会话流里的本机链接：进预览窗 ----------
+  // 只拦本机 host(同源 / localhost 别名)；外链、锚点、mailto、相对路径维持浏览器默认。
+  // 修饰键与中键放行，留着「我就是要新开一个标签页」这个出口。
+  function linkPreviewDelegate(e) {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const a = e.target.closest('a[href]');
+    if (!a) return;
+    const href = a.getAttribute('href') || '';
+    if (!/^(https?:\/\/|\/(?!\/))/i.test(href) || !pvSameHost(href)) return;
+    e.preventDefault();
+    const txt = (a.textContent || '').trim();
+    pvOpenUrl(href, txt && txt.length <= 40 ? txt : null);
+  }
+  $('chat-view').addEventListener('click', linkPreviewDelegate);
+
   // 图片全屏查看器:transform 缩放+平移。双指捻合缩放(1~6x)、放大后单指/鼠标拖动、双击切 2.5x。
   // 第 3 参 list([{src,alt}] 或 [src]) 传入「同组图片」时开启左右滑动切换；第 4 参 at 指定起始下标。
   // 切图用双层 img 做真正的分页位移（旧图跟手滑出、新图同步滑入），并在开图时预取相邻图，
