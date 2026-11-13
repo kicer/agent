@@ -119,7 +119,10 @@ router.get('/:id/tree', function (req, res) {
       const childRel = rel ? rel + '/' + e.name : e.name;
       if (e.isSymbolicLink()) { entries.push({ name: e.name, rel: childRel, type: 'link' }); continue; }
       if (e.isDirectory()) {
-        entries.push({ name: e.name, rel: childRel, type: 'dir', ignored: TREE_IGNORE_DIRS.has(e.name) });
+        // mtimeMs 给前端判断空目录是否还是空的：目录内增删子项会更新它
+        let mtimeMs = null;
+        try { mtimeMs = fs.statSync(path.join(abs, e.name)).mtimeMs; } catch (_) {}
+        entries.push({ name: e.name, rel: childRel, type: 'dir', ignored: TREE_IGNORE_DIRS.has(e.name), mtimeMs: mtimeMs });
       } else if (e.isFile()) {
         let size = null;
         try { size = fs.statSync(path.join(abs, e.name)).size; } catch (_) {}

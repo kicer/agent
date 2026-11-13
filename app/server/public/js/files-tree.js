@@ -25,6 +25,7 @@
   let expanded = new Set(['']); // 已展开的相对目录（'' = 根）
   let cache = new Map();        // rel -> /tree 响应
   let loading = new Map();      // rel -> Promise（并发去重）
+  let emptyDirs = new Map();    // rel -> 目录 mtimeMs：确认空着的目录，mtime 没变就不必再请求
   let gen = 0;                  // 会话切换/刷新时自增，防止旧请求回填到新树的缓存
   // 多选：rel -> 'dir' | 'file'。勾目录表示整个目录（下载打成一个 zip、删除递归），
   // 所以勾目录会吃掉子项，勾子项会把祖先目录降级掉，见 toggleSel。
@@ -35,7 +36,7 @@
     gen++;
     cache = new Map();
     loading = new Map();
-    if (!keepExpanded) { expanded = new Set(['']); sel.clear(); }
+    if (!keepExpanded) { expanded = new Set(['']); sel.clear(); emptyDirs = new Map(); }
   }
 
   function sid() { return (state && state.sessionId) || ''; }
@@ -47,15 +48,24 @@
     parent.appendChild(el);
   }
 
-  function openDir(rel) {
+  function openDir(rel, dirMtime) {
     if (cache.has(rel)) return Promise.resolve(cache.get(rel));
     if (loading.has(rel)) return loading.get(rel);
     if (!sid()) return Promise.resolve(null);
+    // 已知空目录且目录自身 mtime 未变（增删子项才会变）：跳过请求，直接给空结果
+    if (dirMtime != null && emptyDirs.get(rel) === dirMtime) {
+      return Promise.resolve({ dir: rel, total: 0, capped: false, entries: [] });
+    }
     const url = '/api/sessions/' + encodeURIComponent(sid()) + '/tree?dir=' +
       encodeURIComponent(rel) + (showHidden ? '&hidden=1' : '');
     const myGen = gen;
     const p = req('GET', url).then(function (data) {
-      if (myGen === gen) { cache.set(rel, data); loading.delete(rel); }
+      if (myGen === gen) {
+        cache.set(rel, data); loading.delete(rel);
+        const n = (data && data.entries) ? data.entries.length : 0;
+        if (!n && dirMtime != null) emptyDirs.set(rel, dirMtime);
+        else if (n) emptyDirs.delete(rel);
+      }
       return data;
     }, function (e) {
       if (myGen === gen) loading.delete(rel);
@@ -126,20 +136,21 @@
     return row;
   }
 
-  async function renderDirInto(container, rel, depth) {
+  async function renderDirInto(container, rel, depth, dirMtime) {
     container.innerHTML = '';
-    const data = await openDir(rel);
+    const data = await openDir(rel, dirMtime);
     if (!data) return;
     const frag = document.createDocumentFragment();
     const list = data.entries || [];
-    if (!list.length) tip(frag, '（空目录）');
+    // 只在根目录给空提示：子目录展开后本来就该「看不出变化」，根节点全空白则分不清是空还是没加载
+    if (!list.length && !rel) tip(frag, '（空目录）');
     for (const ent of list) {
       frag.appendChild(rowFor(ent, depth));
       if (ent.type === 'dir' && !ent.ignored && expanded.has(ent.rel)) {
         const kids = document.createElement('div');
         kids.className = 'tree-children';
         frag.appendChild(kids);
-        renderDirInto(kids, ent.rel, depth + 1).catch(function () {}); // 异步填充子层
+        renderDirInto(kids, ent.rel, depth + 1, ent.mtimeMs).catch(function () {}); // 异步填充子层
       }
     }
     if (data.capped) tip(frag, '仅显示前 ' + list.length + ' 项（共 ' + data.total + ' 项）', 'tree-more');
