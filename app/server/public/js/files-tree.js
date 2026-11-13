@@ -18,8 +18,6 @@
   const SVG_EYE = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-eye-sm"/></svg>';
   const SVG_DL = '<svg viewBox="0 0 24 24"><use href="#i-download"/></svg>';
   const SVG_DEL = '<svg viewBox="0 0 24 24"><use href="#i-trash"/></svg>';
-  const SVG_THEME = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-theme-light"/></svg>' +
-    '<svg class="ic sm hidden" viewBox="0 0 24 24"><use href="#i-theme-dark"/></svg>';
   const SVG_REVEAL_SM = '<svg viewBox="0 0 24 24"><use href="#i-external-b"/></svg>';
 
   let localCapable = false;     // local 启动器：才显示「在 Finder/终端中打开」
@@ -396,34 +394,6 @@
   }
 
   // local 能力探测结果回来后才把「在 Finder/终端中打开」露出来（服务器形态永远隐藏）
-  // ---------- 主题（auto / light / dark 三态循环）----------
-  // 色板全在 style.css 的变量里，这里只负责落 data-theme 与两态图标。
-  const THEME_ORDER = ['light', 'dark'];
-  const THEME_LABEL = ['主题：浅色', '主题：深色'];
-  function themeMode() { return document.documentElement.getAttribute('data-theme-mode') === 'dark' ? 'dark' : 'light'; }
-  function applyTheme(mode) {
-    const m = mode === 'dark' ? 'dark' : 'light';
-    document.documentElement.setAttribute('data-theme', m);
-    document.documentElement.setAttribute('data-theme-mode', m);
-    try { localStorage.setItem('agent-theme', m); } catch (_) {}
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', m === 'dark' ? '#0d1117' : '#3964FE');
-    syncThemeBtn();
-  }
-  function cycleTheme() {
-    applyTheme(themeMode() === 'dark' ? 'light' : 'dark');
-  }
-  function syncThemeBtn() {
-    const btn = $('tree-theme');
-    if (!btn) return;
-    const i = themeMode() === 'dark' ? 1 : 0;
-    btn.title = THEME_LABEL[i];
-    btn.setAttribute('aria-label', THEME_LABEL[i]);
-    btn.querySelectorAll('svg').forEach(function (s, k) { s.classList.toggle('hidden', k !== i); });
-  }
-  window.applyTheme = applyTheme;
-  window.cycleTheme = cycleTheme;
-  window.syncThemeBtn = syncThemeBtn;
 
   function syncLocalButtons() {
     const rv = $('tree-reveal'), tm = $('tree-terminal');
@@ -455,7 +425,6 @@
         '<button class="icon-btn" type="button" id="tree-vcs" title="Git 改动与历史" aria-label="Git 改动与历史">' + SVG_VCS + '</button>' +
       '</span>' +
       '<span class="pv-actions tree-actions-ext">' +
-        '<button class="icon-btn" type="button" id="tree-theme" title="主题：浅色" aria-label="切换主题">' + SVG_THEME + '</button>' +
         '<button class="icon-btn hidden" type="button" id="tree-reveal" title="在 Finder 中打开" aria-label="在 Finder 中打开">' + SVG_REVEAL + '</button>' +
         '<button class="icon-btn hidden" type="button" id="tree-terminal" title="在终端中打开" aria-label="在终端中打开">' + SVG_TERM + '</button>' +
       '</span>';
@@ -477,9 +446,6 @@
     box.appendChild(body);
     box.appendChild(foot);
 
-    head.querySelector('#tree-theme').addEventListener('click', function () {
-      if (typeof cycleTheme === 'function') cycleTheme();
-    });
     head.querySelector('#tree-hidden').addEventListener('click', function () {
       showHidden = !showHidden;
       invalidate(false);
@@ -501,7 +467,6 @@
     body.addEventListener('click', onTreeClick);
 
     syncLocalButtons();
-    syncThemeBtn();
   }
 
   // 侧栏底部「文件树」图标 → 切到这个面板（由 files.js 的 setDrawerPane 调用）。

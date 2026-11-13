@@ -193,6 +193,10 @@
            桌面属性区与菜单项共用 data-act，事件统一在 sessions.js 分发。 -->
       <div class="header-actions" id="header-actions">
         <div class="ha-icons">
+          <button class="icon-btn ha-btn" data-act="theme" id="theme-toggle" data-tip="主题：浅色" aria-label="切换主题">
+            <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-theme-light"/></svg>
+            <svg class="ic sm hidden" viewBox="0 0 24 24"><use href="#i-theme-dark"/></svg>
+          </button>
           <button class="icon-btn ha-btn" data-act="new" data-tip="新建会话" aria-label="新建会话">
             <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-plus"/></svg>
           </button>
@@ -212,6 +216,11 @@
           <button class="ha-item" role="menuitem" data-act="compact">
             <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-database"/></svg>
             <span class="ha-item-main">压缩上下文</span>
+          </button>
+          <button class="ha-item" role="menuitem" data-act="theme" id="theme-toggle-mobile">
+            <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-theme-light"/></svg>
+            <svg class="ic sm hidden" viewBox="0 0 24 24"><use href="#i-theme-dark"/></svg>
+            <span class="ha-item-main">切换主题</span><span class="ha-item-sub" id="theme-label-mobile">浅色</span>
           </button>
           <button class="ha-item" role="menuitem" data-act="new">
             <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-plus"/></svg>

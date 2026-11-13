@@ -491,8 +491,37 @@
     if (act === 'model') openModelSwitch();
     else if (act === 'schedule') openScheduleModal();
     else if (act === 'compact') summarizeChat();
+    else if (act === 'theme') cycleTheme();
     else if (act === 'new') newChat();
   }
+
+  // ---------- 主题（浅/深两态，默认浅色；色板全在 style.css 变量里）----------
+  function themeMode() { return document.documentElement.getAttribute('data-theme-mode') === 'dark' ? 'dark' : 'light'; }
+  function applyTheme(mode) {
+    const m = mode === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', m);
+    document.documentElement.setAttribute('data-theme-mode', m);
+    try { localStorage.setItem('agent-theme', m); } catch (_) {}
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', m === 'dark' ? '#0d1117' : '#3964FE');
+    syncThemeBtns();
+  }
+  function cycleTheme() { applyTheme(themeMode() === 'dark' ? 'light' : 'dark'); }
+  function syncThemeBtns() {
+    const dark = themeMode() === 'dark';
+    const lbl = dark ? '主题：深色' : '主题：浅色';
+    ['theme-toggle', 'theme-toggle-mobile'].forEach(function (id) {
+      const b = $(id);
+      if (!b) return;
+      b.querySelectorAll('svg').forEach(function (s, k) { s.classList.toggle('hidden', k !== (dark ? 1 : 0)); });
+    });
+    const t = $('theme-toggle');
+    if (t) { t.title = lbl; t.dataset.tip = lbl; }
+    const lab = $('theme-label-mobile');
+    if (lab) lab.textContent = dark ? '深色' : '浅色'; // 副标题只写当前值，主文案是动作
+  }
+  window.applyTheme = applyTheme;
+  window.cycleTheme = cycleTheme;
   // 桌面属性区（模型/定时任务/压缩）与移动菜单项共用同一批 data-act，事件只在这里绑一次。
   (function bindHeaderActions() {
     document.querySelectorAll('#header-meta [data-act], #header-actions [data-act]').forEach(el => {
@@ -505,6 +534,7 @@
       if (!e.target.closest('#header-actions')) closeHeaderMenu();
     });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeHeaderMenu(); });
+    syncThemeBtns(); // 按钮图标/文字跟着当前主题落一次
   })();
 
   // ---------- 定时任务（弹窗改频次/提示词；无任务时同一弹窗即新建） ----------
