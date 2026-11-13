@@ -15,6 +15,7 @@ const PV_PLAIN = /\.(txt|log)$/i;
 // 常见代码/配置/数据文本扩展名；无扩展名的文件(Dockerfile/LICENSE 等)也按文本尝试，二进制嗅探兜底
 const PV_TEXT = /\.(md|markdown|txt|log|csv|tsv|json|jsonl|xml|yml|yaml|toml|ini|conf|cfg|properties|env|py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|c|h|cpp|hpp|cc|cs|go|rs|rb|php|swift|sh|bash|zsh|bat|ps1|sql|lua|r|dart|vue|css|less|scss|srt|vtt)$/i;
 const PV_TEXT_MAX = 512 * 1024; // 文本预览截断阈值(字符)，超出提示下载看全文
+const PV_CODE_MAX = 5000; // 代码预览最多逐行渲染的行数：行号要逐行建节点，几万行会把面板拖死
 const PV_SRC_MAX = 2 * 1024 * 1024; // 源码面板的显示上限，超过就只给前 2MB（大文件塞 pre 会卡）
 let pvSeq = 0; // 预览序号：快速连点时旧请求不许再动 DOM
 // reload: 当前内容的"重新载入"动作(文本类无 iframe，按名重开)；为 null 时回退到 reload iframe
@@ -97,7 +98,7 @@ function pvToggleSrc() {
     let text = pvState.source;
     if (text.length > PV_SRC_MAX) text = text.slice(0, PV_SRC_MAX) + '\n\n…（源码较大，仅显示前 ' + Math.round(PV_SRC_MAX / 1024) + ' KB）';
     const pre = document.createElement('pre');
-    pre.className = 'pv-pre pv-src-pre'; // 代码类预览本身也是 .pv-pre，多一个类便于区分/定位
+    pre.className = 'pv-pre pv-src-pre'; // 源码面板：不加行号的原文（代码预览本身走 .pv-code）
     pre.textContent = text; // 不用 innerHTML：源码里的标签必须当文本
     pvState.srcPre = pre;
     document.getElementById('pv-body').appendChild(pre);
@@ -483,10 +484,27 @@ async function pvTextNode(name, sizeText, r) {
     tip.textContent = '文件较大，仅预览前 ' + Math.round(PV_TEXT_MAX / 1024) + ' KB，完整内容请下载查看。';
     frag.appendChild(tip);
   }
-  const pre = document.createElement('pre');
-  pre.className = 'pv-pre';
-  pre.textContent = bodyText;
-  frag.appendChild(pre);
+  // 代码/配置/数据：逐行渲染以便左侧打行号（视觉同 Git 面板的 .vcs-line）。
+  // 超过 PV_CODE_MAX 行只渲染前段，剩下的交代一句——几万个逐行节点会让面板卡到没法滚。
+  const lines = bodyText.split('\n');
+  const total = lines.length;
+  const shown = total > PV_CODE_MAX ? lines.slice(0, PV_CODE_MAX) : lines;
+  const code = document.createElement('div');
+  code.className = 'pv-code';
+  code.style.setProperty('--nw', Math.max(2, String(shown.length).length) + 'ch'); // 行号列宽按最大行号位数
+  const rows = [];
+  for (let i = 0; i < shown.length; i++) {
+    // 行号交给 CSS counter（.pv-cl::before）生成：伪元素不进选区，复制不会把行号带走
+    rows.push('<div class="pv-cl">' + esc(shown[i]) + '</div>');
+  }
+  code.innerHTML = rows.join('');
+  frag.appendChild(code);
+  if (total > PV_CODE_MAX) {
+    const tip2 = document.createElement('div');
+    tip2.className = 'pv-trunc';
+    tip2.textContent = '文件较大，仅显示前 ' + PV_CODE_MAX + ' 行（共 ' + total + ' 行），完整内容请下载查看。';
+    frag.appendChild(tip2);
+  }
   const holder = document.createElement('div');
   holder.className = 'pv-plain';
   holder.appendChild(frag);
