@@ -17,7 +17,7 @@
   const SVG_VCS = '<svg class="ic sm" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9v1a4 4 0 0 1-4 4H9"/></svg>';
   const SVG_EYE = '<svg class="ic sm" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
   const SVG_DL = '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-  const SVG_DEL = '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+  const SVG_DEL = '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
   const SVG_REVEAL_SM = '<svg viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
   let localCapable = false;     // local 启动器：才显示「在 Finder/终端中打开」
@@ -195,7 +195,6 @@
       sel.delete(rel);
       invalidate(true);
       renderBody();
-      toast('已删除');
     } catch (e) { toast('删除失败：' + e.message); }
   }
 
@@ -349,7 +348,7 @@
     sel.clear();
     invalidate(true);
     renderBody();
-    toast(fail ? ('已删除 ' + done + ' 项，' + fail + ' 项失败') : ('已删除 ' + done + ' 项'));
+    if (fail) toast('已删除 ' + done + ' 项，' + fail + ' 项失败'); // 全成功时列表自己就空了，不弹
   }
 
   function onTreeClick(e) {

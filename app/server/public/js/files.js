@@ -49,8 +49,7 @@
   // 深度思考开关：每次发消息随 body 传给后端，后端会合并该模型的 thinking_params
   $('deep-think-btn').addEventListener('click', () => {
     state.deepThink = !state.deepThink;
-    $('deep-think-btn').classList.toggle('on', state.deepThink);
-    toast(state.deepThink ? '深度思考已开启' : '深度思考已关闭');
+    $('deep-think-btn').classList.toggle('on', state.deepThink); // 按钮态即反馈，不再弹 toast
   });
 
   // ---------- 任务文件面板(底部浮层:点输入行右侧文件夹按钮展开,遮罩盖住输入区) ----------
@@ -666,8 +665,7 @@
           ok++;
         } catch (e) { fail++; toast('删除失败:' + name + ' ' + e.message); }
       }
-      if (ok) toast('已删除 ' + ok + ' 项');
-      loadFiles(); // 重新拉取并重置选中
+      loadFiles(); // 重新拉取并重置选中；失败已逐条提示，全成功时不弹汇总
     }
     $('files-bulk-download').addEventListener('click', bulkDownload);
     $('files-bulk-delete').addEventListener('click', bulkDelete);
