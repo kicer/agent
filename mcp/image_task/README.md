@@ -172,7 +172,7 @@ response_format=url
     url: "http://mcp_image_task:3000/mcp"
     headers:
       Authorization: "Bearer <网关 KEY>"
-      X-Image-Task-Base-Url: "https://wb.ai.foresh.com/v1"
+      X-Image-Task-Base-Url: "https://your-gateway.example.com/v1"
       X-Image-Task-Model: "global:gpt-image-2.5-sunburst"
     mode: skill
 ```
@@ -258,7 +258,7 @@ curl -s -X POST http://localhost:8082/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Image-Task-Base-Url: https://wb.ai.foresh.com/v1" \
+  -H "X-Image-Task-Base-Url: https://your-gateway.example.com/v1" \
   -H "X-Image-Task-Model: global:gpt-image-2.5-sunburst" \
   -H "Mcp-Session-Id: $SESSION" \
   -d '{
