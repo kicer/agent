@@ -10,6 +10,19 @@
   <script src="/vendor/marked.min.js"></script>
   <script src="/vendor/prism.min.js"></script>
   <meta name="theme-color" content="#3964FE">
+  <!-- 主题首屏：先落 data-theme，避开刷新时的白屏闪一下。默认浅色，手动切过后存 localStorage -->
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('agent-theme') === 'dark' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', m);
+        document.documentElement.setAttribute('data-theme-mode', m);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'light');
+        document.documentElement.setAttribute('data-theme-mode', 'light');
+      }
+    })();
+  </script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Agent">
@@ -22,8 +35,8 @@
          三角箭头、虚线分隔。纯色不用渐变/阴影，折叠与展开同一底色。默认收起 */
       .msg-summary {
         width: 100%; /* .msg.other 是 align-items:flex-start 的列 flex，不写就只撑标题那点宽 */
-        margin: 0 0 8px; border: 1px solid #dbe4fb; border-radius: 12px; overflow: hidden;
-        background: #f7f9ff;
+        margin: 0 0 8px; border: 1px solid var(--bd-dbe4fb); border-radius: 12px; overflow: hidden;
+        background: var(--bg-f7f9ff);
       }
       .msg-summary > summary {
         list-style: none; cursor: pointer; user-select: none;
@@ -38,8 +51,8 @@
       }
       .msg-summary[open] > summary::before { transform: rotate(90deg); }
       .msg-summary-body {
-        /* 比标题区（#f7f9ff）再淡一档，分隔开又不跳色 */
-        border-top: 1px dashed #dbe4fb; background: #fbfcff;
+        /* 比标题区深一档（用变量，暗色自动跟随） */
+        border-top: 1px dashed var(--bd-dbe4fb); background: var(--bg-fbfcff);
         padding: 10px 13px 12px;
       }
       .msg-summary-body .bubble-ai { margin: 0; background: transparent; font-size: 14px; line-height: 1.7; }
@@ -56,7 +69,7 @@
       #schedule-modal .sched-row select,
       #schedule-modal .sched-row input {
         width: auto; margin: 0; padding: 7px 8px; font-size: 14px;
-        border: 1px solid #dde1ea; border-radius: 8px; background: #fff; color: var(--ink);
+        border: 1px solid var(--bd-dde1ea); border-radius: 8px; background: var(--bg-fff); color: var(--ink);
       }
       #schedule-modal .sched-row select { appearance: none; -webkit-appearance: none; }
       #schedule-modal .sched-row .sched-num { width: 52px; text-align: center; }
@@ -65,9 +78,9 @@
       /* schedule 弹窗内的提示词编辑区（.modal input 不覆盖 textarea，单独给样式） */
       #schedule-modal textarea {
         width: 100%; box-sizing: border-box; display: block;
-        border: 1px solid #dde1ea; border-radius: 10px;
+        border: 1px solid var(--bd-dde1ea); border-radius: 10px;
         padding: 10px 12px; font-size: 14px; line-height: 1.5;
-        margin-bottom: 10px; background: #fff; color: var(--ink); resize: vertical;
+        margin-bottom: 10px; background: var(--bg-fff); color: var(--ink); resize: vertical;
       }
       #schedule-modal textarea:focus { border-color: var(--active); }
       /* welcome 头像兼做「选择模型」入口（与聊天态的「选择模型」同一弹窗） */
@@ -132,6 +145,9 @@
   <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></symbol>
   <symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9v1a4 4 0 0 1-4 4H9"/></symbol>
   <symbol id="i-eye-sm" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+  <symbol id="i-theme-auto" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></symbol>
+  <symbol id="i-theme-light" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v2M12 20.5v2M3.4 3.4l1.4 1.4M19.2 19.2l1.4 1.4M1.5 12h2M20.5 12h2M3.4 20.6l1.4-1.4M19.2 4.8l1.4-1.4"/></symbol>
+  <symbol id="i-theme-dark" viewBox="0 0 24 24"><path d="M21 13.2A9 9 0 1 1 10.8 3a7.2 7.2 0 0 0 10.2 10.2z"/></symbol>
   <symbol id="i-file-doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></symbol>
   <symbol id="i-folder-c" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></symbol>
   <symbol id="i-chevron-right" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></symbol>
