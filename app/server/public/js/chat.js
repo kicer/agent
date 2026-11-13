@@ -380,6 +380,7 @@
     }
     // 历史渲染收口:给本轮新渲染出的代码块补复制按钮(目标可能是分页离屏容器,装饰后再随节点搬迁)
     decorateCodePre(target);
+    pvHighlightMdCode(target); // 对话正文里的围栏代码块也上色（与预览同一套）
     return { closeArc };
   }
 

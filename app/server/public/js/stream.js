@@ -313,6 +313,7 @@
               state.streamEl.className = 'bubble-ai' + (r.fmt ? ' md' : ''); // 增量期间是纯文本,收尾统一换 md 排版
               state.streamEl.innerHTML = r.html;
               decorateCodePre(state.streamEl); // 流式期间不插按钮(每帧整块换 innerHTML),收尾统一装饰一次
+              pvHighlightMdCode(state.streamEl); // 围栏代码块上色
             } else {
               // 无文本时去掉气泡（纯工具调用/纯思考也要保留思考面板）
               state.streamEl.remove();
@@ -326,6 +327,7 @@
             bubble.className = 'bubble-ai' + (r.fmt ? ' md' : '');
             bubble.innerHTML = r.html;
             decorateCodePre(bubble);
+            pvHighlightMdCode(bubble);
             state.streamWrap.appendChild(bubble);
           }
           // 「压缩」总结回合的最终答复（后端已保证只有压缩回合里首条无工具调用的收尾回复才带 is_summary，
