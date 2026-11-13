@@ -1259,6 +1259,8 @@
     if (!changed) return;
     if (files) window.showFileTree();
     else loadSessionList();
+    // 地址栏跟着侧栏模式走（?s=<id>&files=1）：刷新后还停在同一面板
+    if (typeof syncUrl === 'function') syncUrl();
   }
   $('da-files').addEventListener('click', () => {
     setDrawerPane(!$('drawer').classList.contains('drawer-mode-files'));
