@@ -1923,6 +1923,9 @@ body.pv-max .pv-code { max-width: none; padding-left: 16px; padding-right: 16px;
 .vcs-repo { padding: 9px 16px; border-bottom: 1px solid var(--border); background: var(--drawer-bg);
   font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--gray);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 列表头里的 remote 名：悬停看 URL（已脱敏）；没配 remote 时灰色注明 */
+.vcs-repo .vcs-remote { color: var(--fg-0550ae); cursor: help; }
+.vcs-repo .vcs-remote.none { color: var(--gray); }
 .vcs-empty { padding: 44px 24px; text-align: center; font-size: 13px; color: var(--gray-light); }
 .vcs-item { padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .vcs-item:hover { background: var(--surface); }

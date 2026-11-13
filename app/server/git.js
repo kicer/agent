@@ -47,7 +47,15 @@ async function ensureRepo(dir) {
   let head = '';
   try { branch = (await run(root, ['symbolic-ref', '--short', '-q', 'HEAD'])).trim(); } catch (_) { /* detached */ }
   try { head = (await run(root, ['rev-parse', '--short', 'HEAD'])).trim(); } catch (_) { /* 空仓库 */ }
-  return { root, branch: branch || (head ? 'detached' : ''), head };
+  // remote：列表里要能看出这个仓库推到哪。只取第一条 fetch（origin 惯例在最前）；
+  // URL 里的 user:pass 脱敏，免得面板上直接暴露凭据。
+  let remote = null;
+  try {
+    const first = (await run(root, ['remote', '-v'])).split('\n').filter(Boolean)[0] || '';
+    const m = /^(\S+)\s+(\S+)\s+\(fetch\)/.exec(first);
+    if (m) remote = { name: m[1], url: m[2].replace(/\/\/[^/@]+@/, '//***@') };
+  } catch (_) { /* 没配 remote */ }
+  return { root, branch: branch || (head ? 'detached' : ''), head, remote };
 }
 
 // 把一个整段 diff 按 `diff --git` 切开，键是文件路径。

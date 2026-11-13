@@ -54,7 +54,10 @@
     const parts = [];
     parts.push('<div class="vcs-list">');
     if (st.repo) {
-      parts.push('<div class="vcs-repo">' + esc(st.repo.root) + (st.repo.branch ? ' · ' + esc(st.repo.branch) : '') + '</div>');
+      const rm = st.repo.remote;
+      parts.push('<div class="vcs-repo">' + esc(st.repo.root) + (st.repo.branch ? ' · ' + esc(st.repo.branch) : '') +
+        ' · <span class="vcs-remote' + (rm ? '' : ' none') + '" title="' + esc(rm ? rm.url : '未配置 remote') + '">' +
+        esc(rm ? rm.name : '无 remote') + '</span></div>');
     }
     if (st.worktree && st.worktree.files) {
       parts.push('<div class="vcs-item wt" data-act="worktree">' +
