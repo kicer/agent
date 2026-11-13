@@ -42,10 +42,10 @@
   }
 
   function reasonText(reason) {
-    if (reason === 'no_git') return '这个环境没有 git 命令（服务器镜像未装 git）。';
+    if (reason === 'no_git') return '这个环境没有 git 命令。';
     if (reason === 'bad_rev') return '提交不存在，可能已被改写或清理。';
     if (reason === 'timeout') return 'git 执行超时，仓库可能过大。';
-    if (reason === 'not_repo') return '当前会话目录不是 git 仓库。';
+    if (reason === 'not_repo') return '未找到 git 仓库：当前会话目录及其上级都不是仓库。';
     return '读取失败：' + (reason || '未知错误');
   }
 
