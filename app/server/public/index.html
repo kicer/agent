@@ -84,12 +84,76 @@
   </script>
   </head>
 <body>
+<!-- 图标 sprite：全站 99 处 svg 的几何图形都收在这里，引用方式
+     <svg class="ic" viewBox="0 0 24 24"><use href="#i-xxx"/></svg>
+     尺寸/描边仍由各处 CSS 控制（.ic、.tree-act svg 等），本文件只存形状。
+     同形但历史写法不同的（folder/folder-b/folder-c、x-line/x-line-b/x-path、eye/eye-sm 等）
+     各留一份，保证替换前后逐像素一致；后续要收敛，改引用指向同一个 id 即可。 -->
+<svg id="icon-sprite" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+  <symbol id="i-history" viewBox="0 0 24 24"><path stroke-width="2" stroke-linecap="round" d="M4 5h16M4 15h10"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><polyline points="12 7.5 12 12 15.5 14"></polyline></symbol>
+  <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="3" y1="7" x2="21" y2="7"></line><circle cx="9" cy="7" r="2.6"></circle><line x1="3" y1="17" x2="21" y2="17"></line><circle cx="15" cy="17" r="2.6"></circle></symbol>
+  <symbol id="i-robot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"></rect><line x1="12" y1="4" x2="12" y2="8"></line><circle cx="12" cy="3" r="1.4"></circle><circle cx="9" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><circle cx="15" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><line x1="9.5" y1="17" x2="14.5" y2="17"></line></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></symbol>
+  <symbol id="i-x-line" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M12 10.2a1.8 1.8 0 1 0 0.001 3.6A1.8 1.8 0 0 0 12 10.2z"></path><path stroke-width="1.5" d="M15.76 15.76 C10.955 20.565 5.373 22.779 3.297 20.703 C1.22 18.627 3.434 13.045 8.24 8.24 C13.045 3.435 18.627 1.22 20.703 3.297 C22.779 5.374 20.565 10.955 15.76 15.76z"></path><path stroke-width="1.5" d="M16.096 7.904 C20.905 12.713 22.965 18.298 20.703 20.703 C18.44 23.108 13.003 20.755 8.24 15.76 C3.477 10.76 1.22 5.373 3.297 3.297 C5.374 1.22 10.955 3.434 16.096 7.904z"></path></symbol>
+  <symbol id="i-folder-b" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></symbol>
+  <symbol id="i-paperclip" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"></rect><circle cx="7" cy="9" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="12" cy="9" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="17" cy="9" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="7" cy="12.5" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12.5" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="17" cy="12.5" r="1.1" fill="currentColor" stroke="none"></circle><line x1="8" y1="16" x2="16" y2="16"></line></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></symbol>
+  <symbol id="i-spinner" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M22 12a10 10 0 0 1-10 10"></path></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></symbol>
+  <symbol id="i-upload-cloud" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></symbol>
+  <symbol id="i-x-line-b" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></symbol>
+  <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path></symbol>
+  <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M8 3v3a2 2 0 0 1-2 2H3"></path><path d="M21 8h-3a2 2 0 0 1-2-2V3"></path><path d="M3 16h3a2 2 0 0 1 2 2v3"></path><path d="M16 21v-3a2 2 0 0 1 2-2h3"></path></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></symbol>
+  <symbol id="i-x-path" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></symbol>
+  <symbol id="i-gem" viewBox="0 0 24 24"><path d="M6 3h12l4 6-10 13L2 9z"></path><polyline points="2 9 22 9"></polyline><polyline points="10 3 8 9 12 22"></polyline><polyline points="14 3 16 9 12 22"></polyline></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></symbol>
+  <symbol id="i-external-b" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></symbol>
+  <symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9v1a4 4 0 0 1-4 4H9"/></symbol>
+  <symbol id="i-eye-sm" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+  <symbol id="i-file-doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></symbol>
+  <symbol id="i-folder-c" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></symbol>
+  <symbol id="i-image-b" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 4-6 8-6s8 2 8 6"></path></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"></circle><path d="M2 21c0-3.6 3.1-5.5 7-5.5s7 1.9 7 5.5"></path><path d="M16 8.5a3 3 0 0 1 0 6"></path><path d="M18 21c0-2.8-1.4-4.5-4-5.2"></path></symbol>
+  <symbol id="i-sliders-v" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></symbol>
+  <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><circle cx="7" cy="15" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="12" cy="15" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="17" cy="15" r="1.2" fill="currentColor" stroke="none"></circle></symbol>
+  <symbol id="i-chevron-right-b" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"></path></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></symbol>
+  <symbol id="i-pencil-b" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+</svg>
+
   <div id="app">
 
     <!-- ================= 顶部导航栏 ================= -->
     <header class="header" id="chat-header">
       <button class="icon-btn" id="menu-btn" title="历史记录" aria-label="打开历史记录">
-        <svg viewBox="0 0 24 24" class="ic sm"><path stroke-width="2" stroke-linecap="round" d="M4 5h16M4 15h10"/></svg>
+        <svg viewBox="0 0 24 24" class="ic sm"><use href="#i-history"/></svg>
       </button>
       <div class="header-center" id="header-center"><!-- 未对话状态为空白,JS 注入对话信息 --></div>
 
@@ -100,11 +164,11 @@
           <span class="hdr-label" id="hdr-model-text">选择模型</span>
         </button>
         <button class="hdr-chip hdr-sched hidden" id="hdr-sched" data-act="schedule" data-tip="定时任务" aria-label="定时任务">
-          <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><polyline points="12 7.5 12 12 15.5 14"></polyline></svg>
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-clock"/></svg>
           <span class="hdr-label" id="hdr-sched-text">定时任务</span>
         </button>
         <button class="icon-btn ha-btn hdr-compact hidden" id="hdr-compact" data-act="compact" data-tip="压缩上下文" aria-label="压缩上下文">
-          <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path></svg>
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-database"/></svg>
         </button>
       </div>
 
@@ -113,27 +177,27 @@
       <div class="header-actions" id="header-actions">
         <div class="ha-icons">
           <button class="icon-btn ha-btn" data-act="new" data-tip="新建会话" aria-label="新建会话">
-            <svg class="ic sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-plus"/></svg>
           </button>
         </div>
         <button class="icon-btn ha-more" id="ha-more" title="更多" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false" aria-controls="ha-menu">
-          <svg class="ic sm" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle></svg>
+          <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-more"/></svg>
         </button>
         <div class="ha-menu hidden" id="ha-menu" role="menu">
           <button class="ha-item" role="menuitem" data-act="model">
-            <svg class="ic sm" viewBox="0 0 24 24"><line x1="3" y1="7" x2="21" y2="7"></line><circle cx="9" cy="7" r="2.6"></circle><line x1="3" y1="17" x2="21" y2="17"></line><circle cx="15" cy="17" r="2.6"></circle></svg>
+            <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-sliders"/></svg>
             <span class="ha-item-main">切换模型</span><span class="ha-item-sub hidden" id="ha-model-sub"></span>
           </button>
           <button class="ha-item" role="menuitem" data-act="schedule">
-            <svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><polyline points="12 7.5 12 12 15.5 14"></polyline></svg>
+            <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-clock"/></svg>
             <span class="ha-item-main">定时任务</span><span class="ha-item-sub hidden" id="ha-sched-sub"></span>
           </button>
           <button class="ha-item" role="menuitem" data-act="compact">
-            <svg class="ic sm" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"></ellipse><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path></svg>
+            <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-database"/></svg>
             <span class="ha-item-main">压缩上下文</span>
           </button>
           <button class="ha-item" role="menuitem" data-act="new">
-            <svg class="ic sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-plus"/></svg>
             <span class="ha-item-main">新建会话</span>
           </button>
         </div>
@@ -145,7 +209,7 @@
       <section id="welcome-view">
         <div class="welcome-head">
           <div class="logo-badge" onclick="openModelSwitch()" title="选择模型" role="button" aria-label="选择模型">
-            <svg class="ic" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"></rect><line x1="12" y1="4" x2="12" y2="8"></line><circle cx="12" cy="3" r="1.4"></circle><circle cx="9" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><circle cx="15" cy="13.5" r="1" fill="currentColor" stroke="none"></circle><line x1="9.5" y1="17" x2="14.5" y2="17"></line></svg>
+            <svg class="ic" viewBox="0 0 24 24"><use href="#i-robot"/></svg>
           </div>
           <div class="welcome-slogan">随时开始吧</div>
         </div>
@@ -154,11 +218,11 @@
         <div class="welcome-dir hidden" id="welcome-dir">
           <span class="welcome-dir-cap">工作目录</span>
           <button type="button" class="welcome-dir-pick" id="welcome-dir-pick" title="选择本会话的工作目录">
-            <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+            <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"/></svg>
             <span class="welcome-dir-path" id="welcome-dir-path">默认</span>
           </button>
           <button type="button" class="welcome-dir-clear hidden" id="welcome-dir-clear" title="恢复默认目录" aria-label="恢复默认目录">
-            <svg class="ic sm" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+            <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-x-line"/></svg>
           </button>
         </div>
       </section>
@@ -186,23 +250,23 @@
         <div class="input-actions">
           <div class="ia-side ia-left">
             <button class="think-toggle" id="deep-think-btn" title="深度思考">
-              <svg viewBox="0 0 24 24" class="ic sm"><path d="M12 10.2a1.8 1.8 0 1 0 0.001 3.6A1.8 1.8 0 0 0 12 10.2z"></path><path stroke-width="1.5" d="M15.76 15.76 C10.955 20.565 5.373 22.779 3.297 20.703 C1.22 18.627 3.434 13.045 8.24 8.24 C13.045 3.435 18.627 1.22 20.703 3.297 C22.779 5.374 20.565 10.955 15.76 15.76z"></path><path stroke-width="1.5" d="M16.096 7.904 C20.905 12.713 22.965 18.298 20.703 20.703 C18.44 23.108 13.003 20.755 8.24 15.76 C3.477 10.76 1.22 5.373 3.297 3.297 C5.374 1.22 10.955 3.434 16.096 7.904z"></path></svg>
+              <svg viewBox="0 0 24 24" class="ic sm"><use href="#i-bulb"/></svg>
               深度思考
             </button>
           </div>
           <div class="ia-side ia-right">
             <button class="plus-btn" id="files-btn" title="任务文件" aria-label="任务文件">
-              <svg viewBox="0 0 24 24" class="ic sm"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+              <svg viewBox="0 0 24 24" class="ic sm"><use href="#i-folder-b"/></svg>
             </button>
             <button class="plus-btn" id="attach-btn" title="上传文件" aria-label="上传文件">
-              <svg viewBox="0 0 24 24" class="ic sm"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+              <svg viewBox="0 0 24 24" class="ic sm"><use href="#i-paperclip"/></svg>
             </button>
             <!-- 同一按钮四态：发送（↑）/ 停止（方块）/ 语音（麦克风）/ 键盘。
                  data-state 由 JS 切换，尺寸不变避免输入区跳动 -->
             <button class="send-btn" id="send-btn" data-state="send" title="发送" aria-label="发送">
-              <svg class="ic sm ic-send" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
-              <svg class="ic sm ic-voice" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
-              <svg class="ic sm ic-kb" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"></rect><circle cx="7" cy="9" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="12" cy="9" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="17" cy="9" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="7" cy="12.5" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12.5" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="17" cy="12.5" r="1.1" fill="currentColor" stroke="none"></circle><line x1="8" y1="16" x2="16" y2="16"></line></svg>
+              <svg class="ic sm ic-send" viewBox="0 0 24 24"><use href="#i-send"/></svg>
+              <svg class="ic sm ic-voice" viewBox="0 0 24 24"><use href="#i-mic"/></svg>
+              <svg class="ic sm ic-kb" viewBox="0 0 24 24"><use href="#i-keyboard"/></svg>
               <span class="stop-sq" aria-hidden="true"></span>
             </button>
           </div>
@@ -217,8 +281,8 @@
       <!-- 回到底部浮动按钮(搬自 index;上翻历史时出现、AI 输出中常驻转圈)。
            放在 footer 内、相对 footer 顶边停靠:输入框长高/编辑条出现时不会被盖住 -->
       <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" onclick="clickScrollBottom()" title="回到底部" aria-label="回到底部">
-        <svg class="sb-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
-        <svg class="sb-spinner hidden" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M22 12a10 10 0 0 1-10 10"></path></svg>
+        <svg class="sb-arrow" viewBox="0 0 24 24"><use href="#i-chevron-down"/></svg>
+        <svg class="sb-spinner hidden" viewBox="0 0 24 24"><use href="#i-spinner"/></svg>
       </button>
     </footer>
 
@@ -227,7 +291,7 @@
     <aside id="drawer" aria-label="对话历史">
       <div class="drawer-search">
         <div class="search-box">
-          <svg class="ic sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-search"/></svg>
           <input type="search" id="search-input" placeholder="搜寻对话内容..." enterkeyhint="search">
         </div>
       </div>
@@ -238,10 +302,10 @@
            窄屏两个都隐藏：文件只保留输入行右侧的旧面板（不做两套）。选中项高亮。 -->
       <div class="drawer-actions" id="drawer-actions">
         <button class="drawer-act" id="da-files" type="button" title="文件树" aria-label="文件树">
-          <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+          <svg viewBox="0 0 24 24"><use href="#i-folder"/></svg>
         </button>
         <button class="drawer-act" id="da-settings" type="button" title="设置" aria-label="设置">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>
+          <svg viewBox="0 0 24 24"><use href="#i-gear"/></svg>
         </button>
       </div>
     </aside>
@@ -254,7 +318,7 @@
             <span class="files-panel-title">任务文件<span class="files-panel-size" id="files-panel-size" title="当前目录下全部文件总大小"></span></span>
             <label class="file-upload" title="上传文件" aria-label="上传文件">
               <input type="file" id="file-input" multiple hidden>
-              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+              <svg viewBox="0 0 24 24"><use href="#i-upload-cloud"/></svg>
             </label>
           </div>
           <div class="files-crumbs hidden" id="files-crumbs" aria-label="目录路径"></div>
@@ -270,10 +334,10 @@
             </div>
             <div class="files-panel-actions">
               <button class="files-fab" id="files-bulk-download" title="批量下载" aria-label="批量下载" disabled>
-                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                <svg viewBox="0 0 24 24"><use href="#i-download"/></svg>
               </button>
               <button class="files-fab del" id="files-bulk-delete" title="批量删除" aria-label="批量删除" disabled>
-                <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                <svg viewBox="0 0 24 24"><use href="#i-trash"/></svg>
               </button>
             </div>
           </div>
@@ -288,7 +352,7 @@
         <!-- 顶栏:左侧返回 + 中间标题 + 右侧操作按钮,风格与对话页 header 一致 -->
         <header class="header">
           <button class="icon-btn" id="set-back-btn" title="返回" aria-label="返回">
-            <svg class="ic" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            <svg class="ic" viewBox="0 0 24 24"><use href="#i-chevron-left"/></svg>
           </button>
           <div class="header-center"><div class="header-title" id="set-title">设置</div></div>
           <div class="header-right" id="set-actions"><!-- JS 按页注入操作按钮 --></div>
@@ -301,7 +365,7 @@
     <div id="skill-create-modal" class="modal-overlay hidden" onclick="if(event.target===this)sUI.closeCreate()">
       <div class="modal">
         <button class="modal-close-btn" onclick="sUI.closeCreate()">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <svg viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>
         </button>
         <h3>新建技能</h3>
         <input type="text" id="skill-new-name" placeholder="技能名(字母/数字/-/_)">
@@ -314,7 +378,7 @@
     <div id="model-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)sUI.mClose()">
       <div class="modal modal-wide">
         <button class="modal-close-btn" onclick="sUI.mClose()">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <svg viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>
         </button>
         <h3 id="mpe-title">编辑平台</h3>
         <!-- 平台预设：仅新增平台时展示，点选即填好 url/类型并给模型卡带上该平台的参数缺省 -->
@@ -340,7 +404,7 @@
     <div id="user-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)sUI.closeUserModal()">
       <div class="modal">
         <button class="modal-close-btn" onclick="sUI.closeUserModal()">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <svg viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>
         </button>
         <h3 id="ue-title">添加用户</h3>
         <input type="text" id="ue-user" placeholder="用户名（字母/数字/下划线）" autocomplete="off">
@@ -362,7 +426,7 @@
     <div id="mcp-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)mcpUI.close()">
       <div class="modal modal-wide">
         <button class="modal-close-btn" onclick="mcpUI.close()">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <svg viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>
         </button>
         <h3 id="mce-title">编辑 MCP 服务</h3>
         <input type="text" id="mce-name" placeholder="服务名">
@@ -400,7 +464,7 @@
     <div id="schedule-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeScheduleModal()">
       <div class="modal">
         <button class="modal-close-btn" onclick="closeScheduleModal()">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <svg viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>
         </button>
         <h3 id="schedule-modal-title">定时任务</h3>
         <div class="sched-row">
@@ -433,7 +497,7 @@
     <div id="confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)confirmClose(null)">
       <div class="modal">
         <button class="modal-close-btn" onclick="confirmClose(null)" aria-label="关闭">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <svg viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>
         </button>
         <h3 id="confirm-title">请确认</h3>
         <div class="modal-text" id="confirm-text"></div>
@@ -449,7 +513,7 @@
     <div id="prompt-modal" class="modal-overlay hidden" onclick="if(event.target===this)promptCancel()">
       <div class="modal">
         <button class="modal-close-btn" onclick="promptCancel()">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <svg viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>
         </button>
         <h3 id="prompt-title">请输入</h3>
         <input type="text" id="prompt-input">
@@ -469,7 +533,7 @@
             <p class="msw-sub" id="bind-model-sub">选择一个模型继续当前会话</p>
           </div>
           <button class="modal-close-btn" onclick="closeModelSwitch()">
-            <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <svg viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>
           </button>
         </div>
         <div class="msw-list" id="bind-model-list"></div>
@@ -494,23 +558,23 @@
       <span class="pv-addr">
         <input class="pv-title" id="pv-title" aria-label="文件路径或网址">
         <button class="icon-btn hidden" id="pv-refresh" title="重新载入" aria-label="重新载入">
-          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-refresh"/></svg>
         </button>
         <button class="icon-btn hidden" id="pv-popup" title="新窗口打开" aria-label="新窗口打开">
-          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-external"/></svg>
         </button>
       </span>
       <span class="pv-actions">
         <!-- 源码钮：只在当前内容有源文本时出现（md/文本/代码/html/svg），点了在预览与原文间切换 -->
         <button class="icon-btn hidden" id="pv-src" title="查看源码" aria-label="查看源码">
-          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-eye"/></svg>
         </button>
         <button class="icon-btn hidden" id="pv-download" title="下载文件" aria-label="下载文件">
-          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-download"/></svg>
         </button>
         <button class="icon-btn" id="pv-max" title="放大" aria-label="放大">
-          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
-          <svg class="ic sm hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"></path><path d="M21 8h-3a2 2 0 0 1-2-2V3"></path><path d="M3 16h3a2 2 0 0 1 2 2v3"></path><path d="M16 21v-3a2 2 0 0 1 2-2h3"></path></svg>
+          <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-maximize"/></svg>
+          <svg class="ic sm hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-minimize"/></svg>
         </button>
         <button class="icon-btn" id="pv-close" title="关闭预览" aria-label="关闭预览">✕</button>
       </span>
@@ -527,11 +591,11 @@
       <span class="fs-name" id="fs-file-name"></span>
       <!-- 源码切换钮:仅当当前内容有源文本时显隐(toggleFsSrc 在渲染视图/源码面板间互切) -->
       <button class="fs-btn hidden" id="fs-src-btn" title="显示源码" aria-label="显示源码">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-eye"/></svg>
       </button>
       <!-- 复制源码:显隐与 eye 一致(有源文本才出现);HTML/SVG/MD/代码通用 -->
       <button class="fs-btn hidden" id="fs-copy-btn" title="复制源码" aria-label="复制源码">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-copy"/></svg>
       </button>
       <button class="fs-btn" onclick="closeFullscreen()" title="关闭" aria-label="关闭">✕</button>
     </div>
@@ -542,7 +606,7 @@
   <!-- 拖拽上传提示层:window 级 dragenter 时显示;pointer-events:none,不参与命中测试(逻辑见 js/files.js) -->
   <div id="drop-overlay" class="hidden" aria-hidden="true">
     <div class="drop-hint">
-      <svg viewBox="0 0 24 24" class="ic"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+      <svg viewBox="0 0 24 24" class="ic"><use href="#i-upload-cloud"/></svg>
       <span>松开即可上传</span>
     </div>
   </div>

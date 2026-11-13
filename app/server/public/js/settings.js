@@ -146,7 +146,7 @@
   // 快照里的 id 全部剥除,防止重复 id 干扰 $('…') 查找;仅作动画背景,滑完由 renderSetPage 重渲染真页。
   function snapSetPage() {
     const box = document.createElement('div');
-    box.innerHTML = '<header class="header"><button class="icon-btn" tabindex="-1"><svg class="ic" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg></button>' +
+    box.innerHTML = '<header class="header"><button class="icon-btn" tabindex="-1"><svg class="ic" viewBox="0 0 24 24"><use href="#i-chevron-left"/></svg></button>' +
       '<div class="header-center"><div class="header-title">' + esc($('set-title').textContent) + '</div></div>' +
       '<div class="header-right">' + $('set-actions').innerHTML + '</div></header>' +
       '<div class="set-under-body">' + $('set-body').innerHTML + '</div>';
@@ -281,17 +281,17 @@
   // ---------- 页:设置主页(卡片入口) ----------
   const SET_CARDS = [
     { go: 'account', name: '账户', desc: '修改密码 · 用户画像 · 退出登录',
-      icon: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 4-6 8-6s8 2 8 6"></path></svg>' },
+      icon: '<svg class="ic" viewBox="0 0 24 24"><use href="#i-user"/></svg>' },
     { go: 'users', name: '用户', desc: '账号 · 角色 · 默认模型', adminOnly: true, needAuth: true,
-      icon: '<svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"></circle><path d="M2 21c0-3.6 3.1-5.5 7-5.5s7 1.9 7 5.5"></path><path d="M16 8.5a3 3 0 0 1 0 6"></path><path d="M18 21c0-2.8-1.4-4.5-4-5.2"></path></svg>' },
+      icon: '<svg class="ic" viewBox="0 0 24 24"><use href="#i-users"/></svg>' },
     { go: 'service', name: '服务', desc: '服务状态 · 系统配置', adminOnly: true,
-      icon: '<svg class="ic" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>' },
+      icon: '<svg class="ic" viewBox="0 0 24 24"><use href="#i-sliders-v"/></svg>' },
     { go: 'skills', name: '技能', desc: '技能管理 · 技能文件编辑', adminOnly: true,
-      icon: '<svg class="ic" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>' },
+      icon: '<svg class="ic" viewBox="0 0 24 24"><use href="#i-zap"/></svg>' },
     { go: 'models', name: '模型', desc: '模型池状态 · 增删改', adminOnly: true,
-      icon: '<svg class="ic" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>' },
+      icon: '<svg class="ic" viewBox="0 0 24 24"><use href="#i-cpu"/></svg>' },
     { go: 'mcp', name: 'MCP', desc: 'MCP 服务 · 增删改', adminOnly: true,
-      icon: '<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><circle cx="7" cy="15" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="12" cy="15" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="17" cy="15" r="1.2" fill="currentColor" stroke="none"></circle></svg>' },
+      icon: '<svg class="ic" viewBox="0 0 24 24"><use href="#i-layout"/></svg>' },
   ];
   function setPageHome(ctx) {
     setTitle('设置');
@@ -303,7 +303,7 @@
         '<span class="set-ico">' + c.icon + '</span>' +
         '<span class="set-tt"><span class="set-name">' + c.name + '</span>' +
         '<span class="set-desc">' + c.desc + '</span></span>' +
-        '<svg class="ic sm set-arrow" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>' +
+        '<svg class="ic sm set-arrow" viewBox="0 0 24 24"><use href="#i-chevron-right-b"/></svg>' +
       '</button>').join('') + '</div>');
   }
 
@@ -395,7 +395,7 @@
   async function setPageUsers(ctx) {
     setTitle('用户');
     setActions('<button class="icon-btn" title="添加用户" onclick="sUI.openUserAdd()">' +
-      '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
+      '<svg class="ic" viewBox="0 0 24 24"><use href="#i-plus"/></svg></button>');
     setBody('<div class="set-scroll" id="user-list"><div class="empty-tip">加载中…</div></div>');
     try {
       const r = await req('GET', '/api/users');
@@ -689,7 +689,7 @@
   async function setPageService(ctx) {
     setTitle('服务');
     setActions('<button class="icon-btn" title="编辑配置文件" onclick="sUI.openCfg()">' +
-      '<svg class="ic" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"></path></svg></button>');
+      '<svg class="ic" viewBox="0 0 24 24"><use href="#i-edit"/></svg></button>');
     setBody('<div class="set-scroll" id="svc-body"><div class="empty-tip">加载中…</div></div>');
     try {
       const [st, cg] = await Promise.all([
@@ -769,7 +769,7 @@
   async function setPageCfgEditor(ctx) {
     setTitle('config.yml 原文');
     setActions('<button class="icon-btn" title="校验并保存" onclick="sUI.saveCfg()">' +
-      '<svg class="ic" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg></button>');
+      '<svg class="ic" viewBox="0 0 24 24"><use href="#i-check"/></svg></button>');
     setBody('<div class="set-editor"><div class="cfg-err hidden" id="cfg-editor-err"></div>' +
       '<textarea id="set-editor-area" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></div>');
     try {
@@ -812,7 +812,7 @@
     SET.curSkill = null;
     setTitle('技能管理');
     setActions('<button class="icon-btn" title="新建技能" onclick="sUI.openCreate()">' +
-      '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
+      '<svg class="ic" viewBox="0 0 24 24"><use href="#i-plus"/></svg></button>');
     setBody('<div class="set-scroll" id="skills-list"><div class="empty-tip">加载中…</div></div>');
     try {
       const rows = await req('GET', '/api/skills');
@@ -855,7 +855,7 @@
     setTitle(SET.curSkill);
     setActions('<label class="icon-btn" title="上传文件">' +
       '<input type="file" style="display:none;" onchange="sUI.onUpload(event)">' +
-      '<svg class="ic" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg></label>');
+      '<svg class="ic" viewBox="0 0 24 24"><use href="#i-upload-cloud"/></svg></label>');
     setBody('<div class="set-scroll" id="skill-detail"><div class="empty-tip">加载中…</div></div>');
     try {
       const d = await req('GET', '/api/skills/' + encodeURIComponent(SET.curSkill));
@@ -871,7 +871,7 @@
       el.innerHTML = '<div class="skill-files">' + d.files.map(f => {
         const a = encodeURIComponent(f.filename);
         return '<div class="file-row" onclick="sUI.editFile(\'' + a + '\')">' +
-          '<svg class="file-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>' +
+          '<svg class="file-ico" viewBox="0 0 24 24"><use href="#i-file-doc"/></svg>' +
           '<span class="file-name">' + esc(f.filename) + '</span>' +
           '<span class="file-size">' + fmtSize(f.size) + '</span>' +
           '<button class="file-act" onclick="event.stopPropagation();sUI.editFile(\'' + a + '\')">编辑</button>' +
@@ -885,7 +885,7 @@
   function setPageSkillEditor(ctx) {
     setTitle(SET.editorLabel || '编辑文件');
     setActions('<button class="icon-btn" title="保存" onclick="sUI.saveFile()">' +
-      '<svg class="ic" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg></button>');
+      '<svg class="ic" viewBox="0 0 24 24"><use href="#i-check"/></svg></button>');
     setBody('<div class="set-editor"><textarea id="set-editor-area" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></div>');
     $('set-editor-area').value = SET.editorText;
   }
@@ -1066,7 +1066,7 @@
     if (ev) ev.stopPropagation(); // 冒泡到分组头会误触折叠/展开
     fetchBalance(pi + '-' + ki, pi, ki, true);
   }
-  const BAL_REFRESH_SVG = '<svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
+  const BAL_REFRESH_SVG = '<svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>';
   // 平台卡折叠/展开(gk = 'p'+pi)。首次展开:给该平台每个 Key 行自动查一次余额(每页会话一次;手动刷新不受限)。
   function toggleModelGroup(gk) {
     const on = !SET.expandedGroups[gk];
@@ -1159,7 +1159,7 @@
     }).join('') : '';
     return '<div class="model-group' + (open ? ' open' : '') + '" id="mgrp-' + gk + '">' +
       '<div class="model-group-head" onclick="sUI.toggleGroup(\'' + gk + '\')">' +
-        '<svg class="model-group-caret" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>' +
+        '<svg class="model-group-caret" viewBox="0 0 24 24"><use href="#i-chevron-right-b"/></svg>' +
         '<span class="model-group-name">' + esc(p.name || ('平台' + pi)) + '</span>' +
         '<span class="model-group-badge">' + keys.length + ' keys</span>' +
         '<span class="model-group-meta">' + models.filter(m => m.enable !== false).length + ' / ' + models.length + ' 模型</span>' +
@@ -1212,7 +1212,7 @@
   function setPageModels(ctx) {
     setTitle('模型池');
     setActions('<button class="icon-btn" title="添加模型" onclick="sUI.openAdd()">' +
-      '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
+      '<svg class="ic" viewBox="0 0 24 24"><use href="#i-plus"/></svg></button>');
     setBody('<div class="set-scroll" id="model-cards"><div class="empty-tip">加载中…</div></div>');
     // 余额与展开态跨设置内导航保持(仅 closeSettings 回会话页时重置),重进本页不重复查余额
     loadModelCards(ctx);
@@ -1622,7 +1622,7 @@
   async function setPageMcp(ctx) {
     setTitle('MCP 服务');
     setActions('<button class="icon-btn" title="添加 MCP 服务" onclick="mcpUI.add()">' +
-      '<svg class="ic" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>');
+      '<svg class="ic" viewBox="0 0 24 24"><use href="#i-plus"/></svg></button>');
     setBody('<div class="set-scroll" id="mcp-list"><div class="empty-tip">加载中…</div></div>');
     await loadMcpList(ctx);
   }

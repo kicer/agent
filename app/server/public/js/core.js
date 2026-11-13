@@ -148,11 +148,11 @@
   const MODES = {
     secretary: {
       label: '文秘助理', hint: '支持文字输入，可起草、润色、整理文书',
-      icon: '<svg class="header-mode-icon" viewBox="0 0 24 24"><path d="M6 3h12l4 6-10 13L2 9z"></path><polyline points="2 9 22 9"></polyline><polyline points="10 3 8 9 12 22"></polyline><polyline points="14 3 16 9 12 22"></polyline></svg>',
+      icon: '<svg class="header-mode-icon" viewBox="0 0 24 24"><use href="#i-gem"/></svg>',
     },
     vision: {
       label: '识图专家', hint: '支持图片识别输入',
-      icon: '<svg class="header-mode-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
+      icon: '<svg class="header-mode-icon" viewBox="0 0 24 24"><use href="#i-image"/></svg>',
     },
   };
 

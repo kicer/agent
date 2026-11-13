@@ -329,8 +329,8 @@
     const low = f.filename.toLowerCase();
     const fsPv = /\.(md|txt|html?|pdf|png|jpe?g|gif|webp|svg|docx|xlsx|pptx|csv|tsv|json|jsonl|xml|yml|yaml|toml|ini|conf|cfg|properties|env|log|py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|c|h|cpp|hpp|cc|cs|go|rs|rb|php|swift|sh|bash|zsh|bat|ps1|sql|lua|r|dart|vue|css|less|scss|srt|vtt)$/.test(low);
     const ico = fsPv
-      ? '<svg class="file-ico eye" viewBox="0 0 24 24" aria-label="可预览"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
-      : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+      ? '<svg class="file-ico eye" viewBox="0 0 24 24" aria-label="可预览"><use href="#i-eye"/></svg>'
+      : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><use href="#i-file-doc"/></svg>';
     const name = esc(String(f.filename).split('/').pop() || f.filename);
     const ftime = fmtTime(f.mtime || f.ctime);
     const sel = isFileEffectivelySelected(f.filename);
@@ -352,10 +352,10 @@
       (under.length > 0 && under.every(isFileEffectivelySelected));
     return '<div class="file-dir-head' + (checked ? ' selected' : '') + '" data-dir="' + esc(node.path) + '" role="button">' +
       '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"></span>' +
-      '<svg class="file-dir-ico" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>' +
+      '<svg class="file-dir-ico" viewBox="0 0 24 24"><use href="#i-folder-c"/></svg>' +
       '<span class="file-dir-name">' + esc(node.name) + '</span>' +
       '<span class="file-dir-count">' + countDirFiles(node) + ' 个文件</span>' +
-      '<svg class="file-dir-go" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+      '<svg class="file-dir-go" viewBox="0 0 24 24"><use href="#i-chevron-right"/></svg>' +
     '</div>';
   }
 
@@ -386,7 +386,7 @@
       sizeEl.textContent = total > 0 ? fmtSize(total) : '';
     }
     // 根节点：home 图标 + 「根目录」，比一个孤悬的「/」醒目得多；在根时它是当前层，纯文本不可点
-    const homeIc = '<svg class="crumb-ic" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>';
+    const homeIc = '<svg class="crumb-ic" viewBox="0 0 24 24"><use href="#i-home"/></svg>';
     let html = filesCurDir
       ? '<span class="crumb" data-path="">' + homeIc + '根目录</span>'
       : '<span class="crumb cur">' + homeIc + '根目录</span>';
@@ -773,8 +773,8 @@
   function uploadIconSvg(name) {
     // 与文件面板同款图标语言:图片用图、其余用文档
     return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name || '')
-      ? '<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>'
-      : '<svg class="ic" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+      ? '<svg class="ic" viewBox="0 0 24 24"><use href="#i-image-b"/></svg>'
+      : '<svg class="ic" viewBox="0 0 24 24"><use href="#i-file-doc"/></svg>';
   }
   function addUploadCard(file) {
     const row = $('up-cards');
@@ -789,7 +789,7 @@
         '<div class="up-meta">' + uploadTypeLabel(file.name) + ' · ' + fmtSize(file.size) + '</div>' +
       '</div>' +
       '<button class="up-x hidden" title="不再随消息告知该文件" aria-label="移除卡片">' +
-        '<svg class="ic" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' +
+        '<svg class="ic" viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>' +
       '</button>' +
       '<div class="up-mask"><span class="up-pct">0%</span></div>';
     const mask = card.querySelector('.up-mask');
@@ -1058,7 +1058,7 @@
     row.innerHTML = state.attachments.map((f, i) =>
       '<span class="attach-chip"><span class="name">' + esc(f.name) + '</span>' +
       '<button class="rm" data-i="' + i + '" aria-label="移除附件">' +
-      '<svg class="ic sm" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' +
+      '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-x-line-b"/></svg>' +
       '</button></span>').join('');
   }
   $('attach-chips').addEventListener('click', e => {

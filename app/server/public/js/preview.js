@@ -145,8 +145,7 @@ function pvInfoNode(name, sizeText, hint) {
   const box = document.createElement('div');
   box.className = 'pv-none';
   box.innerHTML =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>' +
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-file-doc"/></svg>' +
     '<div class="nm"></div><div class="meta"></div><div class="hint"></div>';
   box.querySelector('.nm').textContent = String(name || '');
   box.querySelector('.meta').textContent = sizeText ? sizeText : '';
@@ -728,7 +727,7 @@ window.matchMedia('(min-width: 960px)').addEventListener('change', () => { if (!
 // —— 通用 UI 卡片（stream.js 转发 SSE ui_card；任何 MCP 服务/工具回包附 type:"ui_card" 块即可产出）——
 // 产生方契约 {action, arg, title?, note?}；新交互在动作注册表加一条即可，未知 action 忽略（向前兼容）。
 // 图标由前端统一持有（与 pv-none 同一枚文档 SVG），产生方不提供图形，只给数据。
-const UI_CARD_ICON_DOC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+const UI_CARD_ICON_DOC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-file-doc"/></svg>';
 const UI_CARD_ACTIONS = {
   // arg = 相对会话目录的文件路径，点击 = openFilePreview（office 走预览网关，其余类型走文本/图片渲染）
   open_preview: { go: '预览 ›', hint: '点击打开预览', icon: UI_CARD_ICON_DOC, run: (d) => openFilePreview(d.arg) },

@@ -8,17 +8,17 @@
 // 依赖(全局)：state $ req toast downloadFile confirmModal openFilePreview
 'use strict';
 (function () {
-  const SVG_FOLDER = '<svg class="ic sm" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
-  const SVG_FILE = '<svg class="ic sm" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>';
-  const SVG_LINK = '<svg class="ic sm" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg>';
-  const SVG_REVEAL = '<svg class="ic sm" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
-  const SVG_REFRESH = '<svg class="ic sm" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg>';
-  const SVG_TERM = '<svg class="ic sm" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>';
-  const SVG_VCS = '<svg class="ic sm" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9v1a4 4 0 0 1-4 4H9"/></svg>';
-  const SVG_EYE = '<svg class="ic sm" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
-  const SVG_DL = '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-  const SVG_DEL = '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
-  const SVG_REVEAL_SM = '<svg viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
+  const SVG_FOLDER = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-folder"/></svg>';
+  const SVG_FILE = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-file"/></svg>';
+  const SVG_LINK = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-link"/></svg>';
+  const SVG_REVEAL = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-external-b"/></svg>';
+  const SVG_REFRESH = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-reload"/></svg>';
+  const SVG_TERM = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-terminal"/></svg>';
+  const SVG_VCS = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-git"/></svg>';
+  const SVG_EYE = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-eye-sm"/></svg>';
+  const SVG_DL = '<svg viewBox="0 0 24 24"><use href="#i-download"/></svg>';
+  const SVG_DEL = '<svg viewBox="0 0 24 24"><use href="#i-trash"/></svg>';
+  const SVG_REVEAL_SM = '<svg viewBox="0 0 24 24"><use href="#i-external-b"/></svg>';
 
   let localCapable = false;     // local 启动器：才显示「在 Finder/终端中打开」
   let showHidden = false;

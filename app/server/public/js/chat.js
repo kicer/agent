@@ -32,13 +32,13 @@
     // 删除本条:仅已落库消息可删(传 m.id);流式未落库时无 id,不渲染
     const del = msgId
       ? '<button class="act act-del" title="删除本条" data-msg-id="' + msgId + '">' +
-        '<svg class="ic sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>' +
+        '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-x-path"/></svg>' +
         '</button>'
       : '';
     // 编辑并重发:只给未压缩的用户消息(调用方传 canEdit);带 b64 回填输入框,避免从 DOM 反推
     const edit = canEdit && msgId
       ? '<button class="act act-edit" title="编辑并重发" data-msg-id="' + msgId + '" data-b64="' + b64 + '">' +
-        '<svg class="ic sm" viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg>' +
+        '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-pencil"/></svg>' +
         '</button>'
       : '';
     const u = normUsage(usage);
@@ -49,7 +49,7 @@
       '<span>' + fmtTime(ts) + '</span>' +
       usageHtml +
       '<button class="act act-copy" title="复制" data-b64="' + b64 + '">' +
-        '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
+        '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-copy"/></svg>' +
       '</button>' +
       edit +
       del +
@@ -100,7 +100,7 @@
   // 历史重渲染默认收起(与原设计一致),流式阶段的展开行为由 ensureStreamThinkPanel 显式控制。
   // 复制按钮走 onCopyClick 统一代理:点击时从 DOM 取思考全文(不依赖 b64,流式增量也能复制)
   const THINK_COPY_BTN = '<button class="act act-copy" title="复制思考内容">' +
-    '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
+    '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-copy"/></svg>' +
     '</button>';
   function thinkPanelHtml(text) {
     return '<details class="msg-think"><summary>思考过程' + THINK_COPY_BTN + '</summary><div class="msg-think-body">' + esc(text) + '</div></details>';
@@ -112,7 +112,7 @@
   // 复制文本在点击时从 pre.textContent 现取(onCopyClick 的 .code-wrap 分支),不嵌 b64、不怕内容后续变化。
   // 只碰 .md 里的 pre:工具卡 / 思考区已有自己的复制按钮,行内 code 不加。
   const CODE_COPY_BTN = '<button class="act act-copy" type="button" title="复制代码">' +
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-copy"/></svg>' +
     '</button>';
   function decorateCodePre(root) {
     if (!root || !root.querySelectorAll) return;
@@ -172,14 +172,14 @@
     if (!text) return '';
     const b64 = btoa(unescape(encodeURIComponent(text)));
     return '<button class="act act-copy" title="复制参数与结果" data-b64="' + b64 + '">' +
-      '<svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>';
+      '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button>';
   }
   // 工具卡「删除本条」：删的是 tool 消息行；后端会把它在父 assistant 里的调用同步摘除。
   // msgId = tool 消息的库行 id（历史渲染传 m.id；实时由 tool_result 事件的 msg_id 携带）
   function toolDelBtnHtml(msgId) {
     if (!msgId) return '';
     return '<button class="act act-del" title="删除本条" data-msg-id="' + msgId + '">' +
-      '<svg class="ic sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>';
+      '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-x-path"/></svg></button>';
   }
   function renderToolCard(id, name, argsStr, createdAt, opts) {
     const div = document.createElement('div');
