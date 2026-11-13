@@ -181,9 +181,6 @@
     clearTimeout(sseSuspendTimer);
     clearTimeout(sseResumeProbeTimer);
     sseResumeProbeTimer = 0;
-    // 回前台先刷一次文件树：后台期间的变动（工具产物/外部改动）直接补上；
-    // 必须放在下方 sseSuspended 分支之前，否则「挂起后唤醒」这条路径会漏掉
-    if (typeof window.reloadFileTree === 'function') window.reloadFileTree();
     // 后台已挂起：客户端不在线期间的 SSE 事件确定丢弃，必须补拉（增量渲染，不闪）
     if (sseSuspended) { resumeStream(); return; }
     if (!state.sessionId || state.view !== 'chat' || !state.es) return;
@@ -191,11 +188,6 @@
     if (state.es.readyState !== EventSource.OPEN) { resyncSession(); return; }
     // 仍 OPEN 但心跳变旧：先给连接一个宽限自证，真静默才补拉
     if (Date.now() - state.lastSseAt > 45000) probeSseAlive();
-  });
-  // 窗口失去又获得焦点（如从 Finder 改完文件点回来）：页面一直可见时 visibilitychange 不触发，
-  // 只有 focus 能抓到；reloadFileTree 自带 debounce + 1s 去重，和上面的 visibilitychange 不会双刷
-  window.addEventListener('focus', () => {
-    if (state.sessionId && state.view === 'chat' && typeof window.reloadFileTree === 'function') window.reloadFileTree();
   });
 
   // 地址栏跟随当前会话与侧栏模式：?s=<id>[&files=1]，刷新/收藏/分享都能回到同一屏
