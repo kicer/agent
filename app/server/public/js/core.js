@@ -208,7 +208,11 @@
   function renderHeader() {
     const c = $('header-center');
     // welcome（含刚 newChat）一律清空：newChat 会停在 welcome，不重刷会残留旧会话标题
-    if (state.view !== 'chat' || !state.sessionId) { c.innerHTML = ''; return; }
+    if (state.view !== 'chat' || !state.sessionId) {
+      c.innerHTML = '';
+      document.title = 'Agent 任务台'; // 回欢迎页/新建会话时标签页恢复默认
+      return;
+    }
     // 顶部只显标题；助手类型 icon 早已退位（会话阶段徽标随 advising 一并移除）
     const title = document.createElement('div');
     title.className = 'header-title';
@@ -218,6 +222,8 @@
     title.addEventListener('click', renameSession); // 点标题重命名(同步 index)
     c.innerHTML = '';
     c.appendChild(title);
+    // 标签页标题跟着会话走：切会话/重命名/自动生成标题都会走到这里
+    document.title = state.sessionTitle ? state.sessionTitle + ' · Agent' : 'Agent 任务台';
   }
 
   // ---------- 模式切换已移除：新建会话固定用 state.mode（secretary），助手类型不再占顶部 icon
