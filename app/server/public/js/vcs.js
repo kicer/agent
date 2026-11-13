@@ -64,9 +64,12 @@
         '<div class="t">未提交的改动</div>' +
         '<div class="m">' + st.worktree.files + ' 个文件有变动</div></div>');
     }
+    const up = st.repo && st.repo.upstream;
     for (const c of st.commits) {
-      parts.push('<div class="vcs-item" data-act="commit" data-id="' + esc(c.id) + '">' +
-        '<div class="t">' + esc(c.subject) + '</div>' +
+      const atUp = up && c.id === up.id;
+      parts.push('<div class="vcs-item' + (atUp ? ' at-up' : '') + '" data-act="commit" data-id="' + esc(c.id) + '">' +
+        '<div class="t">' + esc(c.subject) +
+        (atUp ? ' <span class="vcs-up" title="远端 ' + esc(up.ref) + ' 指向这里">' + esc(up.ref) + '</span>' : '') + '</div>' +
         '<div class="m">' + esc(c.author) + ' · ' + esc(fmtTime(c.time)) + ' · ' + esc(c.short) + '</div></div>');
     }
     if (!st.commits.length && !(st.worktree && st.worktree.files)) {

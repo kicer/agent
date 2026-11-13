@@ -55,7 +55,16 @@ async function ensureRepo(dir) {
     const m = /^(\S+)\s+(\S+)\s+\(fetch\)/.exec(first);
     if (m) remote = { name: m[1], url: m[2].replace(/\/\/[^/@]+@/, '//***@') };
   } catch (_) { /* 没配 remote */ }
-  return { root, branch: branch || (head ? 'detached' : ''), head, remote };
+  // upstream：列表要把 origin/master 标在它指向的那条提交上，一眼看出本地领先几条。
+  // 优先当前分支的 upstream，没配就回退 origin/master。
+  let upstream = null;
+  try {
+    const ref = (await run(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])).trim();
+    if (ref) upstream = { ref, id: (await run(root, ['rev-parse', ref])).trim() };
+  } catch (_) {
+    try { upstream = { ref: 'origin/master', id: (await run(root, ['rev-parse', 'origin/master'])).trim() }; } catch (__) { upstream = null; }
+  }
+  return { root, branch: branch || (head ? 'detached' : ''), head, remote, upstream };
 }
 
 // 把一个整段 diff 按 `diff --git` 切开，键是文件路径。

@@ -1931,6 +1931,11 @@ body.pv-max .pv-code { max-width: none; padding-left: 16px; padding-right: 16px;
 .vcs-item { padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .vcs-item:hover { background: var(--surface); }
 .vcs-item .t { font-size: 13.5px; font-weight: 600; color: var(--ink); word-break: break-word; line-height: 1.45; }
+/* 远端分支（origin/master）指向的那条提交：标题后挂一枚小标签，一眼看出本地领先几条 */
+.vcs-up { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px;
+  font: 600 10.5px/17px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg-0550ae); background: var(--bg-dbeafe); vertical-align: 1px; }
+.vcs-item.at-up { box-shadow: inset 3px 0 0 var(--active); }
 .vcs-item .m { margin-top: 3px; font-size: 12px; color: var(--gray); }
 .vcs-item .m code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 /* 「未提交的改动」入口：列表顶部单独一行，与提交行区分 */
