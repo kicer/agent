@@ -75,9 +75,21 @@
   }
 
   // ---------- 详情（提交 / 未提交共用）----------
-  function lineHtml(cls, oldNo, newNo, text) {
+  // 语法高亮：与预览共用 PV_LANG（preview.js）。只能逐行高亮：diff 是片段，多行注释/三引号串
+  // 本来就拼不完整；逐行反而不会把行号与红绿底色搞乱。
+  function prismLang(path) {
+    if (typeof PV_LANG === 'undefined' || typeof Prism === 'undefined' || !Prism.languages) return null;
+    const m = /\.([^.\\/]+)$/.exec(String(path || ''));
+    const lang = m && PV_LANG[m[1].toLowerCase()];
+    return lang && Prism.languages[lang] ? lang : null;
+  }
+  function codeEsc(text, lang) {
+    if (!lang) return esc(text);
+    try { return Prism.highlight(text, Prism.languages[lang], lang); } catch (_) { return esc(text); }
+  }
+  function lineHtml(cls, oldNo, newNo, text, lang) {
     return '<div class="vcs-line' + (cls ? ' ' + cls : '') + '"><span class="n">' + (oldNo == null ? '' : oldNo) +
-      '</span><span class="n">' + (newNo == null ? '' : newNo) + '</span><span class="c">' + esc(text) + '</span></div>';
+      '</span><span class="n">' + (newNo == null ? '' : newNo) + '</span><span class="c">' + codeEsc(text, lang) + '</span></div>';
   }
 
   // 行号自己推：@@ -a,b +c,d @@ 之后的上下文/+/- 分别推进两个计数器
@@ -86,6 +98,8 @@
     if (!f.patch) return '<div class="vcs-nodiff">没有可显示的差异</div>';
     const out = [];
     const lines = String(f.patch).split('\n');
+    // 大 patch 不上色：逐行跑 Prism 是同步的，几千行会把面板卡一下
+    const lang = lines.length <= 2000 ? prismLang(f.path) : null;
     let oldNo = 0, newNo = 0, inHunk = false, rows = 0;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -99,9 +113,9 @@
       if (!inHunk) continue; // 文件头（diff --git / index / --- / +++）由文件行本身表达，不重复渲染
       if (line.charAt(0) === '\\') { out.push('<div class="vcs-line meta"><span class="n"></span><span class="n"></span><span class="c">' + esc(line) + '</span></div>'); continue; }
       const c = line.charAt(0);
-      if (c === '+') out.push(lineHtml('a', null, newNo++, line.slice(1)));
-      else if (c === '-') out.push(lineHtml('d', oldNo++, null, line.slice(1)));
-      else out.push(lineHtml('', oldNo++, newNo++, line.slice(1)));
+      if (c === '+') out.push(lineHtml('a', null, newNo++, line.slice(1), lang));
+      else if (c === '-') out.push(lineHtml('d', oldNo++, null, line.slice(1), lang));
+      else out.push(lineHtml('', oldNo++, newNo++, line.slice(1), lang));
       if (++rows > 3000) { out.push('<div class="vcs-nodiff">行数过多，剩余部分已隐藏</div>'); break; }
     }
     return out.join('') || '<div class="vcs-nodiff">仅改名或模式变更，没有内容差异</div>';

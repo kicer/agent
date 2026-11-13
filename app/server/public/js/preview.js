@@ -16,6 +16,58 @@ const PV_PLAIN = /\.(txt|log)$/i;
 const PV_TEXT = /\.(md|markdown|txt|log|csv|tsv|json|jsonl|xml|yml|yaml|toml|ini|conf|cfg|properties|env|py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|c|h|cpp|hpp|cc|cs|go|rs|rb|php|swift|sh|bash|zsh|bat|ps1|sql|lua|r|dart|vue|css|less|scss|srt|vtt)$/i;
 const PV_TEXT_MAX = 512 * 1024; // 文本预览截断阈值(字符)，超出提示下载看全文
 const PV_CODE_MAX = 5000; // 代码预览最多逐行渲染的行数：行号要逐行建节点，几万行会把面板拖死
+// 扩展名 → Prism 语言 id。只映射打包进来的语言（见 vendor/prism.min.js），命中不了就当纯文本
+const PV_LANG = {
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'jsx',
+  ts: 'typescript', mts: 'typescript', cts: 'typescript', tsx: 'tsx',
+  json: 'json', jsonl: 'json', json5: 'json',
+  yml: 'yaml', yaml: 'yaml',
+  sh: 'bash', bash: 'bash', zsh: 'bash', ksh: 'bash', env: 'bash',
+  py: 'python', pyw: 'python',
+  go: 'go', rs: 'rust', java: 'java',
+  c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp', cc: 'cpp', cxx: 'cpp', hh: 'cpp',
+  sql: 'sql', css: 'css', wxss: 'css',
+  html: 'markup', htm: 'markup', xml: 'markup', svg: 'markup', vue: 'markup',
+  md: 'markdown', markdown: 'markdown',
+  toml: 'toml', ini: 'ini', conf: 'ini', cfg: 'ini', properties: 'ini',
+  diff: 'diff', patch: 'diff',
+};
+// 整块高亮；Prism 没加载、语言没打包、或抛异常都返回 null，调用方退回纯文本
+function pvHighlightCode(text, name) {
+  if (typeof Prism === 'undefined' || !Prism.languages) return null;
+  const ext = (String(name).match(/\.([^.\\/]+)$/) || [])[1];
+  const lang = PV_LANG[String(ext || '').toLowerCase()];
+  const grammar = lang && Prism.languages[lang];
+  if (!grammar) return null;
+  try { return Prism.highlight(text, grammar, lang); } catch (_) { return null; }
+}
+// 把整块高亮 HTML 按行拆开：跨行的 <span> 在行尾补 </span>、下一行行首重开。
+// 逐行调用 Prism.highlight 会把多行注释/三引号字符串切花，所以必须先整块高亮再拆。
+// Prism 输出的文本已转义（&lt; 等），不存在裸 '<'，因此只匹配标签与换行就够了。
+function pvSplitHighlighted(html) {
+  const out = [];
+  const stack = [];
+  let cur = '';
+  let last = 0;
+  const re = /(\n|<span\b[^>]*>|<\/span>)/g;
+  let m;
+  while ((m = re.exec(html))) {
+    cur += html.slice(last, m.index);
+    last = m.index + m[0].length;
+    if (m[0] === '\n') {
+      out.push(cur + '</span>'.repeat(stack.length));
+      cur = stack.join('');
+    } else if (m[0] === '</span>') {
+      stack.pop();
+      cur += '</span>';
+    } else {
+      stack.push(m[0]);
+      cur += m[0];
+    }
+  }
+  out.push(cur + html.slice(last)); // 末尾无条件留一行：文本以 \n 结尾时最后是空行
+  return out;
+}
 const PV_SRC_MAX = 2 * 1024 * 1024; // 源码面板的显示上限，超过就只给前 2MB（大文件塞 pre 会卡）
 let pvSeq = 0; // 预览序号：快速连点时旧请求不许再动 DOM
 // reload: 当前内容的"重新载入"动作(文本类无 iframe，按名重开)；为 null 时回退到 reload iframe
@@ -112,6 +164,20 @@ function pvToggleSrc() {
   const lbl = pvState.srcOn ? '返回预览' : '查看源码';
   btn.title = lbl;
   btn.setAttribute('aria-label', lbl);
+}
+
+// md 里的围栏代码块上色：marked 输出 <pre><code class="language-xx">，命中 PV_LANG 才处理。
+// highlightElement 会重写 code 的 innerHTML，复制按钮挂在父级 .code-wrap 上，不受影响。
+function pvHighlightMdCode(root) {
+  if (typeof Prism === 'undefined' || !Prism.languages) return;
+  root.querySelectorAll('pre code').forEach((el) => {
+    if (el.dataset.hl) return; // 幂等：同一节点被重复装饰时不再处理
+    const m = /language-([\w-]+)/.exec(String(el.className || ''));
+    const lang = m && PV_LANG[m[1].toLowerCase()];
+    if (!lang || !Prism.languages[lang]) return;
+    el.dataset.hl = '1';
+    try { Prism.highlightElement(el); } catch (_) {}
+  });
 }
 
 // 每次展示内容都过一遍：标题显示相对路径(子目录可见)，右上角下载钮随文件走
@@ -460,6 +526,7 @@ async function pvTextNode(name, sizeText, r) {
     wrap.className = 'msg other';
     wrap.innerHTML = '<div class="' + cls + ' pv-doc">' + html + '</div>';
     decorateCodePre(wrap);
+    pvHighlightMdCode(wrap); // 围栏代码块上色（与代码预览同一套配色）
     const n = wrap.firstChild;
     // q.fmt=false 表示 marked 不可用、面板就是原文排版：新窗口也按纯文本开，避免空白被折叠
     n.__tb = q.fmt
@@ -493,9 +560,12 @@ async function pvTextNode(name, sizeText, r) {
   code.className = 'pv-code';
   code.style.setProperty('--nw', Math.max(2, String(shown.length).length) + 'ch'); // 行号列宽按最大行号位数
   const rows = [];
+  const hl = pvHighlightCode(shown.join('\n'), name); // 整块高亮再按行拆，跨行 token 才不会花
+  const parts = hl ? pvSplitHighlighted(hl) : null;
+  const useHl = parts && parts.length === shown.length; // 行数对不上就退回纯文本，不让行号错位
   for (let i = 0; i < shown.length; i++) {
     // 行号交给 CSS counter（.pv-cl::before）生成：伪元素不进选区，复制不会把行号带走
-    rows.push('<div class="pv-cl">' + esc(shown[i]) + '</div>');
+    rows.push('<div class="pv-cl">' + (useHl ? parts[i] : esc(shown[i])) + '</div>');
   }
   code.innerHTML = rows.join('');
   frag.appendChild(code);
@@ -564,6 +634,7 @@ async function pvRenderLegacy(name, r, my) {
     wrap.className = 'msg other';
     wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';
     decorateCodePre(wrap);
+    pvHighlightMdCode(wrap);
     pvOverlayShow(wrap.firstChild, { bar: true, name: name, source: text }); // 全宽沉浸，eye/复制看原文
   }
 }
