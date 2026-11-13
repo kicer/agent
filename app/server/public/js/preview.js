@@ -130,6 +130,7 @@ function pvOpenPane() {
 function pvCloseDoc() {
   if (!document.body.classList.contains('pv-open')) return;
   document.body.classList.remove('pv-open', 'pv-max');
+  if (typeof vcsSetMode === 'function') vcsSetMode(false); // 关面板即离开 Git 模式
   if (typeof pvSetMaxUI === 'function') pvSetMaxUI(false); // 收起时复位放大钮图标(函数声明提升，定义在后亦可)
   pvClearBody();
   pvState.name = null; pvState.url = null;
@@ -206,6 +207,7 @@ async function pvOpenOffice(name, sizeText) {
 // ---------- 统一入口：所有文件点击都走这 ----------
 async function openFilePreview(name, sizeText) {
   if (!state.sessionId) return;
+  if (typeof vcsSetMode === 'function') vcsSetMode(false); // 点文件即离开 Git 面板（预览/Git 二选一）
   if (PV_OFFICE.test(name)) { try { await pvOpenOffice(name, sizeText); } catch (e) { toast('预览失败：' + e.message); } return; }
   let kind = pvKind(name);
   if (kind === 'pdf' && !navigator.pdfViewerEnabled) kind = 'none'; // WebView 内嵌不了 PDF：给占位卡，不再自动下载

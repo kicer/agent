@@ -2,6 +2,22 @@ FROM node:20-slim
 
 ENV TZ=Asia/Shanghai
 
+# git：Git 面板（提交历史 / 未提交改动）要读仓库，本机与容器共用同一条代码路径。
+# 国内构建慢：apt 默认源在国外，apt-get update 能卡十几分钟。默认换成腾讯云镜像（与 executor 同源）。
+# 境外构建或想换源：docker compose build --build-arg DEBIAN_MIRROR=deb.debian.org
+ARG DEBIAN_MIRROR=mirrors.cloud.tencent.com
+
+# 换 apt 源：bookworm 可能是 /etc/apt/sources.list，也可能是 deb822 的 /etc/apt/sources.list.d/*.sources，
+# 直接 grep 扫一遍、只替换域名，两种格式都盖住（路径 /debian、/debian-security 保持不变）。
+RUN set -eux; \
+    files="$(grep -rl 'deb.debian.org' /etc/apt/ 2>/dev/null || true)"; \
+    if [ -n "$files" ]; then sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" $files; fi
+
+# 装完清 apt 列表，不给镜像多留几十 MB。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # 国内构建慢：npm 默认源在国外。默认换成腾讯云 npm 镜像（与宿主机 ~/.npmrc 一致）。

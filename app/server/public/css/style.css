@@ -1640,6 +1640,73 @@ body.pv-resizing #pv-pane iframe { pointer-events: none; }
 .pv-none button { margin-top: 8px; border: 0; background: var(--active); color: #fff; border-radius: 8px; padding: 9px 22px; font-size: 13px; cursor: pointer; }
 .pv-none button:hover { opacity: .88; }
 
+/* ---------- Git 面板（复用预览栏：body.pv-mode-vcs。列表 / 提交详情 / 未提交改动）---------- */
+/* 文件树头的 Git 钮开启时高亮用通用的 .icon-btn.active（如显示隐藏文件那种），不另造类 */
+.vcs-list { padding-bottom: 24px; }
+/* 列表顶部的仓库行：会话目录可能只是仓库的某个子目录，所以显式写出 root */
+.vcs-repo { padding: 9px 16px; border-bottom: 1px solid var(--border); background: var(--drawer-bg);
+  font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--gray);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vcs-empty { padding: 44px 24px; text-align: center; font-size: 13px; color: var(--gray-light); }
+.vcs-item { padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.vcs-item:hover { background: var(--surface); }
+.vcs-item .t { font-size: 13.5px; font-weight: 600; color: var(--ink); word-break: break-word; line-height: 1.45; }
+.vcs-item .m { margin-top: 3px; font-size: 12px; color: var(--gray); }
+.vcs-item .m code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+/* 「未提交的改动」入口：列表顶部单独一行，与提交行区分 */
+.vcs-item.wt { background: var(--active-light); }
+.vcs-item.wt:hover { background: #e3ecfe; }
+.vcs-more { display: block; margin: 14px auto 0; padding: 7px 18px; font-size: 12.5px; color: var(--ink);
+  background: var(--page); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.vcs-more:hover { background: var(--surface); }
+.vcs-back { display: flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: 12.5px; color: var(--active);
+  background: var(--page); border-bottom: 1px solid var(--border); cursor: pointer; position: sticky; top: 0; z-index: 2; }
+.vcs-back:hover { background: var(--surface); }
+.vcs-commit { padding: 12px 16px 14px; border-bottom: 1px solid var(--border); background: var(--drawer-bg); }
+.vcs-subject { font-size: 14px; font-weight: 700; line-height: 1.5; word-break: break-word; }
+.vcs-meta { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--gray); }
+.vcs-meta code { padding: 1px 6px; border-radius: 5px; background: var(--surface); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.vcs-meta .vcs-hash { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--active); }
+.vcs-err-t { max-width: 420px; }
+.vcs-msg { margin: 8px 0 0; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; color: #444; }
+.vcs-sum { display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 12px; color: var(--gray); border-bottom: 1px solid var(--border); }
+.vcs-sum b.a { color: #1a7f37; }
+.vcs-sum b.d { color: #cf222e; }
+.vcs-file { border-bottom: 1px solid var(--border); }
+.vcs-fh { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12.5px; cursor: pointer; user-select: none; }
+.vcs-fh:hover { background: var(--surface); }
+.vcs-caret { flex: none; width: 10px; color: var(--gray); transition: transform .12s ease; }
+.vcs-file.open .vcs-caret { transform: rotate(90deg); }
+.vcs-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--ink); }
+.vcs-badge { flex: none; padding: 0 5px; border-radius: 4px; font-size: 11px; line-height: 17px; background: var(--surface); color: var(--gray); }
+.vcs-badge.m { color: #9a6700; background: #fff8c5; }
+.vcs-badge.a { color: #1a7f37; background: #dafbe1; }
+.vcs-badge.d { color: #cf222e; background: #ffebe9; }
+.vcs-badge.r { color: #0550ae; background: #ddf4ff; }
+.vcs-badge.u { color: #6639ba; background: #f3e8ff; }
+.vcs-stat { flex: none; font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.vcs-stat .a { color: #1a7f37; }
+.vcs-stat .d { color: #cf222e; }
+.vcs-fb { display: none; border-top: 1px solid var(--border); overflow-x: auto; background: #fff; }
+.vcs-file.open .vcs-fb { display: block; }
+/* 行：旧号 / 新号 / 代码三列。代码不换行，横向滚动（diff 语义上就该逐行对齐） */
+.vcs-line { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr);
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.vcs-line .n { padding: 0 6px; text-align: right; color: #b0b6bd; user-select: none;
+  background: #fafbfc; border-right: 1px solid rgba(0,0,0,.04); }
+.vcs-line .c { padding: 0 8px; white-space: pre; color: var(--ink); }
+.vcs-line.a { background: #e6ffec; }
+.vcs-line.a .n { background: #ccffd8; }
+.vcs-line.d { background: #ffebe9; }
+.vcs-line.d .n { background: #ffd7d5; }
+.vcs-line.h { background: #ddf4ff; }
+.vcs-line.h .c { color: #0550ae; }
+.vcs-line.h .n { background: #ddf4ff; }
+.vcs-line.meta .c { color: var(--gray); font-style: italic; }
+.vcs-nodiff { padding: 12px 16px; font-size: 12px; color: var(--gray); }
+.vcs-note { padding: 8px 16px; font-size: 12px; color: var(--gray); background: var(--drawer-bg); }
+
 /* 通用 UI 卡片：SSE ui_card → 聊天流可点卡片（动作注册表驱动，见 preview.js） */
 .ui-card { display: flex; align-items: center; gap: 10px; max-width: 420px; margin: 8px 0; padding: 10px 14px;
   border: 1px solid var(--border); border-radius: 12px; background: var(--page); cursor: pointer; }

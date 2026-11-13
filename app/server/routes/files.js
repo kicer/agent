@@ -9,6 +9,7 @@ const { listTaskFiles } = require('./sessions');
 const { resolveInTask } = require('../tools/executor');
 const downloadToken = require('../download-token');
 const log = require('../log');
+const git = require('../git');
 
 const router = express.Router();
 
@@ -140,6 +141,32 @@ router.get('/:id/tree', function (req, res) {
     capped: entries.length > TREE_MAX,
     entries: entries.slice(0, TREE_MAX),
   });
+});
+
+// ---------- Git 面板（只读）：提交列表 / 提交详情 ----------
+// rev=worktree 是「未提交的改动」，与提交详情返回同一副骨架（commit=null），前端共用一个渲染器。
+// 不是仓库 / 没装 git 不算错误：HTTP 200 + { ok:false, reason }，由界面显示空状态。
+function gitDir(req) { return engine.taskDirOf(req.params.id); }
+
+router.get('/:id/git/commits', async function (req, res) {
+  const session = engine.getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: '会话不存在' });
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+  const before = String(req.query.before || '');
+  // before 只接受完整/短 hash：它会拼进 git 参数，绝不能是任意表达式
+  const out = await git.query(gitDir(req), 'commits', {
+    before: /^[0-9a-f]{7,40}$/i.test(before) ? before : '',
+    limit,
+  });
+  res.json(out);
+});
+
+router.get('/:id/git/commit/:rev', async function (req, res) {
+  const session = engine.getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: '会话不存在' });
+  const rev = String(req.params.rev || '');
+  if (rev !== 'worktree' && !/^[0-9a-f]{4,40}$/i.test(rev)) return res.status(400).json({ error: '非法的提交编号' });
+  res.json(await git.query(gitDir(req), 'commit', { rev }));
 });
 
 router.get('/:id/files', function (req, res) {
