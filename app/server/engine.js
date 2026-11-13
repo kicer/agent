@@ -205,9 +205,44 @@ function syncModelPool() {
   // 进程重启后：key 非独占，所有会话的绑定保持不动（顶部展示的模型持续可见，直到用户手动断开/换绑）。
   // active（重启后必无回合进程）与遗留 queued 会话统一归位 held；指向已被删除/禁用模型的绑定，
   // 下次发消息时由 ensureBinding 自动改选（优先留原平台），用户无感。
+  // 归位前先把「回合没走完」的 active 挑出来：stop/重启打断时它们停在半路，最后一条非 tool 消息
+  // 必是 user（模型还没答）或带 tool_calls 的 assistant（这批工具之后没了下文）。
+  // 已答完、只是没来得及 finalize 的会话（最后是纯文本 assistant）不在此列，照常归位 held。
+  const resumeIds = [];
+  for (const r of db.prepare("SELECT id FROM sessions WHERE status='active'").all()) {
+    const last = db.prepare(
+      "SELECT role, tool_calls FROM messages WHERE session_id = ? AND role != 'tool' ORDER BY id DESC LIMIT 1"
+    ).get(r.id);
+    if (last && (last.role === 'user'
+      || (last.role === 'assistant' && last.tool_calls && last.tool_calls !== '[]'))) resumeIds.push(r.id);
+  }
   db.prepare('UPDATE model_pool SET is_busy = 0, current_session_id = NULL').run(); // 旧版独占列清残留（调度已不读）
   db.prepare("UPDATE sessions SET status='held', held_at=COALESCE(held_at, updated_at), updated_at=? WHERE status IN ('active','queued')").run(now());
   startHeldSweeper();
+  // 续跑：不伪造工具执行结果，但给中断点那批调用补一条「服务重启、结果未知」的回执，
+  // 否则 buildMessages 会把整行 tool_calls 丢掉，模型看不到自己发过什么命令，重启类任务就会无限重试。
+  // 等 5s 是因为 init 早于 server.listen，executor 也可能还在起，太早开跑首轮工具只会拿到连接错误。
+  const RESUME_DELAY_MS = 5000;
+  for (const id of resumeIds) {
+    setTimeout(() => {
+      const s = getSession(id);
+      // 5s 内用户可能已经自己发消息（已开跑）或点了停止：只接管仍停在 held/active 的会话
+      if (!s || (s.status !== 'held' && s.status !== 'active')) return;
+      try {
+        ensureBinding(s);
+        touch(id, { status: 'active', held_at: null, completed_at: null, cancelled_at: null });
+        getRun(id, true).deepThink = !!s.deep_think; // 恢复中断前的深度思考开关（会话行里持久化的值）
+        const n = markInterruptedBatch(id); // 先补中断点的回执，模型才能看到自己发过什么命令
+        if (n) log.info('tool', id + ' 重启续跑前补齐 ' + n + ' 条中断回执');
+        emitStatus(id);
+        runLoop(id);
+        log.info('engine', id + ' 重启后续跑未完成的回合');
+      } catch (e) {
+        log.warn('engine', id + ' 重启续跑失败：' + (e && e.message || e));
+      }
+    }, RESUME_DELAY_MS);
+  }
+  if (resumeIds.length) log.info('engine', '检测到 ' + resumeIds.length + ' 个被中断的回合，就绪后自动续跑');
 }
 
 // ---------- 会话闲置处理（30min held 归档 + 4h 记忆收口） ----------
@@ -585,6 +620,34 @@ async function runLoop(sessionId) {
     // 自动压缩只在回合完全结束（循环已退、finalize 已收尾）后检查：AI↔tools 交互途中绝不触发
     maybeAutoCompress(sessionId, run, wasCompressTurn);
   }
+}
+
+// 重启续跑前给中断点那批调用补回执：不伪造执行结果，只告知「服务重启、结果未知」。
+// 有了配对回执，buildMessages 才会保留整行 tool_calls——否则它会把无回执的调用剔掉，
+// 模型看不到自己发过什么命令，「重启」类任务就靠猜，猜错就无限重试。
+function markInterruptedBatch(sessionId) {
+  const last = db.prepare(
+    "SELECT id, role, tool_calls FROM messages WHERE session_id = ? AND role != 'tool' ORDER BY id DESC LIMIT 1"
+  ).get(sessionId);
+  if (!last || last.role !== 'assistant' || !last.tool_calls) return 0; // 收尾回复或用户才发完话
+  let calls = [];
+  try { calls = JSON.parse(last.tool_calls) || []; } catch (_) { return 0; }
+  const got = new Set(
+    db.prepare(
+      "SELECT tool_call_id FROM messages WHERE session_id = ? AND role = 'tool' AND id > ? AND tool_call_id IS NOT NULL AND tool_call_id != ''"
+    ).all(sessionId, last.id).map(r => r.tool_call_id)
+  );
+  let n = 0;
+  for (const c of calls) {
+    if (!c || !c.id || got.has(c.id)) continue;
+    const name = (c.function && c.function.name) || '未知工具';
+    saveMessage(sessionId, {
+      role: 'tool', tool_call_id: c.id, name,
+      content: '[系统] 服务重启，本次调用被中断，执行结果未知：先核实实际状态再决定，不要直接重试。',
+    });
+    n++;
+  }
+  return n;
 }
 
 function finalize(sessionId, run) {
