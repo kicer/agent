@@ -789,21 +789,31 @@ window.matchMedia('(min-width: 960px)').addEventListener('change', () => { if (!
   const h = document.createElement('div');
   h.className = 'pv-resizer';
   pane.appendChild(h);
-  let st = null;
+  let st = null;        // { x: 起始 clientX, w: 起始宽度, lastX: 最新 clientX }
+  let rafId = 0;
+  // 改 --pv-w 会带着 #app 的 width/margin 一起重排（会话里的文字跟着重新折行），
+  // 一帧可能来十几个 pointermove，所以只在 rAF 里落一次值。
+  function commit() {
+    if (!st) return;
+    document.documentElement.style.setProperty('--pv-w', clamp(st.w + (st.lastX - st.x)) + 'px');
+  }
   h.addEventListener('pointerdown', (e) => {
-    st = { x: e.clientX, w: pane.offsetWidth || clamp(window.innerWidth * 0.5) };
+    e.preventDefault(); // 从按下这一刻就掐掉拖选，否则会顺手选中一大片消息文字
+    st = { x: e.clientX, w: pane.offsetWidth || clamp(window.innerWidth * 0.5), lastX: e.clientX };
     try { h.setPointerCapture(e.pointerId); } catch (_) {}
     document.body.classList.add('pv-resizing');
   });
   h.addEventListener('pointermove', (e) => {
     if (!st) return;
-    document.documentElement.style.setProperty('--pv-w', clamp(st.w + (e.clientX - st.x)) + 'px');
+    st.lastX = e.clientX;
+    if (!rafId) rafId = requestAnimationFrame(() => { rafId = 0; commit(); });
   });
   function end() {
     if (!st) return;
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; commit(); } // 把最后一帧补上
+    const w = pane.offsetWidth;
     st = null;
     document.body.classList.remove('pv-resizing');
-    const w = pane.offsetWidth;
     if (w) localStorage.setItem('pv-w', String(w));
   }
   h.addEventListener('pointerup', end);
