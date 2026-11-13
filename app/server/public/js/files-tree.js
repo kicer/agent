@@ -402,14 +402,18 @@
 
     // 头部直接复用预览栏的 .pv-head / .pv-actions / .icon-btn：
     // 两者在桌面上左右并排，尺寸/描边/内边距必须一模一样，否则一眼就看出错位。
-    // 不放地址条（路径在 280px 里必然截断，没有信息量），所以只剩右侧操作钮。
+    // 不放地址条（路径在 280px 里必然截断，没有信息量）。
+    // 操作钮按用途分两组：左边是树内的只读操作（显示隐藏文件 / 刷新 / Git 面板），
+    // 右边是拉到外部打开（Finder / 终端，仅本地模式出现）。两组分居两端，连点不易误触。
     const head = document.createElement('header');
     head.className = 'pv-head tree-head';
     head.innerHTML =
-      '<span class="pv-actions">' +
+      '<span class="pv-actions tree-actions-main">' +
         '<button class="icon-btn" type="button" id="tree-hidden" title="显示隐藏文件" aria-label="显示隐藏文件">' + SVG_EYE + '</button>' +
         '<button class="icon-btn" type="button" id="tree-refresh" title="刷新" aria-label="刷新">' + SVG_REFRESH + '</button>' +
         '<button class="icon-btn" type="button" id="tree-vcs" title="Git 改动与历史" aria-label="Git 改动与历史">' + SVG_VCS + '</button>' +
+      '</span>' +
+      '<span class="pv-actions tree-actions-ext">' +
         '<button class="icon-btn hidden" type="button" id="tree-reveal" title="在 Finder 中打开" aria-label="在 Finder 中打开">' + SVG_REVEAL + '</button>' +
         '<button class="icon-btn hidden" type="button" id="tree-terminal" title="在终端中打开" aria-label="在终端中打开">' + SVG_TERM + '</button>' +
       '</span>';

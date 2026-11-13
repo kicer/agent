@@ -884,7 +884,9 @@ body.voice-active .scroll-bottom-btn { display: none; }
 /* 左栏树头部复用预览栏的 .pv-head / .pv-actions / .icon-btn：
    它俩在桌面上左右并排，高一点点或图标小一号都会明显错位。
    不放地址条：侧栏只有 280px，路径必然被截断，没有信息量。 */
-.tree-head .pv-actions { gap: 4px; margin-left: auto; } /* 靠右，与预览栏的操作钮同一侧 */
+/* 操作钮分两组分居两端：左边是树内只读操作（显示隐藏文件/刷新/Git），右边是外部打开 */
+.tree-head { justify-content: space-between; }
+.tree-head .pv-actions { gap: 4px; margin-left: 0; } /* 组内间距按侧栏收紧；两端由 space-between 拉开 */
 /* 头部图标的「开启中」态（如显示隐藏文件） */
 .pv-actions .icon-btn.active { color: var(--active); background: var(--active-soft); }
 
