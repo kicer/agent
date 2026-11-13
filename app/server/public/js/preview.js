@@ -564,8 +564,9 @@ async function pvTextNode(name, sizeText, r) {
   const parts = hl ? pvSplitHighlighted(hl) : null;
   const useHl = parts && parts.length === shown.length; // 行数对不上就退回纯文本，不让行号错位
   for (let i = 0; i < shown.length; i++) {
-    // 行号交给 CSS counter（.pv-cl::before）生成：伪元素不进选区，复制不会把行号带走
-    rows.push('<div class="pv-cl">' + (useHl ? parts[i] : esc(shown[i])) + '</div>');
+    // 行号交给 CSS counter（.pv-cl::before）生成：伪元素不进选区，复制不会把行号带走。
+    // 代码必须包在 .c 里：裸文本在 flex 容器里是匿名 flex 项，浏览器会折叠它的前导空白。
+    rows.push('<div class="pv-cl"><span class="c">' + (useHl ? parts[i] : esc(shown[i])) + '</span></div>');
   }
   code.innerHTML = rows.join('');
   frag.appendChild(code);

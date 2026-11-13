@@ -130,8 +130,19 @@
         '<span class="vcs-badge ' + esc(String(f.status || '').toLowerCase()) + '">' + esc(BADGE[f.status] || f.status) + '</span>' +
         '<span class="vcs-stat"><b class="a">+' + f.adds + '</b><b class="d">-' + f.dels + '</b></span>' +
       '</div>' +
-      '<div class="vcs-fb">' + patchHtml(f) + (f.truncated ? '<div class="vcs-nodiff">差异过大，已截断</div>' : '') + '</div>' +
+      '<div class="vcs-fb"><div class="vcs-fb-in">' + patchHtml(f) + (f.truncated ? '<div class="vcs-nodiff">差异过大，已截断</div>' : '') + '</div></div>' +
     '</div>';
+  }
+
+  // 行背景要盖满「可视宽度 ∩ 内容宽度」：只量 clientWidth 不够，长行溢出到 1129 时行背景仍只有 699，
+  // 横滑右边就露白。scrollWidth 正好是最长行的内容宽，取两者较大值写成 px 给内层。
+  function syncPatchWidth(scope) {
+    (scope || document).querySelectorAll('.vcs-fb').forEach(function (fb) {
+      const inner = fb.firstElementChild;
+      if (!inner) return;
+      const w = Math.max(fb.clientWidth, fb.scrollWidth);
+      if (w > 0) inner.style.minWidth = w + 'px';
+    });
   }
 
   function renderDetail(d) {
@@ -157,6 +168,7 @@
     if (!d.files.length) parts.push('<div class="vcs-empty">没有文件变动</div>');
     parts.push('</div>');
     bodyEl().innerHTML = parts.join('');
+    syncPatchWidth(bodyEl());
   }
 
   // ---------- 数据加载 ----------
@@ -248,7 +260,7 @@
     const back = e.target.closest('.vcs-back');
     if (back) { loadList(false); return; }
     const fh = e.target.closest('.vcs-fh');
-    if (fh) { fh.parentNode.classList.toggle('open'); return; }
+    if (fh) { fh.parentNode.classList.toggle('open'); syncPatchWidth(fh.parentNode); return; }
   });
 
   window.openVcsPane = openPane;

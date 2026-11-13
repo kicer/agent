@@ -1667,6 +1667,8 @@ body.pv-max .pv-pre { max-width: none; } /* 放大时源码面板同样铺满 */
   counter-reset: pvline; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4; }
 /* 单行：行号用 ::before + counter 生成。伪元素不参与选区，复制代码时不会把行号带进去 */
 .pv-cl { display: flex; min-height: 1.6em; counter-increment: pvline; white-space: pre; padding-right: 12px; }
+/* 代码必须落在显式元素里：flex 容器的裸文本是匿名 flex 项，前导空白会被折叠、纯缩进行会被丢掉 */
+.pv-cl .c { flex: 1 0 auto; white-space: pre; }
 .pv-cl::before {
   content: counter(pvline); flex: none; width: calc(var(--nw, 3ch) + 18px); margin-right: 10px; padding-right: 8px;
   text-align: right; color: #b0b6bd; user-select: none;
@@ -1746,8 +1748,12 @@ body.pv-max .pv-code { max-width: none; padding-left: 16px; padding-right: 16px;
 .vcs-stat .d { color: #cf222e; }
 .vcs-fb { display: none; border-top: 1px solid var(--border); overflow-x: auto; background: #fff; }
 .vcs-file.open .vcs-fb { display: block; }
+/* 滚动内容包一层：inline-block 的宽度由内容决定（max-content），行再撑满它。
+   否则块级行只有容器宽，横向滚动后短行右侧露白，红绿底色盖不住 */
+.vcs-fb-in { display: block; min-width: 100%; }
 /* 行：旧号 / 新号 / 代码三列。代码不换行，横向滚动（diff 语义上就该逐行对齐） */
 .vcs-line { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr);
+  width: 100%;
   font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .vcs-line .n { padding: 0 6px; text-align: right; color: #b0b6bd; user-select: none;
   background: #fafbfc; border-right: 1px solid rgba(0,0,0,.04); }
