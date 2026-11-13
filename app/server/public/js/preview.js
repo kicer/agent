@@ -15,9 +15,11 @@ const PV_PLAIN = /\.(txt|log)$/i;
 // 常见代码/配置/数据文本扩展名；无扩展名的文件(Dockerfile/LICENSE 等)也按文本尝试，二进制嗅探兜底
 const PV_TEXT = /\.(md|markdown|txt|log|csv|tsv|json|jsonl|xml|yml|yaml|toml|ini|conf|cfg|properties|env|py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|c|h|cpp|hpp|cc|cs|go|rs|rb|php|swift|sh|bash|zsh|bat|ps1|sql|lua|r|dart|vue|css|less|scss|srt|vtt)$/i;
 const PV_TEXT_MAX = 512 * 1024; // 文本预览截断阈值(字符)，超出提示下载看全文
+const PV_SRC_MAX = 2 * 1024 * 1024; // 源码面板的显示上限，超过就只给前 2MB（大文件塞 pre 会卡）
 let pvSeq = 0; // 预览序号：快速连点时旧请求不许再动 DOM
 // reload: 当前内容的"重新载入"动作(文本类无 iframe，按名重开)；为 null 时回退到 reload iframe
-const pvState = { name: null, url: null, blobUrl: null, reload: null, mobilePush: false };
+const pvState = { name: null, url: null, blobUrl: null, reload: null, mobilePush: false,
+  source: null, srcOn: false, bodyNode: null, srcPre: null };
 
 function pvDesktop() { return window.matchMedia('(min-width: 960px)').matches; }
 
@@ -75,6 +77,40 @@ function pvToolbar(o) {
   document.getElementById('pv-popup').classList.toggle('hidden', !o.popup);
   pvState.reload = typeof o.reload === 'function' ? o.reload : null;
   pvState.url = o.url === undefined ? null : o.url;
+  // 源码钮：o.source 是原文（已渲染过的内容才有），没传就藏起来并回到预览态
+  pvState.source = o.source == null || o.source === '' ? null : String(o.source);
+  pvState.srcOn = false;
+  pvState.srcPre = null;
+  const sb = document.getElementById('pv-src');
+  sb.classList.toggle('hidden', pvState.source == null);
+  sb.classList.remove('active');
+  sb.title = '查看源码';
+  sb.setAttribute('aria-label', '查看源码');
+}
+
+// 预览 ↔ 源码互切：不重建预览节点，只把它 display:none 再挂一个等宽 pre，来回切代价很低
+function pvToggleSrc() {
+  const btn = document.getElementById('pv-src');
+  if (!btn || pvState.source == null || !pvState.bodyNode) return;
+  pvState.srcOn = !pvState.srcOn;
+  if (pvState.srcOn) {
+    let text = pvState.source;
+    if (text.length > PV_SRC_MAX) text = text.slice(0, PV_SRC_MAX) + '\n\n…（源码较大，仅显示前 ' + Math.round(PV_SRC_MAX / 1024) + ' KB）';
+    const pre = document.createElement('pre');
+    pre.className = 'pv-pre pv-src-pre'; // 代码类预览本身也是 .pv-pre，多一个类便于区分/定位
+    pre.textContent = text; // 不用 innerHTML：源码里的标签必须当文本
+    pvState.srcPre = pre;
+    document.getElementById('pv-body').appendChild(pre);
+    pvState.bodyNode.style.display = 'none';
+  } else {
+    if (pvState.srcPre && pvState.srcPre.parentNode) pvState.srcPre.parentNode.removeChild(pvState.srcPre);
+    pvState.srcPre = null;
+    pvState.bodyNode.style.display = '';
+  }
+  btn.classList.toggle('active', pvState.srcOn);
+  const lbl = pvState.srcOn ? '返回预览' : '查看源码';
+  btn.title = lbl;
+  btn.setAttribute('aria-label', lbl);
 }
 
 // 每次展示内容都过一遍：标题显示相对路径(子目录可见)，右上角下载钮随文件走
@@ -90,6 +126,11 @@ function pvClearBody() {
   document.getElementById('pv-body').innerHTML = '';
   pvState.reload = null; // 换内容/关窗后旧的刷新动作立即失效
   pvState.url = null;    // 新窗口地址同理：不清会残留上一份内容的 blob/网关 URL
+  pvState.source = null; // 源码同样跟内容走，不然会把上一个文件的原文留在按钮里
+  pvState.srcOn = false;
+  pvState.bodyNode = null;
+  pvState.srcPre = null;
+  document.getElementById('pv-src').classList.add('hidden');
   if (pvState.blobUrl) { try { URL.revokeObjectURL(pvState.blobUrl); } catch (_) {} pvState.blobUrl = null; }
 }
 
@@ -272,9 +313,12 @@ async function openFilePreview(name, sizeText) {
   }
   const show = (node, tb) => {
     if (my !== pvSeq) return;
+    // 节点上挂了 __src（原文）就带进工具条：预览栏据此显示源码钮。手机端的源码钮走 fs-viewer，不掺和。
+    if (node && node.__src != null) { tb = Object.assign({}, tb || tbAll, { source: node.__src }); delete node.__src; }
     if (desk) {
       pvClearBody(); pvHeader(name, sizeText);
       document.getElementById('pv-body').appendChild(node);
+      pvState.bodyNode = node;
       pvToolbar(tb || tbAll);
     } else pvOverlayShow(node, { bar: true, name: name });
   };
@@ -337,11 +381,13 @@ async function openFilePreview(name, sizeText) {
     // 统一等 show() 之后登记，陈旧序号则立即撤销防泄漏。
     let newBlobUrl = null;
     if (kind === 'html') {
-      const src = rewriteHtmlDocSrcs(await r.text(), name); // 相对资源改写，否则 about:srcdoc/blob 基准下全 404
+      const raw = await r.text(); // 原文留着做源码面板，改写只用于内嵌显示
+      const src = rewriteHtmlDocSrcs(raw, name); // 相对资源改写，否则 about:srcdoc/blob 基准下全 404
       const fr = document.createElement('iframe');
       fr.className = 'pv-frame';
       fr.setAttribute('sandbox', 'allow-same-origin allow-scripts');
       fr.srcdoc = src;
+      fr.__src = raw;
       newBlobUrl = URL.createObjectURL(new Blob([src], { type: 'text/html;charset=utf-8' }));
       tb = Object.assign({}, tbAll, { url: newBlobUrl }); // 新窗口=改写后的页面（与面板里同一份）
       node = fr;
@@ -352,10 +398,14 @@ async function openFilePreview(name, sizeText) {
       fr.className = 'pv-frame'; fr.title = String(name); fr.src = u; // 不加 sandbox：内建查看器插件需要 unrestricted 帧
       node = fr; tb = Object.assign({}, tbAll, { url: u });
     } else if (kind === 'img') {
-      const u = URL.createObjectURL(await r.blob());
+      // r 只能读一次：svg 先取文本再自己包 blob（也顺便拿到源码面板要的原文）
+      const isSvg = /\.svg$/i.test(name);
+      const svgText = isSvg ? await r.text() : null;
+      const u = URL.createObjectURL(isSvg ? new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }) : await r.blob());
       newBlobUrl = u;
       const im = document.createElement('img');
       im.className = 'pv-img'; im.src = u; im.alt = String(name);
+      if (isSvg) im.__src = svgText;
       const g = pvImgGroup(name);
       im.addEventListener('click', () => openImageViewer(u, String(name).split('/').pop(), g && g.list, g && g.at));
       node = im; tb = Object.assign({}, tbAll, { url: u });
@@ -415,13 +465,14 @@ async function pvTextNode(name, sizeText, r) {
     n.__tb = q.fmt
       ? { popup: true, url: URL.createObjectURL(new Blob([pvMdDoc(html, name)], { type: 'text/html;charset=utf-8' })) }
       : { popup: true, url: pvTextUrl(text) };
+    n.__src = text;
     return n;
   }
   if (PV_PLAIN.test(low)) {
     const wrap = document.createElement('div');
     wrap.className = 'msg other';
     wrap.innerHTML = '<div class="bubble-ai pv-doc">' + esc(text) + '</div>';
-    const n = wrap.firstChild; n.__tb = { popup: true, url: pvTextUrl(text) };
+    const n = wrap.firstChild; n.__tb = { popup: true, url: pvTextUrl(text) }; n.__src = text;
     return n;
   }
   const frag = document.createDocumentFragment();
@@ -441,6 +492,7 @@ async function pvTextNode(name, sizeText, r) {
   holder.className = 'pv-plain';
   holder.appendChild(frag);
   holder.__tb = { popup: true, url: pvTextUrl(text) }; // 新窗口用全文，不受面板截断影响
+  holder.__src = text; // 源码面板同样给全文
   return holder;
 }
 
@@ -516,6 +568,7 @@ document.getElementById('pv-max').addEventListener('click', () => {
   const max = document.body.classList.toggle('pv-max');
   pvSetMaxUI(max);
 });
+document.getElementById('pv-src').addEventListener('click', pvToggleSrc);
 document.getElementById('pv-refresh').addEventListener('click', () => {
   if (typeof pvState.reload === 'function') { pvState.reload(); return; }
   const f = document.getElementById('pv-body').querySelector('iframe');
