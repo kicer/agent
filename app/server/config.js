@@ -83,7 +83,7 @@ const DEFAULTS = {
   // allow_private=false 开 SSRF 防护：目标主机名解析到回环/私有/链路本地地址即拒绝（重定向逐跳复查）；
   // 确需抓内网服务再显式开 true（注意 DNS 重绑定属残余风险）。
   fetch: { timeout_ms: 30000, max_bytes: 1048576, max_chars: 12000, max_chars_hard: 64000, allow_private: false },
-  // auto_compress_tokens：本轮 In token 峰值 ≥ 此值时推送「自动压缩」提议（0=关）。
+  // auto_compress_tokens：本轮 In token 峰值 ≥ 此值时推送「自动压缩」提议（0=关，默认关）。
   // auto_complete_ms：held（保持中）超过此时长自动收口为 completed（0=关）。key 非独占后 held 不占任何资源，
   //   收口是纯视觉动作：历史/绑定不动，再发言照常由 completed 分支续跑（见 engine.sweepHeldTimeouts）。
   // 历史重放占位裁剪（llm.buildMessages）：trim.rules 逐条声明「哪个工具、参数侧还是回执侧、
@@ -93,7 +93,7 @@ const DEFAULTS = {
   //   turns  = 这一行之后又来了几条真人消息（role=user 且 type 为空，「后面又来了几条真人消息」）
   // 所以 turns:1 = 回合内绝不裁、跨过用户回合边界才裁（避免长回合里模型反复重读同一个文件）。
   // 这里是默认策略的唯一来源：config.yml 写了 trim.rules 就整体替换（写 [] = 全关）。
-  agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 60000, auto_complete_ms: 1800000, trim: {
+  agent: { temperature: 1.0, max_tool_iterations: 100, max_retries: 2, language: 'Simplified Chinese', auto_compress_tokens: 0, auto_complete_ms: 1800000, trim: {
     min_chars: 600,
     rules: [
       // 参数正文只是写盘时的快照：不带 turns，回合内也照裁（省的是每轮重发整个文件）

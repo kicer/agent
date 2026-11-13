@@ -46,7 +46,7 @@ agent:
   max_tool_iterations: 100                         # 单轮最大迭代数（含工具调用）
   max_retries: 2                                   # 上游失败重试次数
   language: "Simplified Chinese"                   # 强制回复语言；留空不限
-  auto_compress_tokens: 60000                      # In token 超此值弹「自动压缩」提议；0=关
+  auto_compress_tokens: 0                          # In token 超此值弹「自动压缩」提议；0=关（默认关）
   # 历史重放占位裁剪（省 token）：把「可再生的重负载」换成单行占位再发给上游
   #（DB/UI 不动，盘上可重读/重抓）。两个距离条件**同时满足**才裁：
   #   rounds = 这一行之后又出现了几条 AI 回复   （「后面 AI 又说了几句话」）
