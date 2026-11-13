@@ -910,8 +910,9 @@
     // 全部成功不再弹提示(卡片已完成态即反馈);有失败才提醒
     if (errCount) toast('已上传 ' + done + ' 个，失败 ' + errCount + ' 个');
     loadFiles();
-    // 桌面端左栏文件树是新的浏览入口，上传后要同步（旧面板只在手机端用）
-    if (typeof window.refreshFileTree === 'function') window.refreshFileTree();
+    // 桌面端左栏文件树是新的浏览入口，上传后要同步（旧面板只在手机端用）；
+    // 用 reloadFileTree 保留展开与勾选，refreshFileTree 会把用户展开的目录全收起来
+    if (typeof window.reloadFileTree === 'function') window.reloadFileTree();
     // 1.2s 后收起进度条(还有别的批次在传就不收)
     setTimeout(() => {
       if (uploadBatches.size) return;

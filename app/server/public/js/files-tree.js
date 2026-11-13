@@ -452,6 +452,7 @@
   // 侧栏底部「文件树」图标 → 切到这个面板（由 files.js 的 setDrawerPane 调用）。
   window.showFileTree = function () {
     ensureShell();
+    invalidate(true); // 切回面板一律重拉已展开的目录，不拿上次的缓存糊弄（后台只标脏的也在这里补上）
     renderBody();
   };
 
@@ -460,6 +461,23 @@
     invalidate(false);
     const drawer = $('drawer');
     if (drawer && drawer.classList.contains('drawer-mode-files')) renderBody();
+  };
+
+  // 按需刷新（一轮跑完 / 回前台 / 断线重连）：保留展开与勾选，只重拉已展开的目录。
+  // 不在文件树面板时只标脏不渲染，等切回来由 showFileTree 重新拉。
+  let reloadTimer = 0, reloadAt = 0, reloading = false;
+  window.reloadFileTree = function () {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(async function () {
+      if (Date.now() - reloadAt < 1000) return; // 刚刷过：多路触发(done/visibility/focus/resync)合并掉
+      if (reloading) return; // 上一轮还在渲，跳过（它读到的就是刚清过的缓存）
+      reloadAt = Date.now();
+      invalidate(true);
+      const drawer = $('drawer');
+      if (!drawer || !drawer.classList.contains('drawer-mode-files')) return;
+      reloading = true;
+      try { await renderBody(); } finally { reloading = false; }
+    }, 250);
   };
 
   (function init() {

@@ -473,6 +473,9 @@
       state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
       updateScrollBottomBtn();
       loadSessionList();
+      // 一轮完整跑完（agent 循环退出才发 done）：工具/技能产物可能新增或改名，文件树就地刷新；
+      // 不在文件树面板时 reloadFileTree 只标脏，等切回去再重拉
+      if (typeof window.reloadFileTree === 'function') window.reloadFileTree();
     });
     // 服务端首次交互后自动生成的标题（finalize 后约 1s 到达）：即时刷新顶栏 + 重拉会话列表（PC 常驻侧边栏/移动抽屉）
     es.addEventListener('title', ev => {
