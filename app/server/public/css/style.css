@@ -1559,11 +1559,11 @@ label.icon-btn { cursor: pointer; }
   #scrim { display: none !important; }
 
   /* 对话内容限宽居中 */
-  #chat-view { padding: 16px 32px 8px; }
+  #chat-view { padding: 16px 20px 8px; }
   #chat-view > * { width: 100%; max-width: 860px; margin-left: auto; margin-right: auto; }
 
   /* 输入区与会话列同宽、居中 */
-  footer { padding-left: 32px; padding-right: 32px; }
+  footer { padding-left: 20px; padding-right: 20px; }
   footer > * { max-width: 860px; margin-left: auto; margin-right: auto; }
 
   /* toast 相对会话区(而非整个视口)居中 */
