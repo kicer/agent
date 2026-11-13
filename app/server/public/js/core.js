@@ -223,7 +223,7 @@
     c.innerHTML = '';
     c.appendChild(title);
     // 标签页标题跟着会话走：切会话/重命名/自动生成标题都会走到这里
-    document.title = state.sessionTitle ? state.sessionTitle + ' · Agent' : 'Agent 任务台';
+    document.title = state.sessionTitle || 'Agent 任务台';
   }
 
   // ---------- 模式切换已移除：新建会话固定用 state.mode（secretary），助手类型不再占顶部 icon
