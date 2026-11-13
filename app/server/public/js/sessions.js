@@ -201,12 +201,20 @@
     try { history.replaceState(null, '', url); } catch (_) {}
   }
 
+  // 收起预览：桌面分栏(#pv-pane，含 Git 面板)与窄屏全屏浮层都要收。
+  // pvCloseDoc 内部会 vcsSetMode(false)，Git 面板跟着一起落下。
+  function closePreviewAll() {
+    if (typeof pvCloseDoc === 'function') pvCloseDoc();
+    const fs = document.getElementById('fs-viewer');
+    if (fs && !fs.classList.contains('hidden') && typeof closeFullscreen === 'function') closeFullscreen();
+  }
+
   async function openSession(id) {
       closeStream();
       removeTyping();
       setFilesPanel(false); // 会话切换,收起文件面板防旧列表残留
-      // 预览分栏故意不关：它现在是「随手看参考」的第三列，切会话时关掉会让用户反复重开。
-      // 保留已渲染的内容（静态文件，不存在跨会话越权），点新会话的文件会自然覆盖。
+      // 切会话也要收起预览与 Git：里面是上一个会话的文件/仓库，留在旁边容易被当成新会话的
+      closePreviewAll();
       state.sessionId = id;
       state.status = '';
       state.modelId = '';
@@ -322,6 +330,7 @@
     closeStream();
     removeTyping();
     setFilesPanel(false); // 新建会话,文件面板随之收起
+    closePreviewAll(); // 预览/Git 都属于上一个会话,新建时一并收起
     state.sessionId = null;
     state.sessionTitle = '';
     state.sessionType = 'secretary';
@@ -346,6 +355,7 @@
     userPaused = false;
     renderAttachChips();
     clearUploadCards();
+    renderDrawerList(); // sessionId 已置空，重画抽屉把旧会话的选中态清掉
     syncUrl();
     setView('welcome');
     $('chat-view').innerHTML = '';
