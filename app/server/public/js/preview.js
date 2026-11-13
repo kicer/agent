@@ -512,6 +512,49 @@ function pvMdDoc(html, name) {
 }
 function pvTextUrl(text) { return URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' })); }
 
+// 代码/配置/数据渲染：行号 + Prism 着色。桌面（pvTextNode）与移动端（pvRenderLegacy）共用——
+// 移动端原来只 esc 成纯文本，同一个文件在手机上没行号也没颜色。
+function pvCodeNode(text, name) {
+  const frag = document.createDocumentFragment();
+  let bodyText = text;
+  if (text.length > PV_TEXT_MAX) {
+    bodyText = text.slice(0, PV_TEXT_MAX);
+    const tip = document.createElement('div');
+    tip.className = 'pv-trunc';
+    tip.textContent = '文件较大，仅预览前 ' + Math.round(PV_TEXT_MAX / 1024) + ' KB，完整内容请下载查看。';
+    frag.appendChild(tip);
+  }
+  // 逐行渲染以便左侧打行号（视觉同 Git 面板的 .vcs-line）。
+  // 超过 PV_CODE_MAX 行只渲染前段，剩下的交代一句——几万个逐行节点会让面板卡到没法滚。
+  const lines = bodyText.split('\n');
+  const total = lines.length;
+  const shown = total > PV_CODE_MAX ? lines.slice(0, PV_CODE_MAX) : lines;
+  const code = document.createElement('div');
+  code.className = 'pv-code';
+  code.style.setProperty('--nw', Math.max(2, String(shown.length).length) + 'ch'); // 行号列宽按最大行号位数
+  const rows = [];
+  const hl = pvHighlightCode(shown.join('\n'), name); // 整块高亮再按行拆，跨行 token 才不会花
+  const parts = hl ? pvSplitHighlighted(hl) : null;
+  const useHl = parts && parts.length === shown.length; // 行数对不上就退回纯文本，不让行号错位
+  for (let i = 0; i < shown.length; i++) {
+    // 行号交给 CSS counter（.pv-cl::before）生成：伪元素不进选区，复制不会把行号带走。
+    // 代码必须包在 .c 里：裸文本在 flex 容器里是匿名 flex 项，浏览器会折叠它的前导空白。
+    rows.push('<div class="pv-cl"><span class="c">' + (useHl ? parts[i] : esc(shown[i])) + '</span></div>');
+  }
+  code.innerHTML = rows.join('');
+  frag.appendChild(code);
+  if (total > PV_CODE_MAX) {
+    const tip2 = document.createElement('div');
+    tip2.className = 'pv-trunc';
+    tip2.textContent = '文件较大，仅显示前 ' + PV_CODE_MAX + ' 行（共 ' + total + ' 行），完整内容请下载查看。';
+    frag.appendChild(tip2);
+  }
+  const holder = document.createElement('div');
+  holder.className = 'pv-plain';
+  holder.appendChild(frag);
+  return holder;
+}
+
 // 桌面文本渲染：md 走气泡 markdown；txt/log 原文排版；代码/配置/数据等宽 pre；二进制嗅探回退占位卡
 async function pvTextNode(name, sizeText, r) {
   const text = await r.text();
@@ -542,43 +585,7 @@ async function pvTextNode(name, sizeText, r) {
     const n = wrap.firstChild; n.__tb = { popup: true, url: pvTextUrl(text) }; n.__src = text;
     return n;
   }
-  const frag = document.createDocumentFragment();
-  let bodyText = text;
-  if (text.length > PV_TEXT_MAX) {
-    bodyText = text.slice(0, PV_TEXT_MAX);
-    const tip = document.createElement('div');
-    tip.className = 'pv-trunc';
-    tip.textContent = '文件较大，仅预览前 ' + Math.round(PV_TEXT_MAX / 1024) + ' KB，完整内容请下载查看。';
-    frag.appendChild(tip);
-  }
-  // 代码/配置/数据：逐行渲染以便左侧打行号（视觉同 Git 面板的 .vcs-line）。
-  // 超过 PV_CODE_MAX 行只渲染前段，剩下的交代一句——几万个逐行节点会让面板卡到没法滚。
-  const lines = bodyText.split('\n');
-  const total = lines.length;
-  const shown = total > PV_CODE_MAX ? lines.slice(0, PV_CODE_MAX) : lines;
-  const code = document.createElement('div');
-  code.className = 'pv-code';
-  code.style.setProperty('--nw', Math.max(2, String(shown.length).length) + 'ch'); // 行号列宽按最大行号位数
-  const rows = [];
-  const hl = pvHighlightCode(shown.join('\n'), name); // 整块高亮再按行拆，跨行 token 才不会花
-  const parts = hl ? pvSplitHighlighted(hl) : null;
-  const useHl = parts && parts.length === shown.length; // 行数对不上就退回纯文本，不让行号错位
-  for (let i = 0; i < shown.length; i++) {
-    // 行号交给 CSS counter（.pv-cl::before）生成：伪元素不进选区，复制不会把行号带走。
-    // 代码必须包在 .c 里：裸文本在 flex 容器里是匿名 flex 项，浏览器会折叠它的前导空白。
-    rows.push('<div class="pv-cl"><span class="c">' + (useHl ? parts[i] : esc(shown[i])) + '</span></div>');
-  }
-  code.innerHTML = rows.join('');
-  frag.appendChild(code);
-  if (total > PV_CODE_MAX) {
-    const tip2 = document.createElement('div');
-    tip2.className = 'pv-trunc';
-    tip2.textContent = '文件较大，仅显示前 ' + PV_CODE_MAX + ' 行（共 ' + total + ' 行），完整内容请下载查看。';
-    frag.appendChild(tip2);
-  }
-  const holder = document.createElement('div');
-  holder.className = 'pv-plain';
-  holder.appendChild(frag);
+  const holder = pvCodeNode(text, name);
   holder.__tb = { popup: true, url: pvTextUrl(text) }; // 新窗口用全文，不受面板截断影响
   holder.__src = text; // 源码面板同样给全文
   return holder;
@@ -622,15 +629,16 @@ async function pvRenderLegacy(name, r, my) {
     openImageViewer(u, name, g && g.list, g && g.at);
   } else {
     const text = await r.text();
-    let cls = 'bubble-ai', html;
-    if (PV_MD.test(name)) {
-      const q = mdHtml(text);
-      html = q.html;
-      if (q.fmt) cls += ' md';
-      html = rewriteMdImageSrcs(html, name);
-    } else {
-      html = esc(text);
+    if (!PV_MD.test(name)) {
+      // 代码/配置/数据：与桌面同一套行号 + Prism 着色（原来在手机上只是纯文本）
+      pvOverlayShow(pvCodeNode(text, name), { bar: true, name: name, source: text });
+      return;
     }
+    const q = mdHtml(text);
+    let cls = 'bubble-ai';
+    let html = q.html;
+    if (q.fmt) cls += ' md';
+    html = rewriteMdImageSrcs(html, name);
     const wrap = document.createElement('div');
     wrap.className = 'msg other';
     wrap.innerHTML = '<div class="' + cls + '">' + html + '</div>';

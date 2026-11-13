@@ -1680,6 +1680,10 @@ body.pv-max .pv-pre { max-width: none; } /* 放大时源码面板同样铺满 */
 }
 /* 放大预览时铺满：#pv-pane 已经是全屏，内容别再卡在 920px 的阅读宽度里 */
 body.pv-max .pv-code { max-width: none; padding-left: 16px; padding-right: 16px; }
+/* 窄屏（手机）：行号列收窄，别把正文宽度挤掉 */
+@media (max-width: 959px) {
+  .pv-cl::before { width: 28px; margin-right: 6px; padding-right: 4px; }
+}
 /* Prism token 配色（GitHub 亮色系）：代码预览、md 围栏代码块、Git 面板 diff 共用 */
 :is(.pv-code, .pv-doc, .vcs-line) :is(.token.comment, .token.prolog, .token.doctype, .token.cdata) { color: #6a737d; font-style: italic; }
 :is(.pv-code, .pv-doc, .vcs-line) .token.punctuation { color: #24292e; }
