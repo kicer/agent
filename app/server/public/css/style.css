@@ -1386,7 +1386,7 @@ body.voice-active .scroll-bottom-btn { display: none; }
 
 /* 文件预览沉浸模式：40px 操作条 + 全宽内容。内容从条下开始，不会叠在页面自己的顶部按钮上；
    宽度一点不让（手机横向最贵），只牺牲一条操作栏的高度。 */
-#fs-viewer.fs-bar { display: flex; flex-direction: column; padding: 0; overflow: auto; background: var(--page); }
+#fs-viewer.fs-bar { display: flex; flex-direction: column; padding: 0; overflow: hidden; background: var(--page); }
 #fs-viewer.fs-bar .fs-actions {
   position: sticky; top: 0; z-index: 1;
   flex: none; width: 100%;
@@ -1432,7 +1432,8 @@ body.voice-active .scroll-bottom-btn { display: none; }
 #fs-body .tool-card pre { max-height: 65vh; }
 
 /* HTML 预览：沙箱 iframe 铺满全屏查看器 */
-.fs-html-frame { width: 100%; height: 100%; min-height: 70vh; border: 0; background: var(--bg-fff); border-radius: 12px; }
+/* iframe 默认是 inline：不改成 block 会在底部留一条行盒基线间隙（手机端滑动时露出白条） */
+.fs-html-frame { display: block; width: 100%; height: 100%; min-height: 70vh; border: 0; background: var(--bg-fff); border-radius: 12px; }
 /* 图片预览：fs-viewer 居中缩放显示原图，大图可滚动 */
 .fs-img-frame { display: block; max-width: 100%; max-height: 80vh; margin: 0 auto; border-radius: 8px; object-fit: contain; background: var(--bg-fff); }
 
