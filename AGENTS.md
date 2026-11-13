@@ -180,6 +180,10 @@ curl -s http://127.0.0.1:8090/api/health
   由 `server.js` 传函数进去。
 - 前端是**无构建的经典脚本**：新增文件要同时改 `app/server/public/index.html` 的 `<script>`
   顺序（共享全局作用域，顺序即依赖）。
+- 前端图标统一走 `index.html` 顶部的 `<symbol>` sprite：引用写成
+  `<svg class="…" viewBox="0 0 24 24"><use href="#i-xxx"/></svg>`，形状只改 sprite 里那一行，
+  尺寸与描边归各处 CSS（`.ic` / `.tree-act svg` 等）。加图标先加 `<symbol id="i-xxx">`，
+  漏了不报错、界面只是空白。
 
 ## 常见任务去哪改
 
