@@ -56,6 +56,21 @@
     '</div>';
   }
 
+  // 上下文卡片：画像快照 / 渠道说明 / 开场记忆这类「只发给模型看的注入行」，
+  // 统一渲染成可折叠的系统卡片，而不是伪装成用户发言。
+  function ctxCardHtml(title, text, id) {
+    const r = mdHtml(text || ''); // 与摘要卡片同样走 markdown，保持四张卡片观感一致
+    return '<details class="msg-ctx"' + (id ? ' id="' + id + '"' : '') + '><summary>' + esc(title) + '</summary>'
+      + '<div class="msg-ctx-body"><div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div></div></details>';
+  }
+
+  // 画像快照是每轮请求拼在最前的上下文（不在 messages 表里）。历史是懒加载的，首屏只拉最近几条，
+  // 所以不能一打开就插，得等翻到最早、确认没有更早的消息了再放到最顶。
+  function ensureProfileCard(box) {
+    if (!state.profileSnapshot || !box || box.querySelector('#ctx-profile')) return;
+    box.insertAdjacentHTML('afterbegin', ctxCardHtml('画像快照', state.profileSnapshot, 'ctx-profile'));
+  }
+
   function userMsgHtml(m) {
     const p = parseUploadNotice(m.content);
     const attach = p.files && p.files.length
@@ -72,10 +87,14 @@
   function aiMsgHtml(m) {
     const text = (m.content || '').trim();
     const reason = (m.reasoning || '').trim();
-    if (!text && !reason) return null; // 纯工具调用的应答:不渲染气泡,工具卡由 appendToolCardsFromAssistant 铺
+    const errAck = m.type === 'errAck';
+    // 纯工具调用的应答不渲染气泡（工具卡由 appendToolCardsFromAssistant 铺），但 errAck 要留个标记
+    if (!text && !reason && !errAck) return null;
+    const note = errAck
+      ? '<div class="msg-note">工具调用参数无效，本轮已从上下文移除，模型会重新发起</div>' : '';
     const think = reason ? thinkPanelHtml(m.reasoning) : '';
     const bubble = text ? (() => { const r = mdHtml(m.content); return '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>'; })() : '';
-    return '<div class="msg other">' + think + bubble + actionsHtml(m.created_at, m.content || '', m.id, m.usage) + '</div>';
+    return '<div class="msg other">' + note + think + bubble + actionsHtml(m.created_at, m.content || '', m.id, m.usage) + '</div>';
   }
   // 思考过程折叠面板:summary 固定名「思考过程」+ 右侧复制按钮,body 展示推理全文。
   // 历史重渲染默认收起(与原设计一致),流式阶段的展开行为由 ensureStreamThinkPanel 显式控制。
@@ -118,15 +137,7 @@
 
   // 「压缩」摘要卡片：流式收尾与历史重渲染共用的头部（图标 + 标题 + 右侧说明）。
   function summaryHeaderHtml() {
-    return '<summary>' +
-      '<svg class="sum-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">' +
-        '<ellipse cx="12" cy="5" rx="8" ry="2.5"></ellipse>' +
-        '<path d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path>' +
-        '<path d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"></path>' +
-      '</svg>' +
-      '<span>上下文总结</span>' +
-      '<span class="sum-hint">后续对话以此为起点</span>' +
-    '</summary>';
+    return '<summary><span>上下文总结</span></summary>';
   }
 
   // 历史重渲染：被标记 type='summary' 的摘要消息渲染成摘要卡片（默认收起，点开可重现）。
@@ -322,7 +333,11 @@
   }
 
   function msgNode(m) {
-    if (m.role === 'user') return userMsgHtml(m);
+    if (m.role === 'user') {
+      if (m.type === 'channel_note') return ctxCardHtml('渠道上下文', m.content);
+      if (m.type === 'memory_note') return ctxCardHtml('开场记忆', m.content);
+      return userMsgHtml(m);
+    }
     // 被「压缩总结」标记的摘要消息：重渲染成摘要卡片，而不是普通 AI 气泡
     if (m.role === 'assistant') return m.type === 'summary' ? summaryMsgHtml(m) : aiMsgHtml(m);
     return null; // tool 结果不单独展示
@@ -431,9 +446,12 @@
     const prevTop = keepView ? box.scrollTop : 0;
     const followBottom = !keepView || !box.firstElementChild || isNearBottom();
     box.innerHTML = '';
+    state.profileSnapshot = (s && s.profile_snapshot) || '';
     appendMessagesDom(detail.messages || [], box).closeArc();
+    // 首屏就把历史拉完了（条数少）：直接上画像卡片；否则等上滑翻到最早再插
+    if (!detail.has_more) ensureProfileCard(box);
     if (!(detail.messages || []).length) {
-      box.innerHTML = '<div class="drawer-empty">描述你的需求，AI 会和你讨论并直接干活。</div>';
+      box.insertAdjacentHTML('beforeend', '<div class="drawer-empty">描述你的需求，AI 会和你讨论并直接干活。</div>');
     }
     state.chatHasMore = !!detail.has_more;
     state.chatOldestId = detail.oldest_id || null;
@@ -501,6 +519,7 @@
       while (frag.firstChild) box.insertBefore(frag.firstChild, anchor);
       box.scrollTop = box.scrollHeight - prevH + prevTop;
       state.chatHasMore = !!detail.has_more;
+      if (!detail.has_more) ensureProfileCard(box); // 翻到最早了：画像卡片补到流最顶
       if (detail.oldest_id) state.chatOldestId = detail.oldest_id;
       state.chatLoadedCount += (detail.messages || []).length;
       // 旧页太短导致补完后仍贴在触发区：继续拉下一页，避免卡在顶部要再动一下才加载

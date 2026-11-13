@@ -225,6 +225,36 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 流式阶段给一点视觉提示：边色稍亮，收尾（assistant_message）后去除 */
 .msg-think.streaming { border-color: #d8e0f5; }
 
+/* 上下文卡片：只发给模型看的注入行（画像快照 / 渠道说明 / 开场记忆）折叠展示，
+   视觉与压缩摘要卡片一致：淡蓝底、蓝边蓝字、三角箭头、虚线分隔，不用渐变/阴影 */
+.msg-ctx {
+  margin: 0 0 12px; border: 1px solid #dbe4fb; border-radius: 12px; overflow: hidden;
+  background: #f7f9ff;
+}
+.msg-ctx > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 12px; font-size: 13px; font-weight: 600; color: var(--active);
+}
+.msg-ctx > summary::-webkit-details-marker { display: none; }
+.msg-ctx > summary::before {
+  content: ''; flex: none; width: 0; height: 0; margin-left: 1px;
+  border-left: 5px solid var(--active); border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  transition: transform .15s ease;
+}
+.msg-ctx[open] > summary::before { transform: rotate(90deg); }
+.msg-ctx-body {
+  /* 比标题区（#f7f9ff）再淡一档，分隔开又不跳色 */
+  border-top: 1px dashed #dbe4fb; background: #fbfcff;
+  padding: 10px 13px 12px;
+}
+.msg-ctx-body .bubble-ai { margin: 0; background: transparent; font-size: 14px; line-height: 1.7; }
+/* errAck：这一轮工具参数非法、已从上下文移除，气泡上方标一行 */
+.msg-note {
+  margin: 0 0 6px; padding: 3px 9px; border-radius: 6px;
+  background: #fff8c5; color: #9a6700; font-size: 12px;
+}
+
 /* 用户气泡:右侧,浅色背景,圆角矩形 */
 .bubble-user {
   background: var(--active-soft); color: var(--ink);

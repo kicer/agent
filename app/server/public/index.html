@@ -17,13 +17,12 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/css/style.css">
     <style>
-      /* 「压缩」摘要卡片：与 .msg-think 同族的折叠交互，但做成更醒目的蓝色调卡片；
-         流式收尾（live）和历史重渲染（type='summary' 消息）共用同一套样式。
-         live 阶段 open=true 展开阅读；历史重渲染默认收起。 */
+      /* 「压缩」摘要卡片：与 .msg-ctx（画像快照/渠道/记忆）同一套视觉——淡蓝底、蓝边蓝字、
+         三角箭头、虚线分隔。纯色不用渐变/阴影，折叠与展开同一底色。默认收起 */
       .msg-summary {
+        width: 100%; /* .msg.other 是 align-items:flex-start 的列 flex，不写就只撑标题那点宽 */
         margin: 0 0 8px; border: 1px solid #dbe4fb; border-radius: 12px; overflow: hidden;
-        background: linear-gradient(180deg, #f7f9ff 0%, #ffffff 56%);
-        box-shadow: 0 1px 3px rgba(57, 100, 254, 0.08);
+        background: #f7f9ff;
       }
       .msg-summary > summary {
         list-style: none; cursor: pointer; user-select: none;
@@ -37,13 +36,12 @@
         transition: transform .15s ease;
       }
       .msg-summary[open] > summary::before { transform: rotate(90deg); }
-      .msg-summary .sum-ic { flex: none; width: 15px; height: 15px; }
-      .msg-summary .sum-hint { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--gray); }
       .msg-summary-body {
-        border-top: 1px dashed #dbe4fb; background: var(--page);
+        /* 比标题区（#f7f9ff）再淡一档，分隔开又不跳色 */
+        border-top: 1px dashed #dbe4fb; background: #fbfcff;
         padding: 10px 13px 12px;
       }
-      .msg-summary-body .bubble-ai { margin: 0; font-size: 14px; line-height: 1.7; }
+      .msg-summary-body .bubble-ai { margin: 0; background: transparent; font-size: 14px; line-height: 1.7; }
       /* 「仅摘要」后摘要之前的旧历史：UI 保留但变淡，尾部附存档说明（不再发给 AI） */
       .msg-archived { opacity: .55; }
       .archived-note {

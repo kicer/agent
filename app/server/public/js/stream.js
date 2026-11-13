@@ -308,13 +308,12 @@
           // 「压缩」总结回合的最终答复（后端已保证只有压缩回合里首条无工具调用的收尾回复才带 is_summary，
           // 中间 AI 回复已按普通消息渲染）：把已流式输出的气泡装进摘要卡片（与历史重渲染同款样式），
           // 并标记 wrap 为 msg-summary-live：archiveDomBeforeSummary 据此定位摘要卡片，之前的旧消息收进存档容器。
-          // open=true 让用户立刻读到；后续轮次不自动折起（卡片可手动点 summary 收起）。
+          // 摘要卡片默认收起（与画像快照/渠道/记忆同一种交互），用户想读时点开。
           // 防重：同一 streamWrap 已有卡片则不再重复插入（保护 SSE 重连重发等场景）。
           if (d.is_summary && hasText && state.streamWrap && !state.streamWrap.querySelector('.msg-summary')) {
             const wrap0 = state.streamWrap;
             const det = document.createElement('details');
             det.className = 'msg-summary';
-            det.open = true;
             det.innerHTML = summaryHeaderHtml() + '<div class="msg-summary-body"></div>';
             const body = det.querySelector('.msg-summary-body');
             const bubble = wrap0.querySelector('.bubble-ai');
