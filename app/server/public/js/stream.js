@@ -98,13 +98,19 @@
   // ---------- 待发送条幅 ----------
   // 队列本身在服务端（engine.pendings），关页面/换设备/重连都不丢；这里只负责画。
   // 每条一行；只有队首有「干预 / 立即发送」，其余显示排队中（不能越过前一条先发）。
+  // 两条操作各配一枚图标：笔=撤回编辑（正文退回输入框），垃圾桶=直接丢弃这条
+  const SQ_EDIT_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+  const SQ_TRASH_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+
   function renderSendQueue() {
     const box = $('send-queue');
     if (!box) return;
     const list = state.pending || [];
+    // 条幅增减会改 chat-view 的 clientHeight，浏览器不会替你补滚动：
+    // 改动前先记住是不是贴底，贴底就强制滚回去，否则最后一条消息被裁在视口外。
+    const keepBottom = typeof isNearBottom === 'function' ? isNearBottom() : false;
     box.classList.toggle('hidden', !list.length);
-    if (!list.length) { box.innerHTML = ''; return; }
-    box.innerHTML = list.map((it, i) => {
+    box.innerHTML = list.length ? list.map((it, i) => {
       const busy = it.mode === 'interject' || it.mode === 'now';
       const tag = it.mode === 'now' ? '<span class="sq-tag">正在中断…</span>'
         : it.mode === 'interject' ? '<span class="sq-tag">等待当前步骤…</span>'
@@ -116,11 +122,14 @@
       return '<div class="sq-item' + (busy ? ' sq-busy' : '') + '" data-qid="' + esc(it.id) + '">' +
         '<span class="sq-text" title="' + esc(it.content) + '">' + esc(it.content) + '</span>' +
         tag + acts +
-        '<button class="sq-x" data-act="cancel" title="取消这条">×</button></div>';
-    }).join('');
+        '<button class="sq-act" data-act="recall" title="撤回到输入框，重新编辑" aria-label="撤回编辑">' + SQ_EDIT_ICON + '</button>' +
+        '<button class="sq-act" data-act="cancel" title="删除这条" aria-label="删除这条">' + SQ_TRASH_ICON + '</button></div>';
+    }).join('') : '';
+    // 双帧补滚：hidden 类与 textarea 高度都是本帧生效，rAF 后再跟一次才稳
+    if (keepBottom && typeof scrollBottom === 'function') { scrollBottom(); requestAnimationFrame(scrollBottom); }
   }
 
-  // 条幅按钮：× 取消；干预/立即发送升级队首（服务端只在安全边界真正投递）。
+  // 条幅按钮：笔=撤回编辑（正文退回输入框），垃圾桶=直接丢弃；干预/立即发送升级队首。
   async function onSendQueueClick(e) {
     const btn = e.target.closest('#send-queue button[data-act]');
     if (!btn || !state.sessionId) return;
@@ -128,18 +137,32 @@
     const qid = item && item.dataset.qid;
     if (!qid) return;
     const act = btn.dataset.act;
+    const isDel = act === 'recall' || act === 'cancel'; // 两者都是删队列项，区别只在要不要回填
+    // 撤回文本必须在请求前取：DELETE 的响应里这条已经没了
+    const draft = act === 'recall' ? ((state.pending || []).find(x => x.id === qid) || {}).content || '' : '';
     btn.disabled = true;
     try {
       const base = '/api/sessions/' + state.sessionId + '/pending/' + encodeURIComponent(qid);
-      const r = act === 'cancel' ? await req('DELETE', base) : await req('POST', base, { action: act });
+      const r = isDel ? await req('DELETE', base) : await req('POST', base, { action: act });
       if (r && Array.isArray(r.pending)) { state.pending = r.pending; renderSendQueue(); }
-      if (act === 'cancel') return;
-      if (r && r.delivered) return; // 回合已结束：服务端直接投递，等 user_message 画气泡
-      toast(act === 'now' ? '已请求中断，随后立即发送' : '已请求干预：当前步骤结束后插话');
+      if (isDel) { if (draft) recallToInput(draft); return; }
+      // 干预/立即发送：条幅自己会变成「等待当前步骤…」/「正在中断…」，不再弹 toast
     } catch (err) {
       toast('操作失败：' + err.message);
       renderSendQueue();
     }
+  }
+
+  // 撤回：塞回输入框（撤回段在前、已有草稿在后，与发送失败的兜底同序），光标停在撤回段末尾
+  function recallToInput(text) {
+    const ta = $('msg-input');
+    if (!ta) return;
+    ta.value = text + (ta.value ? '\n' + ta.value : '');
+    autosize();
+    updateSendBtn();
+    ta.focus({ preventScroll: true }); // 别让浏览器为露出输入框去滚页面，聊天区的位置由下面统一管
+    try { ta.setSelectionRange(text.length, text.length); } catch (_) {}
+    if (typeof scrollBottom === 'function') { scrollBottom(); requestAnimationFrame(scrollBottom); }
   }
 
   const sendQueueBox = $('send-queue');
@@ -519,7 +542,7 @@
       try { text = decodeURIComponent(escape(atob(copyBtn.dataset.b64 || ''))); } catch (_) {}
     }
     const ok = await copyText(text);
-    toast(ok ? '已复制' : '复制失败');
+    if (!ok) toast('复制失败');
     if (ok) {
       copyBtn.classList.add('copied');
       setTimeout(() => copyBtn.classList.remove('copied'), 1200);
@@ -540,7 +563,6 @@
     btn.disabled = true;
     try {
       await req('DELETE', '/api/sessions/' + state.sessionId + '/messages/' + msgId);
-      toast('已删除');
       // 按已加载量分页重拉（长会话删一条不该退回全量重建）
       const detail = await req('GET', '/api/sessions/' + state.sessionId + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount));
       if (state.view === 'chat') renderDetail(detail);
