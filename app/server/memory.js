@@ -118,7 +118,7 @@ function tokenScore(fl, t) {
   const frac = hit / (t.length - 1);
   return frac >= 0.5 ? frac * 0.9 : 0;
 }
-function searchFragments(db, user, query, count) {
+function searchFragments(db, user, query, count, excludeSid) {
   const toks = String(query || '').toLowerCase().split(/[\s,，、;；。.!！?？]+/).filter(Boolean).slice(0, 8);
   if (!toks.length) return '';
   const lim = Math.max(1, Math.min(30, Number(count) || 10));
@@ -132,6 +132,23 @@ function searchFragments(db, user, query, count) {
     for (const t of toks) sum += tokenScore(fl, t);
     if (sum > 0) hits.push({ r: r, score: sum / toks.length, i: i });
   });
+  // 未收口的会话没有碎片，标题是它唯一可检索的记忆：同样打分、同样渲染、同样排序，
+  // 不另起段落（否则模型会把「标题命中」当另一类东西，反而不信）。
+  const pend = db.prepare(
+    "SELECT id, title, updated_at FROM sessions WHERE user = ? AND journaled_at IS NULL AND TRIM(title) != ''"
+  ).all(String(user || ''));
+  pend.forEach((s, i) => {
+    if (excludeSid && s.id === excludeSid) return;
+    const fl = String(s.title).toLowerCase();
+    let sum = 0;
+    for (const t of toks) sum += tokenScore(fl, t);
+    if (sum > 0) {
+      hits.push({
+        r: { session_id: s.id, day: dayString(s.updated_at), text: s.title, last_active_at: s.updated_at },
+        score: sum / toks.length, i: rows.length + i
+      });
+    }
+  });
   if (!hits.length) return '';
   hits.sort((a, b) => b.score - a.score || a.i - b.i);
   const shown = hits.slice(0, lim);
@@ -143,14 +160,36 @@ function searchFragments(db, user, query, count) {
 
 // ---------- 读：日期索引 / 某天整天（只记得「大概哪天」时的翻页） ----------
 function daysIndex(db, user) {
-  return db.prepare(
-    'SELECT day, COUNT(*) n FROM memory_fragments WHERE user = ? GROUP BY day ORDER BY day DESC'
-  ).all(String(user || '')).map(r => '- ' + r.day + '（' + r.n + ' 条）');
+  const u = String(user || '');
+  const map = new Map();
+  for (const r of db.prepare('SELECT day, COUNT(*) n FROM memory_fragments WHERE user = ? GROUP BY day').all(u)) {
+    map.set(r.day, (map.get(r.day) || 0) + r.n);
+  }
+  // 未收口会话的日期也要进索引：那天干过活，只是还没落碎片，索引里不该整天消失。
+  // 日期一律走 dayString（业务时区 Asia/Shanghai），不交给 SQLite 的 localtime，避免容器 TZ 漂移。
+  for (const s of db.prepare(
+    "SELECT updated_at FROM sessions WHERE user = ? AND journaled_at IS NULL AND TRIM(title) != ''"
+  ).all(u)) {
+    const d = dayString(s.updated_at);
+    map.set(d, (map.get(d) || 0) + 1);
+  }
+  return [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
+    .map(e => '- ' + e[0] + '（' + e[1] + ' 条）');
 }
 function dayEntry(db, user, date) {
-  return db.prepare(
-    'SELECT ' + FRAG_COLS + FRAG_FROM + ' WHERE f.user = ? AND f.day = ? ORDER BY COALESCE(f.last_active_at, f.created_at)'
-  ).all(String(user || ''), String(date || '').trim()).map(renderFrag).join('\n\n');
+  const u = String(user || '');
+  const d = String(date || '').trim();
+  const rows = db.prepare(
+    'SELECT ' + FRAG_COLS + FRAG_FROM + ' WHERE f.user = ? AND f.day = ?'
+  ).all(u, d);
+  for (const s of db.prepare(
+    "SELECT id, title, updated_at FROM sessions WHERE user = ? AND journaled_at IS NULL AND TRIM(title) != ''"
+  ).all(u)) {
+    if (dayString(s.updated_at) !== d) continue;
+    rows.push({ session_id: s.id, day: d, text: s.title, last_active_at: s.updated_at });
+  }
+  rows.sort((a, b) => (Number(a.last_active_at) || 0) - (Number(b.last_active_at) || 0));
+  return rows.map(renderFrag).join('\n\n');
 }
 
 // ---------- 裁剪：day 为 ISO 串，字典序即日期序；默认永久存储为 no-op ----------

@@ -1757,7 +1757,7 @@ function toolRecall(ctx, args) {
     case 'search': {
       const q = String(args.query || '').trim();
       if (!q) throw new Error('op=search 需要 query（关键词；空格分隔多个词更好，如「身份证 水印」）');
-      const txt = memory.searchFragments(db, user, q, args.count);
+      const txt = memory.searchFragments(db, user, q, args.count, ctx.sessionId);
       return txt || '日记中无「' + q + '」相关记录。';
     }
     case 'days': {
