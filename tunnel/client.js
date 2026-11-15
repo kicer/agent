@@ -147,11 +147,15 @@ async function handleRequest(id, st) {
 }
 
 // ---------- 连接 / 重连 ----------
+// 日志只在状态变化时说：启动一条、连上一条、断开一条，重试过程完全静默
+// （和 MCP 服务一个风格：启动时报一次自己在哪，之后没人连也不刷屏）。
+let linked = false;      // 当前是否连着
+let everLinked = false;  // 是否连上过（区分首连和重连）
+
 function connect() {
   if (stopping) return;
   const sep = CFG.server.includes('?') ? '&' : '?';
   const url = CFG.server + sep + 'token=' + encodeURIComponent(CFG.token);
-  log('连接', CFG.server);
   ws = new WebSocket(url, {
     headers: { 'User-Agent': CFG.userAgent },
     handshakeTimeout: 20000,
@@ -160,29 +164,34 @@ function connect() {
 
   ws.on('open', () => {
     backoff = 1000;
-    log('已连接，暴露 ' + CFG.services.map(s => s.host + '→127.0.0.1:' + s.port).join(', '));
+    linked = true;
+    log(everLinked ? '已重新连接' : '已连接 ' + CFG.server);
+    everLinked = true;
   });
   ws.on('message', onMessage);
   ws.on('close', (code, reason) => {
     if (stopping) return;
-    log('断开 code=' + code + ' ' + (reason || '') + '，' + Math.round(backoff / 1000) + 's 后重连');
+    if (linked) {                 // 只在「连着 → 断开」这个跳变上说一次
+      linked = false;
+      log('断开' + (reason ? '：' + reason : '') + '，重连中');
+    }
     setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 30000);   // 指数退避，封顶 30s
   });
-  ws.on('error', (e) => log('连接错误', e.message));
+  ws.on('error', () => {});       // close 紧接着会来，不重复报
 }
 
 process.on('SIGINT', () => { stopping = true; log('退出'); try { ws && ws.close(1000, 'client shutdown'); } catch (_) {} process.exit(0); });
 process.on('SIGTERM', () => { stopping = true; process.exit(0); });
 
-// 启动自检：本地端口不通时早点说，别等服务器转发过来才报错
+// 启动：一条说清楚往哪连、暴露了什么（之后只在状态变化时再说）
+log('隧道 → ' + CFG.server + '（' + CFG.services.map(s => s.host + '→127.0.0.1:' + s.port).join(', ') + '）');
+
+// 本地端口不通时早点说（只报问题，正常不吭声）
 for (const s of CFG.services) {
-  const req = http.request({ host: '127.0.0.1', port: s.port, path: '/', method: 'HEAD', timeout: 3000 }, (res) => {
-    log('自检 ' + s.host + ' → 127.0.0.1:' + s.port + ' 可达（HTTP ' + res.statusCode + '）');
-    res.resume();
-  });
-  req.on('error', (e) => log('自检警告：127.0.0.1:' + s.port + ' 不可达（' + e.code + '），服务没起来？'));
-  req.on('timeout', () => { req.destroy(); log('自检警告：127.0.0.1:' + s.port + ' 超时'); });
+  const req = http.request({ host: '127.0.0.1', port: s.port, path: '/', method: 'HEAD', timeout: 3000 }, (res) => res.resume());
+  req.on('error', (e) => log('警告：127.0.0.1:' + s.port + ' 不可达（' + e.code + '），本地服务没起来？'));
+  req.on('timeout', () => { req.destroy(); log('警告：127.0.0.1:' + s.port + ' 超时'); });
   req.end();
 }
 

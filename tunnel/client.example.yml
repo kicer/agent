@@ -1,9 +1,13 @@
 # tunnel 本机端配置 —— 复制为 client.yml 后改（client.yml 不进版本库）
 
-# 服务器隧道地址：对外走 TLS 用 wss，本机自测用 ws://127.0.0.1:19000/tunnel
-server: "wss://agent.home.example.com/tunnel"
+# 服务器隧道地址，两种形态按需选：
+#   只有 IP（最省事，但要求服务器把 19000 映射到 0.0.0.0）
+#     ws://1.2.3.4:19000/tunnel        ← 明文，token 在公网裸奔，仅限内网/临时调试
+#   有域名 + 证书（推荐，前面套 nginx 反代）
+#     wss://tunnel.example.com/tunnel
+server: "ws://1.2.3.4:19000/tunnel"
 
-# 和服务器 server.yml 里的 token 一致
+# 和服务器 server.yml 里自动生成的 token 一致
 token: ""
 
 # 握手 UA：伪装成浏览器，降低被 DPI 盯上的概率。不写就用内置默认值
@@ -15,14 +19,14 @@ maxBodyMb: 64
 # 要暴露的本地服务：加服务 = 加一项，两边代码都不用动
 #   路由优先级：固定端口指定的 name → host 精确 → *.域名 通配 → "*" 兜底
 services:
-  - name: agent
-    host: agent.home.example.com
+  # 直接按 IP 访问时，请求的 Host 头就是那个 IP，用 "*" 兜底最省事（单服务形态）
+  - host: "*"
     port: 8090
 
-  # 没有域名时用 "*" 兜底：所有请求都给这一项（单服务形态）
-  # - host: "*"
+  # 有域名时按 Host 精确匹配，一个域名对一个服务
+  # - name: agent
+  #   host: agent.example.com
   #   port: 8090
-
   # - name: nas
-  #   host: nas.home.example.com
+  #   host: nas.example.com
   #   port: 5000

@@ -20,7 +20,7 @@
 ## 快速验证（本机，不碰 nginx）
 
 ```bash
-cd tunnel && npm install
+cd tunnel && npm install                # 国内慢就加 --registry=https://registry.npmmirror.com
 cp client.example.yml client.yml        # server 改成 ws://127.0.0.1:19000/tunnel，token 先留空
 node server.js &                        # 首次启动生成 server.yml，日志打印 TOKEN
 # 把 TOKEN 填进 client.yml 的 token，再：
