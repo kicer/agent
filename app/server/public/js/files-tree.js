@@ -19,6 +19,7 @@
   const SVG_DL = '<svg viewBox="0 0 24 24"><use href="#i-download"/></svg>';
   const SVG_DEL = '<svg viewBox="0 0 24 24"><use href="#i-trash"/></svg>';
   const SVG_REVEAL_SM = '<svg viewBox="0 0 24 24"><use href="#i-external-b"/></svg>';
+  const SVG_AT = '<span class="at-glyph">@</span>';
 
   let localCapable = false;     // local 启动器：才显示「在 Finder/终端中打开」
   let showHidden = false;
@@ -130,6 +131,8 @@
     }
     // 行内动作：服务器形态给「下载 / 删除」；local 本就跑在同一台机器上，
     // 「下载」到本地是多余的（用 Finder 直接看原文件更顺），所以换成「在 Finder 中显示」。
+    // @ 引用排最前：它是「往输入框送东西」的动作，和后面的下载 / Finder / 删除（对文件本身动手）分开
+    row.appendChild(actBtn('at', ent.type === 'dir' ? '引用此目录' : '引用到输入框', SVG_AT, false));
     if (ent.type === 'file' && !localCapable) row.appendChild(actBtn('download', '下载', SVG_DL, false));
     if (localCapable) row.appendChild(actBtn('reveal', '在 Finder 中显示', SVG_REVEAL_SM, false));
     row.appendChild(actBtn('delete', '删除', SVG_DEL, true));
@@ -380,6 +383,7 @@
       if (a === 'download') { if (typeof downloadFile === 'function') downloadFile(rel); }
       else if (a === 'delete') deleteNode(rel, isDir);
       else if (a === 'reveal') localAction('reveal', rel);
+      else if (a === 'at') insertPathRef(rel, isDir);
       return;
     }
     if (row.classList.contains('is-ignored') || row.dataset.type === 'link') return;
@@ -391,6 +395,30 @@
       // 窄屏的预览是全屏浮层：点完把抽屉收起（同点会话的行为），否则关预览后还压在抽屉上
       if (typeof openDrawer === 'function' && !window.matchMedia('(min-width: 960px)').matches) openDrawer(false);
     }
+  }
+
+  // @ 引用：把相对路径插到对话框光标处。插的是纯相对路径，不带 @ 前缀——
+  // @<会话id>/<rel> 是跨会话只读路径的语法（resolvePastPath），带上会被当成会话 id 而报错。
+  // 相对路径正是 read_file / list_directory 直接认的形态。
+  function insertPathRef(rel, isDir) {
+    const ta = $('msg-input');
+    if (!ta || !rel) return;
+    const txt = isDir ? rel + '/' : rel;
+    const s = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+    const e = ta.selectionEnd == null ? s : ta.selectionEnd;
+    const before = ta.value.slice(0, s);
+    const after = ta.value.slice(e);
+    // 前后补空格：粘在已有文字上会让路径和句子糊成一串，AI 切不开。
+    // 末尾（光标后无内容）也补一个，光标落在空格之后，接着打字不会和路径粘连。
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const tail = after ? (/^\s/.test(after) ? '' : ' ') : ' ';
+    ta.value = before + lead + txt + tail + after;
+    // 光标落在「路径 + 尾部空格」之后：末尾插入时继续打字不会和路径粘连（空格真起作用），
+    // 开头/中间插入时也停在插入块之后，与原文自然隔开。
+    const pos = (before + lead + txt + tail).length;
+    ta.focus();
+    try { ta.setSelectionRange(pos, pos); } catch (_) { /* 部分环境不支持，光标位置不强求 */ }
+    ta.dispatchEvent(new Event('input', { bubbles: true })); // 发送按钮状态 / 自动高度靠它跟上
   }
 
   // local 能力探测结果回来后才把「在 Finder/终端中打开」露出来（服务器形态永远隐藏）

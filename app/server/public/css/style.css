@@ -1172,6 +1172,7 @@ body.voice-active .scroll-bottom-btn { display: none; }
 .tree-act:hover { background: var(--border); color: var(--active); }
 .tree-act.danger:hover { background: var(--bg-fdf3f2); color: var(--fg-c0392b); }
 .tree-act svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tree-act .at-glyph { font-size: 13px; font-weight: 700; line-height: 1; }
 .tree-empty, .tree-loading, .tree-more { padding: 10px 12px; font-size: 12px; color: var(--gray); }
 
 /* 行内勾选框：hover 或已选中才淡入；但占位始终在，hover 时文件名不会左右跳。
