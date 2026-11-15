@@ -198,16 +198,16 @@ router.get('/:id', wrap((req, res) => {
     }
   }
 
-  const taskDir = engine.taskDirOf(session.id);
   // 定时任务状态（scheduler.js / schedule 工具；每会话至多一行，无则 null）。
   // 列表接口故意不带此字段，避免 N+1；前端进会话详情时才拉。
   const schedule = db.prepare(
     'SELECT cron_expr, prompt, next_run_at, last_run_at, last_status, last_note FROM scheduled_tasks WHERE session_id = ?'
   ).get(session.id) || null;
+  // 不再返回 files：文件树由 /api/files 按目录懒加载（routes/files.js），
+  // 这里全量递归扫一遍纯属浪费——曾让每次切会话多传 1.4MB（10544 个文件）。
   res.json({
     session,
     messages,
-    files: listTaskFiles(taskDir),
     schedule,
     running: !!(engine.getRun(session.id) || {}).looping,
     // 待投递队列（刷新/换设备后条幅能原样恢复）：只在服务端内存里，重启即空

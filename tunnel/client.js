@@ -9,6 +9,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
+const zlib = require('node:zlib');
 const YAML = require('yaml');
 const WebSocket = require('ws');
 
@@ -105,6 +106,11 @@ function onMessage(raw) {
   }
 }
 
+// gzip 阈值：小于 1KB 压了反而亏（gzip 头开销），超过 8MB 不进内存直接流式
+const COMPRESSIBLE = /^(text\/|application\/(json|javascript|xml|x-javascript)|image\/svg)/i;
+const GZ_MIN = 1024;
+const GZ_MAX = 8 * 1024 * 1024;
+
 async function handleRequest(id, st) {
   const { meta, chunks, ac } = st;
   const svc = pickService(meta);
@@ -132,9 +138,30 @@ async function handleRequest(id, st) {
     });
     const outHeaders = {};
     r.headers.forEach((v, k) => { outHeaders[k] = v; });
+    const ct = String(outHeaders['content-type'] || '');
+    const cl = Number(outHeaders['content-length']) || 0;
     delete outHeaders['content-encoding'];   // 体已被 fetch 解压，长度也对不上，统一走 chunked
     delete outHeaders['content-length'];
     delete outHeaders['transfer-encoding'];
+
+    // 可压缩、大小已知且在阈值内：缓冲后 gzip 再发。跨境链路上带宽是瓶颈，
+    // JS/CSS/JSON 能压到 1/4 左右。SSE 不能缓冲（会毁掉流式），大文件不进内存，
+    // 已压缩的二进制（图片/zip）压了反而变大——这几种都走下面的原路径。
+    if (COMPRESSIBLE.test(ct) && !/event-stream/i.test(ct) && cl > 0 && cl <= GZ_MAX) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      const gz = buf.length >= GZ_MIN ? zlib.gzipSync(buf, { level: 6 }) : null;
+      if (gz && gz.length < buf.length * 0.9) {   // 压不动（已压缩/随机数据）就发明文
+        outHeaders['content-encoding'] = 'gzip';
+        send({ id, ev: 'head', status: r.status, headers: outHeaders });
+        send({ id, ev: 'data', b64: gz.toString('base64') });
+      } else {
+        send({ id, ev: 'head', status: r.status, headers: outHeaders });
+        send({ id, ev: 'data', b64: buf.toString('base64') });
+      }
+      send({ id, ev: 'end' });
+      return;
+    }
+
     send({ id, ev: 'head', status: r.status, headers: outHeaders });
     if (r.body) {
       for await (const chunk of r.body) send({ id, ev: 'data', b64: Buffer.from(chunk).toString('base64') });
