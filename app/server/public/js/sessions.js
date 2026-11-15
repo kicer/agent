@@ -242,6 +242,9 @@
     renderAttachChips();
     clearUploadCards(); // 切会话清掉旧会话的上传卡片
     renderDrawerList(); // 会话切换后立刻重画抽屉高亮,避免下次打开才看到更新
+    // 文件树同理，而且更早：它的缓存按路径存、不含会话，晚一步清就会在抽屉里
+    // 先看到上个会话的文件。紧跟 sessionId 变更就清，不等 detail 回来。
+    if (window.refreshFileTree) window.refreshFileTree();
     setView('chat');
     $('chat-view').innerHTML = '<div class="drawer-empty">加载中…</div>';
     try {
@@ -252,7 +255,6 @@
       state.deepThink = !!(detail.session && detail.session.deep_think);
       $('deep-think-btn').classList.toggle('on', state.deepThink);
       connectStream();
-      if (window.refreshFileTree) window.refreshFileTree();
       syncUrl(); // 详情拿到才写地址栏：坏链接不会把刷新后的页面也钉死在坏会话上
     } catch (e) {
       if (state.sessionId === id) {

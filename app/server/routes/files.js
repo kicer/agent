@@ -124,9 +124,9 @@ router.get('/:id/tree', function (req, res) {
         try { mtimeMs = fs.statSync(path.join(abs, e.name)).mtimeMs; } catch (_) {}
         entries.push({ name: e.name, rel: childRel, type: 'dir', ignored: TREE_IGNORE_DIRS.has(e.name), mtimeMs: mtimeMs });
       } else if (e.isFile()) {
-        let size = null;
-        try { size = fs.statSync(path.join(abs, e.name)).size; } catch (_) {}
-        entries.push({ name: e.name, rel: childRel, type: 'file', size: size });
+        let size = null, mtimeMs = null;
+        try { const st = fs.statSync(path.join(abs, e.name)); size = st.size; mtimeMs = st.mtimeMs; } catch (_) {}
+        entries.push({ name: e.name, rel: childRel, type: 'file', size: size, mtimeMs: mtimeMs });
       }
     }
   } catch (err) {

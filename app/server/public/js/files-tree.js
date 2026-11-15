@@ -500,7 +500,10 @@
   // 侧栏底部「文件树」图标 → 切到这个面板（由 files.js 的 setDrawerPane 调用）。
   window.showFileTree = function () {
     ensureShell();
-    invalidate(true); // 切回面板一律重拉已展开的目录，不拿上次的缓存糊弄（后台只标脏的也在这里补上）
+    // 缓存还在就直接用：同一会话里反复开关面板，不该把已展开的目录全部重拉一遍
+    // （展开 N 层就是 N 轮请求，移动网络下能到 1-2 秒）。文件真变了有 reloadFileTree 兜底，
+    // 它在一轮跑完 / 回前台 / 断线重连时会把已展开的层重新拉一遍。
+    if (!cache.size) invalidate(true);
     renderBody();
   };
 

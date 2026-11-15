@@ -997,7 +997,8 @@ body.voice-active .scroll-bottom-btn { display: none; }
   flex: 1; min-width: 0; font-weight: 600; color: var(--text, var(--fg-223));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.files-panel .file-dir-count { flex: none; font-size: 12px; color: var(--gray); }
+.files-panel .file-dir-count,
+.files-panel .file-dir-time { flex: none; font-size: 12px; color: var(--gray); }
 .files-panel .file-dir-go {
   width: 14px; height: 14px; flex: none;
   fill: none; stroke: var(--gray-light); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;

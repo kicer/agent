@@ -158,10 +158,10 @@
     return fileSelected.has(p) || isPathInDirSel(p);
   }
   // 目录节点内所有文件的相对路径（递归）
+  // 当前层能拿到的文件（懒加载只拉这一层，子目录内容没有；
+  // 目录整体勾选走 dirSelKey，zip 打包由后端 collectZipEntries 递归）
   function filesUnderDir(node) {
-    let out = node.files.map(f => f.filename);
-    for (const d of node.dirs.values()) out = out.concat(filesUnderDir(d));
-    return out;
+    return node ? node.files.map(f => f.filename) : [];
   }
   // 全选的作用域 = 当前浏览目录下的全部文件（递归含其子文件夹，等价于逐个勾选这些文件夹行）。
   // 不能再用全任务树的扁平列表：在子文件夹里点全选会把根下其它文件也选上，批量删除会清空整个任务目录。
@@ -297,31 +297,28 @@
   // 扁平文件列表 → 树节点 { name, path, dirs: Map, files: [] }
   // 目录标记行（?dirs=1：filename 以 '/' 结尾 + dir:true）只沿途铺设路径节点、不入任何 files[]，
   // 不含文件的空夹子因此也能渲染；与同名文件路径铺出的节点经 dirs Map 天然去重。
-  function buildFilesTree(files) {
-    const root = { name: '', path: '', dirs: new Map(), files: [] };
-    for (const f of files) {
-      const isDir = f.dir === true || /\/$/.test(String(f.filename));
-      const name = isDir ? String(f.filename).replace(/\/+$/, '') : String(f.filename);
-      if (!name) continue;
-      const segs = name.split('/');
-      let node = root, rel = '';
-      const dirDepth = isDir ? segs.length : segs.length - 1; // 文件：末段是文件名；目录：全是路径段
-      for (let i = 0; i < dirDepth; i++) {
-        const seg = segs[i];
-        rel = rel ? rel + '/' + seg : seg;
-        if (!node.dirs.has(seg)) node.dirs.set(seg, { name: seg, path: rel, dirs: new Map(), files: [] });
-        node = node.dirs.get(seg);
+  // 把 /tree 返回的单层 entries 变成渲染用节点（子目录只留空 Map，进入时才拉）
+  function buildNodeFromEntries(dir, entries) {
+    const node = { name: dir.split('/').pop() || '', path: dir, dirs: new Map(), files: [] };
+    for (const e of entries) {
+      if (e.type === 'dir') {
+        node.dirs.set(e.name, { name: e.name, path: e.rel, dirs: new Map(), files: [], mtime: e.mtimeMs });
+      } else if (e.type === 'file') {
+        node.files.push({ filename: e.rel, size: e.size, mtime: e.mtimeMs, ctime: e.mtimeMs });
       }
-      if (!isDir) node.files.push(f);
     }
-    return root;
+    return node;
   }
 
-  // 目录(含子目录)内文件总数，用于目录头计数
-  function countDirFiles(node) {
-    let n = node.files.length;
-    for (const d of node.dirs.values()) n += countDirFiles(d);
-    return n;
+  // 文件/目录时间：统一「年/月/日 时:分」。全局 fmtTime 对今天只给时分（聊天消息那种场景），
+  // 文件列表要能一眼看出新旧，所以固定带日期。
+  function fmtFileTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '';
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '/' + p(d.getMonth() + 1) + '/' + p(d.getDate())
+      + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
   function fileRowHtml(f) {
@@ -332,7 +329,7 @@
       ? '<svg class="file-ico eye" viewBox="0 0 24 24" aria-label="可预览"><use href="#i-eye"/></svg>'
       : '<svg class="file-ico doc" viewBox="0 0 24 24" aria-label="可下载"><use href="#i-file-doc"/></svg>';
     const name = esc(String(f.filename).split('/').pop() || f.filename);
-    const ftime = fmtTime(f.mtime || f.ctime);
+    const ftime = fmtFileTime(f.mtime || f.ctime);
     const sel = isFileEffectivelySelected(f.filename);
     return '<div class="file-row clickable' + (sel ? ' selected' : '') + '" data-path="' + esc(f.filename) + '" data-preview="' + (fsPv ? '1' : '0') + '" data-size="' + esc(fmtSize(f.size)) + '">' +
       '<span class="file-check" role="checkbox" aria-checked="' + (sel ? 'true' : 'false') + '" aria-label="选择"></span>' +
@@ -346,29 +343,23 @@
 
   // 目录行（带勾选框）：整个文件夹作为一个选中项（下载时后端打包成 zip）；
   // 点行其余区域进入该目录（单层列表，不再有折叠/展开）。
+  // 懒加载下不知道子目录内容，勾选态只看这一行自己是否被整体勾选；右侧显示修改时间，和文件行一致。
   function dirRowHtml(node) {
-    const under = filesUnderDir(node);
-    const checked = fileSelected.has(dirSelKey(node.path)) ||
-      (under.length > 0 && under.every(isFileEffectivelySelected));
+    const checked = fileSelected.has(dirSelKey(node.path));
+    const dtime = fmtFileTime(node.mtime);
     return '<div class="file-dir-head' + (checked ? ' selected' : '') + '" data-dir="' + esc(node.path) + '" role="button">' +
       '<span class="file-check" role="checkbox" aria-checked="' + (checked ? 'true' : 'false') + '" aria-label="选择文件夹"></span>' +
       '<svg class="file-dir-ico" viewBox="0 0 24 24"><use href="#i-folder-c"/></svg>' +
       '<span class="file-dir-name">' + esc(node.name) + '</span>' +
-      '<span class="file-dir-count">' + countDirFiles(node) + ' 个文件</span>' +
+      (dtime ? '<span class="file-dir-time">' + dtime + '</span>' : '') +
       '<svg class="file-dir-go" viewBox="0 0 24 24"><use href="#i-chevron-right"/></svg>' +
     '</div>';
   }
 
-  // 按相对路径取树节点（'' = 根）；路径不存在（如删除后重拉）返回 null
+  // 懒加载下只有当前浏览目录的节点（'' = 根）；其它路径没有数据
   function filesNodeAt(path) {
-    let node = filesTreeRoot;
-    if (!node) return null;
-    if (!path) return node;
-    for (const seg of String(path).split('/')) {
-      node = node.dirs.get(seg);
-      if (!node) return null;
-    }
-    return node;
+    if (!filesTreeRoot) return null;
+    return (path || '') === filesCurDir ? filesTreeRoot : null;
   }
 
   // 渲染当前目录：顶部面包屑（根目录(home) › a › b，点任意节点回跳）+ 单层列表（目录在前、文件在后）。
@@ -380,7 +371,7 @@
     if (!node) { filesCurDir = ''; node = filesNodeAt(''); } // 当前目录已被删除 → 退回根
     const sizeEl = $('files-panel-size');
     if (!node) { el.innerHTML = ''; if (sizeEl) sizeEl.textContent = ''; return; }
-    // 标题旁总大小：按未过滤的聚合表取当前目录递归总量（关彩蛋时服务端不返回 dot 项；开彩蛋时含 .imgcache/.tmp/.venv 全计）
+    // 标题旁总大小：只算当前层文件（子目录的递归大小要额外扫全树，懒加载拿不到）
     if (sizeEl) {
       const total = filesDirSizes.get(filesCurDir) || 0;
       sizeEl.textContent = total > 0 ? fmtSize(total) : '';
@@ -419,28 +410,18 @@
     filesTreeRoot = null;
     updateFilesFooter();
     try {
-      // 彩蛋开启时后端连 dot 项一起列，且不再滤 .tmp/.venv（全量放出）
+      // 按目录懒加载：只拉当前这一层（/tree），不再全量递归。
+      // 之前一次拉全树，仓库级工作目录能到 1.4MB（10544 个文件，81% 在 node_modules）。
       const hiddenQ = filesShowHidden ? '&hidden=1' : '';
-      const files = await req('GET', '/api/sessions/' + state.sessionId + '/files?dirs=1' + hiddenQ);
-      // 会话级 .tmp（executor 的共享 /tmp 落盘处）与 .venv（Python 虚拟环境）不属于任务产物：默认隐藏（老后端兼容兑底；新版关彩蛋时服务端已不返回 dot 项）
-      const shown = filesShowHidden ? files : files.filter(f => !/^(\.tmp|\.venv)(\/|$)/.test(String(f.filename)));
-      // 重建目录树后只渲染当前目录这一层(后端已按时间倒序,组内再排一次防旧排序缓存)
-      filesTreeRoot = buildFilesTree(shown);
-      // 总大小按原始列表（含 .tmp/.venv）聚合：目录标记行无字节量跳过；文件把 size 记到每一级祖先目录（根 = ''）
-      filesDirSizes = new Map([['', 0]]);
-      for (const f of files) {
-        if (f.dir === true || /\/$/.test(String(f.filename))) continue;
-        const sz = Number(f.size) || 0;
-        if (!sz) continue;
-        filesDirSizes.set('', (filesDirSizes.get('') || 0) + sz);
-        const segs = String(f.filename).split('/');
-        segs.pop(); // 末段是文件名，其余是祖先目录
-        let acc = '';
-        for (const seg of segs) {
-          acc = acc ? acc + '/' + seg : seg;
-          filesDirSizes.set(acc, (filesDirSizes.get(acc) || 0) + sz);
-        }
-      }
+      const data = await req('GET', '/api/sessions/' + state.sessionId + '/tree?dir='
+        + encodeURIComponent(filesCurDir) + hiddenQ);
+      const entries = (data && data.entries) || [];
+      filesTreeRoot = buildNodeFromEntries(filesCurDir, entries);
+      // 标题旁总大小：只统计当前层文件（子目录的递归大小要额外扫全树，懒加载拿不到）
+      let total = 0;
+      for (const f of filesTreeRoot.files) total += Number(f.size) || 0;
+      filesDirSizes = new Map([[filesCurDir, total]]);
+      if (data && data.capped) toast('目录条目过多，仅显示前 ' + entries.length + ' 项');
       renderFilesDir(); // filesCurDir 失效时自动退回根目录
       // 重新渲染后刷新底部计数与按钮状态
       updateFilesFooter();
@@ -543,8 +524,7 @@
         if (!dp || !state.sessionId) return;
         if (e.target.closest('.file-check')) { toggleDirSelect(dp); return; }
         filesCurDir = dp;
-        renderFilesDir();
-        updateFilesFooter(); // 全选作用域随浏览目录变化，刷新底部勾选态
+        loadFiles(); // 懒加载：进哪层拉哪层（renderFilesDir / updateFilesFooter 在它内部调）
         return;
       }
       const row = e.target.closest('.file-row');
@@ -594,8 +574,7 @@
     const c = e.target.closest('.crumb[data-path]');
     if (!c) return;
     filesCurDir = c.dataset.path;
-    renderFilesDir();
-    updateFilesFooter(); // 同上：面包屑回跳也重算全选态
+    loadFiles(); // 同上：面包屑回跳也按目录重拉
   });
 
   // 彩蛋：点面板标题旁的总大小文本 = 切换隐藏文件（dot 项含 .tmp/.venv）显隐。
