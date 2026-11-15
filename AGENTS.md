@@ -25,6 +25,7 @@
 | `mcp/` | 同栈 MCP 服务：`web_search` / `image_task` / `video_task` / `asr` | 四个容器，仅内网 |
 | `skills/` | 目录式技能（`SKILL.md` + `run.py`/`run.sh`） | 运行时挂载，`skills/deps` 为依赖层 |
 | `local/` | **本地端启动器**：同一份代码跑在本机（不起 Docker / executor），`start.sh` 负责探测、装依赖、守护 | 独立于 compose，见 `docs/local-mode.md` |
+| `tunnel/` | **反向隧道**：服务器端 `server.js` 按 Host / 固定端口 / 通配路由转发，本机 `client.js` 承接 | 独立 compose，见 `tunnel/README.md` |
 | `scripts/` | `init.sh` 生成 `.env` + 首次创建 `config.yml`（仅初始管理员）；`init_host.sh` 裸机初始化 | 幂等，**不覆盖已有配置** |
 | `docs/` | 专题文档：`tool-design.md`（工具接口规范）、`OFFICE.md` | — |
 | `tasks/` | **运行时数据**：每个会话一个工作目录 | gitignore |
@@ -38,10 +39,13 @@
 
 ```mermaid
 flowchart TD
+    CORE["agent-core（8090，唯一对外端口）"]
     B["浏览器 / PWA"] -->|"HTTP + SSE"| CORE
+    M["手机 / 外网"] -->|"HTTPS"| TUN["tunnel server（19000，仅回环）"]
+    TUN -->|"WebSocket"| TC["tunnel client（本机）"]
+    TC -->|"HTTP"| CORE
     W["微信客户端"] --> WXBOT["agent-wxbot（8093，仅内网）"]
     WXBOT -->|"回调 /wxhook/*（共享 Bearer token）"| CORE
-    CORE["agent-core（8090，唯一对外端口）"]
     CORE --> EXEC["agent-executor（9000 exec / 3100 预览，仅内网）"]
     CORE --> MCP["mcp_web_search / mcp_image_task / mcp_video_task / mcp_asr（3000，仅内网）"]
     CORE -->|"分段投递回复"| WXBOT
@@ -59,6 +63,7 @@ flowchart TD
 | 服务 | 端口 | 可见性 |
 |---|---|---|
 | `agent-core` | 8090 | 宿主机映射，**唯一对外** |
+| `tunnel` server | 19000 | 仅 `127.0.0.1`，对外经 nginx 反代 |
 | `agent-executor` | 9000（exec）、3100（预览网关） | 仅 `expose`，内网 |
 | `agent-wxbot` | 8093 | 仅内网 |
 | `mcp_*` | 3000 | 仅内网 |
@@ -72,6 +77,7 @@ flowchart TD
 | `./skills/` | `/workspace/skills` | `/workspace/skills:ro` | 技能与共享依赖 |
 | `./config.yml` | `/app/config.yml` | 不挂、不读 | 平台密钥、登录密钥 |
 | `./app/server/` | `/app/server` | — | 后端代码（**热挂载**） |
+| `./tunnel/data/` | — | — | 隧道服务端配置 `server.yml`（首次启动自动生成，含 token） |
 | `./wxbot/data/` | — | `/data`（wxbot） | 微信登录凭证 |
 
 推论：
@@ -163,6 +169,7 @@ curl -s http://127.0.0.1:8090/api/health
 | 配置默认值 | `app/server/config.js` 的 `DEFAULTS` ↔ `app/config.example.yml` |
 | 内置工具 | `app/server/tools/definitions.json` ↔ `app/AGENTS.md` / README 工具表 ↔ `docs/tool-design.md` 规范 |
 | 新增服务 / 端口 / 卷 | `docker-compose.yml` ↔ `README.md` 的部署与安全章节 |
+| 隧道 token | `tunnel/data/server.yml`（自动生成）↔ `tunnel/client.yml`（手写），两边必须一致 |
 | 新增环境变量 | compose ↔ README「环境变量」 |
 | 发版号 | `app/package.json` 的 `version` ↔ `app/server/routes/system.js` 的 `VERSION` 字面量（两者不自动同步） |
 | 技能格式 | `skills/README.md` ↔ `app/server/tools/skills.js` 的解析 |
@@ -197,5 +204,6 @@ curl -s http://127.0.0.1:8090/api/health
 | 改微信投递 | `app/server/wechat.js`（业务）+ `app/server/routes/wechat.js`（HTTP/鉴权） |
 | 改语音输入 | `app/server/public/js/voice.js`（录音与插入）+ `app/server/routes/asr.js`（代理）+ `mcp/asr/`（转写）；客户端桥契约见 `docs/voice-input.md` |
 | 改隔离执行 | `executor/server.js`（先读顶部安全模型注释） |
+| 改隧道路由 / 转发 | `tunnel/server.js`（按 Host / 端口匹配）+ `tunnel/client.js`（本地服务映射） |
 | 加同栈 MCP 服务 | `mcp/<name>/` + `docker-compose.yml` + `config.yml` 的 `mcp_servers` |
 | 加技能 | `skills/<name>/`（`SKILL.md` + `run.py`），见 `skills/README.md` |

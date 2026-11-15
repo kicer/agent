@@ -72,6 +72,7 @@ cd agent
 | Office 文档（docx/xlsx/pptx） | 首次用到时下载一次 officecli 二进制（约 34MB） | `office` 报 `binary missing` 并给出该技能 `AGENTS.md` 的路径，按它下载即可（不需 root、不需重启）；预览面板里直接显示同一份安装说明 |
 | 网页搜索 | 无 | 装了 Node 就有（内置免费后端） |
 | 图片 / 视频生成 | 设置页给对应 MCP 填上游 key | 调用时报明确的缺参错误 |
+| 反向隧道 | `tunnel/client.yml`（服务器地址 + token） | `start.sh` 跳过，不占端口；配置说明见 `tunnel/README.md` |
 
 装完 `ffmpeg` 之后**重跑一次 `./local/start.sh`** 即可生效。`python3` 稍特殊：技能清单本来就在，
 只要新装的解释器落在 core 启动时 `PATH` 已包含的目录里（如 brew 的 `/opt/homebrew/bin`）就无需重启；
@@ -143,6 +144,9 @@ git pull
 2. 那个目录先 `git init` 一下，改坏了能回滚
 
 另外，`core` 只监听 `127.0.0.1`，同一局域网的人访问不到。
+
+配了隧道后，core 会经隧道 client 暴露到公网域名。访问控制靠隧道 token + 上游 nginx 的 TLS；
+入口仍是 `127.0.0.1:8090`，不额外监听端口。
 
 ## 已知限制
 

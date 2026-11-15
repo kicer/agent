@@ -28,6 +28,8 @@ macOS / Linux，Node 20+，不需要 Docker：
 
 首次运行会让你选一个工作目录（技能、会话、数据库都在里面）。命令直接在本机执行，没有沙箱隔离，只监听 `127.0.0.1`。
 
+需要从外网访问时，配好 [`tunnel/client.yml`](tunnel/README.md) 后 `start.sh` 会一并拉起隧道 client；未配置则跳过。
+
 ## 组成
 
 | 目录 | 说明 |
@@ -38,6 +40,7 @@ macOS / Linux，Node 20+，不需要 Docker：
 | [`mcp/`](mcp/README.md) | 四个 MCP 服务：网页搜索、图片生成、视频生成、语音转写 |
 | [`skills/`](skills/README.md) | 内置技能 |
 | [`local/`](local/README.md) | 本机模式启动器 |
+| [`tunnel/`](tunnel/README.md) | 反向隧道：把本机服务经服务器中转，供外网访问 |
 
 ## 配置
 
@@ -68,6 +71,7 @@ docker compose up -d --build
 ## 安全
 
 - 对外只开 agent-core 一个端口，其余服务只在 Docker 内网
+- 隧道只经服务器 nginx（TLS）对外，宿主机端口仅绑 `127.0.0.1`；`server.yml` 与 `client.yml` 的 token 必须一致
 - 命令在 executor 容器里执行，只挂当前会话目录，根文件系统只读
 - 单租户设计：除管理员接口外不做用户级资源隔离，不要开放给互不信任的人
 - `config.yml`、`.env`、`wxbot/data/` 存密钥，已加入 `.gitignore`

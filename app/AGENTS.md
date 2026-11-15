@@ -51,7 +51,7 @@ AGENT_CONFIG=./config.yml node server/server.js
 | `server/wechat.js` | 微信绑定、媒体落盘、上下文注入、SSE→微信分段投递、任务通知 |
 | `server/routes/channel.js` | 文本命令层（`/new` `/switch` `/think` …），微信与外部接入端共用 |
 | `server/routes/*.js` | HTTP API，按资源分文件 |
-| `server/sse.js` | 按会话分组的 SSE 总线（`addClient`/`emit`/`onInternal`） |
+| `server/sse.js` | 按会话分组的 SSE 总线（`addClient`/`emit`/`onInternal`）；`assistant_delta` / `reasoning_delta` / `tool_call_args` 攒 50ms 或 8 条合并写入 |
 | `server/auth.js` | HMAC cookie 登录、Basic 兜底、`requireAdmin`、免认证路径 |
 | `server/memory.js` | 长期记忆（日记碎片）读写与检索，仅依赖 `time.js` |
 | `server/time.js` | 业务时区单一入口：`TZ`、`dayString`、`stampString`、`fmtTime`、`fmtIso` |
@@ -354,6 +354,8 @@ preview-proxy.mount（末尾兜底）
   JS/CSS 改动不需要。
 - 另有 `login.html`、`memory.html`（日记调试页）。
 - API 调用统一走 `core.js` 的 `req()`；SSE 用 `EventSource` + 前端看门狗。
+- 文件面板（`files.js`）按目录懒加载：只请求 `GET /api/sessions/:id/tree?dir=<rel>` 的当前层，
+  进入子目录才拉下一层；会话详情接口不返回全量 `files`。
 
 ## 扩展指南
 
