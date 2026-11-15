@@ -257,12 +257,12 @@ CSS
     elif [ -s "$UI_DIR/redirect" ] || [ -s "$UI_DIR/ready" ]; then
       url=$(cat "$UI_DIR/redirect" 2>/dev/null)
       [ -n "$url" ] || url=$(cat "$UI_DIR/ready")
-      # 后续启动：会自己跳；首次安装：只停在这页等点击。两种情况都留一个按钮兜底。
+      # auto 模式（写了 redirect）才会自己跳；click 模式就停在这页等点击。
       if [ -s "$UI_DIR/redirect" ]; then
         printf '<p class="note">2 秒后自动打开应用；没反应就点下面的按钮。</p>\n'
       fi
       printf '<p class="note"><a class="open" href="%s">打开应用</a> <span class="addr">%s</span></p>\n' "$url" "$url"
-      printf '<p class="tip">停止服务：运行 <code>./local/stop.sh</code>（关掉这个页面不影响服务）。</p>\n'
+      printf '<p class="tip">停止服务：运行 <code>./local/stop.sh</code>。</p>\n'
     else
       printf '<p class="tip">本页每秒自动刷新，进度会自己出现。</p>\n'
     fi
@@ -319,15 +319,14 @@ ui_stop_ticker() {
 ui_idle() { ui_stop_ticker; rm -f "$UI_DIR/busy"; ui_render; }
 
 ui_done() {
-  # $1 应用地址  $2 auto|click（首次安装用 click：给链接让用户自己点，不自动跳）
+  # $1 应用地址  $2 auto|click（click = 停在状态页等用户点，不自动跳）  $3 note（HTML，可选）
   ui_stop_ticker
   rm -f "$UI_DIR/busy" "$UI_DIR/error" "$UI_DIR/redirect" "$UI_DIR/ready" "$UI_DIR/note"
   printf '%s\n' "${1:-}" > "$UI_DIR/ready"
   if [ "${2:-auto}" = 'auto' ]; then
     printf '%s\n' "${1:-}" > "$UI_DIR/redirect"
-  else
-    # 首次安装用户就停在这页，那下一步怎么配模型也得写在页上，不能只在终端里。
-    printf '<p class="hint">首次使用：进去后点左下角「用户区」→ 设置 → 模型池，添加平台和 API Key，再点「重启」（服务会自动拉起来）。</p>\n' > "$UI_DIR/note"
+  elif [ -n "${3:-}" ]; then
+    printf '%s\n' "$3" > "$UI_DIR/note"
   fi
   ui_title '已启动'
 }
@@ -1104,15 +1103,24 @@ while :; do
       if [ -n "${PREVIEW_PORT:-}" ] && ! port_open "$PREVIEW_PORT"; then
         warn "预览网关没起来（端口 ${PREVIEW_PORT}）——日志：local/.runtime/preview.log"
       fi
-      if [ "$FIRST_RUN" = 1 ]; then
-        # 首次安装：停在状态页，给一个按钮让用户自己点（先看完「首次使用」提示再进去）。
-        ui_done "http://${HOST_ADDR}:${PORT}" click
-        # 状态页没弹出来时（Linux / AGENT_LOCAL_UI=0）总得给个入口，否则用户什么都看不到。
-        [ "$UI_OPEN" = 1 ] || open_browser
-      else
-        ui_done "http://${HOST_ADDR}:${PORT}" auto
-        open_browser
+      # 隧道 client（可选）：配了 tunnel/client.yml 才起，当第 5 个子进程，
+      # 停止时由 do_cleanup 的 kill_tree 一并收掉。它自带指数退避重连、进程不退出，
+      # 所以不需要守护循环；连不上时静默重试，真要查状态就看 local/.runtime/tunnel.log。
+      if [ -f "$ROOT/tunnel/client.yml" ]; then
+        ( cd "$ROOT/tunnel" && exec node client.js >>"$RUNTIME/tunnel.log" 2>&1 ) &
+        MCP_PIDS="$MCP_PIDS $!"
+        printf '%s\n' "$!" > "$RUNTIME/tunnel.pid"
+        ui_step '隧道：已启动' ok
       fi
+      # 一律停在状态页：启动摘要（语音/技能/隧道）和日志尾巴都留在屏幕上，
+      # 用户看完自己点「打开应用」，不会 2 秒就跳走。
+      if [ "$FIRST_RUN" = 1 ]; then
+        ui_done "http://${HOST_ADDR}:${PORT}" click '<p class="hint">首次使用：进去后点左下角「用户区」→ 设置 → 模型池，添加平台和 API Key，再点「重启」（服务会自动拉起来）。</p>'
+      else
+        ui_done "http://${HOST_ADDR}:${PORT}" click
+      fi
+      # 状态页没弹出来时（Linux / AGENT_LOCAL_UI=0）总得给个入口，否则用户什么都看不到。
+      [ "$UI_OPEN" = 1 ] || open_browser
       printf '\n'
       say "已启动：http://$HOST_ADDR:$PORT"
       sleep 1
@@ -1125,15 +1133,6 @@ while :; do
         say '技能：已启用'
       else
         say '技能：python3 未安装（Python 技能暂不可用）'
-      fi
-      # 隧道 client（可选）：配了 tunnel/client.yml 才起，当第 5 个子进程，
-      # 停止时由 do_cleanup 的 kill_tree 一并收掉。它自带指数退避重连、进程不退出，
-      # 所以不需要守护循环；日志也只报状态变化，连不上时静默重试。
-      if [ -f "$ROOT/tunnel/client.yml" ]; then
-        ( cd "$ROOT/tunnel" && exec node client.js >>"$RUNTIME/tunnel.log" 2>&1 ) &
-        MCP_PIDS="$MCP_PIDS $!"
-        printf '%s\n' "$!" > "$RUNTIME/tunnel.pid"
-        say '隧道：已启动'
       fi
       if [ "$FIRST_RUN" = 1 ]; then
         printf '\n首次使用：左下角「用户区」→ 设置 → 模型池，添加平台和 API Key，然后点「重启」。\n'
