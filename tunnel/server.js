@@ -123,9 +123,12 @@ function handleRequest(req, res, fixedService) {
     client.send(JSON.stringify({ id, op: 'body', b64: chunk.toString('base64') }));
   });
   req.on('end', () => { if (!overflow) client.send(JSON.stringify({ id, op: 'end' })); });
-  // 手机/浏览器提前断开：让家里把上游请求也停掉，别白跑
-  req.on('aborted', () => {
-    if (!pending.has(id)) return;
+  // 客户端提前断开：让家里把上游请求也停掉，别白跑。
+  // 必须挂在 res 上：SSE 是 GET 无 body，req 的 'aborted' 只在传 body 时触发（且已废弃）。
+  // 漏掉这条时，前端关掉 SSE 后 client 会继续读流、继续往 WS 灌数据，切会话时
+  // 新旧两条流同时推，把单条 WS 占满，后发的 detail 请求只能排队。
+  res.on('close', () => {
+    if (!pending.has(id)) return; // 正常结束时 pending 已删
     client.send(JSON.stringify({ id, op: 'abort' }));
     pending.delete(id);
   });
