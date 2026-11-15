@@ -795,7 +795,7 @@ kill_tree_hard() {
 do_cleanup() {
   # 心跳子进程也得收掉，不然退出后它会继续每秒重绘页面。
   ui_stop_ticker
-  rm -f "$RUNTIME/ui/busy" "$RUNTIME/supervisor.pid" "$RUNTIME/preview.port"
+  rm -f "$RUNTIME/ui/busy" "$RUNTIME/supervisor.pid" "$RUNTIME/preview.port" "$RUNTIME/tunnel.pid"
   for p in $CORE_PID $MCP_PIDS; do kill_tree "$p"; done
   CORE_PID=''
   MCP_PIDS=''
@@ -1125,6 +1125,15 @@ while :; do
         say '技能：已启用'
       else
         say '技能：python3 未安装（Python 技能暂不可用）'
+      fi
+      # 隧道 client（可选）：配了 tunnel/client.yml 才起，当第 5 个子进程，
+      # 停止时由 do_cleanup 的 kill_tree 一并收掉。它自带指数退避重连、进程不退出，
+      # 所以不需要守护循环；日志也只报状态变化，连不上时静默重试。
+      if [ -f "$ROOT/tunnel/client.yml" ]; then
+        ( cd "$ROOT/tunnel" && exec node client.js >>"$RUNTIME/tunnel.log" 2>&1 ) &
+        MCP_PIDS="$MCP_PIDS $!"
+        printf '%s\n' "$!" > "$RUNTIME/tunnel.pid"
+        say '隧道：已启动'
       fi
       if [ "$FIRST_RUN" = 1 ]; then
         printf '\n首次使用：左下角「用户区」→ 设置 → 模型池，添加平台和 API Key，然后点「重启」。\n'

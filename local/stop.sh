@@ -98,6 +98,17 @@ for p in "$PORT" $MCP_PORTS "$pv_port"; do
   done
 done
 
+# 5) 隧道 client：它不监听端口，正常随启动器的 do_cleanup 一起收掉；
+#    启动器被 kill -9 时 EXIT trap 不跑，会漏成孤儿，按它自己写的 pid 文件兜底。
+if [ -f "$RUNTIME/tunnel.pid" ]; then
+  tpid=$(cat "$RUNTIME/tunnel.pid" 2>/dev/null || printf '')
+  case "$tpid" in ''|*[!0-9]*) tpid='';; esac
+  if [ -n "$tpid" ] && kill -0 "$tpid" 2>/dev/null; then
+    stop_pid "$tpid" '隧道 client'
+  fi
+  rm -f "$RUNTIME/tunnel.pid"
+fi
+
 if [ "$stopped" = 1 ]; then
   say '已停止'
 else
