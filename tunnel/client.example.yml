@@ -1,0 +1,28 @@
+# tunnel 本机端配置 —— 复制为 client.yml 后改（client.yml 不进版本库）
+
+# 服务器隧道地址：对外走 TLS 用 wss，本机自测用 ws://127.0.0.1:19000/tunnel
+server: "wss://agent.home.example.com/tunnel"
+
+# 和服务器 server.yml 里的 token 一致
+token: ""
+
+# 握手 UA：伪装成浏览器，降低被 DPI 盯上的概率。不写就用内置默认值
+# userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+# 请求体上限（MB），和服务端双保险
+maxBodyMb: 64
+
+# 要暴露的本地服务：加服务 = 加一项，两边代码都不用动
+#   路由优先级：固定端口指定的 name → host 精确 → *.域名 通配 → "*" 兜底
+services:
+  - name: agent
+    host: agent.home.example.com
+    port: 8090
+
+  # 没有域名时用 "*" 兜底：所有请求都给这一项（单服务形态）
+  # - host: "*"
+  #   port: 8090
+
+  # - name: nas
+  #   host: nas.home.example.com
+  #   port: 5000

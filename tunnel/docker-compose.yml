@@ -1,0 +1,24 @@
+# tunnel 独立编排：只跑隧道服务端，和 agent 的 compose 互不相干
+#   cd tunnel && docker compose up -d
+#
+# 首次启动会自己生成 ./data/server.yml（含随机 token）并打印到日志：
+#   docker compose logs | grep TOKEN
+# 把那个 token 填到家里 client.yml 的 token 即可。
+services:
+  tunnel:
+    build: .
+    image: agent-tunnel:latest
+    container_name: agent-tunnel
+    restart: unless-stopped
+    ports:
+      # IP 直连：http://<服务器IP>:19000
+      - "${TUNNEL_PORT:-19000}:19000"
+      # 固定端口路由（一个端口钉一个服务）：先在 data/server.yml 的 routes 里配好，再放开对应端口
+      # - "${TUNNEL_PORT_AGENT:-19001}:19001"
+      # - "${TUNNEL_PORT_NAS:-19002}:19002"
+    volumes:
+      # 挂目录而不是单文件：server.yml 不存在时 docker 会造个同名目录，单文件挂载会踩这个坑
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      - TUNNEL_CONFIG=/app/data/server.yml

@@ -1,0 +1,15 @@
+{
+  "name": "agent-tunnel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "通用反向隧道：把本机 HTTP 服务经服务器中转，按 Host 路由，支持流式响应",
+  "main": "server.js",
+  "scripts": {
+    "server": "node server.js",
+    "client": "node client.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "yaml": "2.6.1"
+  }
+}
