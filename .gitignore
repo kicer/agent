@@ -14,6 +14,8 @@ local/config.local.yml
 skills/office/bin/
 skills/**/__pycache__/
 *.log
+# 读图压缩缓存（会话工作目录 = 仓库根时落在仓库里）
+.imgcache/
 .DS_Store
 app/server/version.json
 *.apk
