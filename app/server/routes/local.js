@@ -14,6 +14,25 @@ const engine = require('../engine');
 
 const router = express.Router();
 
+// 这些接口都是弹宿主机的原生对话框 / 开 Finder / 开终端，只有坐在这台机器前才有意义。
+// 远程访问（经隧道 / 反代 / 局域网）一律当作不存在，返回 404 —— 行为和服务器形态完全一致
+// （那边 server.js 根本不挂这个路由），前端原有的 catch 就会把入口整条隐藏。
+// 判断依据：反向代理一定会加 X-Forwarded-* 头（nginx 设的，tunnel client 原样转发），
+// 本机直连 127.0.0.1:8090 不会有。
+// 不能看 Host：tunnel client 用 fetch 转发时 Host 是禁止头、会被重写成 127.0.0.1:8090。
+// 也不能看 X-Forwarded-For 的 IP 值：stream 分流后源地址永远是 127.0.0.1。
+function isLocalHost(req) {
+  if (req.headers['x-forwarded-for'] || req.headers['x-forwarded-host']
+    || req.headers['x-real-ip'] || req.headers['x-forwarded-proto']) return false;
+  const host = String(req.headers.host || '').replace(/:\d+$/, '').toLowerCase().replace(/^\[|\]$/g, '');
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
+router.use(function (req, res, next) {
+  if (isLocalHost(req)) return next();
+  res.status(404).json({ error: 'Not Found' });
+});
+
 function sendErr(res, err) {
   const code = (err && err.status_code) || 500;
   res.status(code).json({ error: String((err && err.message) || err) });
