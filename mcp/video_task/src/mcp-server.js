@@ -86,6 +86,14 @@ function pickModel(headers) {
   return s || null;
 }
 
+// 网关的模型名一定带域前缀（cn: / global:）。旧配置里遗留的智谱模型名
+// （cogvideox-flash 之类）没有冒号，发上去会 400「route config not found」，
+// 统一回落到默认模型，老配置不用改也能用。
+function normalizeModel(m) {
+  if (!m) return DEFAULT_MODEL;
+  return m.includes(":") ? m : DEFAULT_MODEL;
+}
+
 async function callWb({ url, token, method = "POST", body }) {
   const init = {
     method,
@@ -155,7 +163,7 @@ async function handleCreate({ args, headers, token }) {
     };
   }
 
-  const model = pickModel(headers) || DEFAULT_MODEL;
+  const model = normalizeModel(pickModel(headers));
   const seconds = Number.isFinite(args.seconds) ? args.seconds : DEFAULT_SECONDS;
 
   try {
