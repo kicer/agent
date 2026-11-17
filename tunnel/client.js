@@ -4,7 +4,8 @@
 //   主动连服务器 → 收请求 → 按 Host 找本地端口 → 转发 → 流式回传
 //
 // 用法: node client.js [config.yml]     环境变量 TUNNEL_SERVER / TUNNEL_TOKEN 覆盖配置
-// 断线自动重连（指数退避 1s → 30s），心跳由服务端 ping 驱动，本端 ws 库自动回 pong。
+// 断线自动重连（指数退避 1s → 30s）。心跳由服务端 ping 驱动、本端 ws 库自动回 pong；
+// 但半死链路（Mac 睡眠/切网后 TCP 还在、实际不通）不会触发 close，所以本端另设看门狗。
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -42,7 +43,9 @@ function loadConfig() {
 }
 const CFG = loadConfig();
 
-function log(...a) { console.log(new Date().toISOString().slice(11, 19), '[client]', ...a); }
+// 日志时间固定东八区：本机时区可能变，跨时区看日志不该换算
+const CST_MS = 8 * 3600 * 1000;
+function log(...a) { console.log(new Date(Date.now() + CST_MS).toISOString().slice(11, 19), '[client]', ...a); }
 
 // ---------- 服务路由：Host → 本地端口 ----------
 // 精确匹配优先；再退到「忽略端口」；最后允许 *.xxx 通配一项
@@ -72,6 +75,7 @@ const inflight = new Map();
 let ws = null;
 let backoff = 1000;
 let stopping = false;
+let lastSeen = 0;          // 最近一次收到服务端任何帧的时刻
 
 function send(obj) {
   if (ws && ws.readyState === 1) {
@@ -192,10 +196,12 @@ function connect() {
   ws.on('open', () => {
     backoff = 1000;
     linked = true;
+    lastSeen = Date.now();
     log(everLinked ? '已重新连接' : '已连接 ' + CFG.server);
     everLinked = true;
   });
-  ws.on('message', onMessage);
+  ws.on('message', (data) => { lastSeen = Date.now(); onMessage(data); });
+  ws.on('ping', () => { lastSeen = Date.now(); });
   ws.on('close', (code, reason) => {
     if (stopping) return;
     if (linked) {                 // 只在「连着 → 断开」这个跳变上说一次
@@ -207,6 +213,16 @@ function connect() {
   });
   ws.on('error', () => {});       // close 紧接着会来，不重复报
 }
+
+// 看门狗：服务端每 25s ping 一次，超过 75s（连丢 3 次）一个帧都没收到就认定链路半死。
+// 这种连接 close 事件永远不来，只能本端主动 terminate，由 close 走既有重连。
+setInterval(() => {
+  if (stopping || !ws || ws.readyState !== 1) return;
+  if (Date.now() - lastSeen > 75000) {
+    log('链路 ' + Math.round((Date.now() - lastSeen) / 1000) + 's 无响应，主动断开重连');
+    try { ws.terminate(); } catch (_) {}
+  }
+}, 20000).unref();
 
 process.on('SIGINT', () => { stopping = true; log('退出'); try { ws && ws.close(1000, 'client shutdown'); } catch (_) {} process.exit(0); });
 process.on('SIGTERM', () => { stopping = true; process.exit(0); });
