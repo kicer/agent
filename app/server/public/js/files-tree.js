@@ -98,13 +98,12 @@
       if (expanded.has(ent.rel)) row.classList.add('open');
     }
     if (ent.type === 'link') row.classList.add('is-link');
-    if (ent.ignored) row.classList.add('is-ignored');
 
     // 不画展开箭头：文件夹图标已经说明可以点，点行任意位置都能展开/收起。
 
     // 勾选框：hover 或已选中时淡入，但占位始终在，避免 hover 时文件名左右跳。
-    // 忽略的大目录和软链不参与批量操作（后端也不让删），所以不给勾选框。
-    if (!ent.ignored && ent.type !== 'link') {
+    // 软链不参与批量操作（后端也不让删），所以不给勾选框。
+    if (ent.type !== 'link') {
       const chk = document.createElement('span');
       chk.className = 'tree-check';
       chk.setAttribute('role', 'checkbox');
@@ -125,10 +124,6 @@
     name.textContent = ent.name;
     row.appendChild(name);
 
-    if (ent.ignored) {
-      row.title = ent.rel + '（已忽略的大目录/构建产物）';
-      return row;
-    }
     // 行内动作：服务器形态给「下载 / 删除」；local 本就跑在同一台机器上，
     // 「下载」到本地是多余的（用 Finder 直接看原文件更顺），所以换成「在 Finder 中显示」。
     // @ 引用排最前：它是「往输入框送东西」的动作，和后面的下载 / Finder / 删除（对文件本身动手）分开
@@ -149,7 +144,7 @@
     if (!list.length && !rel) tip(frag, '（空目录）');
     for (const ent of list) {
       frag.appendChild(rowFor(ent, depth));
-      if (ent.type === 'dir' && !ent.ignored && expanded.has(ent.rel)) {
+      if (ent.type === 'dir' && expanded.has(ent.rel)) {
         const kids = document.createElement('div');
         kids.className = 'tree-children';
         frag.appendChild(kids);
@@ -246,7 +241,7 @@
     const body = $('tree-body');
     if (!body) return [];
     return Array.from(body.querySelectorAll('.tree-row')).filter(function (r) {
-      return !r.classList.contains('is-ignored') && r.dataset.type !== 'link';
+      return r.dataset.type !== 'link';
     });
   }
 
@@ -386,7 +381,7 @@
       else if (a === 'at') insertPathRef(rel, isDir);
       return;
     }
-    if (row.classList.contains('is-ignored') || row.dataset.type === 'link') return;
+    if (row.dataset.type === 'link') return;
     if (isDir) {
       if (expanded.has(rel)) expanded.delete(rel); else expanded.add(rel);
       renderBody();

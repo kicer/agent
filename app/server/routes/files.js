@@ -81,10 +81,6 @@ router.post('/:id/files', upload.array('files', 10), function (req, res) {
 // 为什么不复用 GET /:id/files：那个接口同步递归整棵目录，会话里一旦有大项目 /
 // node_modules，单线程 core 会被卡死（连 SSE 一起挂）。这里一律「一次一层」、
 // 忽略大目录、限量返回，客户端展开才请求下一层。
-const TREE_IGNORE_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'out', 'target', '.venv', 'venv',
-  '__pycache__', '.next', '.cache', 'coverage', '.idea', '.vscode',
-]);
 const TREE_MAX = 500;
 
 // 相对路径 → 会话根内的绝对路径。字面 + realpath 双重校验，防符号链接跳出会话目录。
@@ -122,7 +118,7 @@ router.get('/:id/tree', function (req, res) {
         // mtimeMs 给前端判断空目录是否还是空的：目录内增删子项会更新它
         let mtimeMs = null;
         try { mtimeMs = fs.statSync(path.join(abs, e.name)).mtimeMs; } catch (_) {}
-        entries.push({ name: e.name, rel: childRel, type: 'dir', ignored: TREE_IGNORE_DIRS.has(e.name), mtimeMs: mtimeMs });
+        entries.push({ name: e.name, rel: childRel, type: 'dir', mtimeMs: mtimeMs });
       } else if (e.isFile()) {
         let size = null, mtimeMs = null;
         try { const st = fs.statSync(path.join(abs, e.name)); size = st.size; mtimeMs = st.mtimeMs; } catch (_) {}
@@ -132,9 +128,8 @@ router.get('/:id/tree', function (req, res) {
   } catch (err) {
     return res.status(500).json({ error: String((err && err.message) || err) });
   }
-  // 排序：正常目录 → 正常文件 → 被忽略的大目录（灰显沉底）；同类按名称
+  // 排序：目录在前、文件在后；同类按名称
   entries.sort((a, b) =>
-    (a.ignored ? 1 : 0) - (b.ignored ? 1 : 0) ||
     (a.type === 'dir' ? 0 : 1) - (b.type === 'dir' ? 0 : 1) ||
     (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   res.json({

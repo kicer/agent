@@ -1159,7 +1159,6 @@ body.voice-active .scroll-bottom-btn { display: none; }
   font-size: 13px; color: var(--ink); white-space: nowrap;
 }
 .tree-row:hover { background: var(--surface); }
-.tree-row.is-ignored { color: var(--gray-light); cursor: default; }
 .tree-row.is-link { color: var(--gray); }
 .tree-ico { flex: none; width: 16px; height: 16px; display: inline-flex; color: var(--gray); }
 .tree-ico svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
