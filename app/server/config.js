@@ -102,6 +102,10 @@ const DEFAULTS = {
       { tool: 'fetch', side: 'result', rounds: 2, turns: 1, status_regex: '^HTTP (\\d{3})' },
       { tool: 'read_file', side: 'result', rounds: 2, turns: 1 },
       { tool: 'web_search', side: 'result', rounds: 2, turns: 1 },
+      // terminal 输出占了会话上下文的大头（实测 69%），但单条都不大（最大 10KB），
+      // 所以阈值降到 1500（实测拐点：>1500 裁 43%，>2000 只裁 33%）。
+      // rounds:5 比其它规则更晚动手——terminal 输出经常还要回头看；turns:2 保证当前回合绝不裁。
+      { tool: 'terminal', side: 'result', rounds: 5, turns: 2, min_chars: 1500 },
     ],
   } },
   // 大图上传预处理（浏览器端 canvas 压缩，参数经 /api/system/status 下发前端）。
