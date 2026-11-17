@@ -744,15 +744,17 @@ async function callModel(cfg, modelId, messages, tools, options) {
   const cid = opts.context_id;
   const storeOn = !!(modelCfg.store && cid);
   const fullBody = JSON.stringify(body);
+  // 已剥内部键的全量数组（上面 map 的产物，保序保长）。增量分支会把它替换成尾部切片，
+  // 所以先存一份：409 重试要拿它重发全量，不能拿原始 messages（那上面挂着 __rowId）。
+  const strippedFull = body.messages;
   if (storeOn) {
     const st = ctxState.get(cid);
     headers['X-Context-Id'] = cid;
     const anchor = st && st.len > 0 ? messages[st.len - 1] : null;
     const anchored = !!(st && messages.length > st.len && anchor && anchor.__rowId === st.lastRowId);
     if (anchored) {
-      // 用 body.messages（已剥内部键）而不是 messages（原始数组，带 __rowId）：
-      // 两者长度与顺序一致（上面的 map 保序保长），索引可直接沿用。
-      body.messages = body.messages.slice(st.len); // 只发新增
+      // body.messages 此时是已剥键的全量数组，与 messages 同序同长，索引可直接沿用。
+      body.messages = strippedFull.slice(st.len); // 只发新增
     } else {
       headers['X-Context-Reset'] = '1';        // 全量：首轮 / 进程重启 / 压缩后新 id / 历史被改
     }
@@ -768,7 +770,7 @@ async function callModel(cfg, modelId, messages, tools, options) {
   // 409 = relay 那边没有这个 id 的缓存（重启 / TTL / LRU / 压缩换了 id）：改发全量重试一次。
   // 只重试一次：重发的是全量（带 Reset 头），relay 会整段存下，不可能再 409。
   if (storeOn && res.status === 409) {
-    body.messages = messages;
+    body.messages = strippedFull;   // 已剥内部键的全量，不能拿原始 messages
     headers['X-Context-Reset'] = '1';
     res = await fetch(modelCfg.url + '/chat/completions', {
       method: 'POST',
