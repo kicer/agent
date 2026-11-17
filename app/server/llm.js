@@ -732,8 +732,9 @@ async function callModel(cfg, modelId, messages, tools, options) {
     headers['X-Context-Id'] = cid;
     if (st && messages.length > st.len) {
       body.messages = messages.slice(st.len); // 只发新增
+    } else {
+      headers['X-Context-Reset'] = '1';        // 全量：首轮 / 进程重启 / 压缩后新 id
     }
-    // st 为空（首轮 / 进程重启 / 压缩后新 id）时什么都不带：messages 保持全量。
   }
 
   let res = await fetch(modelCfg.url + '/chat/completions', {
@@ -744,9 +745,10 @@ async function callModel(cfg, modelId, messages, tools, options) {
   });
 
   // 409 = relay 那边没有这个 id 的缓存（重启 / TTL / LRU / 压缩换了 id）：改发全量重试一次。
-  // 只重试一次：重发的是全量，relay 会整段存下，不可能再 409。
+  // 只重试一次：重发的是全量（带 Reset 头），relay 会整段存下，不可能再 409。
   if (storeOn && res.status === 409) {
     body.messages = messages;
+    headers['X-Context-Reset'] = '1';
     res = await fetch(modelCfg.url + '/chat/completions', {
       method: 'POST',
       headers,
