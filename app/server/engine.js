@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { buildMessages, callModel, encodeBlocks, decodeBlocks, compressMessages, titleMessages, setProfilePrompts, patchImageReceipt } = require('./llm');
+const { instanceId } = require('./instance');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const publicFiles = require('./public-files');
 const mcp = require('./mcp');
@@ -1159,6 +1160,9 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
     // key_slot 定位会话占用的具体 key 副本（model_id 只到「平台/模型」）
     const result = await callModel(cfg, session.model_id, messages, tools, {
       key_slot: session.model_slot,
+      // 增量上下文用：<core_id>:<user>:<session_id>，三层保证跨 core / 跨用户 / 跨会话都不撞。
+      // 只有带 store: true 的模型才会真的用它（llm.js 判断）。
+      context_id: instanceId(cfg.data_root) + ':' + (session.user || '-') + ':' + session.id,
       signal: run.abortController.signal,
       shouldCancel: () => run.cancelled,
       onText: delta => bus.emit(sessionId, 'assistant_delta', { text: delta }),

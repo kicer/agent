@@ -2,6 +2,14 @@
 // 累积 content 与 tool_calls 分片；支持 abort。
 const fs = require('fs');
 const path = require('path');
+const crypto = require('node:crypto');
+
+// 增量上下文：context_id -> { hash, len }（本进程认为 relay 已存到哪一段）。
+// 只存指针不存正文；进程重启即清空 → 下一轮发全量，relay 整段替换，行为正确。
+const ctxState = new Map();
+function ctxHash(messages) {
+  return crypto.createHash('sha256').update(JSON.stringify(messages)).digest('hex');
+}
 
 const SYSTEM_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'profile-default.txt'), 'utf8');
 
@@ -714,17 +722,52 @@ async function callModel(cfg, modelId, messages, tools, options) {
     opts.onFetchParams(logBody);
   }
 
-  const res = await fetch(modelCfg.url + '/chat/completions', {
+  // ---- 增量上下文（context relay）----
+  // 仅对显式 store: true 的模型生效，且必须带 opts.context_id。
+  // 不做前缀比对：压缩/改写/relay 重启一律靠 409 回退全量，客户端只负责“接着上次发”。
+  const cid = opts.context_id;
+  const storeOn = !!(modelCfg.store && cid);
+  const fullBody = JSON.stringify(body);
+  if (storeOn) {
+    const st = ctxState.get(cid);
+    headers['X-Context-Id'] = cid;
+    if (st && messages.length > st.len) {
+      body.messages = messages.slice(st.len); // 只发新增
+      headers['X-Context-Hash'] = st.hash;
+    } else {
+      headers['X-Context-Hash'] = '';          // 首轮 / 压缩后：全量替换
+    }
+  }
+
+  let res = await fetch(modelCfg.url + '/chat/completions', {
     method: 'POST',
     headers,
-    body: JSON.stringify(body),
+    body: storeOn ? JSON.stringify(body) : fullBody,
     signal: controller.signal,
   });
+
+  // relay 说 hash 对不上（缓存没了 / 历史被改写）：改发全量重试一次。
+  // 只重试一次：hash="" 对 relay 是“整段替换”，重发后不可能再 409。
+  if (storeOn && res.status === 409) {
+    body.messages = messages;
+    headers['X-Context-Hash'] = '';
+    res = await fetch(modelCfg.url + '/chat/completions', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  }
+
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     const err = new Error('上游返回 ' + res.status + ': ' + text.slice(0, 500));
     err.upstream_status = res.status;
     throw err;
+  }
+  // 成功才更新“relay 已存到哪”：失败下一轮自然重发全量。
+  if (storeOn) {
+    ctxState.set(cid, { hash: ctxHash(messages), len: messages.length });
   }
 
   let content = '';

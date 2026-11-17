@@ -211,6 +211,11 @@ IM 用户在实时对话，回合中插话应当“当前这步跑完就插”�
 `{content, reasoning, tool_calls, finish_reason, usage, aborted, sseFrames}`；正文开头混入的
 `<think>` 块会被 `splitInlineThinking` 剥离到 reasoning。
 
+增量上下文（模型配了 `store: true` 且带 `opts.context_id`）：只发上次之后新增的消息，带
+`X-Context-Id` / `X-Context-Hash`；relay 回 409 说明缓存对不上（压缩、relay 重启、TTL 过期），
+改发全量重试**一次**。指针存 `ctxState`（进程内存，只存 hash + 条数），进程重启即失效 →
+下一轮自动全量。上游仍然是全量，语义不变。
+
 ## 工具层
 
 - 工具全集 = `definitions.json`（14 个内置）+ MCP 发现结果；再依次叠 profile 的 `tools_allow`
