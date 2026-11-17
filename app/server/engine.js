@@ -875,6 +875,10 @@ async function runLoopInner(sessionId, run) {
         lastErr = err;
         const retriable = !err.upstream_status || err.upstream_status === 429 || err.upstream_status >= 500;
         if (!retriable || attempt === cfg.agent.max_retries) break;
+        // 重试用的是同一份 messages（数组一字未变），所以增量上下文会发空 body，
+        // 只花百来字节就能让 relay 用缓存重发。这行日志是用来对上那笔账的。
+        log.warn('model', sessionId + ' 第 ' + (attempt + 1) + '/' + cfg.agent.max_retries +
+          ' 次重试：' + String(err.message || '').slice(0, 100));
         await sleep(2000 * (attempt + 1));
       }
     }
