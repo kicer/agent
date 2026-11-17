@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | `web_search/` | `mcp_web_search` | 网页搜索（默认免费 Parallel / Exa，可换成自建 `/search` 上游） | `3000` | `POST /` |
 | `image_task/` | `mcp_image_task` | 图片生成 / 编辑（文生图走 `/images/generations`，图生图走 `/images/edits`，单工具 op=create/get） | `3000` | `POST /mcp` |
-| `video_task/` | `mcp_video_task` | 视频生成（上游 WorkBuddy 网关 `/v1/videos`，异步，单工具 op=create/get） | `3000` | `POST /mcp` |
+| `video_task/` | `mcp_video_task` | 视频生成（任意 OpenAI 兼容 `/videos` 上游，异步，单工具 op=create/get） | `3000` | `POST /mcp` |
 | `asr/` | `mcp_asr` | 语音转文字（上游 OpenAI 兼容 `/audio/transcriptions`），**额外带一个给输入框用的 `POST /transcribe`** | `3000` | `POST /mcp` |
 
 **这些服务一个宿主机端口都不占**——它们只挂在 `agent-mcp-net` 上，由 `agent-core` / `agent-executor`
@@ -50,7 +50,9 @@ mcp_servers:
 > 从旧的「agent + mcp 双仓库」部署升级：先在旧 mcp 仓库目录 `docker compose down`（只需一次，否则同名容器与网络会冲突），再 `up` 本栈。
 
 `image_task` / `video_task` 的 token **不由服务端保存**——每个请求从 `Authorization` header 读取
-（agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。`video_task` 用 wb.ai 网关的 API Key；
+（agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。`video_task` 走任意 OpenAI 兼容的 videos 上游：
+提交 `/videos/generations`、查询 `/videos/{task_id}`，地址与模型由 `X-Video-Task-Base-Url` /
+`X-Video-Task-Model` 指定（两者都必填）；
 `image_task` 走任意 OpenAI 兼容的 images 上游：文生图 `/images/generations`、图生图 `/images/edits`，
 上游地址与模型分别由 `X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定（两者都必填）。
 所以这两个服务不用配任何密钥。

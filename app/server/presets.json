@@ -95,7 +95,7 @@
     {
       "key": "video_task",
       "label": "视频生成",
-      "desc": "WorkBuddy 网关（minimax / kling）",
+      "desc": "文生视频 / 图生视频",
       "url": "http://mcp_video_task:3000/mcp",
       "mode": "skill",
       "fields": [
@@ -105,12 +105,20 @@
           "secret": true,
           "prefix": "Bearer ",
           "required": true,
-          "placeholder": "wb.ai 的 API Key"
+          "placeholder": "API Key"
+        },
+        {
+          "header": "X-Video-Task-Base-Url",
+          "label": "地址",
+          "required": true,
+          "placeholder": "https://<host>/v1",
+          "hint": "OpenAI 兼容 videos / generations"
         },
         {
           "header": "X-Video-Task-Model",
           "label": "模型",
-          "default": "cn:minimax-video-h3"
+          "required": true,
+          "placeholder": "上游的模型 id"
         }
       ]
     },
