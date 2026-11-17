@@ -21,3 +21,4 @@ app/server/version.json
 *.apk
 # 部署配置真身（含密钥，模板见 scripts/deploy.conf.example）；
 deploy.conf
+relay/config.json
