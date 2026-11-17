@@ -2,7 +2,7 @@
 // 单进程内存模型：JS 单线程 + better-sqlite3 同步 API，不存在跨进程竞争。
 const fs = require('fs');
 const path = require('path');
-const { buildMessages, callModel, encodeBlocks, decodeBlocks, compressMessages, titleMessages, setProfilePrompts, patchImageReceipt } = require('./llm');
+const { buildMessages, callModel, encodeBlocks, decodeBlocks, compressMessages, titleMessages, setProfilePrompts, patchImageReceipt, invalidateContext } = require('./llm');
 const { instanceId } = require('./instance');
 const { executeTool, resolveInTask } = require('./tools/executor');
 const publicFiles = require('./public-files');
@@ -116,6 +116,13 @@ function archivedCount(history) {
   let n = 0;
   for (const r of history || []) if (r.type === 'archived') n++;
   return n;
+}
+
+// 增量上下文 id 的拼法（与 llm.js 的 X-Context-Id 一致）：<core_id>:<user>:<session_id>:<archived_cnt>。
+// 删除消息后要把这个 key 作废，让下一轮走全量重建。
+function contextIdOf(session) {
+  return instanceId(cfg.data_root) + ':' + (session.user || '-') + ':' + session.id +
+    ':' + archivedCount(session.history);
 }
 
 function saveMessage(sessionId, msg) {
@@ -1172,8 +1179,7 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
       // archived_cnt = 已被压缩掉的行数，它就是「压缩代数」：压缩后自增 → id 自变 →
       // relay 找不到缓存并回 409 → 发全量重建。裁剪不改它（只换内容不删行），
       // 所以裁剪不会打断增量。只有带 store: true 的模型才真的用它（llm.js 判断）。
-      context_id: instanceId(cfg.data_root) + ':' + (session.user || '-') + ':' + session.id
-        + ':' + archivedCount(session.history),
+      context_id: contextIdOf(session),
       signal: run.abortController.signal,
       shouldCancel: () => run.cancelled,
       onText: delta => bus.emit(sessionId, 'assistant_delta', { text: delta }),
@@ -1850,7 +1856,9 @@ function clearSessionMessages(sessionId) {
   }
   runs.delete(sessionId);
   clearPendings(sessionId); // 历史清零：队列里的消息也没了着落，一并作废
+  const cid = contextIdOf(session); // 删行不影响 archived_cnt，先算后算等价
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+  invalidateContext(cid); // 历史清零：增量指针也得跟着作废
   wipeSessionTmp(sessionId);   // 会话级 /tmp 随清空一并抹掉（尽力而为，失败只记日志不阻断）
   autoCompressProposed.delete(sessionId); // 历史清零，恢复自动压缩提议额度
   // 标题随历史一并清零：旧标题描述的是已删除的对话，留着会让新对话文不对题；
@@ -1886,6 +1894,7 @@ function deleteMessage(sessionId, messageId) {
   const row = db.prepare('SELECT * FROM messages WHERE id = ? AND session_id = ?').get(messageId, sessionId);
   if (!row) throw Object.assign(new Error('消息不存在'), { status_code: 404 });
   if (row.role === 'tool') return deleteToolMessage(sessionId, row);
+  const cid = contextIdOf(session); // 删之前先算：archived_cnt 不受删行影响，两者等价，但先算更直观
   let removed = 0;
   if (row.tool_calls) {
     let calls = [];
@@ -1897,6 +1906,9 @@ function deleteMessage(sessionId, messageId) {
     }
   }
   db.prepare('DELETE FROM messages WHERE id = ?').run(messageId);
+  // 删中间一条：后面的行位置全变，但末尾行 id 没变，锚点查不出来——主动作废增量指针，
+  // 下一轮改发 X-Context-Reset 全量重建，否则 relay 缓存里还留着被删那行，增量拼出来会错位。
+  invalidateContext(cid);
   return { ok: true, id: messageId, removed: removed + 1 };
 }
 
@@ -1914,6 +1926,8 @@ function editUserMessage(sessionId, messageId, content, opts) {
   // 先确保能开跑：无可用模型时抛 503，避免删完历史却发不出去
   ensureBinding(session);
   const removed = db.prepare('DELETE FROM messages WHERE session_id = ? AND id >= ?').run(sessionId, messageId).changes;
+  // 尾部截断：锚点本就能查出，但这里紧接着就重新发消息，一并作废指针更直接
+  invalidateContext(contextIdOf(session));
   const r = postUserMessage(sessionId, content, opts);
   log.info('msg', sessionId + ' 编辑消息 ' + messageId + '，丢弃其后 ' + Math.max(0, removed - 1) + ' 条历史');
   return Object.assign({ removed: removed }, r);
@@ -1944,6 +1958,9 @@ function deleteToolMessage(sessionId, row) {
     }
     break; // id 唯一，命中即止
   }
+  // 同上：回执被删、父调用也改过 tool_calls，历史已被控——作废增量指针
+  const s = getSession(sessionId);
+  if (s) invalidateContext(contextIdOf(s));
   return { ok: true, id: row.id, removed };
 }
 

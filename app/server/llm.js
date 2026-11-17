@@ -313,7 +313,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
       // summarize_request（旧版遗留行）：仅在未收尾的旧压缩回合内发给模型，其余一律跳过
       if (row.type === 'summarize_request') {
         if (i > lastClosingAssistant && (row.content || '').trim()) {
-          messages.push({ role: 'user', content: row.content });
+          messages.push({ role: 'user', content: row.content, __rowId: row.id });
         }
         return;
       }
@@ -343,7 +343,7 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
         });
         return;
       }
-      const m = { role: 'assistant', content: row.content || '' };
+      const m = { role: 'assistant', content: row.content || '', __rowId: row.id };
       // 思维链回传原料：存库 reasoning 随原样带给 callModel（中性内部键，按模型
       // reasoning_ack_field 改名注入后此键必被剥除，不会泄往上游）。
       if (row.reasoning) m.__reasoning = row.reasoning;
@@ -424,9 +424,9 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
     }
     if (row.role === 'tool') {
       if (trimActive && typeof content === 'string') content = trimToolContent(content, row, callById, roundsAfter, turnsAfter);
-      messages.push({ role: 'tool', tool_call_id: row.tool_call_id, name: row.name, content });
+      messages.push({ role: 'tool', tool_call_id: row.tool_call_id, name: row.name, content, __rowId: row.id });
     } else {
-      messages.push({ role: row.role, content });
+      messages.push({ role: row.role, content, __rowId: row.id });
     }
   });
   // 未消费图片合并发送：图上文字置顶、图块紧随（同序）。
@@ -654,6 +654,14 @@ function splitInlineThinking(raw) {
   return { content: text.trim(), reasoning: think.trim() };
 }
 
+// 剥离内部键 __rowId（锚点用）：有才拷贝，没就原样返回，避免每行都新建对象
+function stripRowId(m) {
+  if (!m || m.__rowId == null) return m;
+  const c = Object.assign({}, m);
+  delete c.__rowId;
+  return c;
+}
+
 // 调模型一次。onText(textDelta) 回调流式文本。
 // 返回 { content, tool_calls: [{id,name,arguments(string)}], finish_reason, usage, aborted }
 // 可选回调 opts.onToolCallStart({id,name})：某 tool_call 首次凑齐 id+name 时触发一次；
@@ -691,20 +699,23 @@ async function callModel(cfg, modelId, messages, tools, options) {
   // 思维链回传（逐模型 opt-in）：开思考时把 buildMessages 挂的内部键 __reasoning 按
   // reasoning_ack_field 写回 assistant 行；关思考时整段不发。带 tool_calls 的行缺思维链
   // 时用空串占位（缺失会被上游 400，空串实测通过）。__reasoning 是内部键，任何情况都剥。
+  // __rowId（锚点用的库行 id）同样是内部键：没想发也不该发给上游，任何行有就剥。
   if (body.messages && body.messages.length) {
     const ack = modelCfg.reasoning_ack_field;
     const send = !!(ack && opts.deepThink);
     body.messages = body.messages.map(mm => {
-      if (!mm || mm.role !== 'assistant') return mm;
+      if (!mm || mm.role !== 'assistant') return stripRowId(mm);
       if (!mm.__reasoning) {
-        if (!send || !mm.tool_calls) return mm;
+        if (!send || !mm.tool_calls) return stripRowId(mm);
         const c = Object.assign({}, mm);
         c[ack] = '';
+        delete c.__rowId; // 内部键，不发给上游
         return c;
       }
       const c = Object.assign({}, mm);
       if (send) c[ack] = mm.__reasoning;
       delete c.__reasoning;
+      delete c.__rowId;
       return c;
     });
   }
@@ -724,16 +735,26 @@ async function callModel(cfg, modelId, messages, tools, options) {
   // id 尾部的 archived_cnt 就是「压缩代数」：压缩会把老行标 archived，代数一变 id 就变，
   // relay 自然找不到缓存并回 409，不需要额外传 hash。
   // 裁剪不改 id（只换内容不删行），所以它不会打断增量：relay 里留着完本文，模型读到的信息更多。
+  //
+  // 能不能只发新增，靠「锚点」判：上一轮发出去的最后一条库行(其 messages.id)还在不在
+  // 本轮数组的同一位置上。历史被改只有两种形态——尾部截断（编辑/清空/压缩后）与中间挖洞
+  //（删单条，由 invalidateContext 另行作废）——前者必然让锚点对不上。
+  // 只比长度是不行的：编辑台丢弃历史后新内容又长出来，长度可能反而更大，切点就错位了，
+  // relay 忠实 concat 出一份错位数组，上游按 tool_call_mismatch 拒收。
   const cid = opts.context_id;
   const storeOn = !!(modelCfg.store && cid);
   const fullBody = JSON.stringify(body);
   if (storeOn) {
     const st = ctxState.get(cid);
     headers['X-Context-Id'] = cid;
-    if (st && messages.length > st.len) {
-      body.messages = messages.slice(st.len); // 只发新增
+    const anchor = st && st.len > 0 ? messages[st.len - 1] : null;
+    const anchored = !!(st && messages.length > st.len && anchor && anchor.__rowId === st.lastRowId);
+    if (anchored) {
+      // 用 body.messages（已剥内部键）而不是 messages（原始数组，带 __rowId）：
+      // 两者长度与顺序一致（上面的 map 保序保长），索引可直接沿用。
+      body.messages = body.messages.slice(st.len); // 只发新增
     } else {
-      headers['X-Context-Reset'] = '1';        // 全量：首轮 / 进程重启 / 压缩后新 id
+      headers['X-Context-Reset'] = '1';        // 全量：首轮 / 进程重启 / 压缩后新 id / 历史被改
     }
   }
 
@@ -764,8 +785,14 @@ async function callModel(cfg, modelId, messages, tools, options) {
     throw err;
   }
   // 成功才更新“relay 已存到几条”：失败下一轮自然重发全量。
+  // lastRowId 取本轮发出去的数组里最后一个「来自数据库的行」的 id（末尾可能是合成的
+  // 图片提示行，没有 __rowId，要往前找）：它就是下一轮比对的锚点。
   if (storeOn) {
-    ctxState.set(cid, { len: messages.length });
+    let lastRowId = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i] && messages[i].__rowId != null) { lastRowId = messages[i].__rowId; break; }
+    }
+    ctxState.set(cid, { len: messages.length, lastRowId: lastRowId });
   }
 
   let content = '';
@@ -856,4 +883,12 @@ async function callModel(cfg, modelId, messages, tools, options) {
   return { content, reasoning, tool_calls: Array.from(toolCalls.values()), finish_reason: finishReason, usage, aborted, sseFrames };
 }
 
-module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setEnvMode, setPayloadTrim, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages, patchImageReceipt };
+// 作废某会话的增量上下文指针：下一轮直接走 X-Context-Reset 全量重建。
+// 用在「历史被挖了一个洞」的地方——删中间某条消息时，后面的行位置没变、
+// 锚点（末尾行 id）查不出异常，但 relay 缓存里还留着被删那行，增量拼出来就错位了。
+// 压缩不用调：压缩会改 cid（archived_cnt +1），自然回落。
+function invalidateContext(cid) {
+  if (cid) ctxState.delete(cid);
+}
+
+module.exports = { callModel, buildMessages, buildSystemPrompt, systemPromptText, setSkillListText, setEnvMode, setPayloadTrim, setProfilePrompts, encodeBlocks, decodeBlocks, compressMessages, titleMessages, patchImageReceipt, invalidateContext };
