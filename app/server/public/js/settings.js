@@ -1260,7 +1260,7 @@
   }
   function pfNewModel() {
     const r = { ref: null, id: '', vision: true, enable: true, display_name: '', profile: '',
-      extra_params: '', thinking_params: '', reasoning_ack_field: '', max_context: 0, adv: false };
+      extra_params: '', thinking_params: '', reasoning_ack_field: '', max_context: 0, store: false, adv: false };
     if (pfEdit) applyModelDefaults(r, pfEdit.preset);
     return r;
   }
@@ -1284,6 +1284,7 @@
         thinking_params: pfJsonText(m.thinking_params),
         reasoning_ack_field: m.reasoning_ack_field || '',
         max_context: Number(m.max_context) || 0,
+        store: m.store === true,
         adv: false,
       })),
     };
@@ -1374,6 +1375,7 @@
       '<div class="mpe-cks">' +
         '<label class="mpe-ck"><input type="checkbox"' + (r.vision ? ' checked' : '') + ' onchange="sUI.mModVision(' + i + ',this.checked)">图片输入</label>' +
         '<label class="mpe-ck"><input type="checkbox"' + (r.enable !== false ? ' checked' : '') + ' onchange="sUI.mModEnable(' + i + ',this.checked)">启用</label>' +
+        '<label class="mpe-ck" title="只发新增消息，需上游有 context relay"><input type="checkbox"' + (r.store ? ' checked' : '') + ' onchange="sUI.mModField(' + i + ',\'store\',this.checked)">增量上下文</label>' +
         '<button type="button" class="mpe-adv-btn" onclick="sUI.mAdvToggle(' + i + ')">' + (r.adv ? '收起' : '高级') + '</button>' +
       '</div>' + adv +
     '</div>';
@@ -1430,6 +1432,7 @@
     if (ra) nv.reasoning_ack_field = ra;
     const mc = Math.max(0, parseInt(r.max_context, 10) || 0);
     if (mc) nv.max_context = mc;
+    if (r.store === true) nv.store = true;   // 缺省 false，只在勾选时写
     return nv;
   }
   // 根据工作态算批量编辑:原地改(值变更项) → 删行(降序) → 新增行(append)。
@@ -1511,6 +1514,12 @@
         const mc = Math.max(0, parseInt(r.max_context, 10) || 0);
         if (mc !== curMc) {
           edits.push(mc ? { path: mp.concat('max_context'), value: mc } : { path: mp.concat('max_context'), op: 'delete' });
+        }
+        // 增量上下文：缺省不写，只在勾选时落键，取消勾选则删键
+        const curSt = om.store === true;
+        const st = r.store === true;
+        if (st !== curSt) {
+          edits.push(st ? { path: mp.concat('store'), value: true } : { path: mp.concat('store'), op: 'delete' });
         }
       } else {
         edits.push({ op: 'append', path: ['platforms', pfEdit.idx, 'models'], value: pfModelValue(r) });
