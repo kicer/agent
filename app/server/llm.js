@@ -750,13 +750,19 @@ async function callModel(cfg, modelId, messages, tools, options) {
   if (storeOn) {
     const st = ctxState.get(cid);
     headers['X-Context-Id'] = cid;
+    // 锚点：上一轮发出去的数组里最后一条库行的 messages.id。
     const anchor = st && st.len > 0 ? messages[st.len - 1] : null;
-    const anchored = !!(st && messages.length > st.len && anchor && anchor.__rowId === st.lastRowId);
-    if (anchored) {
-      // body.messages 此时是已剥键的全量数组，与 messages 同序同长，索引可直接沿用。
-      body.messages = strippedFull.slice(st.len); // 只发新增
+    const anchorOk = !!(st && anchor && anchor.__rowId === st.lastRowId);
+    if (anchorOk && messages.length === st.len) {
+      // 数组与上次一模一样（错误重试 / 切模型但没新增消息）：发空增量，
+      // relay 用缓存原样转发即可。缓存不在时它会回 409，下面重试一次全量。
+      body.messages = [];
+    } else if (anchorOk && messages.length > st.len) {
+      // 前缀没动：只发新增。strippedFull 与 messages 同序同长，索引可直接沿用。
+      body.messages = strippedFull.slice(st.len);
     } else {
-      headers['X-Context-Reset'] = '1';        // 全量：首轮 / 进程重启 / 压缩后新 id / 历史被改
+      // 全量：首轮 / 进程重启 / 压缩后新 id / 历史被改
+      headers['X-Context-Reset'] = '1';
     }
   }
 
