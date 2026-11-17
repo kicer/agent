@@ -110,6 +110,14 @@ function loadHistory(sessionId) {
   return db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY id').all(sessionId);
 }
 
+// 已被压缩掉的行数 = 「压缩代数」。压缩时会把摘要之前的所有行标成 archived，
+// 所以这个数单调递增；用它做增量上下文的 id 后缀，压缩后 id 自变，relay 缓存自然失效。
+function archivedCount(history) {
+  let n = 0;
+  for (const r of history || []) if (r.type === 'archived') n++;
+  return n;
+}
+
 function saveMessage(sessionId, msg) {
   const info = db.prepare(
     'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, usage, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
@@ -1160,9 +1168,12 @@ async function streamAssistant(sessionId, run, session, messages, tools) {
     // key_slot 定位会话占用的具体 key 副本（model_id 只到「平台/模型」）
     const result = await callModel(cfg, session.model_id, messages, tools, {
       key_slot: session.model_slot,
-      // 增量上下文用：<core_id>:<user>:<session_id>，三层保证跨 core / 跨用户 / 跨会话都不撞。
-      // 只有带 store: true 的模型才会真的用它（llm.js 判断）。
-      context_id: instanceId(cfg.data_root) + ':' + (session.user || '-') + ':' + session.id,
+      // 增量上下文用：<core_id>:<user>:<session_id>:<archived_cnt>。
+      // archived_cnt = 已被压缩掉的行数，它就是「压缩代数」：压缩后自增 → id 自变 →
+      // relay 找不到缓存并回 409 → 发全量重建。裁剪不改它（只换内容不删行），
+      // 所以裁剪不会打断增量。只有带 store: true 的模型才真的用它（llm.js 判断）。
+      context_id: instanceId(cfg.data_root) + ':' + (session.user || '-') + ':' + session.id
+        + ':' + archivedCount(session.history),
       signal: run.abortController.signal,
       shouldCancel: () => run.cancelled,
       onText: delta => bus.emit(sessionId, 'assistant_delta', { text: delta }),

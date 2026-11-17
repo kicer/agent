@@ -2,14 +2,11 @@
 // 累积 content 与 tool_calls 分片；支持 abort。
 const fs = require('fs');
 const path = require('path');
-const crypto = require('node:crypto');
 
-// 增量上下文：context_id -> { hash, len }（本进程认为 relay 已存到哪一段）。
+// 增量上下文：context_id -> { len }（本进程认为 relay 已存到第几条）。
 // 只存指针不存正文；进程重启即清空 → 下一轮发全量，relay 整段替换，行为正确。
+// 不存 hash：id 里已经带 archived_cnt（压缩代数），压缩后 id 自变、缓存自然对不上。
 const ctxState = new Map();
-function ctxHash(messages) {
-  return crypto.createHash('sha256').update(JSON.stringify(messages)).digest('hex');
-}
 
 const SYSTEM_PROMPT_TEMPLATE = fs.readFileSync(path.join(__dirname, 'templates', 'profile-default.txt'), 'utf8');
 
@@ -724,7 +721,9 @@ async function callModel(cfg, modelId, messages, tools, options) {
 
   // ---- 增量上下文（context relay）----
   // 仅对显式 store: true 的模型生效，且必须带 opts.context_id。
-  // 不做前缀比对：压缩/改写/relay 重启一律靠 409 回退全量，客户端只负责“接着上次发”。
+  // id 尾部的 archived_cnt 就是「压缩代数」：压缩会把老行标 archived，代数一变 id 就变，
+  // relay 自然找不到缓存并回 409，不需要额外传 hash。
+  // 裁剪不改 id（只换内容不删行），所以它不会打断增量：relay 里留着完本文，模型读到的信息更多。
   const cid = opts.context_id;
   const storeOn = !!(modelCfg.store && cid);
   const fullBody = JSON.stringify(body);
@@ -733,10 +732,8 @@ async function callModel(cfg, modelId, messages, tools, options) {
     headers['X-Context-Id'] = cid;
     if (st && messages.length > st.len) {
       body.messages = messages.slice(st.len); // 只发新增
-      headers['X-Context-Hash'] = st.hash;
-    } else {
-      headers['X-Context-Hash'] = '';          // 首轮 / 压缩后：全量替换
     }
+    // st 为空（首轮 / 进程重启 / 压缩后新 id）时什么都不带：messages 保持全量。
   }
 
   let res = await fetch(modelCfg.url + '/chat/completions', {
@@ -746,11 +743,10 @@ async function callModel(cfg, modelId, messages, tools, options) {
     signal: controller.signal,
   });
 
-  // relay 说 hash 对不上（缓存没了 / 历史被改写）：改发全量重试一次。
-  // 只重试一次：hash="" 对 relay 是“整段替换”，重发后不可能再 409。
+  // 409 = relay 那边没有这个 id 的缓存（重启 / TTL / LRU / 压缩换了 id）：改发全量重试一次。
+  // 只重试一次：重发的是全量，relay 会整段存下，不可能再 409。
   if (storeOn && res.status === 409) {
     body.messages = messages;
-    headers['X-Context-Hash'] = '';
     res = await fetch(modelCfg.url + '/chat/completions', {
       method: 'POST',
       headers,
@@ -765,9 +761,9 @@ async function callModel(cfg, modelId, messages, tools, options) {
     err.upstream_status = res.status;
     throw err;
   }
-  // 成功才更新“relay 已存到哪”：失败下一轮自然重发全量。
+  // 成功才更新“relay 已存到几条”：失败下一轮自然重发全量。
   if (storeOn) {
-    ctxState.set(cid, { hash: ctxHash(messages), len: messages.length });
+    ctxState.set(cid, { len: messages.length });
   }
 
   let content = '';
