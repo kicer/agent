@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | `web_search/` | `mcp_web_search` | 网页搜索（默认免费 Parallel / Exa，可换成自建 `/search` 上游） | `3000` | `POST /` |
 | `image_task/` | `mcp_image_task` | 图片生成 / 编辑（文生图走 `/images/generations`，图生图走 `/images/edits`，单工具 op=create/get） | `3000` | `POST /mcp` |
-| `video_task/` | `mcp_video_task` | 智谱 CogVideo 视频生成（异步，单工具 op=create/get） | `3000` | `POST /mcp` |
+| `video_task/` | `mcp_video_task` | 视频生成（上游 WorkBuddy 网关 `/v1/videos`，异步，单工具 op=create/get） | `3000` | `POST /mcp` |
 | `asr/` | `mcp_asr` | 语音转文字（上游 OpenAI 兼容 `/audio/transcriptions`），**额外带一个给输入框用的 `POST /transcribe`** | `3000` | `POST /mcp` |
 
 **这些服务一个宿主机端口都不占**——它们只挂在 `agent-mcp-net` 上，由 `agent-core` / `agent-executor`
@@ -50,7 +50,7 @@ mcp_servers:
 > 从旧的「agent + mcp 双仓库」部署升级：先在旧 mcp 仓库目录 `docker compose down`（只需一次，否则同名容器与网络会冲突），再 `up` 本栈。
 
 `image_task` / `video_task` 的 token **不由服务端保存**——每个请求从 `Authorization` header 读取
-（agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。`video_task` 用智谱 token；
+（agent 侧配在 `config.yml` 的 `mcp_servers[].headers`）。`video_task` 用 wb.ai 网关的 API Key；
 `image_task` 走任意 OpenAI 兼容的 images 上游：文生图 `/images/generations`、图生图 `/images/edits`，
 上游地址与模型分别由 `X-Image-Task-Base-Url` / `X-Image-Task-Model` 指定（两者都必填）。
 所以这两个服务不用配任何密钥。
@@ -71,23 +71,23 @@ mcp_servers:
 本栈默认不给 MCP 服务映射宿主机端口（它们只在 `agent-mcp-net` 内网可达）。要从宿主机直连，
 自行在 `docker-compose.yml` 给对应服务加 `ports` 即可。
 
-## 图片是怎么到智谱手上的（只有 video_task 关心）
+## 图片是怎么到上游的（只有 video_task 关心）
 
-智谱服务器生成视频前要**自己来拉参考图**，它不带 cookie、不带 `Authorization`。这套链路里**没有任何人上传文件**：
+上游生成视频前要**自己来拉参考图**，它不带 cookie、不带 `Authorization`。这套链路里**没有任何人上传文件**：
 
 ```
 AI ──调用 agent 内置的「公开临时 URL」工具（直接传文件路径）──► 拿到一条短命公网 URL
       │
       ▼
-AI 把拿到的 URL 当 image_url 交给 video_task:3000/mcp
+AI 把拿到的 URL 当 image_url 交给 video_task:3000/mcp（转发为上游的 image 字段）
       │
       ▼
-智谱  ──匿名 GET──►  agent 侧提供的公开临时 URL
-                        那个文件始终躺在 agent 的任务目录里，零拷贝
+上游 ──匿名 GET──►  agent 侧提供的公开临时 URL
+                       那个文件始终躺在 agent 的任务目录里，零拷贝
 ```
 
 - 签发与托管全在 agent 侧（它已集成为一个 tool，AI 直接调用即可，不需要 curl 任何内网入口）。
-- 链接短命：到期或 agent 重启后失效；智谱只在提交任务那一刻拉一次图，完全够用。
+- 链接短命：到期或 agent 重启后失效；上游只在提交任务那一刻拉一次图，完全够用。
 - mcp 这三家一个端口都不露，唯一公网可达的东西只有 agent 自己。
 
 ## 端口与安全

@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// MCP 视频任务服务：对接 WorkBuddy 网关（wb.ai）的 OpenAI 兼容视频接口
+//   提交 POST /v1/videos/generations（wait=false，立刻回 task_id）
+//   查询 GET  /v1/videos/{task_id}
+// 只有一条工具 video_task，用 op 区分 create / get；服务端不轮询，AI 自己查。
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -6,26 +10,25 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-const ZHIPU_SUBMIT_URL =
-  "https://open.bigmodel.cn/api/paas/v4/videos/generations";
-const ZHIPU_QUERY_URL = (id) =>
-  `https://open.bigmodel.cn/api/paas/v4/async-result/${encodeURIComponent(id)}`;
+// 上游网关地址：容器内可用 WB_BASE_URL 覆盖
+const WB_BASE = (process.env.WB_BASE_URL || "https://wb.ai.foresh.com").replace(/\/+$/, "");
+const SUBMIT_URL = `${WB_BASE}/v1/videos/generations`;
+const queryUrl = (id) => `${WB_BASE}/v1/videos/${encodeURIComponent(id)}`;
 
-// 默认模型：cogvideox-flash
-const DEFAULT_MODEL = "cogvideox-flash";
+// 默认模型：minimax 出片约 2 分钟、扣 57 积分；kling 约 8 分钟、扣 103 积分
+const DEFAULT_MODEL = "cn:minimax-video-h3";
+const DEFAULT_SECONDS = 4;
 
-// AI 不可见的服务端默认（可被同名 header 覆盖）
-const DEFAULT_QUALITY = "speed";       // speed | quality
-const DEFAULT_FPS = 30;                // 30 | 60
-const DEFAULT_WATERMARK_ENABLED = true; // 平台政策默认 true
+// 提交/查询都是快接口（wait=false 立刻返回），卡住基本等于上游挂了
+const UPSTREAM_TIMEOUT_MS = 60_000;
 
-// submit/query 都是快接口，卡住基本等于上游挂了；限时避免工具调用被拖死
-const UPSTREAM_TIMEOUT_MS = 30_000;
+// 上游状态归一：命中终态才停轮询
+const DONE = new Set(["completed", "succeeded", "success"]);
+const FAILED = new Set(["failed", "error", "cancelled", "canceled"]);
 
 // ── 优雅退出 ──────────────────────────────────────────────────────────────
 // 容器里 node 以 PID 1 运行且未注册 SIGTERM 处理器时，内核不会对其执行默认
 // 终止动作，docker stop/restart 会白等满 10s 宽限期才被 SIGKILL。
-// 显式注册处理器，关闭 MCP session 与长连接后立即退出；3s 定时器为兜底。
 let httpServer = null;
 let closeAllSessions = () => {};
 let shuttingDown = false;
@@ -35,7 +38,7 @@ function shutdown(sig) {
   shuttingDown = true;
   console.log(`[video] received ${sig}, shutting down`);
   closeAllSessions();
-  if (!httpServer) process.exit(0); // stdio 模式无监听，直接退
+  if (!httpServer) process.exit(0);
   httpServer.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }
@@ -43,11 +46,7 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
 function parseArgs(argv) {
-  const args = {
-    http: false,
-    port: 3000,
-    host: "0.0.0.0",
-  };
+  const args = { http: false, port: 3000, host: "0.0.0.0" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--http") args.http = true;
@@ -57,6 +56,7 @@ function parseArgs(argv) {
   return args;
 }
 
+// 鉴权：每个请求从 header 取 wb.ai 的 API Key，服务端不落盘
 function pickToken(headers) {
   if (!headers) return null;
   const candidates = [
@@ -80,42 +80,13 @@ function pickToken(headers) {
 
 function pickModel(headers) {
   if (!headers) return null;
-  const v =
-    headers["x-video-task-model"] ||
-    headers["x-mcp-model"] ||
-    headers["x-model"];
+  const v = headers["x-video-task-model"] || headers["x-mcp-model"] || headers["x-model"];
   if (!v) return null;
   const s = String(v).trim();
   return s || null;
 }
 
-function pickHeaderString(headers, name, fallback) {
-  if (!headers) return fallback;
-  const v = headers[name];
-  if (v === undefined || v === null) return fallback;
-  const s = String(v).trim();
-  return s ? s : fallback;
-}
-
-function pickHeaderInt(headers, name, fallback) {
-  if (!headers) return fallback;
-  const v = headers[name];
-  if (v === undefined || v === null) return fallback;
-  const n = parseInt(String(v).trim(), 10);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function pickHeaderBool(headers, name, fallback) {
-  if (!headers) return fallback;
-  const v = headers[name];
-  if (v === undefined || v === null) return fallback;
-  const s = String(v).trim().toLowerCase();
-  if (s === "true" || s === "1" || s === "yes") return true;
-  if (s === "false" || s === "0" || s === "no") return false;
-  return fallback;
-}
-
-async function callZhipu({ url, token, method = "POST", body }) {
+async function callWb({ url, token, method = "POST", body }) {
   const init = {
     method,
     headers: {
@@ -125,16 +96,17 @@ async function callZhipu({ url, token, method = "POST", body }) {
     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   };
   if (body !== undefined) init.body = JSON.stringify(body);
+
   let resp;
   try {
     resp = await fetch(url, init);
   } catch (e) {
-    // AbortSignal.timeout 中止时抛 TimeoutError/AbortError，转成明确的超时错误
     if (e?.name === "TimeoutError" || e?.name === "AbortError") {
-      throw new Error(`Upstream request timed out after ${UPSTREAM_TIMEOUT_MS} ms`);
+      throw new Error(`上游 ${UPSTREAM_TIMEOUT_MS} ms 内没有响应`);
     }
     throw e;
   }
+
   const text = await resp.text();
   let data;
   try {
@@ -143,9 +115,9 @@ async function callZhipu({ url, token, method = "POST", body }) {
     data = { raw: text };
   }
   if (!resp.ok) {
-    const err = new Error(
-      `Zhipu API error: ${resp.status} ${resp.statusText} - ${text}`
-    );
+    // 网关的错误体是 {error:{message}}，取原话给模型看，便于自行纠错
+    const msg = data?.error?.message || data?.error?.code || text.slice(0, 300);
+    const err = new Error(`网关返回 ${resp.status}: ${msg}`);
     err.status = resp.status;
     err.detail = data;
     throw err;
@@ -153,96 +125,62 @@ async function callZhipu({ url, token, method = "POST", body }) {
   return data;
 }
 
-// ===== op=create：提交视频生成（同步只提交，立刻返回）=====
-async function submitVideo({
-  token,
-  model,
-  prompt,
-  image_url,
-  quality,
-  with_audio,
-  fps,
-  watermark_enabled,
-}) {
-  // 平台要求 image_url 和 prompt 至少传一个（handler 侧已校验）
-  const body = {
-    model,
-    quality,
-    with_audio: Boolean(with_audio),
-    watermark_enabled: Boolean(watermark_enabled),
-    fps,
-    // 由服务端生成唯一 request_id，便于日志关联；不暴露给 AI
-    request_id: randomUUID(),
-  };
-  if (prompt) body.prompt = prompt;
-  if (image_url) body.image_url = image_url;
-
-  return await callZhipu({ url: ZHIPU_SUBMIT_URL, token, body });
-  // { model, id, request_id, task_status }
+// ===== op=create：提交任务，wait=false 立刻返回 task_id =====
+async function submitVideo({ token, model, prompt, imageUrl, seconds, aspectRatio, resolution, negativePrompt, enableAudio }) {
+  const body = { model, prompt, wait: false };
+  if (imageUrl) body.image = imageUrl;
+  if (seconds) body.seconds = seconds;
+  if (aspectRatio) body.aspect_ratio = aspectRatio;
+  if (resolution) body.resolution = resolution;
+  if (negativePrompt) body.negative_prompt = negativePrompt;
+  if (enableAudio !== undefined && enableAudio !== null) body.enable_audio = Boolean(enableAudio);
+  return await callWb({ url: SUBMIT_URL, token, body });
 }
 
-// ===== op=get：查询异步结果（单次拉取，不内部轮询）=====
-async function queryAsyncResult({ token, id }) {
-  return await callZhipu({
-    url: ZHIPU_QUERY_URL(id),
-    token,
-    method: "GET",
-  });
-  // { id, request_id, model, task_status, video_result?, ... }
+// ===== op=get：查任务（单次拉取） =====
+async function queryVideo({ token, taskId }) {
+  return await callWb({ url: queryUrl(taskId), token, method: "GET" });
 }
 
-// ---------- op=create 的业务处理 ----------
+function normStatus(s) {
+  return String(s || "").trim().toLowerCase();
+}
+
 async function handleCreate({ args, headers, token }) {
-  // 纯空白 prompt 等同没给：schema 只校验类型/长度，不校验内容。
-  // 不 trim 的话，“   ”会被当成合法 prompt 提交（text-to-video 拿到空白提示词，
-  // image-to-video 则多传一个无意义字段）。
   const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
-  if (!prompt && !args.image_url) {
+  if (!prompt) {
     return {
       isError: true,
-      content: [
-        {
-          type: "text",
-          text: 'op=create requires at least one of "prompt" or "image_url".',
-        },
-      ],
+      content: [{ type: "text", text: 'op=create 需要 "prompt"（视频描述，必填）。' }],
     };
   }
 
-  // AI 不可见：全部走 header
   const model = pickModel(headers) || DEFAULT_MODEL;
-  const quality = pickHeaderString(
-    headers,
-    "x-video-task-quality",
-    DEFAULT_QUALITY
-  );
-  const fps = pickHeaderInt(headers, "x-video-task-fps", DEFAULT_FPS);
-  const watermark_enabled = pickHeaderBool(
-    headers,
-    "x-video-task-watermark",
-    DEFAULT_WATERMARK_ENABLED
-  );
+  const seconds = Number.isFinite(args.seconds) ? args.seconds : DEFAULT_SECONDS;
 
   try {
     const data = await submitVideo({
       token,
       model,
       prompt,
-      image_url: args.image_url,
-      quality,
-      with_audio: args.with_audio ?? false,
-      fps,
-      watermark_enabled,
+      imageUrl: args.image_url,
+      seconds,
+      aspectRatio: args.aspect_ratio,
+      resolution: args.resolution,
+      negativePrompt: args.negative_prompt,
+      // 兼容旧字段名
+      enableAudio: args.enable_audio ?? args.with_audio,
     });
 
+    const taskId = data.task_id || data.id;
     const summary =
-      `Model: ${model}\n` +
-      `task_id: ${data.id}\n` +
-      `request_id: ${data.request_id}\n` +
-      `task_status: ${data.task_status}\n` +
+      `model: ${data.model || model}\n` +
+      `task_id: ${taskId}\n` +
+      `status: ${normStatus(data.status) || "queued"}\n` +
       `\n` +
-      `Video generation is asynchronous. ` +
-      `Call this tool again with op="get" and task_id="${data.id}" to fetch the result.`;
+      `视频是异步生成（minimax 约 2 分钟，kling 约 8 分钟）。` +
+      `之后用 op="get" 加 task_id="${taskId}" 查询，直到 status 变成 completed 或 failed。` +
+      `不要重复提交同一个任务。`;
 
     return { content: [{ type: "text", text: summary }] };
   } catch (e) {
@@ -251,138 +189,157 @@ async function handleCreate({ args, headers, token }) {
       content: [
         {
           type: "text",
-          text: `Failed to submit video task: ${e.message}${
-            e.detail ? `\nDetails: ${JSON.stringify(e.detail)}` : ""
-          }`,
+          text: `提交视频任务失败：${e.message}`,
         },
       ],
     };
   }
 }
 
-// ---------- op=get 的业务处理 ----------
 async function handleGet({ args, token }) {
-  // 与 handleCreate 同理：纯空白 task_id 不能直接拼进上游路径，
-  // 否则会得到一条含编码后空白的上游报错，既无从归因也误导模型。
   const taskId = typeof args.task_id === "string" ? args.task_id.trim() : "";
   if (!taskId) {
     return {
       isError: true,
-      content: [{ type: "text", text: 'op=get requires "task_id".' }],
+      content: [{ type: "text", text: 'op=get 需要 "task_id"。' }],
     };
   }
 
   try {
-    const data = await queryAsyncResult({ token, id: taskId });
-    const status = data.task_status || "UNKNOWN";
+    const data = await queryVideo({ token, taskId });
+    const status = normStatus(data.status) || "unknown";
 
-    if (status === "SUCCESS") {
-      const v = (data.video_result || [])[0];
-      if (!v || !v.url) {
+    if (DONE.has(status)) {
+      const url = (data.videos || [])[0]?.url;
+      if (!url) {
         return {
           isError: true,
           content: [
             {
               type: "text",
-              text: `Task succeeded but no video URL returned. Raw: ${JSON.stringify(
-                data
-              )}`,
+              text: `任务已完成但没有返回视频地址。原始响应：${JSON.stringify(data).slice(0, 500)}`,
             },
           ],
         };
       }
+      const credit = data.usage?.credit;
       const summary =
-        `task_id: ${data.id}\n` +
-        `model: ${data.model}\n` +
-        `task_status: SUCCESS\n` +
-        `Video URL: ${v.url}\n` +
-        (v.cover_image_url ? `Cover: ${v.cover_image_url}\n` : "");
-      // 单块输出：URL 已经写在摘要里，旧版额外回一个裸 URL 块会让模型
-      // （core 会把 text 块 join 成一段）看到同一个链接两遍。
+        `task_id: ${taskId}\n` +
+        `model: ${data.model || "-"}\n` +
+        `status: completed\n` +
+        `Video URL: ${url}\n` +
+        (credit !== undefined ? `credit: ${credit}\n` : "") +
+        `\n注意：视频是签名直链，约 12 小时失效；要长期保存请立刻下载到本地。`;
       return { content: [{ type: "text", text: summary }] };
     }
 
-    // PROCESSING / FAIL / 其他：原样返回关键字段
-    const errBlock = data.error ? `\nerror: ${JSON.stringify(data.error)}` : "";
+    if (FAILED.has(status)) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text:
+              `task_id: ${taskId}\n` +
+              `status: ${status}\n` +
+              (data.error ? `error: ${JSON.stringify(data.error)}\n` : "") +
+              `任务已失败，需要换提示词或模型重新提交。`,
+          },
+        ],
+      };
+    }
+
+    // queued / in_progress：告诉模型继续等，别重复提交
+    const progress = data.progress;
     return {
-      isError: status === "FAIL",
       content: [
         {
           type: "text",
           text:
-            `task_id: ${data.id}\n` +
-            `model: ${data.model}\n` +
-            `task_status: ${status}` +
-            errBlock,
+            `task_id: ${taskId}\n` +
+            `model: ${data.model || "-"}\n` +
+            `status: ${status}` +
+            (progress !== undefined && progress !== null ? `（进度 ${progress}%）` : "") +
+            `\n还没出片，稍后再用 op="get" 查一次。`,
         },
       ],
     };
   } catch (e) {
     return {
       isError: true,
-      content: [
-        {
-          type: "text",
-          text: `Failed to query video task: ${e.message}${
-            e.detail ? `\nDetails: ${JSON.stringify(e.detail)}` : ""
-          }`,
-        },
-      ],
+      content: [{ type: "text", text: `查询视频任务失败：${e.message}` }],
     };
   }
 }
 
 function buildServer() {
   const server = new McpServer(
-    { name: "video_task", version: "1.0.0" },
+    { name: "video_task", version: "2.0.0" },
     { capabilities: { tools: {} } }
   );
 
   server.tool(
     "video_task",
-    `AI video generation task.
+    `AI 视频生成任务（异步）。
 
-Operations:
-- \`create\`: Start a new video generation task. Requires at least one of \`prompt\` or \`image_url\`. Returns \`task_id\` immediately; generation runs in background.
-- \`get\`: Check an existing task. Requires \`task_id\`. Returns status and, on SUCCESS, the video URL.
+操作：
+- \`create\`：提交视频生成，必须给 \`prompt\`。立刻返回 \`task_id\`，生成在后台跑。
+- \`get\`：用 \`task_id\` 查进度，出片后返回视频直链。
 
-Examples:
-- Text-to-video → \`{"op":"create","prompt":"A cat running in a garden"}\`
-- Image-to-video → \`{"op":"create","image_url":"https://example.com/cat.jpg","prompt":"The cat runs forward"}\`
-- Check task → \`{"op":"get","task_id":"<task_id from create>"}\`
+示例：
+- 文生视频 → \`{"op":"create","prompt":"一只橘猫在阳光下的草地上奔跑，电影感"}\`
+- 图生视频 → \`{"op":"create","prompt":"画面里的人缓缓转身","image_url":"https://..."}\`
+- 查任务 → \`{"op":"get","task_id":"<create 返回的 task_id>"}\`
 
-Workflow: call \`create\` once, then call \`get\` with the returned \`task_id\` until \`task_status\` is \`SUCCESS\` or \`FAIL\`. Never create duplicate tasks just to check status.`,
+工作流：\`create\` 调一次，然后反复用 \`get\` 查同一个 \`task_id\`，直到 status 变成 completed 或 failed。**不要为了看进度重复提交任务。**
+耗时参考：minimax 约 2 分钟（扣 57 积分），kling 约 8 分钟（扣 103 积分）。视频直链约 12 小时失效。`,
     {
       op: z
         .enum(["create", "get"])
-        .describe(
-          "Use create to start video generation; use get to check a task by its task_id."
-        ),
+        .describe("create 提交生成；get 按 task_id 查结果。"),
       prompt: z
         .string()
-        .max(512)
+        .max(2000)
         .optional()
-        .describe(
-          "Video description, max 512 characters. Required for text-to-video; when combined with image_url it describes the motion."
-        ),
+        .describe("视频描述，create 必填。图生视频时描述画面如何运动。"),
       image_url: z
         .string()
         .url()
         .optional()
         .describe(
-          "Reference image for image-to-video: publicly reachable png/jpeg/jpg URL <= 5 MB. For local files, first use the built-in mint_public_link tool to get a public temporary URL."
+          "图生视频的参考图，公网可访问的 png/jpeg URL。本地文件先用 mint_public_link 换成公网短链。"
         ),
+      seconds: z
+        .number()
+        .min(4)
+        .max(15)
+        .optional()
+        .describe("视频时长（秒），默认 4。越长越慢越贵。"),
+      aspect_ratio: z
+        .string()
+        .optional()
+        .describe("画幅，如 16:9 / 9:16 / 1:1。上游不严格校验，写合法值即可。"),
+      resolution: z
+        .string()
+        .optional()
+        .describe("分辨率，如 768P / 1080P。留空用上游默认。"),
+      negative_prompt: z
+        .string()
+        .optional()
+        .describe("不希望出现的画面描述。"),
+      enable_audio: z
+        .boolean()
+        .optional()
+        .describe("是否生成音频，默认 false。"),
       with_audio: z
         .boolean()
         .optional()
-        .describe(
-          "Whether to generate AI audio. Used with create; defaults to false."
-        ),
+        .describe("旧字段名，等同 enable_audio。"),
       task_id: z
         .string()
         .min(1)
         .optional()
-        .describe("task_id returned by create. Required for get; omit for create."),
+        .describe("create 返回的 task_id，get 时必填。"),
     },
     async (args, extra) => {
       const headers = extra?.requestInfo?.headers;
@@ -390,7 +347,7 @@ Workflow: call \`create\` once, then call \`get\` with the returned \`task_id\` 
       if (!token) {
         return {
           isError: true,
-          content: [{ type: "text", text: "Missing authentication token." }],
+          content: [{ type: "text", text: "缺少鉴权：header 里要带 Authorization: Bearer <API Key>。" }],
         };
       }
 
@@ -402,12 +359,7 @@ Workflow: call \`create\` once, then call \`get\` with the returned \`task_id\` 
         default:
           return {
             isError: true,
-            content: [
-              {
-                type: "text",
-                text: `Unknown op "${args.op}" (available: create, get).`,
-              },
-            ],
+            content: [{ type: "text", text: `未知 op "${args.op}"（可用：create、get）。` }],
           };
       }
     }
@@ -420,7 +372,6 @@ async function startHttp({ port, host }) {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
 
-  // session -> { server, transport } 映射
   const sessions = new Map();
 
   closeAllSessions = () => {
@@ -433,32 +384,28 @@ async function startHttp({ port, host }) {
       } catch {}
     }
     sessions.clear();
-    // 掰掉未关闭的 SSE / keep-alive 连接，否则 httpServer.close() 回调不会触发
     httpServer?.closeAllConnections?.();
   };
 
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", service: "video_task", sessions: sessions.size });
+    res.json({ status: "ok", service: "video_task", upstream: WB_BASE, sessions: sessions.size });
   });
 
   async function handleSessionRequest(req, res) {
     const sessionId = req.headers["mcp-session-id"];
 
-    // 已有 session：复用 transport
     if (sessionId && sessions.has(sessionId)) {
       const { transport } = sessions.get(sessionId);
       await transport.handleRequest(req, res, req.body);
       return;
     }
 
-    // 新 session：必须是 initialize 请求
     if (!isInitializeRequest(req.body)) {
       res.status(400).json({
         jsonrpc: "2.0",
         error: {
           code: -32000,
-          message:
-            "Bad Request: missing valid Mcp-Session-Id for non-initialize request",
+          message: "Bad Request: missing valid Mcp-Session-Id for non-initialize request",
         },
         id: req.body?.id ?? null,
       });
@@ -484,10 +431,8 @@ async function startHttp({ port, host }) {
     await transport.handleRequest(req, res, req.body);
   }
 
-  // POST /mcp: 主入口
   app.post("/mcp", handleSessionRequest);
 
-  // GET /mcp & DELETE /mcp: 用于 SSE 流 / 会话关闭
   const handleOther = async (req, res) => {
     const sessionId = req.headers["mcp-session-id"];
     if (!sessionId || !sessions.has(sessionId)) {
@@ -501,17 +446,13 @@ async function startHttp({ port, host }) {
   app.delete("/mcp", handleOther);
 
   httpServer = app.listen(port, host, () => {
-    console.log(
-      `[video] MCP HTTP server listening on http://${host}:${port}/mcp`
-    );
+    console.log(`[video] MCP HTTP server listening on http://${host}:${port}/mcp → ${WB_BASE}`);
   });
 }
 
 async function startStdio() {
   const server = buildServer();
-  const { StdioServerTransport } = await import(
-    "@modelcontextprotocol/sdk/server/stdio.js"
-  );
+  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("[video] MCP stdio server started");

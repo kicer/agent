@@ -95,7 +95,7 @@
     {
       "key": "video_task",
       "label": "视频生成",
-      "desc": "智谱 BigModel 异步视频接口",
+      "desc": "WorkBuddy 网关（minimax / kling）",
       "url": "http://mcp_video_task:3000/mcp",
       "mode": "skill",
       "fields": [
@@ -105,12 +105,12 @@
           "secret": true,
           "prefix": "Bearer ",
           "required": true,
-          "placeholder": "智谱 API Key"
+          "placeholder": "wb.ai 的 API Key"
         },
         {
           "header": "X-Video-Task-Model",
           "label": "模型",
-          "default": "cogvideox-flash"
+          "default": "cn:minimax-video-h3"
         }
       ]
     },
