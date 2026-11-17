@@ -48,7 +48,13 @@
   if (typeof marked !== 'undefined') marked.setOptions({ breaks: true, gfm: true });
   function mdHtml(text) {
     if (typeof marked === 'undefined') return { html: esc(text), fmt: false };
-    try { return { html: marked.parse(text || ''), fmt: true }; }
+    try {
+      // 公式先抠成占位、marked 解析完再填回 KaTeX 输出（见 math.js）
+      const html = typeof mdParseWithMath === 'function'
+        ? mdParseWithMath(text || '', marked)
+        : marked.parse(text || '');
+      return { html: html, fmt: true };
+    }
     catch (_) { return { html: esc(text), fmt: false }; }
   }
   function fmtTime(ts) {

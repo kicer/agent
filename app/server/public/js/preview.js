@@ -497,17 +497,22 @@ function pvCloseOverlayQuiet() { const fs = document.getElementById('fs-viewer')
 // 其余按 text/plain 原样打开——服务端文件响应一律 attachment，直接导航只会触发下载。
 // md 里原样透传的 <script> 在面板(innerHTML)本就不执行，但 blob 文档会执行，故先剔除以保持一致。
 function pvMdDoc(html, name) {
+  // KaTeX 样式表用根绝对路径引入：blob 文档的 base 是 blob:，相对路径找不到字体
   const css =
     'body{margin:0;padding:24px 32px 48px;max-width:900px;font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#1f2328;background:#fff}' +
     'img{max-width:100%;height:auto}pre{background:#f6f8fa;padding:12px 14px;border-radius:8px;overflow:auto}' +
     'code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}' +
     'table{border-collapse:collapse}th,td{border:1px solid #d8dee4;padding:6px 10px}' +
     'blockquote{margin:0;padding:0 14px;color:#57606a;border-left:3px solid #d8dee4}' +
-    'a{color:#0969da}';
+    'a{color:#0969da}' +
+    '.math-block{display:block;text-align:center;margin:14px 0;overflow-x:auto;overflow-y:hidden}';
   const title = esc(String(name || '').split('/').pop() || '预览');
+  const origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
   return '<!DOCTYPE html><html><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<title>' + title + '</title><style>' + css + '</style></head><body>' +
+    '<title>' + title + '</title>' +
+    '<link rel="stylesheet" href="' + origin + '/vendor/katex/katex.min.css">' +
+    '<style>' + css + '</style></head><body>' +
     html.replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '') + '</body></html>';
 }
 function pvTextUrl(text) { return URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' })); }

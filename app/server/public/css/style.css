@@ -483,6 +483,12 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* markdown 排版(v1 同款;仅当 marked 渲染成功时加 .md 类,否则保留 pre-wrap 原文) */
 .bubble-ai.md, .bubble-user.md { white-space: normal; }
+/* KaTeX 公式：块级单独占行、超宽可横滚；行内不折行避免断在半截 */
+.math-block { display: block; margin: 12px 0; overflow-x: auto; overflow-y: hidden; }
+.math-block .katex-display { margin: 0; }
+.math-inline { display: inline; white-space: nowrap; }
+.math-fallback, .math-error { font-family: ui-monospace, Menlo, Consolas, monospace; color: #b45309; }
+.math-error { text-decoration: underline dotted; }
 .bubble-ai.md > :first-child, .bubble-user.md > :first-child { margin-top: 0; }
 .bubble-ai.md > :last-child, .bubble-user.md > :last-child { margin-bottom: 0; }
 .bubble-ai.md p, .bubble-user.md p { margin: 6px 0; }
