@@ -12,6 +12,9 @@ const (
 	TKindPing  = "ping"      // hub → 节点：保活
 	TKindPong  = "pong"      // 节点 → hub：保活回应
 	TKindHealth = "health"   // 双向：hub 要指标 / 节点回指标
+	TKindFile      = "file"       // 双向：core 发起一次 read/write
+	TKindFileChunk = "file.chunk" // 双向：文件数据块（base64）
+	TKindFileDone  = "file.done"  // 双向：结束，带 size / sha256 / err
 )
 
 // Msg 是双向通用信封：不同 t 只用其中一部分字段，其余 omitempty。
@@ -55,4 +58,11 @@ type Msg struct {
 	DiskTotalGB   float64 `json:"disk_total_gb,omitempty"`
 	DiskFreeGB    float64 `json:"disk_free_gb,omitempty"`
 	TempC         float64 `json:"temp_c,omitempty"`
+
+	// file（read/write 共用一个 信封）
+	Op   string `json:"op,omitempty"`     // read | write
+	Path string `json:"path,omitempty"`   // 设备侧绝对路径，必须在 root 内
+	Size int64  `json:"size,omitempty"`   // 文件字节数
+	SHA  string `json:"sha256,omitempty"` // 文件内容的 sha256（传完对账）
+	Data []byte `json:"data,omitempty"`   // 数据块（JSON 里是 base64）
 }

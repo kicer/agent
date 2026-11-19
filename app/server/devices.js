@@ -7,6 +7,7 @@
 // 启用条件：有公网前缀（config.yml public_link.base_url 或 env PUBLIC_BASE_URL）
 // 且配了 DEVICE_TOKEN。本地部署两者都没有，设备也连不进来，端点干脆不挂。
 const crypto = require('crypto');
+const fs = require('fs');
 const WebSocket = require('ws');
 const log = require('./log');
 
@@ -104,6 +105,16 @@ function onConnection(ws) {
     if (m.t === 'exit') {
       const p = state.pending.get(m.id);
       if (p && p.onExit) p.onExit(m);
+      return;
+    }
+    if (m.t === 'file.chunk') {
+      const p = state.pending.get(m.id);
+      if (p && p.onFileChunk) p.onFileChunk(m);
+      return;
+    }
+    if (m.t === 'file.done') {
+      const p = state.pending.get(m.id);
+      if (p && p.onFileDone) p.onFileDone(m);
       return;
     }
     if (m.t === 'health') {
@@ -273,4 +284,119 @@ function exec({ device, command, cwd, timeout_ms }) {
   });
 }
 
-module.exports = { init, attach, enabled, list, health, exec, PATH };
+
+// ---------- 文件通道 ----------
+// core 与设备之间拉/推单个文件，复用同一条 WS：256 KiB 一块，base64 传输。
+// 写盘一律先落 .part，size 与 sha256 都对上才 rename——不留半截文件。
+const FILE_CHUNK = 256 * 1024;
+const MAX_FILE = 50 * 1024 * 1024;
+
+function fileTimeout(bytes) {
+  return Math.max(61000, Math.ceil(bytes / FILE_CHUNK) * 3000);
+}
+
+// pull：设备 → 会话目录
+function pull({ device, remotePath, localPath }) {
+  return new Promise((resolve, reject) => {
+    const dev = pick(device);
+    if (!dev) return reject(new Error(device ? `设备 ${device} 不在线` : '当前没有设备在线'));
+    if (!remotePath) return reject(new Error('remote_path 不能为空'));
+
+    const id = newJobId();
+    const tmp = localPath + '.part';
+    const out = fs.createWriteStream(tmp);
+    const hash = crypto.createHash('sha256');
+    let got = 0;
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return false;
+      settled = true;
+      clearTimeout(timer);
+      state.pending.delete(id);
+      return true;
+    };
+    const fail = msg => {
+      if (!finish()) return;
+      try { out.destroy(); } catch (_) {}
+      try { fs.unlinkSync(tmp); } catch (_) {}
+      reject(new Error(msg));
+    };
+    const timer = setTimeout(() => fail('拉取超时（60s 无完成）'), 60000);
+
+    state.pending.set(id, {
+      onFileChunk(m) {
+        if (settled) return;
+        let b;
+        try { b = Buffer.from(String(m.data || ''), 'base64'); } catch (_) { return fail('数据块解码失败'); }
+        got += b.length;
+        if (got > MAX_FILE) return fail('文件超过 50MiB 上限');
+        hash.update(b);
+        out.write(b);
+      },
+      onFileDone(m) {
+        if (settled) return;
+        if (m.err) return fail(String(m.err));
+        out.end(() => {
+          if (!finish()) return;
+          const sum = hash.digest('hex');
+          if (typeof m.size === 'number' && m.size !== got) {
+            try { fs.unlinkSync(tmp); } catch (_) {}
+            return reject(new Error(`大小不符：收到 ${got}，设备报 ${m.size}`));
+          }
+          if (m.sha256 && String(m.sha256).toLowerCase() !== sum) {
+            try { fs.unlinkSync(tmp); } catch (_) {}
+            return reject(new Error('sha256 不符'));
+          }
+          try { fs.renameSync(tmp, localPath); } catch (e) { return reject(e); }
+          resolve({ device: dev.name, bytes: got, sha256: sum, path: localPath });
+        });
+      },
+    });
+
+    dev.ws.send(JSON.stringify({ t: 'file', id, op: 'read', path: remotePath }));
+  });
+}
+
+// push：会话目录 → 设备
+async function push({ device, localPath, remotePath }) {
+  const dev = pick(device);
+  if (!dev) throw new Error(device ? `设备 ${device} 不在线` : '当前没有设备在线');
+  if (!remotePath) throw new Error('remote_path 不能为空');
+
+  const st = fs.statSync(localPath);
+  if (!st.isFile()) throw new Error('只能推文件，不能推目录：' + localPath);
+  if (st.size > MAX_FILE) throw new Error('文件超过 50MiB 上限');
+  const buf = fs.readFileSync(localPath);
+  const sum = crypto.createHash('sha256').update(buf).digest('hex');
+  const id = newJobId();
+
+  const done = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      state.pending.delete(id);
+      reject(new Error('推送超时'));
+    }, fileTimeout(buf.length));
+    state.pending.set(id, {
+      onFileDone(m) {
+        clearTimeout(timer);
+        state.pending.delete(id);
+        if (m.err) return reject(new Error(String(m.err)));
+        resolve({ device: dev.name, bytes: buf.length, sha256: sum, path: remotePath });
+      },
+    });
+  });
+
+  dev.ws.send(JSON.stringify({ t: 'file', id, op: 'write', path: remotePath, size: buf.length, sha256: sum }));
+  for (let off = 0; off < buf.length; off += FILE_CHUNK) {
+    dev.ws.send(JSON.stringify({
+      t: 'file.chunk', id,
+      data: buf.subarray(off, off + FILE_CHUNK).toString('base64'),
+    }));
+    // 简单背压：发送缓冲堆到 4MB 就等一等，避免把内存打满
+    while (dev.ws.bufferedAmount > 4 * 1024 * 1024) await new Promise(r => setTimeout(r, 10));
+  }
+  dev.ws.send(JSON.stringify({ t: 'file.done', id }));
+  return done;
+}
+
+module.exports = { init, attach, enabled, list, health, exec, pull, push, PATH };

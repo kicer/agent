@@ -834,7 +834,39 @@ async function toolDevice(ctx, args) {
     }
   }
 
-  return 'Error: action 必须是 list / health / exec';
+  if (action === 'pull') {
+    const name = String(args.device || '').trim();
+    const remote = String(args.remote_path || '').trim();
+    if (!name) return 'Error: action=pull 需要 device 参数（先调 action=list 看设备名）';
+    if (!remote) return 'Error: action=pull 需要 remote_path 参数';
+    try {
+      const rel = String(args.local_path || '').trim() || path.basename(remote);
+      const abs = resolveInTask(ctx.taskDir, rel, fsRoot(ctx));
+      const r = await devices.pull({ device: name, remotePath: remote, localPath: abs });
+      recordFile(ctx, abs);
+      return `已拉到 ${path.relative(ctx.taskDir, abs) || path.basename(abs)}（${r.bytes} 字节，sha256 ${r.sha256.slice(0, 16)}…）`;
+    } catch (e) {
+      return 'Error: ' + e.message;
+    }
+  }
+
+  if (action === 'push') {
+    const name = String(args.device || '').trim();
+    const local = String(args.local_path || '').trim();
+    const remote = String(args.remote_path || '').trim();
+    if (!name) return 'Error: action=push 需要 device 参数（先调 action=list 看设备名）';
+    if (!local) return 'Error: action=push 需要 local_path 参数（会话目录内的相对路径）';
+    if (!remote) return 'Error: action=push 需要 remote_path 参数（设备上的绝对路径，须在工作根内）';
+    try {
+      const abs = resolveInTask(ctx.taskDir, local, fsRoot(ctx));
+      const r = await devices.push({ device: name, localPath: abs, remotePath: remote });
+      return `已推到 ${name}:${remote}（${r.bytes} 字节，sha256 ${r.sha256.slice(0, 16)}…）`;
+    } catch (e) {
+      return 'Error: ' + e.message;
+    }
+  }
+
+  return 'Error: action 必须是 list / health / exec / pull / push';
 }
 
 async function toolTerminal(ctx, args) {

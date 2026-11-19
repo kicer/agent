@@ -78,6 +78,8 @@ type runner struct {
 
 	mu    sync.Mutex
 	procs map[string]*proc
+
+	files *fileMgr // 文件通道：core 拉取/推送文件时的在途写入
 }
 
 func main() {
@@ -154,6 +156,7 @@ func main() {
 		shell: *shellName,
 		sem:   make(chan struct{}, maxParallel),
 		procs: map[string]*proc{},
+		files: newFileMgr(),
 	}
 	if r.root == "" {
 		home, _ := os.UserHomeDir()
@@ -202,6 +205,13 @@ func main() {
 				}
 			case proto.TKindPing:
 				_ = c.Send(proto.Msg{T: proto.TKindPong})
+			case proto.TKindFile:
+				// write 的建栅必须同步完成：core 紧接着就发 chunk，异步会先到后建、丢块
+				r.fileStart(c, m)
+			case proto.TKindFileChunk:
+				r.fileChunk(c, m)
+			case proto.TKindFileDone:
+				r.fileEnd(c, m)
 			case proto.TKindHealth:
 				h := hostHealth()
 				m := proto.Msg{

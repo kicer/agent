@@ -98,6 +98,7 @@ sh scripts/build.sh all
 |---|---|
 | 设备 → core | `{t:"hello", ver, name, os, arch, shell, shell_path, shell_ver, root}` |
 | core → 设备 | `{t:"exec", id, cmd, cwd, timeout_ms}` · `{t:"kill", id}` · `{t:"ping"}` · `{t:"health", id}` |
+| 文件通道 | `{t:"file", id, op:"read"\|"write", path, size?, sha256?}` · `{t:"file.chunk", id, data:<base64>}` ×N · `{t:"file.done", id, size?, sha256?, err?}` |
 | 设备 → core | `{t:"chunk", id, out:"out"\|"err", chunk:<base64>}` · `{t:"exit", id, code, killed_by, ms, truncated}` · `{t:"pong"}` · `{t:"health", …}` |
 
 - 保活：core 每 20 秒发 `ping`，设备回 `pong`；90 秒无任何消息即断开重连。
@@ -105,6 +106,19 @@ sh scripts/build.sh all
 - 超时：命令超过 `timeout_ms` 由设备侧杀**进程组**，回 `killed_by:"timeout"`。
 - 输出：单流超过上限截断并置 `truncated`。
 - `shell` 报的是实际解释器（`/bin/sh` 可能是 dash / bash / busybox），连同版本，供模型决定命令语法。
+
+## 文件通道
+
+core 通过同一条连接搬文件，**设备不需要任何额外端口**：
+
+| 方向 | 流程 |
+|---|---|
+| 拉取（设备 → 会话目录） | `file{op:read}` → 设备分块回 `file.chunk` → `file.done{size,sha256}` |
+| 推送（会话目录 → 设备） | `file{op:write,size,sha256}` → 分块 `file.chunk` → `file.done` |
+
+- 每块 256 KiB（base64 后约 341 KiB），单文件上限 50 MiB；
+- 写盘先落 `<path>.part`，`size` 与 `sha256` 都对上才 `rename`；
+- 设备侧路径必须在工作根内（与 `exec` 的 cwd 校验同一套）。
 
 ## 安全边界
 
