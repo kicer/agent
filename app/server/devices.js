@@ -86,7 +86,7 @@ function attach(server) {
 function onConnection(ws) {
   const dev = {
     ws, name: null, os: '', arch: '', shell: '', shellPath: '', shellVer: '', root: '', ver: '',
-    connectedAt: Date.now(), lastSeen: Date.now(), health: null, helloTimer: null,
+    connectedAt: Date.now(), lastSeen: Date.now(), helloTimer: null,
   };
   dev.helloTimer = setTimeout(() => {
     if (!dev.name) { try { ws.close(4001, 'hello timeout'); } catch (_) {} }
@@ -151,9 +151,6 @@ function onHello(dev, m) {
   }
   state.byName.set(dev.name, dev);
   log.info('devices', `设备上线：${dev.name}（${dev.os}/${dev.arch} shell=${dev.shellPath || dev.shell} ${dev.shellVer} root=${dev.root}）`);
-
-  // 上线即取一次健康快照，list 时能顺带看到负载；失败不影响接入
-  health(dev.name).catch(() => {});
 }
 
 function pick(name) {
@@ -177,7 +174,6 @@ function list() {
     ver: d.ver,
     connected_sec: Math.round((now - d.connectedAt) / 1000),
     idle_sec: Math.round((now - d.lastSeen) / 1000),
-    health: d.health,
   }));
 }
 
@@ -194,13 +190,13 @@ function health(name) {
       onHealth(m) {
         clearTimeout(timer);
         state.pending.delete(id);
-        dev.health = {
+        resolve({
+          device: dev.name, os: dev.os, arch: dev.arch,
           uptime_sec: m.uptime_sec, host_uptime_sec: m.host_uptime_sec,
           load1: m.load1, load5: m.load5, load15: m.load15,
           mem_total_mb: m.mem_total_mb, mem_free_mb: m.mem_free_mb,
           disk_total_gb: m.disk_total_gb, disk_free_gb: m.disk_free_gb, temp_c: m.temp_c,
-        };
-        resolve({ device: dev.name, os: dev.os, arch: dev.arch, ...dev.health });
+        });
       },
     });
     try {
