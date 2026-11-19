@@ -10,6 +10,9 @@
 `/chat/completions`）→ 模型调用内置工具 / MCP / 技能 → 命令在 `agent-executor` 隔离容器里执行 →
 产物落在会话工作目录并回传。每个会话 = 一个真实 Linux 工作目录 + 一条 SQLite 会话记录。
 
+另有一个可选的**设备执行端** `device/`：设备主动出站连 core 的 `/dev/ws`，模型用 `device`
+工具在远端机器（Mac / Windows / OpenWrt 盒子）上跑命令、拉推文件。
+
 设计基调：**单进程内存模型 + SQLite 同步 API**（JS 单线程，不存在跨进程竞争）；**配置冷加载**
 （改 `config.yml` 需重启，少数写盘接口例外）；**单租户**（登录只把门，不做资源级授权）。
 
@@ -21,6 +24,7 @@
 | `app/server/` | 后端全部代码（入口 `server.js`） | 见 `app/AGENTS.md` |
 | `app/server/public/` | 前端静态资源，经典脚本按序加载，共享全局作用域 | 无构建步骤 |
 | `executor/` | **agent-executor**：`/exec` 隔离命令执行 + Office 预览网关 | 零依赖 Node，独立容器 |
+| `device/` | **agent-device**：设备执行端，出站连 core 的 `/dev/ws`，提供 exec / 文件传输 | Go 单二进制，交叉编译（amd64/arm64/mips/mipsle/windows），见 `device/README.md` |
 | `wxbot/` | 微信 iLink 协议调制解调器（多实例） | 独立容器 `agent-wxbot` |
 | `mcp/` | 同栈 MCP 服务：`web_search` / `image_task` / `video_task` / `asr` | 四个容器，仅内网 |
 | `skills/` | 目录式技能（`SKILL.md` + `run.py`/`run.sh`） | 运行时挂载，`skills/deps` 为依赖层 |
@@ -49,6 +53,7 @@ flowchart TD
     CORE --> EXEC["agent-executor（9000 exec / 3100 预览，仅内网）"]
     CORE --> MCP["mcp_web_search / mcp_image_task / mcp_video_task / mcp_asr（3000，仅内网）"]
     CORE -->|"分段投递回复"| WXBOT
+    DEV["设备：Mac / Windows / OpenWrt"] -->|"wss 出站 /dev/ws"| CORE
 ```
 
 - **对外只暴露 `agent-core` 一个端口**（宿主 `AGENT_PORT`，默认 8090）。executor、wxbot、MCP
@@ -57,6 +62,8 @@ flowchart TD
 - 容器间按容器名访问（`http://agent-executor:9000`、`http://mcp_web_search:3000/`）；
   所有业务容器同在 `agent-mcp-net`（compose 里固定网络名，避免被加上项目名前缀）。
 - `agent-executor-init` 是一次性容器：把技能依赖装进 `./skills/deps` 后退出，属正常现象。
+- 设备（`device/`）**不需要任何入站端口**：设备主动连 `wss://<PUBLIC_BASE_URL 的 host>/dev/ws`，
+  core 按 `DEVICE_TOKEN` 校验。本地部署没有公网前缀，端点不挂，`device` 工具直接回“未启用”。
 
 ### 端口与网络（要改先看这里）
 
@@ -90,12 +97,12 @@ flowchart TD
 ### 环境变量（接线全靠根 `.env` + compose）
 
 `AGENT_CONFIG`、`PORT`、`EXECUTOR_URL`、`EXECUTOR_TOKEN`、`WXBOT_URL`、`WXBOT_TOKEN`、
-`PUBLIC_BASE_URL`、`ASR_URL`、`PREVIEW_PROXIES`、`EXECUTOR_LOG_LEVEL`、`WXBOT_LOG_LEVEL`、`ASR_LOG_LEVEL`。
+`PUBLIC_BASE_URL`、`DEVICE_TOKEN`、`ASR_URL`、`PREVIEW_PROXIES`、`EXECUTOR_LOG_LEVEL`、`WXBOT_LOG_LEVEL`、`ASR_LOG_LEVEL`。
 密钥生成：`./scripts/init.sh`（幂等，重跑不掉登录态；**从不覆盖已有 config.yml**，只在其缺失时创建
 最小骨架）。语音识别的上游 key/base/model 不在 env，
 写在 `config.yml` 的 `mcp_servers[name=asr].headers`（容器不存平台密钥）。
 
-## 三条主链路
+## 四条主链路
 
 1. **Web / HTTP**：`app/server/server.js` 装配 → 路由 → `engine.js` 起回合 →
    `llm.js` 组装并流式调用上游 → `tools/executor.js` 执行工具（`terminal` / `skill` 走
@@ -103,7 +110,10 @@ flowchart TD
 2. **微信**：`agent-wxbot` 收消息 → 回调 core `/wxhook/inbox` → `wechat.js` 落媒体、注入上下文 →
    `routes/channel.js` 的命令层（`/new` `/switch` `/think` …）→ 同一套 `engine`；回合结束由
    SSE 内部订阅者（`bus.onInternal`）分段推回微信。
-3. **定时任务**：`scheduler.js` 每 30s tick → 到期则先 `archiveHistory`（历史整体 `archived`，
+3. **远端设备**：设备上的 `agent-device` 出站连 core `/dev/ws` → `devices.js` 维护连接表 →
+   模型调 `device` 工具（`list` / `health` / `exec` / `pull` / `push`）→ 命令经 WS 下发、输出分片
+   回传；`pull` 落到会话目录后，`read_file` / 技能可直接消费。
+4. **定时任务**：`scheduler.js` 每 30s tick → 到期则先 `archiveHistory`（历史整体 `archived`，
    模型等价新会话）→ `engine.postUserMessage` 投递 → 结束后 `wechat.notifyTask` 通知。
 
 ## 数据与状态
@@ -133,7 +143,9 @@ flowchart TD
    「回合中会话数 → 在用会话数 → 最久未用」择优（详见 `app/AGENTS.md`）。
 7. **运行时目录不入库**。`tasks/`、`data/`、`skills/deps/`、`wxbot/data/` 已被 gitignore；
    不要把样例任务、数据库、密钥当成源码提交。
-8. **工具 schema 是每轮全量重发的上下文成本**。新增工具前先读 `docs/tool-design.md`：能用已有工具
+8. **设备是远端 shell**。`device exec` 在设备上就是 `sh -c` / `cmd /c`；`root` 只约束**起始
+   cwd**，命令里 `cd /etc` 照样能跑。`DEVICE_TOKEN` 泄漏等价于那台机器的 shell 泄漏，按这个等级管理。
+9. **工具 schema 是每轮全量重发的上下文成本**。新增工具前先读 `docs/tool-design.md`：能用已有工具
    的 `op` 扩展就不要新开工具。
 
 ## 开发与验证
@@ -204,6 +216,8 @@ curl -s http://127.0.0.1:8090/api/health
 | 改微信投递 | `app/server/wechat.js`（业务）+ `app/server/routes/wechat.js`（HTTP/鉴权） |
 | 改语音输入 | `app/server/public/js/voice.js`（录音与插入）+ `app/server/routes/asr.js`（代理）+ `mcp/asr/`（转写）；客户端桥契约见 `docs/voice-input.md` |
 | 改隔离执行 | `executor/server.js`（先读顶部安全模型注释） |
+| 改设备执行 / 文件传输 | `app/server/devices.js`（连接表 + exec/health/pull/push）+ `app/server/tools/executor.js` 的 `toolDevice` |
+| 改设备端行为 | `device/cmd/agent/`（协议 `device/pkg/proto`，连接基座 `device/pkg/wsnode`） |
 | 改隧道路由 / 转发 | `tunnel/server.js`（按 Host / 端口匹配）+ `tunnel/client.js`（本地服务映射） |
 | 加同栈 MCP 服务 | `mcp/<name>/` + `docker-compose.yml` + `config.yml` 的 `mcp_servers` |
 | 加技能 | `skills/<name>/`（`SKILL.md` + `run.py`），见 `skills/README.md` |

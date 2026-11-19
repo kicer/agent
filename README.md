@@ -41,6 +41,29 @@ macOS / Linux，Node 20+，不需要 Docker：
 | [`skills/`](skills/README.md) | 内置技能 |
 | [`local/`](local/README.md) | 本机模式启动器 |
 | [`tunnel/`](tunnel/README.md) | 反向隧道：把本机服务经服务器中转，供外网访问 |
+| [`device/`](device/README.md) | 设备执行端：任意机器装上就连回来，模型可在上面跑命令、传文件 |
+
+## 远端设备
+
+把任意一台机器（Mac / Linux / Windows / OpenWrt 盒子）接进来，让模型在它上面执行命令、读写文件：
+
+1. 编译或下载 `device/` 的二进制，和 `config.json` 放在同一个目录：
+
+   ```json
+   { "server": "wss://你的域名/dev/ws", "token": "<DEVICE_TOKEN>", "root": "/Users/you", "name": "mac-01" }
+   ```
+
+2. 直接运行（默认读同目录的 `config.json`，token 不会出现在 `ps` 里）：
+
+   ```bash
+   ./agent-device-darwin-amd64
+   ```
+
+3. 服务器 `.env` 里配同一个 `DEVICE_TOKEN` 并重启 core。
+
+设备**主动出站**连接，不需要公网 IP、不需要开端口。连上后模型侧多出 `device` 工具：
+`list` 看在线设备、`health` 看负载、`exec` 跑命令、`pull`/`push` 收发文件（单个 2 GiB 以内）。
+盒子上的常驻用系统自带的服务管理器（systemd / procd / schtasks），细节见 [`device/README.md`](device/README.md)。
 
 ## 配置
 
