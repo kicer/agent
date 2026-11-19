@@ -28,6 +28,9 @@ services:
       # 对外地址：public_link 的默认值（scripts/init.sh 探测公网 IP 后写进 .env）。
       # 设置页里填过 public_link.base_url 时以设置页为准。
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      # 设备接入（可选）：设备主动连 wss://<公网前缀>/dev/ws 时的 Bearer token。
+      # 与 PUBLIC_BASE_URL 同时具备才会挂端点；留空 = 不启用，本地部署就是这种。
+      - DEVICE_TOKEN=${DEVICE_TOKEN:-}
     networks:
       - agent-mcp-net
 
