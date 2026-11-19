@@ -4,7 +4,7 @@
 #   ./scripts/init.sh                    # 已有 .env / config.yml 均不覆盖
 #
 # 可选变量：PUBLIC_IP、AGENT_PORT、AUTH_USER / AUTH_PASSWORD（默认 admin / admin）、
-#          EXECUTOR_TOKEN / WXBOT_TOKEN / AUTH_SECRET（不给则生成并复用）。
+#          EXECUTOR_TOKEN / WXBOT_TOKEN / DEVICE_TOKEN / AUTH_SECRET（不给则生成并复用）。
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -55,6 +55,7 @@ title "生成 $ENV_FILE"
 
 EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(env_get EXECUTOR_TOKEN)}"
 WXBOT_TOKEN="${WXBOT_TOKEN:-$(env_get WXBOT_TOKEN)}"
+DEVICE_TOKEN="${DEVICE_TOKEN:-$(env_get DEVICE_TOKEN)}"
 AUTH_SECRET="${AUTH_SECRET:-$(env_get AUTH_SECRET)}"
 AGENT_PORT="${PORT_INPUT:-$(env_get AGENT_PORT)}"
 AGENT_PORT="${AGENT_PORT:-8090}"
@@ -62,6 +63,9 @@ OLD_URL="$(env_get PUBLIC_BASE_URL)"
 
 EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-$(gen_hex)}"
 WXBOT_TOKEN="${WXBOT_TOKEN:-$(gen_hex)}"
+# 设备接入（devices.js）：设备连 wss://<公网前缀>/dev/ws 时出示的 Bearer token。
+# 与 PUBLIC_BASE_URL 同时具备才启用；没公网地址的部署生成了也无害。
+DEVICE_TOKEN="${DEVICE_TOKEN:-$(gen_hex)}"
 AUTH_SECRET="${AUTH_SECRET:-$(gen_hex)}"
 
 if [ -n "$PUBLIC_IP" ]; then
@@ -84,7 +88,7 @@ fi
 EXTRAS=""
 if [ -f "$ENV_FILE" ]; then
     EXTRAS="$(awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/ &&
-        $1 !~ /^(EXECUTOR_TOKEN|WXBOT_TOKEN|AUTH_SECRET|AGENT_PORT|PUBLIC_BASE_URL)$/ { print }' \
+        $1 !~ /^(EXECUTOR_TOKEN|WXBOT_TOKEN|DEVICE_TOKEN|AUTH_SECRET|AGENT_PORT|PUBLIC_BASE_URL)$/ { print }' \
         "$ENV_FILE" || true)"
 fi
 
@@ -92,6 +96,7 @@ fi
     echo "# 由 scripts/init.sh 生成；重跑复用已有密钥，并保留其它变量。"
     echo "EXECUTOR_TOKEN=$EXECUTOR_TOKEN"
     echo "WXBOT_TOKEN=$WXBOT_TOKEN"
+    echo "DEVICE_TOKEN=$DEVICE_TOKEN"
     echo "AUTH_SECRET=$AUTH_SECRET"
     echo "AGENT_PORT=$AGENT_PORT"
     echo "PUBLIC_BASE_URL=$PUBLIC_BASE_URL"
@@ -101,7 +106,7 @@ fi
     fi
 } > "$ENV_FILE"
 
-info "EXECUTOR_TOKEN / WXBOT_TOKEN / AUTH_SECRET 已就位"
+info "EXECUTOR_TOKEN / WXBOT_TOKEN / DEVICE_TOKEN / AUTH_SECRET 已就位"
 
 # ---------- config.yml（只写初始管理员）----------
 title "检查 $CONFIG_YML"
