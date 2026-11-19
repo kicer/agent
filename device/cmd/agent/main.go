@@ -1,7 +1,7 @@
-// node-agent：跑在盒子 / Windows / 任意 Linux 上，主动出站连 core 的 wss，接收并执行命令。
+// agent-device：跑在盒子 / Windows / 任意 Linux 上，主动出站连 core 的 wss，接收并执行命令。
 //
-//	node-agent -server wss://your-host.example/dev/ws -token <TOKEN> -root /var/agent/work
-//	node-agent -config agent.json          # 同上，但 token 不落在命令行（ps 看不见）
+//	agent-device -server wss://your-host.example/dev/ws -token <TOKEN> -root /var/agent/work
+//	agent-device                            # 自动读同目录下的 config.json（token 不进 ps）
 //
 // 设计约束（对齐 files/print/agent）：
 //   - 只出站，服务器不需要任何入站端口
@@ -86,7 +86,7 @@ func main() {
 	root := flag.String("root", "", "工作根目录（默认 ~/agent-work），命令的 cwd 必须落在它之内")
 	shellName := flag.String("shell", "", "sh | cmd | powershell（默认按平台）")
 	name := flag.String("name", "", "设备名（默认 hostname）")
-	configPath := flag.String("config", "", "JSON 配置文件：server/token/root/name/shell/insecure；命令行参数优先于它")
+	configPath := flag.String("config", "", "JSON 配置文件；不给时自动找可执行文件同目录的 config.json")
 	insecure := flag.Bool("insecure", false, "跳过证书校验")
 	fixClock := flag.Bool("fix-clock", false, "证书失败时用服务器时间校准本机（Linux 需 root）")
 	flag.Parse()
@@ -95,15 +95,30 @@ func main() {
 	// 配置文件的意义是把 token 从命令行拿掉——ps aux 能看见所有参数。
 	set := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	if *configPath != "" {
+	// 配置文件默认位置：可执行文件同目录的 config.json。放二进制旁边就不用带参数，
+	// token 也不会出现在 ps 里。命令行显式给的 -config 优先。
+	effectiveCfg := *configPath
+	if effectiveCfg == "" {
+		if exe, err := os.Executable(); err == nil {
+			if real, err := filepath.EvalSymlinks(exe); err == nil {
+				exe = real
+			}
+			p := filepath.Join(filepath.Dir(exe), "config.json")
+			if _, err := os.Stat(p); err == nil {
+				effectiveCfg = p
+			}
+		}
+	}
+	if effectiveCfg != "" {
 		var fc fileConfig
-		b, err := os.ReadFile(*configPath)
+		b, err := os.ReadFile(effectiveCfg)
 		if err != nil {
 			log.Fatalf("读配置失败：%v", err)
 		}
 		if err := json.Unmarshal(b, &fc); err != nil {
-			log.Fatalf("配置 %s 不是合法 JSON：%v", *configPath, err)
+			log.Fatalf("配置 %s 不是合法 JSON：%v", effectiveCfg, err)
 		}
+		log.Printf("已加载配置 %s", effectiveCfg)
 		if !set["server"] && fc.Server != "" {
 			*server = fc.Server
 		}
@@ -156,7 +171,7 @@ func main() {
 		host = *name
 	}
 
-	log.Printf("node-agent %s 启动：root=%s shell=%s → %s", version, r.root, r.shell, *server)
+	log.Printf("agent-device %s 启动：root=%s shell=%s → %s", version, r.root, r.shell, *server)
 	shPath, shVer := shellInfo(r.shell)
 	log.Printf("shell：%s（%s %s）", r.shell, shPath, shVer)
 	cfg := wsnode.Config{URL: *server, Token: *token, Insecure: *insecure, FixClock: *fixClock}

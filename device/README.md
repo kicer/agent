@@ -20,7 +20,7 @@ WebSocket 端点，接收 shell 命令、流式回传输出与退出码、上报
 
 ```sh
 git clone <本仓库> && cd device
-go build -trimpath -ldflags "-s -w" -o bin/agent ./cmd/agent
+go build -trimpath -ldflags "-s -w" -o bin/agent-device ./cmd/agent
 ```
 
 交叉编译（一次出五个平台）：
@@ -34,20 +34,23 @@ sh scripts/build.sh all
 
 ### 下载预编译
 
-从本仓库的 Releases 页面取对应平台的文件（`agent-linux-arm64`、`agent-windows-amd64.exe` 等），
+从本仓库的 Releases 页面取对应平台的文件（`agent-device-linux-arm64`、`agent-device-windows-amd64.exe` 等），
 `chmod +x` 即可，静态链接、无运行时依赖，一个文件约 5.5 MB。
 
 ## 运行
 
 ```sh
-# 直接给参数
-./agent -server wss://your-host.example/dev/ws -token <TOKEN> -root /var/agent-work -name box-01
+# 推荐：二进制旁边放一个 config.json，直接启动（token 不出现在 ps 里）
+./agent-device
 
-# 或走配置文件（token 不出现在 ps 里）
-./agent -config agent.json
+# 或者全走命令行
+./agent-device -server wss://your-host.example/dev/ws -token <TOKEN> -root /var/agent-work -name box-01
+
+# 配置文件不在默认位置时显式指定
+./agent-device -config /etc/agent-device.json
 ```
 
-`agent.json`：
+**默认会自动读可执行文件同目录的 `config.json`**（存在才读，不存在就当没配），所以部署时把二进制和配置放一个目录、直接跑就行：
 
 ```json
 {
@@ -67,6 +70,7 @@ sh scripts/build.sh all
 | `-root` | 工作根目录，命令的 `cwd` 必须落在它之内（默认 `~/agent-work`，会自动建） |
 | `-name` | 设备名，服务端用它区分设备（默认 hostname） |
 | `-shell` | `sh` / `cmd` / `powershell`，默认按平台 |
+| `-config` | 配置文件路径，默认 `<二进制所在目录>/config.json` |
 | `-insecure` | 跳过证书校验（自签证书调试用） |
 | `-fix-clock` | 证书报错时用服务器 `Date` 头校准本机时间（小设备没有 RTC 时用，Linux 需 root） |
 

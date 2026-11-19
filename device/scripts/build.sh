@@ -18,7 +18,7 @@ build_with_go() {
         [ "$os" = windows ] && ext=.exe
         echo "build $os/$arch"
         GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
-            -o "bin/agent-$os-$arch$ext" ./cmd/agent
+            -o "bin/agent-device-$os-$arch$ext" ./cmd/agent
     done
 }
 
@@ -35,7 +35,7 @@ elif command -v docker >/dev/null 2>&1; then
                 [ "$os" = windows ] && ext=.exe
                 echo "build $os/$arch"
                 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" \
-                    -o "bin/agent-$os-$arch$ext" ./cmd/agent
+                    -o "bin/agent-device-$os-$arch$ext" ./cmd/agent
             done'
 else
     echo "需要 Go 或 docker 才能编译" >&2
