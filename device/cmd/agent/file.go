@@ -31,7 +31,7 @@ import (
 
 const (
 	fileChunkSize = 256 << 10 // 每块 256 KiB（base64 后约 341 KiB）
-	maxFileBytes  = 50 << 20  // 单文件上限 50 MiB
+	maxFileBytes  = 2 << 30   // 单文件上限 2 GiB
 )
 
 type fileWriter struct {
@@ -110,7 +110,7 @@ func (r *runner) fileRead(c *wsnode.Conn, m proto.Msg) {
 		return
 	}
 	if st.Size() > maxFileBytes {
-		r.fileFail(c, m.ID, "文件超过 50MiB 上限")
+		r.fileFail(c, m.ID, "文件超过 2GiB 上限")
 		return
 	}
 
@@ -151,7 +151,7 @@ func (r *runner) fileBegin(c *wsnode.Conn, m proto.Msg) {
 		return
 	}
 	if m.Size > maxFileBytes {
-		r.fileFail(c, m.ID, "文件超过 50MiB 上限")
+		r.fileFail(c, m.ID, "文件超过 2GiB 上限")
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -180,8 +180,8 @@ func (r *runner) fileChunk(c *wsnode.Conn, m proto.Msg) {
 		return
 	}
 	if w.got+int64(len(m.Data)) > maxFileBytes {
-		r.abortWriter(m.ID, w, "超过 50MiB 上限")
-		r.fileFail(c, m.ID, "超过 50MiB 上限")
+		r.abortWriter(m.ID, w, "超过 2GiB 上限")
+		r.fileFail(c, m.ID, "超过 2GiB 上限")
 		return
 	}
 	if _, err := w.tmp.Write(m.Data); err != nil {

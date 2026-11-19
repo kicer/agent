@@ -288,14 +288,28 @@ function exec({ device, command, cwd, timeout_ms }) {
 // ---------- 文件通道 ----------
 // core 与设备之间拉/推单个文件，复用同一条 WS：256 KiB 一块，base64 传输。
 // 写盘一律先落 .part，size 与 sha256 都对上才 rename——不留半截文件。
-const FILE_CHUNK = 256 * 1024;
-const MAX_FILE = 50 * 1024 * 1024;
+const FILE_CHUNK = 256 * 1024;           // 每块 256 KiB
+const MAX_FILE = 2 * 1024 * 1024 * 1024; // 单文件上限 2 GiB
+const FIRST_CHUNK_MS = 30000;            // 请求发出后等第一块（覆盖设备端 open/stat）
+const IDLE_MS = 30000;                   // 块与块之间的空闲超时：只看卡不卡，不看总共多久
+const DONE_WAIT_MS = 60000;              // push 发完最后一包后等设备确认
+const WS_HIGH = 4 * 1024 * 1024;         // 发送缓冲高水位，超了就歇一会
 
-function fileTimeout(bytes) {
-  return Math.max(61000, Math.ceil(bytes / FILE_CHUNK) * 3000);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// 流式算 sha256：2 GiB 不能整块读进内存
+function hashFile(p) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha256');
+    fs.createReadStream(p)
+      .on('data', c => h.update(c))
+      .on('end', () => resolve(h.digest('hex')))
+      .on('error', reject);
+  });
 }
 
 // pull：设备 → 会话目录
+// 超时按「空闲」算：首块 30s，之后每收到一块重置 30s。稳定但慢的链路不会被误杀。
 function pull({ device, remotePath, localPath }) {
   return new Promise((resolve, reject) => {
     const dev = pick(device);
@@ -308,12 +322,19 @@ function pull({ device, remotePath, localPath }) {
     const hash = crypto.createHash('sha256');
     let got = 0;
     let settled = false;
+    let paused = false;
+    let idle = null;
 
     const finish = () => {
       if (settled) return false;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(idle);
       state.pending.delete(id);
+      // 背压可能把连接停在 pause 上：结束时必须恢复，否则后续所有消息都收不到
+      if (paused) {
+        paused = false;
+        try { dev.ws.resume(); } catch (_) {}
+      }
       return true;
     };
     const fail = msg => {
@@ -322,20 +343,34 @@ function pull({ device, remotePath, localPath }) {
       try { fs.unlinkSync(tmp); } catch (_) {}
       reject(new Error(msg));
     };
-    const timer = setTimeout(() => fail('拉取超时（60s 无完成）'), 60000);
+    const bump = ms => {
+      clearTimeout(idle);
+      idle = setTimeout(() => fail(`${ms / 1000}s 没有收到数据，判定卡住`), ms);
+    };
+    bump(FIRST_CHUNK_MS);
 
     state.pending.set(id, {
       onFileChunk(m) {
         if (settled) return;
+        bump(IDLE_MS);
         let b;
         try { b = Buffer.from(String(m.data || ''), 'base64'); } catch (_) { return fail('数据块解码失败'); }
         got += b.length;
-        if (got > MAX_FILE) return fail('文件超过 50MiB 上限');
+        if (got > MAX_FILE) return fail('文件超过 2GiB 上限');
         hash.update(b);
-        out.write(b);
+        // 磁盘比网络慢时暂停从连接读，等 drain 再恢复——否则缓冲会在内存里堆到 OOM
+        if (!out.write(b) && !paused) {
+          paused = true;
+          try { dev.ws.pause(); } catch (_) {}
+          out.once('drain', () => {
+            paused = false;
+            try { dev.ws.resume(); } catch (_) {}
+          });
+        }
       },
       onFileDone(m) {
         if (settled) return;
+        clearTimeout(idle);
         if (m.err) return fail(String(m.err));
         out.end(() => {
           if (!finish()) return;
@@ -359,6 +394,8 @@ function pull({ device, remotePath, localPath }) {
 }
 
 // push：会话目录 → 设备
+// 发送阶段不设总超时（core 自己知道在发，靠 bufferedAmount 控节奏），
+// 发完最后一包才开始等设备确认（60s）。
 async function push({ device, localPath, remotePath }) {
   const dev = pick(device);
   if (!dev) throw new Error(device ? `设备 ${device} 不在线` : '当前没有设备在线');
@@ -366,36 +403,49 @@ async function push({ device, localPath, remotePath }) {
 
   const st = fs.statSync(localPath);
   if (!st.isFile()) throw new Error('只能推文件，不能推目录：' + localPath);
-  if (st.size > MAX_FILE) throw new Error('文件超过 50MiB 上限');
-  const buf = fs.readFileSync(localPath);
-  const sum = crypto.createHash('sha256').update(buf).digest('hex');
+  if (st.size > MAX_FILE) throw new Error('文件超过 2GiB 上限');
+  const size = st.size;
+  const sum = await hashFile(localPath);
   const id = newJobId();
 
+  let settled = false;
+  let doneTimer = null;
+  let rejectDone = null;
   const done = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      state.pending.delete(id);
-      reject(new Error('推送超时'));
-    }, fileTimeout(buf.length));
+    rejectDone = reject;
     state.pending.set(id, {
       onFileDone(m) {
-        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        clearTimeout(doneTimer);
         state.pending.delete(id);
         if (m.err) return reject(new Error(String(m.err)));
-        resolve({ device: dev.name, bytes: buf.length, sha256: sum, path: remotePath });
+        resolve({ device: dev.name, bytes: size, sha256: sum, path: remotePath });
       },
     });
   });
 
-  dev.ws.send(JSON.stringify({ t: 'file', id, op: 'write', path: remotePath, size: buf.length, sha256: sum }));
-  for (let off = 0; off < buf.length; off += FILE_CHUNK) {
-    dev.ws.send(JSON.stringify({
-      t: 'file.chunk', id,
-      data: buf.subarray(off, off + FILE_CHUNK).toString('base64'),
-    }));
-    // 简单背压：发送缓冲堆到 4MB 就等一等，避免把内存打满
-    while (dev.ws.bufferedAmount > 4 * 1024 * 1024) await new Promise(r => setTimeout(r, 10));
+  try {
+    dev.ws.send(JSON.stringify({ t: 'file', id, op: 'write', path: remotePath, size, sha256: sum }));
+    for await (const chunk of fs.createReadStream(localPath, { highWaterMark: FILE_CHUNK })) {
+      dev.ws.send(JSON.stringify({ t: 'file.chunk', id, data: chunk.toString('base64') }));
+      while (dev.ws.bufferedAmount > WS_HIGH) await sleep(10);
+    }
+    dev.ws.send(JSON.stringify({ t: 'file.done', id }));
+  } catch (e) {
+    settled = true;
+    state.pending.delete(id);
+    throw e;
   }
-  dev.ws.send(JSON.stringify({ t: 'file.done', id }));
+
+  // 发完最后一包才开始看门狗：设备还要算 sha、rename，慢盘上会停几秒
+  doneTimer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    state.pending.delete(id);
+    rejectDone(new Error(`发完最后一包后 ${DONE_WAIT_MS / 1000}s 仍未收到设备确认`));
+  }, DONE_WAIT_MS);
+
   return done;
 }
 

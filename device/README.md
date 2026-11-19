@@ -116,7 +116,8 @@ core 通过同一条连接搬文件，**设备不需要任何额外端口**：
 | 拉取（设备 → 会话目录） | `file{op:read}` → 设备分块回 `file.chunk` → `file.done{size,sha256}` |
 | 推送（会话目录 → 设备） | `file{op:write,size,sha256}` → 分块 `file.chunk` → `file.done` |
 
-- 每块 256 KiB（base64 后约 341 KiB），单文件上限 50 MiB；
+- 每块 256 KiB（base64 后约 341 KiB），单文件上限 2 GiB；
+- 超时按**空闲**算：首块 30s，之后每收到一块重置 30s——链路慢但不卡就不会被误杀；
 - 写盘先落 `<path>.part`，`size` 与 `sha256` 都对上才 `rename`；
 - 设备侧路径必须在工作根内（与 `exec` 的 cwd 校验同一套）。
 
