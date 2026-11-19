@@ -63,6 +63,20 @@ sh scripts/build.sh all
 
 优先级：**命令行显式参数 > 环境变量 `NODE_TOKEN`（仅 token）> 配置文件 > 默认值**。
 
+### shell 用哪个
+
+默认：macOS / Linux 用 `/bin/sh`（固定，不读 `$SHELL`——用户把默认 shell 设成 fish 时，
+模型写的 POSIX 语法会全废）；Windows 用 `cmd`。
+
+想换就在 `config.json` 里写 `shell`，**不做自动探测**：装了 Git Bash / busybox 就写路径，
+没装就保持默认。
+
+```json
+{ "shell": "C:\\Program Files\\Git\\bin\\bash.exe" }
+```
+
+报给 core 的是短标签（`sh` / `bash` / `busybox` / `cmd` / `powershell`），同时带上解释器路径与版本。
+
 | 参数 | 说明 |
 |---|---|
 | `-server` | core 的接入地址，`wss://…/dev/ws` |

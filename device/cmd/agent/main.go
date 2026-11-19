@@ -171,7 +171,7 @@ func main() {
 		host = *name
 	}
 
-	log.Printf("agent-device %s 启动：root=%s shell=%s → %s", version, r.root, r.shell, *server)
+	log.Printf("agent-device %s 启动：root=%s shell=%s → %s", version, r.root, shellKind(r.shell), *server)
 	shPath, shVer := shellInfo(r.shell)
 	log.Printf("shell：%s（%s %s）", r.shell, shPath, shVer)
 	cfg := wsnode.Config{URL: *server, Token: *token, Insecure: *insecure, FixClock: *fixClock}
@@ -181,7 +181,7 @@ func main() {
 			if err := c.Send(proto.Msg{
 				T: proto.TKindHello, Ver: version, Name: host,
 				OS: runtime.GOOS, Arch: runtime.GOARCH,
-				Shell: r.shell, ShellPath: shPath, ShellVer: shVer, Root: r.root,
+				Shell: shellKind(r.shell), ShellPath: shPath, ShellVer: shVer, Root: r.root,
 			}); err != nil {
 				return err
 			}
@@ -361,11 +361,32 @@ func flatten(env map[string]string) []string {
 	return out
 }
 
+// defaultShell 选默认解释器。POSIX 上固定 /bin/sh（不读 $SHELL：用户把 shell 设成 fish
+// 之后模型写的 POSIX 语法全废）；Windows 默认 cmd，想用 git-bash / busybox 就在
+// config.json 里写 "shell": "C:\\Program Files\\Git\\bin\\bash.exe"（或 PATH 里的名字）。
 func defaultShell() string {
 	if runtime.GOOS == "windows" {
 		return "cmd"
 	}
 	return "sh"
+}
+
+// shellKind 把路径/命令名归成一个短标签给 core 看（hello 的 shell 字段）。
+func shellKind(p string) string {
+	b := strings.ToLower(filepath.Base(p))
+	switch {
+	case strings.Contains(b, "busybox"):
+		return "busybox"
+	case strings.Contains(b, "bash"):
+		return "bash"
+	case b == "sh" || b == "sh.exe" || b == "/bin/sh":
+		return "sh"
+	case strings.Contains(b, "powershell"), b == "pwsh", b == "pwsh.exe":
+		return "powershell"
+	case b == "cmd" || b == "cmd.exe":
+		return "cmd"
+	}
+	return p
 }
 
 func shellCmd(name string) (string, []string) {
@@ -374,15 +395,22 @@ func shellCmd(name string) (string, []string) {
 		return "cmd", []string{"/c"}
 	case "powershell", "pwsh":
 		return name, []string{"-NoProfile", "-NonInteractive", "-Command"}
-	default:
-		if runtime.GOOS == "windows" {
-			return "cmd", []string{"/c"}
-		}
-		if _, err := os.Stat("/bin/sh"); err == nil {
-			return "/bin/sh", []string{"-c"}
-		}
-		return "sh", []string{"-c"}
 	}
+	// busybox 的子命令形式：busybox sh -c "…"
+	if strings.Contains(strings.ToLower(filepath.Base(name)), "busybox") {
+		return name, []string{"sh", "-c"}
+	}
+	// 带路径的（git-bash 绝对路径、/bin/sh）直接当 POSIX shell 用
+	if strings.ContainsAny(name, `\/`) {
+		return name, []string{"-c"}
+	}
+	if runtime.GOOS == "windows" {
+		return "cmd", []string{"/c"}
+	}
+	if _, err := os.Stat("/bin/sh"); err == nil {
+		return "/bin/sh", []string{"-c"}
+	}
+	return "sh", []string{"-c"}
 }
 
 // shellInfo 探测实际解释器与版本。这是模型写命令的唯一入口，所以路径要解开符号链接
