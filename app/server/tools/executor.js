@@ -12,6 +12,7 @@ const Database = require('better-sqlite3'); // db 工具：会话目录下的 da
 const TurndownService = require('turndown'); // fetch 工具：HTML→Markdown 用真解析器（内置 htmlparser2，容错截断/畸形文档）
 const rexec = require('../remote-exec');
 const devices = require('../devices'); // device 工具：远端执行节点（设备主动出站连 core，见 devices.js）
+const log = require('../log'); // device 工具调用日志（info 记动作+设备+耗时+命令截断）
 const publicFiles = require('../public-files');
 const scheduler = require('../scheduler'); // 只依赖 log/cron-parser/time.js，不成环（engine→executor→scheduler 单向）
 const profile = require('../user-profile'); // profile 工具的数据面（仅 llm/log 依赖，无环）
@@ -788,6 +789,20 @@ function drainUiCards(text, ctx) {
 // device 工具：把命令送到远端设备执行（设备主动出站连 core，连接表在 devices.js）。
 // 与 terminal 的分工：terminal 只在 core 所在机器/容器里跑，需要落在用户自己的电脑、盒子、
 // Windows 上时用 device。设备不在线就明确报错，不自动降级到本机执行。
+// device 日志用：命令压成一行并截断，避免长命令刷屏
+function devCmd(s, n) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  return t.length > (n || 120) ? t.slice(0, n || 120) + '…' : t;
+}
+
+// device 日志用：字节数human化
+function devBytes(n) {
+  if (!n) return '0B';
+  if (n < 1024) return n + 'B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'KB';
+  return (n / 1024 / 1024).toFixed(2) + 'MB';
+}
+
 async function toolDevice(ctx, args) {
   if (!devices.enabled()) {
     return '设备接入未启用：需要配置公网前缀（PUBLIC_BASE_URL 或设置页「公网地址」）和 DEVICE_TOKEN，重启 core 后生效。';
@@ -796,6 +811,7 @@ async function toolDevice(ctx, args) {
 
   if (action === 'list') {
     const list = devices.list();
+    log.debug('device', 'list → ' + list.length + ' 台');
     if (!list.length) return '当前没有设备在线（设备需主动连 wss://<公网前缀>/dev/ws）。';
     return JSON.stringify(list, null, 2);
   }
@@ -804,8 +820,11 @@ async function toolDevice(ctx, args) {
     const name = String(args.device || '').trim();
     if (!name) return 'Error: action=health 需要 device 参数（先调 action=list 看设备名）';
     try {
-      return JSON.stringify(await devices.health(name), null, 2);
+      const h = await devices.health(name);
+      log.debug('device', 'health ' + name + ' ok');
+      return JSON.stringify(h, null, 2);
     } catch (e) {
+      log.warn('device', 'health ' + name + ' 失败：' + e.message);
       return 'Error: ' + e.message;
     }
   }
@@ -821,6 +840,7 @@ async function toolDevice(ctx, args) {
         cwd: args.cwd,
         timeout_ms: args.timeout_ms,
       });
+      log.info('device', `exec ${r.device} code=${r.code} ${r.ms}ms cmd="${devCmd(args.command)}"`);
       const head = `device=${r.device} exit=${r.code}`
         + (r.killed_by ? ` killed_by=${r.killed_by}` : '')
         + ` ${r.ms}ms` + (r.truncated ? '（输出已截断）' : '');
@@ -830,6 +850,7 @@ async function toolDevice(ctx, args) {
       if (r.stderr && r.stderr.trim()) parts.push('--- stderr ---\n' + r.stderr.replace(/\s+$/, ''));
       return parts.join('\n');
     } catch (e) {
+      log.warn('device', `exec ${name} 失败：${e.message} cmd="${devCmd(args.command)}"`);
       return 'Error: ' + e.message;
     }
   }
@@ -842,10 +863,13 @@ async function toolDevice(ctx, args) {
     try {
       const rel = String(args.local_path || '').trim() || path.basename(remote);
       const abs = resolveInTask(ctx.taskDir, rel, fsRoot(ctx));
+      const t0 = Date.now();
       const r = await devices.pull({ device: name, remotePath: remote, localPath: abs });
       recordFile(ctx, abs);
+      log.info('device', `pull ${name} ${remote} → ${path.relative(ctx.taskDir, abs) || path.basename(abs)} ${devBytes(r.bytes)} ${Date.now() - t0}ms`);
       return `已拉到 ${path.relative(ctx.taskDir, abs) || path.basename(abs)}（${r.bytes} 字节，sha256 ${r.sha256.slice(0, 16)}…）`;
     } catch (e) {
+      log.warn('device', `pull ${name} ${remote} 失败：${e.message}`);
       return 'Error: ' + e.message;
     }
   }
@@ -859,9 +883,12 @@ async function toolDevice(ctx, args) {
     if (!remote) return 'Error: action=push 需要 remote_path 参数（设备上的绝对路径，须在工作根内）';
     try {
       const abs = resolveInTask(ctx.taskDir, local, fsRoot(ctx));
+      const t0 = Date.now();
       const r = await devices.push({ device: name, localPath: abs, remotePath: remote });
+      log.info('device', `push ${name} ${remote} ${devBytes(r.bytes)} ${Date.now() - t0}ms`);
       return `已推到 ${name}:${remote}（${r.bytes} 字节，sha256 ${r.sha256.slice(0, 16)}…）`;
     } catch (e) {
+      log.warn('device', `push ${name} ${remote} 失败：${e.message}`);
       return 'Error: ' + e.message;
     }
   }
