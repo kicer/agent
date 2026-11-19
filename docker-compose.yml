@@ -3,6 +3,12 @@ services:
     build: ./app
     container_name: agent-core
     restart: unless-stopped
+    # 日志轮转：默认 json-file 无上限，长期跑会把磁盘吃穿。保留最近 100MB。
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     ports:
       # 直接把容器 8090 映射到宿主机端口，用 http://<服务器IP>:<AGENT_PORT> 访问。
       - "${AGENT_PORT:-8090}:8090"

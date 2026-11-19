@@ -885,7 +885,7 @@ async function toolDevice(ctx, args) {
       const abs = resolveInTask(ctx.taskDir, local, fsRoot(ctx));
       const t0 = Date.now();
       const r = await devices.push({ device: name, localPath: abs, remotePath: remote });
-      log.info('device', `push ${name} ${remote} ${devBytes(r.bytes)} ${Date.now() - t0}ms`);
+      log.info('device', `push ${name} ${remote} ← ${path.relative(ctx.taskDir, abs) || path.basename(abs)} ${devBytes(r.bytes)} ${Date.now() - t0}ms`);
       return `已推到 ${name}:${remote}（${r.bytes} 字节，sha256 ${r.sha256.slice(0, 16)}…）`;
     } catch (e) {
       log.warn('device', `push ${name} ${remote} 失败：${e.message}`);
