@@ -5,7 +5,7 @@ const path = require('path');
 const net = require('net'); // fetch SSRF 防护：IP 字面量/解析结果判私网
 const dns = require('dns').promises; // 同上：主机名 → IP 后统一判定
 const fsp = require('fs').promises;
-const { spawn } = require('child_process');
+const shell = require('../shell'); // 执行后端：shell 解析 + 进程树 kill（平台差异只在那边，这里不做分支）
 const mcp = require('../mcp');
 const skills = require('./skills');
 const Database = require('better-sqlite3'); // db 工具：会话目录下的 data.db（同步 API，与单进程模型契合）
@@ -764,7 +764,7 @@ function selectOutput(text, head, tail) {
   return parts.join('\n\n');
 }
 
-// terminal：spawn + 进程组 kill + 超时 + 输出截断
+// terminal：交执行后端起 shell（POSIX 默认 /bin/sh -c，Windows 由 shell.js 探测）+ 超时 + 输出截断
 // 通用终端输出 UI 卡片通道：命令行尾部的 ::ui_card {json}:: 标记行 → 从模型面剥离，整块交 ctx.onCard
 // （与 MCP 回包 ui_card 块同一协议，见 mcp.js：任何命令行都可产卡，不限 officecli 封装层）。
 // JSON 解析失败/无 action/ctx 不带 onCard 时标记行原样保留（宁可见不丢数据）。
@@ -809,7 +809,7 @@ async function toolTerminal(ctx, args) {
   }
 
   return new Promise((resolve) => {
-    const child = spawn('/bin/sh', ['-c', args.command], { cwd, detached: true, env: process.env });
+    const child = shell.spawnShell(cfg, args.command, { cwd });
     ctx.run.procs.add(child);
     let out = '';
     let killedBy = null; // 'timeout' | 'cancelled'
@@ -853,10 +853,8 @@ async function toolTerminal(ctx, args) {
 }
 
 function killGroup(child) {
-  if (!child.pid) return;
-  try { process.kill(-child.pid, 'SIGKILL'); } catch (_) {
-    try { child.kill('SIGKILL'); } catch (__) {}
-  }
+  // 平台差异交给执行后端：POSIX 杀进程组，Windows 走 taskkill /T 杀进程树。
+  shell.killTree(child);
 }
 
 // fetch：抓取并转 Markdown。超时/取消覆盖到 body 读取完成（非仅响应头）；

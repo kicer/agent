@@ -76,7 +76,9 @@ const DEFAULTS = {
   db_path: '',
   // executor / 微信接入（wxbot）均不占配置字段：两组件接线纯 env（compose 经根 .env 注入，见 parseAndValidate）；
   // 本配置文件内含密钥，只给 core 进程读，executor/wxbot 一律不挂不读。
-  terminal: { default_timeout_ms: 30000, max_output_chars: 10000 },
+  // terminal.shell：跑命令用的 POSIX shell（空 = 自动探测：POSIX 直接 /bin/sh；Windows 依次找
+  //   git-bash、busybox-w32）。env AGENT_SHELL 优先级更高，AGENT_SHELL_ARGS 覆盖参数模板（默认 -c）。
+  terminal: { default_timeout_ms: 30000, max_output_chars: 10000, shell: '' },
   // fetch：timeout_ms 覆盖请求发出到 body 读完的全生命周期；max_bytes 为流式抓取字节上限（超限即断开）。
   // 下载与返回两上限解耦：下载不进上下文可宽松，返回默认收紧（max_chars），模型显式传 max_chars 时
   // 夹在 max_chars_hard 硬帽内；超窗尾部提示 offset，续读走 ctx.run 上的回合缓存不重抓。

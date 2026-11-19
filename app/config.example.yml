@@ -33,6 +33,9 @@ log_level: "info"                                  # debug < info < warn < error
 terminal:
   default_timeout_ms: 30000                        # 命令默认超时（ms）
   max_output_chars: 10000                          # 回传模型的最大输出字符数
+  # shell: ''                                      # 跑命令的 POSIX shell；空 = 自动探测
+                                                   #   POSIX：/bin/sh；Windows：git-bash → busybox-w32
+                                                   # env AGENT_SHELL 优先级更高，AGENT_SHELL_ARGS 可改参数模板
 
 fetch:
   timeout_ms: 30000                                # 抓取总超时（ms），覆盖响应头到 body 读完

@@ -14,6 +14,7 @@ const { spawn } = require('child_process');
 const YAML = require('yaml');
 const log = require('../log');
 const rexec = require('../remote-exec');
+const shell = require('../shell'); // 本地 spawn 技能时的进程树 kill（平台差异只在 shell.js）
 // mode=skill 的 MCP 工具在 get/run 时由 core 直接转发；mcp.js 只依赖 ./log，不成环。
 const mcp = require('../mcp');
 
@@ -187,7 +188,8 @@ function runEntry(ctx, entry, args, cwd, timeoutMs) {
     });
   }
   return new Promise((resolve, reject) => {
-    const child = spawn(entry, args, { cwd, env: process.env, detached: true });
+    // windowsHide：Windows 上 detached 之外的第二道保险，避免弹控制台；POSIX 忽略该选项。
+    const child = spawn(entry, args, { cwd, env: process.env, detached: true, windowsHide: true });
     if (ctx.run && ctx.run.procs) ctx.run.procs.add(child);
     let out = '';
     let settled = false;
@@ -200,7 +202,7 @@ function runEntry(ctx, entry, args, cwd, timeoutMs) {
       settled = true;
       clearInterval(cancelCheck);
       if (ctx.run && ctx.run.procs) ctx.run.procs.delete(child);
-      try { process.kill(-child.pid, 'SIGKILL'); } catch (_) { try { child.kill('SIGKILL'); } catch (__) {} }
+      shell.killTree(child);
       reject(new SkillExecutionError('技能执行超时（' + timeoutMs + 'ms）已终止：\n' + out.trim(), -1));
     }, timeoutMs);
 
@@ -209,7 +211,7 @@ function runEntry(ctx, entry, args, cwd, timeoutMs) {
         settled = true;
         clearTimeout(timer);
         if (ctx.run && ctx.run.procs) ctx.run.procs.delete(child);
-        try { process.kill(-child.pid, 'SIGKILL'); } catch (_) { try { child.kill('SIGKILL'); } catch (__) {} }
+        shell.killTree(child);
         reject(new SkillExecutionError('技能执行被用户终止', -1));
       }
     }, 200);

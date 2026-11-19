@@ -59,6 +59,7 @@ AGENT_CONFIG=./config.yml node server/server.js
 | `server/public-files.js` | `mint_public_link` 的短链签发与解析（进程内 Map） |
 | `server/download-token.js` | 浏览器下载链接的 HMAC 签名（密钥进程内随机） |
 | `server/remote-exec.js` | 调 `agent-executor` 的 `/exec`（SSE）与预览槽清理 |
+| `server/shell.js` | **执行后端**：解析用哪个 POSIX shell 跑命令（POSIX 直接 `/bin/sh`；Windows 依次 git-bash → busybox-w32）、跨平台杀进程树。平台差异只允许出现在这里 |
 | `server/log.js` | 分级日志 `log.debug/info/warn/error(category, ...)` |
 | `server/balance.js` | 平台余额查询适配器（按 `platform.type` 分发） |
 | `server/version.js` | git commit/date：优先读 `version.json`（post-commit 钩子生成），宿主机有 git 时兜底 `git rev-parse`；页面版本号另外由 `routes/system.js` 的 `VERSION` 字面量决定 |
@@ -403,6 +404,9 @@ preview-proxy.mount（末尾兜底）
 
 ## 陷阱清单（都是踩过的）
 
+- **平台差异只允许出现在 `server/shell.js`**：`terminal` / 技能 / `engine.killRunProcs` 一律走
+  `shell.spawnShell` / `shell.killTree`，上层不写 `process.platform` 分支。POSIX 分支的行为
+  （`/bin/sh -c` + 进程组 + `kill(-pid)`）不能变——它是「模型按 POSIX 写就一定能跑」的保证。
 - **循环依赖**：`engine` 绝不 `require('./wechat')` 或 `require('./scheduler')`，否则拿到半成品
   exports。通知面/engine 引用一律由 `server.js` 注入。`executor → scheduler` 是单向的，安全。
 - **tool_call 配对**：删 assistant 必须连带删该轮的 `tool` 回执；删单条 `tool` 回执必须从父

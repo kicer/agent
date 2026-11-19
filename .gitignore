@@ -10,6 +10,9 @@ skills/*/.deps_installed
 # 本地端（local/）：运行期产物与生成的配置都不入库（含密钥，见 local/README.md）
 local/.runtime/
 local/config.local.yml
+local/config.win.yml
+# busybox-w32：Windows 启动器下载的 shell 二进制（不进 git）
+local/bin/
 # officecli 二进制资产：skills/office/install.sh 运行期拉取，不进 git
 skills/office/bin/
 skills/**/__pycache__/

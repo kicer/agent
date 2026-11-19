@@ -14,6 +14,7 @@ const wechat = require('./wechat');
 const llm = require('./llm');
 const mcp = require('./mcp');
 const skills = require('./tools/skills');
+const shellBackend = require('./shell');
 const log = require('./log');
 
 const cfg = loadConfig(process.env.AGENT_CONFIG);
@@ -243,6 +244,10 @@ mcp.init(cfg).then(async () => {
       log.info('startup', '  auth=' + (auth.enabled ? 'login: ' + cfg.auth.users.map(u => u.user).join(', ') : '(disabled)'));
       log.info('startup', '  wxbot=' + (cfg.wxbot.url && cfg.wxbot.token ? cfg.wxbot.url : '(未启用)'));
       log.info('startup', '  log_level=' + cfg.log_level);
+      // 模型命令到底交给谁跑。硬定 shell 时这里是唯一的凭据（Windows 上尤其要看到）；
+      // 探测不到就降成 warn——服务能起，但 terminal 工具会一片红。
+      if (shellBackend.resolve(cfg)) log.info('startup', '  terminal=' + shellBackend.describe(cfg));
+      else log.warn('startup', '  terminal=' + shellBackend.describe(cfg));
       // 微信实例恢复 fire-and-forget：wxbot 没起只留日志，绝不阻塞/抛错影响启动。
       wechat.restore().catch(e => log.warn('wechat', '启动恢复异常：' + (e && e.message || e)));
       // prompt dump 失败不影响服务：只是核对用产物。

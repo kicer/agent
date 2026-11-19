@@ -8,6 +8,7 @@ const { executeTool, resolveInTask } = require('./tools/executor');
 const publicFiles = require('./public-files');
 const mcp = require('./mcp');
 const rexec = require('./remote-exec');
+const shell = require('./shell'); // 执行后端：killTree 的平台差异（进程组 / taskkill）不往引擎里渗
 const log = require('./log');
 const profile = require('./user-profile');
 const memory = require('./memory');
@@ -568,9 +569,8 @@ function killRunProcs(run) {
   for (const proc of run.procs) {
     // 远端 executor 任务句柄（remote-exec.js）：发 DELETE 取消，不能本地 kill。
     if (typeof proc.remoteKill === 'function') { try { proc.remoteKill(); } catch (_) {} continue; }
-    try { process.kill(-proc.pid, 'SIGKILL'); } catch (_) {
-      try { proc.kill('SIGKILL'); } catch (__) {}
-    }
+    // 平台差异交给执行后端：POSIX 杀进程组，Windows 走 taskkill /T。
+    shell.killTree(proc);
   }
   run.procs.clear();
 }

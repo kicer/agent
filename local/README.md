@@ -63,6 +63,63 @@ cd agent
 这个页面是纯静态文件（不用起服务），所以“node 都没装”的时候也能打开。重跑脚本会重新生成；
 即使没自动弹出，文件也一直在那个路径。
 
+## Windows
+
+需要 Node 20+（不需要 Docker，也不需要装 Git）：
+
+```bat
+node local\start-win.mjs
+node local\start-win.mjs --workspace=D:\AgentWork --port=8090
+```
+
+首次运行会：
+
+1. 自检 Node 版本
+2. **找命令执行环境**：优先用已装的 Git for Windows（自带 bash）；没有再自动下载
+   [busybox-w32](https://frippery.org/busybox)（单文件约 600KB）到 `local/bin/busybox.exe`
+3. 建工作目录（默认 `%USERPROFILE%\AgentWork`，`--workspace` 可改）下的 `tasks/` `data/` `skills/`
+4. 生成 `local/config.win.yml`（**首次生成，之后永不覆盖**）
+5. 把仓库 `skills/` 里的内置技能补过去（只补缺不覆盖）
+6. `app/node_modules` 缺失时 `npm install`
+7. 起 core 并守护（退出 3 秒后自动重启，连崩 5 次停）
+
+浏览器开 `http://127.0.0.1:8090`，到「设置 → 模型池」加平台和 API Key。
+**停止：Ctrl+C**（没有 `stop.sh`，启动器就是前台进程）。`--check` 只做自检不启动。
+
+### 为什么 Windows 是另一条代码路径
+
+`start.sh` 靠 `lsof` / `pgrep` / `readlink -f` / `nohup` / `setsid` / 进程组信号，Windows 一个都没有。
+所以那 1100 多行 bash 没有移植，而是用 Node 重写了「启动器」这一层——它本来就只做进程管理，
+不需要 shell。**业务代码一行都不分平台**：平台差异只落在两个文件里：
+
+| 文件 | 负责 |
+|---|---|
+| `app/server/shell.js` | 用哪个 shell 跑命令、怎么杀进程树（POSIX 进程组 / Windows `taskkill /T`） |
+| `local/start-win.mjs` | 探测、下载 busybox、生成配置、起进程、守护 |
+
+### 覆盖与排错
+
+| 变量 | 作用 |
+|---|---|
+| `AGENT_SHELL` | 直接指定 shell（绝对路径或 PATH 名），跳过一切探测 |
+| `AGENT_SHELL_ARGS` | 参数模板，默认 `-c`（如 bash 想读 rc 可写 `-lc`） |
+| `AGENT_GIT_BASH` | 指定 git-bash 位置（便携版/非标准安装路径） |
+| `AGENT_BUSYBOX` | 指定 busybox.exe 位置 |
+| `AGENT_BUSYBOX_URL` | 换 busybox 下载源（国内网络） |
+
+命令到底交给了谁跑：启动日志里有一行 `terminal=...`，失败时会写成 `terminal=未找到（...）`。
+
+### Windows 上仍有的限制
+
+- **四个同栈 MCP 没有自动拉起**（配置里 `mcp_servers: []`）：网页搜索/图片/视频/语音暂不可用，
+  `terminal`、文件工具、技能正常。
+- **office 预览网关没起**：docx/xlsx/pptx 不能在线预览，但 `office` 技能生成文件不受影响。
+- **没有沙箱**：和 macOS/Linux 本地模式一样，AI 的 `terminal` 就是你的 shell，能读写你有权限的任何文件。
+  工作目录选专用的，别选 `C:\` 或整个仓库。
+- **`chmod` / `ln -s` 这类不生效**：Windows 没有 POSIX 权限位；模型写这类命令会“成功但什么都没做”。
+- **`/tmp` 不是 Linux 的 `/tmp`**：busybox 会把它当当前盘根目录（`C:\tmp`），git-bash 映射到 `%TEMP%`。
+  模型最好用相对路径或会话目录。
+
 ## 可选能力
 
 | 能力 | 需要 | 没有时的表现 |
