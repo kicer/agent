@@ -118,11 +118,19 @@ function archivedCount(history) {
   return n;
 }
 
+// 同上，但按 sessionId 现查：编辑/删除入口拿到的是裸 sessions 行（不含 history），
+// 用 archivedCount(session.history) 会恒得 0，作废的 cid 就打到别的 key 上（压缩过的会话必踩）。
+function archivedCountOf(sessionId) {
+  const r = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND type = 'archived'").get(sessionId);
+  return r ? r.n : 0;
+}
+
 // 增量上下文 id 的拼法（与 llm.js 的 X-Context-Id 一致）：<core_id>:<user>:<session_id>:<archived_cnt>。
 // 删除消息后要把这个 key 作废，让下一轮走全量重建。
+// runLoop 里 session.history 已就绪，走内存计数；其余入口现查库，两条路结果一致。
 function contextIdOf(session) {
-  return instanceId(cfg.data_root) + ':' + (session.user || '-') + ':' + session.id +
-    ':' + archivedCount(session.history);
+  const n = session.history ? archivedCount(session.history) : archivedCountOf(session.id);
+  return instanceId(cfg.data_root) + ':' + (session.user || '-') + ':' + session.id + ':' + n;
 }
 
 function saveMessage(sessionId, msg) {
@@ -885,7 +893,9 @@ async function runLoopInner(sessionId, run) {
     if (run.cancelled) break;
     if (!result) {
       const text = '⚠️ 模型调用失败：' + (lastErr && lastErr.message || '未知错误');
-      const errId = saveMessage(sessionId, { role: 'assistant', content: text });
+      // type='error_note'：留痕给 UI，但不进模型上下文（buildMessages 跳过），
+      // 否则失败文案会当成模型的真实回复一直带下去。
+      const errId = saveMessage(sessionId, { role: 'assistant', content: text, type: 'error_note' });
       bus.emit(sessionId, 'assistant_message', { id: errId, content: text, error: true, created_at: now() });
       break;
     }

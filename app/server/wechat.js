@@ -489,7 +489,7 @@ function getTurn(bid) { return turnState.get(bid) || resetTurn(bid); }
 
 // 投递前的内容归一（语义同旧 deliverNow）：errAck / 空文本 → 不可投；富文本 blocks → 占位文案。
 function normalizeContent(m) {
-  if (!m || m.type === 'errAck') return '';
+  if (!m || m.type === 'errAck' || m.type === 'error_note') return '';
   let content = String(m.content || '').trim();
   if (!content) return '';
   if (content.startsWith('{"__blocks__"')) content = '【富文本消息，请到网页端查看】';

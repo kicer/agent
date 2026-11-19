@@ -310,6 +310,8 @@ function buildMessages(session, language, mintUrl, profile, withProfile, trimOn)
   history.forEach((row, i) => {
       // archived：UI 可见，但不进入模型上下文（节省 token）
       if (row.type === 'archived') return;
+      // error_note：失败文案，只给 UI 留痕，不进模型（否则被当成模型的真实回复带下去）
+      if (row.type === 'error_note') return;
       // summarize_request（旧版遗留行）：仅在未收尾的旧压缩回合内发给模型，其余一律跳过
       if (row.type === 'summarize_request') {
         if (i > lastClosingAssistant && (row.content || '').trim()) {
