@@ -84,7 +84,7 @@ function attach(server) {
 
 function onConnection(ws) {
   const dev = {
-    ws, name: null, os: '', arch: '', shell: '', root: '', caps: [], ver: '',
+    ws, name: null, os: '', arch: '', shell: '', shellPath: '', shellVer: '', root: '', ver: '',
     connectedAt: Date.now(), lastSeen: Date.now(), health: null, helloTimer: null,
   };
   dev.helloTimer = setTimeout(() => {
@@ -128,8 +128,9 @@ function onHello(dev, m) {
   dev.os = String(m.os || '');
   dev.arch = String(m.arch || '');
   dev.shell = String(m.shell || '');
+  dev.shellPath = String(m.shell_path || '');
+  dev.shellVer = String(m.shell_ver || '');
   dev.root = String(m.root || '');
-  dev.caps = Array.isArray(m.caps) ? m.caps : [];
   dev.ver = String(m.ver || '');
 
   const old = state.byName.get(dev.name);
@@ -138,7 +139,7 @@ function onHello(dev, m) {
     try { old.ws.close(4000, 'replaced'); } catch (_) {}
   }
   state.byName.set(dev.name, dev);
-  log.info('devices', `设备上线：${dev.name}（${dev.os}/${dev.arch} shell=${dev.shell} root=${dev.root}）`);
+  log.info('devices', `设备上线：${dev.name}（${dev.os}/${dev.arch} shell=${dev.shellPath || dev.shell} ${dev.shellVer} root=${dev.root}）`);
 
   // 上线即取一次健康快照，list 时能顺带看到负载；失败不影响接入
   health(dev.name).catch(() => {});
@@ -156,9 +157,12 @@ function list() {
     device: d.name,
     os: d.os,
     arch: d.arch,
+    // shell 是模型的命令入口：kind 决定调用形式（sh -c / cmd /c），path 决定实际解释器
+    //（/bin/sh 可能是 dash、bash 或 busybox），ver 拿得到就给。
     shell: d.shell,
+    shell_path: d.shellPath,
+    shell_ver: d.shellVer,
     root: d.root,
-    caps: d.caps,
     ver: d.ver,
     connected_sec: Math.round((now - d.connectedAt) / 1000),
     idle_sec: Math.round((now - d.lastSeen) / 1000),
