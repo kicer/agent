@@ -1,0 +1,48 @@
+name: agent-device release
+
+# 只认设备端标签（agent-device-v0.1.0），不碰主项目的 v2.5.0 这类版本号。
+on:
+  push:
+    tags:
+      - 'agent-device-v*'
+
+permissions:
+  contents: write   # action-gh-release 需要建 release、传附件
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: device/go.mod
+          cache-dependency-path: device/go.sum
+
+      # 复用仓库里的脚本，本地和 CI 一套目标列表
+      - name: 编译各平台
+        working-directory: device
+        run: sh scripts/build.sh all
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: device/bin/agent-device-*
+          fail_on_unmatched_files: true
+          body: |
+            设备执行端 agent-device（`device/`）。
+
+            - 设备主动出站连 core 的 `/dev/ws`，不需要公网 IP、不需要开端口
+            - 二进制不含服务器地址与 token，启动时用 `-server` 或同目录 `config.json` 指定
+            - 模型侧可用 `device` 工具跑命令、看负载、收发文件
+
+            | 平台 | 文件 |
+            | --- | --- |
+            | Linux amd64 / arm64 | `agent-device-linux-*` |
+            | macOS amd64 / arm64 | `agent-device-darwin-*` |
+            | Windows amd64 | `agent-device-windows-amd64.exe` |
+
+            不含 mips / mipsle（OpenWrt 等自行交叉编译：`GOARCH=mips GOMIPS=softfloat`）。
