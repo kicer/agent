@@ -22,3 +22,6 @@ app/server/version.json
 # 部署配置真身（含密钥，模板见 scripts/deploy.conf.example）；
 deploy.conf
 relay/config.json
+
+# 设备端编译产物（交叉编译后本地生成，不入库）
+device/bin/
