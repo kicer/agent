@@ -205,12 +205,35 @@
       "description": "Maintain the current user's profile — stable facts that persist across conversations and get injected into the context of NEW sessions (the current session's injected copy is frozen). Ops: list (read the live profile), set (honorific or industry, single short value), add (append preference tags), remove (delete exact preference tags). Rules: only record what the user has clearly stated or asked to be remembered (form of address, domain, stable output/work preferences); never guess personality, never store one-time task parameters; brief tags beat essays. Preference is a 、-separated tag list (each tag ≤15 chars, ≤24 tags, ≤300 chars total; overflow is rejected — consolidate or remove first). When unsure what is already recorded, op=list returns live state — trust it over memory.",
       "parameters": {
         "type": "object",
-        "required": ["op"],
+        "required": [
+          "op"
+        ],
         "properties": {
-          "op": { "type": "string", "enum": ["list", "set", "add", "remove"], "description": "list = read live profile; set = single-value honorific/industry; add/remove = preference tags." },
-          "honorific": { "type": "string", "description": "op=set: how to address the user (≤20 chars, e.g. 王工). Pass empty string to clear. Exactly one of honorific/industry per call." },
-          "industry": { "type": "string", "description": "op=set: the user's industry/domain (≤20 chars, e.g. 金融). Pass empty string to clear." },
-          "tags": { "type": "array", "items": { "type": "string" }, "description": "op=add/remove: preference tag list, e.g. [\"偏好简洁回复\", \"图表中文标注\"]. Matching is exact text." }
+          "op": {
+            "type": "string",
+            "enum": [
+              "list",
+              "set",
+              "add",
+              "remove"
+            ],
+            "description": "list = read live profile; set = single-value honorific/industry; add/remove = preference tags."
+          },
+          "honorific": {
+            "type": "string",
+            "description": "op=set: how to address the user (≤20 chars, e.g. 王工). Pass empty string to clear. Exactly one of honorific/industry per call."
+          },
+          "industry": {
+            "type": "string",
+            "description": "op=set: the user's industry/domain (≤20 chars, e.g. 金融). Pass empty string to clear."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "op=add/remove: preference tag list, e.g. [\"偏好简洁回复\", \"图表中文标注\"]. Matching is exact text."
+          }
         }
       }
     }
@@ -340,11 +363,17 @@
       "description": "Run or inspect the skills installed on this server. Each skill describes its purpose and input_schema.\n\n{\"op\":\"list\"}  list every skill with a one-line description\n{\"op\":\"get\",\"name\":\"<skill>\"}  return the skill's full details; call it before the first run\n{\"op\":\"run\",\"name\":\"<skill>\",\"args\":{...}}  execute it; args follow its input_schema\n\nop is required. op=get and op=run require name. Put skill arguments inside args, never at the top level.",
       "parameters": {
         "type": "object",
-        "required": ["op"],
+        "required": [
+          "op"
+        ],
         "properties": {
           "op": {
             "type": "string",
-            "enum": ["list", "get", "run"],
+            "enum": [
+              "list",
+              "get",
+              "run"
+            ],
             "description": "Operation to perform on skills."
           },
           "name": {
@@ -398,6 +427,46 @@
             "description": "Return only the last N lines of output to the model. The user still sees full live output.",
             "minimum": 0,
             "default": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "device",
+      "description": "Operate the remote devices (other machines) connected to this server. Devices dial out to this server, so they need no inbound port; they stay connected until closed.\n\n- action=list: no other params. Returns every online device with os/arch/shell/root/caps/health. Always call this first when you don't know device names.\n- action=health: requires device. Returns host uptime, load, memory, disk and temperature (fields the platform can't provide are -1).\n- action=exec: requires device and command. Runs the command through a shell on that device (sh -c on Unix, cmd /c on Windows) and returns stdout, stderr and the exit code. `cwd` must be inside that device's work root; omit it to use the root.\n\nUse it when the work has to happen on the user's own machine (laptop, box, Windows PC). For the machine running this server use `terminal` instead. If a device is offline, say so explicitly — do not silently run the command elsewhere.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "health",
+              "exec"
+            ],
+            "description": "Operation to perform."
+          },
+          "device": {
+            "type": "string",
+            "description": "Device name from action=list."
+          },
+          "command": {
+            "type": "string",
+            "description": "Shell command line (action=exec). Avoid interactive commands."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Working directory on the device; must be inside its work root (action=exec)."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Default 120000, max 600000 (action=exec)."
           }
         }
       }

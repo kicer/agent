@@ -13,6 +13,7 @@ const scheduler = require('./scheduler');
 const wechat = require('./wechat');
 const llm = require('./llm');
 const mcp = require('./mcp');
+const devices = require('./devices');
 const skills = require('./tools/skills');
 const log = require('./log');
 
@@ -47,6 +48,11 @@ wechat.init(cfg, db, bus);
 
 const app = express();
 const server = http.createServer(app);
+
+// 设备接入（devices.js）：设备主动出站连 wss://<公网前缀>/dev/ws。
+// 只在「有公网前缀 + 配了 DEVICE_TOKEN」时真正挂升级处理器，本地部署静默跳过。
+devices.init(cfg);
+devices.attach(server);
 
 // wxbot 内网回调（/wxhook/inbox|hook）：凭共享服务 token（Bearer）把门，微信用户永远不该直接碰
 // 这两个端点（wxbot 只挂内网）。必须挂在全局 express.json(2mb) 之前：媒体 base64 转发体远超 2mb，
