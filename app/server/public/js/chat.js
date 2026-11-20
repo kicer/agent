@@ -192,7 +192,7 @@
     const gen = !!(opts && opts.generating);
     if (gen) div.classList.add('tool-generating');
     div.innerHTML =
-      '<details' + (open ? ' open' : '') + '><summary><span class="spin">◌</span>' +
+      '<details' + (open ? ' open' : '') + '><summary><span class="spin"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>' +
       '<span class="tool-name">' + esc(name) + '</span>' +
       '<span class="tool-args">' + (gen ? '生成参数中…' : esc(toolArgsSummary(name, argsStr))) + '</span></summary>' +
       '<pre class="tool-args-full">' + (gen ? '' : esc(toolArgsFull(argsStr))) + '</pre>' +
@@ -249,7 +249,10 @@
     const card = document.getElementById('tool-' + id);
     if (!card) return;
     if (isError) card.classList.add('error');
-    card.querySelector('.spin').textContent = isError ? '✕' : '✓';
+    card.classList.remove('running'); // 停止转圈，换成结果标记
+    card.querySelector('.spin').innerHTML = isError
+      ? '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-x-line"/></svg>'
+      : '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-check"/></svg>';
     const parsed = parseToolContent(content);
     const pre = card.querySelector('.tool-result');
     if (!pre) return;
@@ -281,11 +284,12 @@
     const pre = card.querySelector('.tool-result');
     if (!pre) return;
     if (!pre.dataset.streaming) { pre.textContent = ''; pre.dataset.streaming = '1'; } // 首块到达：清掉“执行中…”占位
-    const follow = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;           // 用户往上翻时不抢滚动
+    const follow = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 8;            // 用户往上翻时不抢滚动
     pre.appendChild(document.createTextNode(chunk));
     const lines = pre.textContent.split('\n');
     if (lines.length > 2000) pre.textContent = '…（更早输出已折叠）\n' + lines.slice(-2000).join('\n');
-    if (follow) pre.scrollTop = pre.scrollHeight;
+    // 追加后滚到底：读 scrollHeight 会强制布局拿到新高度；再补一帧，避免大 chunk 一次没贴到底
+    if (follow) { pre.scrollTop = pre.scrollHeight; requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; }); }
   }
   // 把 assistant 消息里的 tool_calls 建成工具卡片(历史渲染与 assistant_message 事件共用)
   function appendToolCardsFromAssistant(m, container) {

@@ -182,15 +182,16 @@
     state.streamEl = bubble;
     return wrap;
   }
-  // 思考面板:首次思考 delta 到达时创建,带 open 状态（流式中默认展开）
+  // 思考面板:首次思考 delta 到达时创建。**不展开**，只在 summary 里挂一段动态文字，
+  // 让人感觉到在干活；正文开始后清空那段文字，需要看全文再点开。
   function ensureStreamThinkPanel() {
     if (state.streamThinkEl) return state.streamThinkEl;
     if (!state.streamWrap) ensureStreamWrap();
     const det = document.createElement('details');
     det.className = 'msg-think streaming';
-    det.open = true; // 流式阶段默认展开，看思考增量
+    det.open = false; // 流式阶段也不展开：展开的大段思考会把下面的内容一路顶下去
     const sum = document.createElement('summary');
-    sum.innerHTML = '思考过程' + THINK_COPY_BTN;
+    sum.innerHTML = '思考过程<span class="msg-think-live"></span>' + THINK_COPY_BTN;
     const body = document.createElement('div');
     body.className = 'msg-think-body';
     det.appendChild(sum);
@@ -198,10 +199,12 @@
     // 插在气泡之前（思考 → 结论 的顺序）
     state.streamWrap.insertBefore(det, state.streamEl);
     state.streamThinkEl = body;
+    state.streamThinkLive = sum.querySelector('.msg-think-live');
     return body;
   }
-  // 思考结束(正文开始流式或本轮收尾):自动折叠思考面板并去掉流式高亮边框;用户仍可手动点开回看
+  // 思考结束(正文开始流式或本轮收尾):清空标题行那段动态文字、折叠面板、去掉流式标记
   function collapseStreamThink() {
+    if (state.streamThinkLive) state.streamThinkLive.textContent = '';
     if (!state.streamThinkEl) return;
     const det = state.streamThinkEl.closest('details');
     if (det) { det.open = false; det.classList.remove('streaming'); }
@@ -223,13 +226,22 @@
     el.textContent = full; // 结构不符(收尾后重建/罕见回退)才整段重写
   }
 
+  // 标题行里的动态文字：只取最后一行（单行截断），持续换内容形成“在动”的感觉。
+  // 不能像正文那样 appendData：这里是一行标题，追加只会无限变长。
+  function paintThinkLive(el, full) {
+    if (!el) return;
+    const lines = String(full || '').split('\n').filter(Boolean);
+    const tail = lines.length ? lines[lines.length - 1] : '';
+    if (el.textContent !== tail) el.textContent = tail;
+  }
+
   function scheduleStreamPaint() {
     if (streamPaintQueued) return;
     streamPaintQueued = true;
     requestAnimationFrame(() => {
       streamPaintQueued = false;
       paintStreamingText(state.streamEl, state.streamText);
-      paintStreamingText(state.streamThinkEl, state.streamReasoning);
+      paintThinkLive(state.streamThinkLive, state.streamReasoning);
       maybeAutoScroll();
       updateScrollBottomBtn();
     });
@@ -416,10 +428,12 @@
       if (state.toolCards[d.id]) {
         // 执行时的完整参数事件：若为流式早卡则回填收尾（unwrap 后的干净参数），普通卡不动
         finalizeToolCardArgs(d.id, d.name, d.arguments);
+        state.toolCards[d.id].classList.add('running'); // 执行中：摘要行圆点转起来
         return;
       }
       // 无早卡(旧行为/刷新后重连)：直接建展开卡
       const card = renderToolCard(d.id, d.name, d.arguments, Date.now(), { open: true });
+      card.classList.add('running');
       $('chat-view').appendChild(card);
       state.toolCards[d.id] = card;
       maybeAutoScroll();

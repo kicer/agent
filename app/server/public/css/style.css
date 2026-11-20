@@ -432,6 +432,14 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   border-top: 1px solid var(--border);
   background: var(--bg-fafbfd);
 }
+/* 流式思考：面板保持折叠，只在标题行挂一段动态文字（.msg-think-live），
+   正文开始后清空。不占额外高度，也不会大段刷屏；要看全文点开就是落库的那份。 */
+.msg-think.streaming { pointer-events: none; }
+.msg-think-live {
+  flex: 1; min-width: 0; margin-left: 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-weight: 400; color: var(--gray-light);
+}
 /* 流式阶段给一点视觉提示：边色稍亮，收尾（assistant_message）后去除 */
 .msg-think.streaming { border-color: var(--bd-d8e0f5); }
 
@@ -606,8 +614,7 @@ footer { position: relative; flex: none; padding: 8px 12px calc(10px + var(--sab
 .attach-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
 .attach-chip .rm { color: var(--gray); display: flex; }
 /* 工具卡参数流式生成中：◌ 呼吸提示（收尾后随 .tool-generating 移除） */
-.tool-card.tool-generating .spin { display: inline-block; color: var(--active); animation: tool-gen-pulse 1s ease-in-out infinite; }
-@keyframes tool-gen-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .2 } }
+.tool-card.tool-generating .spin { animation: tool-spin 0.9s linear infinite; }
 
 /* 上传文件卡片行(嵌在输入框内部顶端,由 .input-shell 的 gap 提供间距;逐卡进度遮罩;卡多时横向滚动) */
 .up-cards {
@@ -1382,7 +1389,12 @@ body.voice-active .scroll-bottom-btn { display: none; }
 .tool-card .tool-time .act svg { width: 12px; height: 12px; }
 .tool-card .tool-time .act.copied { color: var(--fg-2e7d32); }
 .tool-card.error { background: var(--bg-fdecea); border-color: var(--bd-f2c4bd); color: var(--fg-a3352a); }
-.tool-card .spin { display: inline-block; width: 1em; text-align: center; }
+.tool-card .spin { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em; }
+.tool-card .spin svg { width: 100%; height: 100%; }
+/* 执行中：摘要行左侧那段弧转起来。动画挂在 .spin 容器上——直接转 SVG 元素时
+   CSS transform 的默认原点在左上角(0 0)，会绕着角转，看着像没动 */
+.tool-card.running .spin { animation: tool-spin 0.9s linear infinite; }
+@keyframes tool-spin { to { transform: rotate(360deg); } }
 .tool-card .tool-args-full { color: var(--fg-6b5b2a); }
 /* 工具结果里的图片(read_file 读图回传;点击放大查看) */
 .tool-img {
