@@ -177,6 +177,13 @@ func main() {
 	if err := os.MkdirAll(r.root, 0o755); err != nil {
 		log.Fatalf("工作根不可用：%v", err)
 	}
+	// 进程 cwd 失效时（快捷方式的「起始位置」指向已删目录、启动目录被改名等），
+	// Windows 上 os/exec 给 nil Stdin 打开空设备 "NUL" 是个相对路径调用，会直接报
+	// 「找不到文件」，任何命令都起不来（含下面的 shellInfo 探测）。工作根刚 MkdirAll 过，
+	// 钉在这里；失败也不致命，后面 run() 还有一层不依赖 NUL 的兵底。
+	if err := os.Chdir(r.root); err != nil {
+		log.Printf("切换工作目录失败（不影响命令执行）：%v", err)
+	}
 	if r.shell == "" {
 		r.shell = defaultShell()
 	}
@@ -278,6 +285,10 @@ func (r *runner) run(m proto.Msg) {
 	sh, shArgs := shellCmd(r.shell)
 	cmd := exec.CommandContext(ctx, sh, append(shArgs, m.Cmd)...)
 	cmd.Dir = dir
+	// 显式给空 stdin：nil 时 os/exec 会去 os.Open(os.DevNull)，Windows 上那是相对路径的
+	// 设备名 "NUL"，cwd 失效时 CreateFile 直接报 ERROR_FILE_NOT_FOUND，命令起不来。
+	// 空 reader 与 NUL 语义一致（子进程读到立即 EOF），不依赖进程 cwd。
+	cmd.Stdin = strings.NewReader("")
 	if len(m.Env) > 0 {
 		cmd.Env = append(os.Environ(), flatten(m.Env)...)
 	}
