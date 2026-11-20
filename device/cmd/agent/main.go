@@ -283,12 +283,8 @@ func (r *runner) run(m proto.Msg) {
 	defer cancel()
 
 	sh, shArgs := shellCmd(r.shell)
-	cmd := exec.CommandContext(ctx, sh, append(shArgs, m.Cmd)...)
+	cmd := newCmd(ctx, sh, append(shArgs, m.Cmd)...)
 	cmd.Dir = dir
-	// 显式给空 stdin：nil 时 os/exec 会去 os.Open(os.DevNull)，Windows 上那是相对路径的
-	// 设备名 "NUL"，cwd 失效时 CreateFile 直接报 ERROR_FILE_NOT_FOUND，命令起不来。
-	// 空 reader 与 NUL 语义一致（子进程读到立即 EOF），不依赖进程 cwd。
-	cmd.Stdin = strings.NewReader("")
 	if len(m.Env) > 0 {
 		cmd.Env = append(os.Environ(), flatten(m.Env)...)
 	}
@@ -433,6 +429,17 @@ func shellKind(p string) string {
 	return p
 }
 
+// newCmd 统一构造要执行的命令：Stdin 显式给一个空 reader。
+// 不给（nil）时 os/exec 会自己 os.Open(os.DevNull)，Windows 上那是相对路径的设备名
+// "NUL"——有的机器上 CreateFile 直接报 ERROR_FILE_NOT_FOUND，命令还没到 shell 就死了
+//（实测 pc-gd：所有 exec 都 exit 127 "open NUL: The system cannot find the file specified"）。
+// 空 reader 与 NUL 语义一致（子进程读到立即 EOF），且不依赖进程 cwd。
+func newCmd(ctx context.Context, name string, args ...string) *exec.Cmd {
+	c := exec.CommandContext(ctx, name, args...)
+	c.Stdin = strings.NewReader("")
+	return c
+}
+
 func shellCmd(name string) (string, []string) {
 	switch name {
 	case "cmd":
@@ -472,16 +479,17 @@ func shellInfo(name string) (string, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
 	defer cancel()
 
-	var out []byte
+	var c *exec.Cmd
 	switch name {
 	case "cmd":
-		out, _ = exec.CommandContext(ctx, "cmd", "/c", "ver").Output()
+		c = newCmd(ctx, "cmd", "/c", "ver")
 	case "powershell", "pwsh":
-		out, _ = exec.CommandContext(ctx, bin, "-NoProfile", "-NonInteractive", "-Command",
-			"$PSVersionTable.PSVersion.ToString()").Output()
+		c = newCmd(ctx, bin, "-NoProfile", "-NonInteractive", "-Command",
+			"$PSVersionTable.PSVersion.ToString()")
 	default:
-		out, _ = exec.CommandContext(ctx, p, "--version").Output()
+		c = newCmd(ctx, p, "--version")
 	}
+	out, _ := c.Output()
 
 	ver := ""
 	if s := strings.TrimSpace(string(out)); s != "" {
