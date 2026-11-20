@@ -881,6 +881,11 @@ async function runLoopInner(sessionId, run) {
         break;
       } catch (err) {
         lastErr = err;
+        // 无 upstream_status = 网络层失败或中断（含「停止」「立即发送」的 abort）：relay 在收到
+        // 上游 200 头时就已 put，而这边没拿到响应头、指针还停在上一轮，不作废就会在下一轮把
+        // 重复的增量再拼一遍 → tool_call_mismatch。直接清指针，下一轮走全量 + Reset 覆盖。
+        // 有 upstream_status 的 429/5xx 则确定没写缓存，保留指针，重试发空增量最省。
+        if (!err.upstream_status) invalidateContext(contextIdOf(session));
         const retriable = !err.upstream_status || err.upstream_status === 429 || err.upstream_status >= 500;
         if (!retriable || attempt === cfg.agent.max_retries) break;
         // 重试用的是同一份 messages（数组一字未变），所以增量上下文会发空 body，
