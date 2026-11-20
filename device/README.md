@@ -81,7 +81,7 @@ sh scripts/build.sh all
 |---|---|
 | `-server` | core 的接入地址，`wss://…/dev/ws` |
 | `-token` | Bearer token，须与服务端 `DEVICE_TOKEN` 一致 |
-| `-root` | 工作根目录，命令的 `cwd` 必须落在它之内（默认 `~/agent-work`，会自动建） |
+| `-root` | 工作根目录，命令的 `cwd` 必须落在它之内（默认 `~/agent-work`，会自动建）。写相对路径时按**二进制所在目录**解析，如 `workspace` / `.`，不能越出该目录 |
 | `-name` | 设备名，服务端用它区分设备（默认 hostname） |
 | `-shell` | `sh` / `cmd` / `powershell`，默认按平台 |
 | `-config` | 配置文件路径，默认 `<二进制所在目录>/config.json` |

@@ -101,11 +101,8 @@ func main() {
 	// token 也不会出现在 ps 里。命令行显式给的 -config 优先。
 	effectiveCfg := *configPath
 	if effectiveCfg == "" {
-		if exe, err := os.Executable(); err == nil {
-			if real, err := filepath.EvalSymlinks(exe); err == nil {
-				exe = real
-			}
-			p := filepath.Join(filepath.Dir(exe), "config.json")
+		if dir := exeDir(); dir != "" {
+			p := filepath.Join(dir, "config.json")
 			if _, err := os.Stat(p); err == nil {
 				effectiveCfg = p
 			}
@@ -163,6 +160,20 @@ func main() {
 		r.root = filepath.Join(home, "agent-work")
 	}
 	r.root = filepath.Clean(r.root)
+	// 相对路径按可执行文件所在目录解析：双击、服务、命令行启动都得到同一个工作区，
+	// 不受进程当前目录影响；同时不允许用 ".." 跑到 exe 目录之外。
+	if !filepath.IsAbs(r.root) {
+		dir := exeDir()
+		if dir == "" {
+			log.Fatalf("工作根 %q 是相对路径，但取不到可执行文件位置", r.root)
+		}
+		abs := filepath.Join(dir, r.root)
+		rel, err := filepath.Rel(dir, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			log.Fatalf("工作根 %q 超出可执行文件目录：%s", r.root, abs)
+		}
+		r.root = abs
+	}
 	if err := os.MkdirAll(r.root, 0o755); err != nil {
 		log.Fatalf("工作根不可用：%v", err)
 	}
@@ -369,6 +380,18 @@ func flatten(env map[string]string) []string {
 		out = append(out, k+"="+v)
 	}
 	return out
+}
+
+// exeDir 返回可执行文件所在目录（解开软链接）。相对的工作根、默认配置都基于它。
+func exeDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	return filepath.Dir(exe)
 }
 
 // defaultShell 选默认解释器。POSIX 上固定 /bin/sh（不读 $SHELL：用户把 shell 设成 fish
