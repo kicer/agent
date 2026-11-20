@@ -362,29 +362,55 @@
     } catch (e) { toast('修改失败:' + e.message); }
   }
   // ---------- 页:账户——用户画像编辑卡直接渲染在账户页(无二级页;保存后 renderSetPage 重拉刷新停用徽标) ----------
+  const PREF_MAX = 1000;   // 与后端 user-profile.js 的 PREF_MAX 对齐
   const PROFILE_FIELDS = [
     ['honorific', '称谓', '希望被怎么称呼', 80],
     ['industry', '行业', '影响术语与默认假设', 80],
-    ['preference', '偏好', '顿号分隔标签（AI 会在沟通中自动补充，可手动增删）', 300],
+    ['preference', '偏好', '一行一条', 0, 'textarea'],
   ];
+  function prefCountText(n) {
+    return '已用 ' + n + ' / ' + PREF_MAX + ' 字' + (n > PREF_MAX ? '，超出部分保存时截断' : '');
+  }
+  function prefCount() {
+    const el = $('prof-preference'), out = $('prof-count-preference');
+    if (!el || !out) return;
+    const n = el.value.trim().length;
+    out.textContent = prefCountText(n);
+    out.style.color = n > PREF_MAX ? 'var(--fg-c0392b)' : '';
+  }
   function profileCardHtml(p) {
     let html = '<div class="settings-card"><h4>用户画像' +
       (p.enabled === false ? ' <span class="badge held">已停用</span>' : '') + '</h4>' +
       '<div class="cfg-kv"><label>启用</label><input type="checkbox" id="prof-enabled"' + (p.enabled === false ? '' : ' checked') + '></div>';
-    for (const [k, name, ph, maxLen] of PROFILE_FIELDS) {
+    for (const [k, name, ph, maxLen, kind] of PROFILE_FIELDS) {
       const v = String(p[k] || '');
-      html += '<div class="cfg-kv"><label>' + esc(name) + '</label>' +
-        '<input class="cfg-input" id="prof-' + k + '" type="text" maxlength="' + (maxLen || 80) + '" data-orig="' + att(v) + '" value="' + att(v) + '" placeholder="' + esc(ph) + '"></div>';
+      if (kind === 'textarea') {
+        // 用户输入什么就存什么、注入什么：不拆不拼、不规范化分隔符，换行原样保留
+        html += '<div class="cfg-kv stack"><label>' + esc(name) + '</label>' +
+          '<textarea class="cfg-textarea" id="prof-' + k + '" rows="8" placeholder="' + esc(ph) + '" oninput="sUI.prefCount()">' + esc(v) + '</textarea>' +
+          '<div class="cfg-note" id="prof-count-' + k + '">' + prefCountText(v.length) + '</div></div>';
+      } else {
+        html += '<div class="cfg-kv"><label>' + esc(name) + '</label>' +
+          '<input class="cfg-input" id="prof-' + k + '" type="text" maxlength="' + (maxLen || 80) + '" data-orig="' + att(v) + '" value="' + att(v) + '" placeholder="' + esc(ph) + '"></div>';
+      }
     }
     html += '<button class="primary-btn" style="margin-top:8px" onclick="sUI.saveProfile()">保存</button>' +
-      '<div class="cfg-note">画像只记「不知道就会做错」的信息，新会话开始时作为背景注入（会话内不更新；清空字段保存即抹除）。' +
-      'AI 会在沟通中持续维护（尤其偏好标签，只记明确表达过的，写入自下个会话生效），这里手动改随时可覆盖。' +
-      '停用后不再注入，AI 的记录请求也会被拒。近期关注（最近会话标题）自动带入背景，无需维护。</div></div>';
+      '<div class="cfg-note">新会话生效</div></div>';
     return html;
   }
   async function saveProfile() {
     const body = { enabled: $('prof-enabled').checked };
-    for (const [k] of PROFILE_FIELDS) { const el = $('prof-' + k); if (el) body[k] = el.value.trim(); }
+    for (const [k, , , , kind] of PROFILE_FIELDS) {
+      const el = $('prof-' + k);
+      if (!el) continue;
+      const v = el.value.trim();
+      if (kind === 'textarea' && v.length > PREF_MAX) {
+        body[k] = v.slice(0, PREF_MAX);
+        toast('偏好超过 ' + PREF_MAX + ' 字，已截断保存');
+      } else {
+        body[k] = v;
+      }
+    }
     try { await req('PUT', '/api/profile', body); toast('已保存，新会话生效'); renderSetPage(); }
     catch (e) { toast('保存失败:' + e.message); }
   }
@@ -1998,6 +2024,7 @@
     // 账户
     changePassword: changePassword,
     saveProfile: saveProfile,
+    prefCount: prefCount,
     // 用户管理（仅管理员）
     openUserAdd: openUserAdd,
     openUserEdit: openUserEditor,

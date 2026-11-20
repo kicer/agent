@@ -1539,6 +1539,16 @@ label.icon-btn { cursor: pointer; }
 .cfg-input:focus { border-color: var(--active); background: var(--bg-fff); }
 .cfg-input::-webkit-outer-spin-button, .cfg-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .cfg-input.cfg-dirty { color: var(--fg-c0392b); border-color: var(--bd-e8b4b0); background: var(--bg-fdf3f2); }
+/* 多行条目输入（如画像偏好）：标签在上、输入框占整行，便于一行一条 */
+.cfg-kv.stack { flex-direction: column; align-items: stretch; gap: 6px; }
+.cfg-kv.stack label { max-width: none; }
+.cfg-textarea {
+  width: 100%; min-height: 96px; box-sizing: border-box; resize: vertical;
+  font-size: 13px; line-height: 1.7; color: var(--ink); font-family: inherit;
+  text-align: left; background: var(--surface); border: 1px solid transparent;
+  border-radius: 8px; padding: 8px 10px; -webkit-appearance: none; appearance: none;
+}
+.cfg-textarea:focus { border-color: var(--active); background: var(--bg-fff); outline: none; }
 .cfg-err {
   margin: 0 0 8px; padding: 8px 12px; border-radius: 8px;
   background: var(--bg-fdecea); color: var(--fg-a3352a); font-size: 12.5px;
