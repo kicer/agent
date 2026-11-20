@@ -971,10 +971,10 @@ async function runLoopInner(sessionId, run) {
         recordModelUsage(sessionId, session.model_id, result.usage);
         // 回合级 In token 峰值：工具迭代只会越滚越大，取各轮 prompt_tokens 最大值作自动压缩判据
         if (msgRow.usage && msgRow.usage.pt > (run.turnMaxPt || 0)) run.turnMaxPt = msgRow.usage.pt;
-        // 「压缩」回合的总结判定：压缩时不传 tools，因此本回合第一条「无 tool_calls 的收尾回复」
-        // 就是摘要（compressing 取自本回合的 run.summarizing 标记）；回合中间若有异常产生的
-        // 工具轮（理论上不会）都是普通消息，前端照常渲染。
-        const isSummary = !hasTools && compressing;
+        // 「压缩」回合的总结判定：压缩指令发出去，模型回来的第一段非空文本就是摘要——带不带
+        // 工具都算（模型常为了把摘要写准先调一次工具查证，这一轮的文字同样是摘要，不能当普通
+        // 回复落库）。空文本（纯工具调用、一个字没写）不算，run.summarizing 保持，下一轮继续压。
+        const isSummary = compressing && !!String(msgRow.content || '').trim();
         bus.emit(sessionId, 'assistant_message', {
               id: assistantId, content: msgRow.content, reasoning: msgRow.reasoning,
               tool_calls: msgRow.tool_calls, type: msgRow.type, created_at: msgRow.created_at,
@@ -999,14 +999,17 @@ async function runLoopInner(sessionId, run) {
                 log.info('msg', sessionId + ' 压缩摘要 ' + assistantId + ' 落库，存档之前 ' + n + ' 条消息（不再发给模型）');
               }
               // 回合内自动压缩把正在跑的任务切成了摘要，摘要一落地就地续跑：
-              // 补一条 user 指令接回原任务，否则会直接走到下面的 !hasTools 收尾，
-              // 任务停在半路，要用户再喊一声才动。
+              // 没有工具回执可用时补一条 user 指令接回原任务，否则会直接走到下面的 !hasTools 收尾，
+              // 任务停在半路，要用户再喊一声才动。有工具回执时不插消息也不 continue——落到下面
+              // 执行工具，回执紧跟在摘要后面，本身就是续跑输入。
               if (run.compactAuto) {
                 run.compactAuto = false;
-                const resumeText = '上下文已压缩，请继续完成原任务。';
-                const resumeId = saveMessage(sessionId, { role: 'user', content: resumeText });
-                bus.emit(sessionId, 'user_message', { id: resumeId, content: resumeText, created_at: now() });
-                continue;
+                if (!hasTools) {
+                  const resumeText = '上下文已压缩，请继续完成原任务。';
+                  const resumeId = saveMessage(sessionId, { role: 'user', content: resumeText });
+                  bus.emit(sessionId, 'user_message', { id: resumeId, content: resumeText, created_at: now() });
+                  continue;
+                }
               }
             }
 

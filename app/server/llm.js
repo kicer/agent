@@ -538,7 +538,8 @@ function trimToolContent(content, row, callById, roundsAfter, turnsAfter) {
 // 拼压缩回合的 messages（参考 titleMessages 的拼法）：默认 system prompt + 正常历史
 //（与 buildMessages 同取舍：archived 不发、旧摘要/工具轮照常），末尾追加一条 user
 //（prompt-compress.txt 原文，历史就在它前面的 messages 里，不再填占位符）。
-// 调用方（engine.runLoopInner 的 compressing 分支）需同时不传 tools。
+// 调用方（engine.runLoopInner 的 compressing 分支）照常带 tools：工具段在最前，删掉等于断整段
+// 前缀缓存；模型偶尔会为核对事实调一次，那一轮的文字仍按摘要处理（见 isSummary 判定）。
 // 【缓存铁律】压缩请求必须与上一次常规请求字节同构、只在尾部追加指令：画像快照与
 // 占位裁剪一律照常（不传 withProfile/trim = 同一拼法），也不裁历史中间任何注入行——
 // 从首个被删/被改动行起前缀缓存全断，等于全价重读（旧代码 withProfile=false 把坐在
