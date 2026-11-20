@@ -46,8 +46,8 @@ jobs:
 
             | 平台 | 文件 |
             | --- | --- |
-            | Linux amd64 / arm64 | `agent-device-linux-*` |
+            | Linux amd64 / arm64 / mips | `agent-device-linux-*` |
             | macOS amd64 / arm64 | `agent-device-darwin-*` |
             | Windows amd64 | `agent-device-windows-amd64.exe` |
 
-            不含 mips / mipsle（OpenWrt 等自行交叉编译：`GOARCH=mips GOMIPS=softfloat`）。
+            `linux-mips` 是软浮点（`GOMIPS=softfloat`），给 AR9331 这类没 FPU 的 OpenWrt 设备用。

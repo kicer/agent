@@ -24,12 +24,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"agent-device/pkg/proto"
 	"agent-device/pkg/wsnode"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 var (
 	maxOutBytes = int64(4 << 20) // 单条命令回传上限，超出截断并标记
@@ -464,6 +466,19 @@ func shellCmd(name string) (string, []string) {
 	return "sh", []string{"-c"}
 }
 
+// toUTF8 把 Windows 中文控制台吐出的 GBK 字节转成 UTF-8。
+// 先过 utf8.Valid：纯 ASCII / 真 UTF-8（英文版 Windows、开了 UTF-8 的系统）一律原样返回，
+// 不会被误转；只有不是合法 UTF-8 时才按 GBK 解，解不出来就保留原样。
+func toUTF8(b []byte) []byte {
+	if utf8.Valid(b) {
+		return b
+	}
+	if d, err := simplifiedchinese.GBK.NewDecoder().Bytes(b); err == nil {
+		return d
+	}
+	return b
+}
+
 // shellInfo 探测实际解释器与版本。这是模型写命令的唯一入口，所以路径要解开符号链接
 // （/bin/sh 可能是 dash / bash / busybox），版本拿不到就留空（dash、busybox 不支持 --version）。
 func shellInfo(name string) (string, string) {
@@ -490,6 +505,7 @@ func shellInfo(name string) (string, string) {
 		c = newCmd(ctx, p, "--version")
 	}
 	out, _ := c.Output()
+	out = toUTF8(out) // 中文 Windows 的 ver 是 GBK；本来就是 UTF-8 的原样返回
 
 	ver := ""
 	if s := strings.TrimSpace(string(out)); s != "" {

@@ -23,7 +23,7 @@ git clone <本仓库> && cd device
 go build -trimpath -ldflags "-s -w" -o bin/agent-device ./cmd/agent
 ```
 
-交叉编译（一次出五个平台）：
+交叉编译（一次出六个平台）：
 
 ```sh
 sh scripts/build.sh all
@@ -137,4 +137,4 @@ core 通过同一条连接搬文件，**设备不需要任何额外端口**：
 | 起始 cwd 越界 | 拒绝 |
 | 断线重连 | 1s→2s→4s 退避，恢复后自动注册 |
 
-在 Linux / macOS / Windows 三平台编译验证（amd64 + arm64）。
+在 Linux / macOS / Windows 三平台编译验证（amd64 + arm64）；另出 `linux-mips` 软浮点版给 OpenWrt 设备。
