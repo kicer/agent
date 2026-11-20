@@ -274,6 +274,19 @@
       pre.insertAdjacentElement('afterend', el);
     }
   }
+  // 工具执行中的增量输出（terminal 长命令）：边跑边填；只留尾部 2000 行，避免长跑命令撑爆 DOM
+  function appendToolOutput(id, chunk) {
+    const card = document.getElementById('tool-' + id);
+    if (!card) return;
+    const pre = card.querySelector('.tool-result');
+    if (!pre) return;
+    if (!pre.dataset.streaming) { pre.textContent = ''; pre.dataset.streaming = '1'; } // 首块到达：清掉“执行中…”占位
+    const follow = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;           // 用户往上翻时不抢滚动
+    pre.appendChild(document.createTextNode(chunk));
+    const lines = pre.textContent.split('\n');
+    if (lines.length > 2000) pre.textContent = '…（更早输出已折叠）\n' + lines.slice(-2000).join('\n');
+    if (follow) pre.scrollTop = pre.scrollHeight;
+  }
   // 把 assistant 消息里的 tool_calls 建成工具卡片(历史渲染与 assistant_message 事件共用)
   function appendToolCardsFromAssistant(m, container) {
     if (!m.tool_calls) return;

@@ -1048,9 +1048,20 @@ async function runLoopInner(sessionId, run) {
         output = chk.error;
         isError = true;
       } else {
+        // 工具执行中的增量输出（terminal 长命令）：50ms 或 16KB 合并成一帧 SSE，避免逐行刷包
+        let liveBuf = '';
+        let liveTimer = null;
+        const flushLive = () => {
+          if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+          if (!liveBuf) return;
+          const chunk = liveBuf;
+          liveBuf = '';
+          bus.emit(sessionId, 'tool_output', { id, chunk });
+        };
         try {
           output = await executeTool({ sessionId, taskDir: taskDirOf(sessionId), workDir: sessionWorkDir(sessionId), run, cfg, db, vision,
             onTaskCreated: () => { run.taskWrap = true; }, onCard: (card) => bus.emit(sessionId, 'ui_card', card),
+            onOutput: (s) => { liveBuf += s; if (liveBuf.length >= 16384) flushLive(); else if (!liveTimer) liveTimer = setTimeout(flushLive, 50); },
             onDeepThink: (info) => {
               const m = (cfg.models || []).find(x => x.id === session.model_id);
               const supported = !!(m && m.thinking_params && Object.keys(m.thinking_params).length);
@@ -1063,6 +1074,7 @@ async function runLoopInner(sessionId, run) {
           output = 'Error: ' + (err && err.message || String(err));
           isError = true;
         }
+        flushLive();
       }
       // 工具可返回 {text, image_rel}（read_file 读图且模型支持 vision，压缩产物在 .imgcache/，
       // text 是 imageReceipt 生成的结构化 JSON 回执）：落库时以 image_ref 内容块拼进 tool 消息

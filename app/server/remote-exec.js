@@ -19,7 +19,7 @@ function reqHeaders(cfg) {
 }
 
 // 执行一条命令。返回 { code, killed_by, out }；传输层失败抛 Error（由调用方决定如何呈现）。
-// opts: { command, cwd?, timeout_ms?, env?, run? }（run = engine 的 {cancelled, procs}，可省略）
+// opts: { command, cwd?, timeout_ms?, env?, run?, onChunk? }（run = engine 的 {cancelled, procs}，可省略）
 async function run(cfg, opts) {
   const base = cfg.executor.url;
   const timeoutMs = opts.timeout_ms && opts.timeout_ms > 0 ? opts.timeout_ms : 300000;
@@ -73,7 +73,11 @@ async function run(cfg, opts) {
           let ev;
           try { ev = JSON.parse(line.slice(6)); } catch (_) { continue; }
           if (ev.type === 'start') id = ev.id;
-          else if (ev.type === 'out' || ev.type === 'err') out += ev.chunk;
+          else if (ev.type === 'out' || ev.type === 'err') {
+            out += ev.chunk;
+            // 增量回调（UI 实时显示用）：失败不影响主流程
+            if (opts.onChunk) { try { opts.onChunk(ev.chunk); } catch (_) {} }
+          }
           else if (ev.type === 'exit') { exit = ev; break outer; }
         }
       }

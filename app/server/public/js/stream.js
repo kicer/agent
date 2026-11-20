@@ -243,7 +243,7 @@
     state.lastSseAt = Date.now(); // 建连即重置静默计时
     // 任何具名事件都算连接存活：静默看门狗与回前台宽限共用（error 不列，原生连接错误也走 error）
     ['ping', 'status', 'assistant_delta', 'reasoning_delta', 'assistant_message', 'tool_call_start',
-      'tool_call_args', 'tool_call', 'tool_result', 'ui_card', 'auto_compress', 'done', 'title', 'think_auto',
+      'tool_call_args', 'tool_call', 'tool_output', 'tool_result', 'ui_card', 'auto_compress', 'done', 'title', 'think_auto',
       'pending_added', 'pending_removed', 'user_message']
       .forEach(function (n) { es.addEventListener(n, function () { markSseAlive(n); }); });
     es.addEventListener('status', ev => {
@@ -423,6 +423,10 @@
       $('chat-view').appendChild(card);
       state.toolCards[d.id] = card;
       maybeAutoScroll();
+    });
+    es.addEventListener('tool_output', ev => {
+      const d = JSON.parse(ev.data);
+      appendToolOutput(d.id, d.chunk);
     });
     es.addEventListener('tool_result', ev => {
       const d = JSON.parse(ev.data);
