@@ -433,7 +433,7 @@
       const atBottom = isNearBottom();
       appendMessagesDom(tail, box).closeArc();
       state.chatLoadedCount += tail.length;
-      if (atBottom) { userPaused = false; scrollBottom(); }
+      if (atBottom) { userPaused = false; userPinned = false; scrollBottom(); }
     }
     updateScrollBottomBtn();
     return true;
@@ -479,6 +479,7 @@
     hookToolCardLazyLoad();
     if (followBottom) {
       userPaused = false;
+      userPinned = false;
       scrollBottom();
     } else {
       userPaused = true; // 用户原本在翻历史：保持暂停跟随与原阅读位置
@@ -591,6 +592,10 @@
   // 把内容推过阈值后 isNearBottom 会变 false,导致后续跟着丢失,看起来像「不跟了」。
   // 「是否贴底」在 scroll 事件里捕获就行,那一刻是 DOM 变更前的真实位置。
   let userPaused = false;
+  // 用户主动上翻后「钉住」：此时不再用 80px 容差判断（那是给内容自身增长留的余量），
+  // 只看是否真的滚回最底部。否则上翻不到 80px 就被 scroll 事件判成「还在底部」，
+  // 下一帧 maybeAutoScroll 又把视口拽回去——表现为「滚不动、一直在抖」。
+  let userPinned = false;
   function maybeAutoScroll() {
     if (!userPaused) scrollBottom();
   }
@@ -611,6 +616,7 @@
   }
   function clickScrollBottom() {
     userPaused = false;
+    userPinned = false;
     scrollBottom();
     updateScrollBottomBtn();
   }
@@ -620,18 +626,25 @@
   function bindChatScroll() {
     const box = $('chat-view');
     let touchY = 0;
-    box.addEventListener('wheel', e => { if (e.deltaY < 0) userPaused = true; }, { passive: true });
+    const pin = () => { userPaused = true; userPinned = true; };
+    box.addEventListener('wheel', e => { if (e.deltaY < 0) pin(); }, { passive: true });
     box.addEventListener('touchstart', e => { touchY = e.touches[0].clientY; }, { passive: true });
     box.addEventListener('touchmove', e => {
       const dy = e.touches[0].clientY - touchY;
-      if (dy > 3) userPaused = true;
+      if (dy > 3) pin();
       touchY = e.touches[0].clientY;
     }, { passive: true });
     box.addEventListener('scroll', () => {
-      // 用 scroll 事件(而非 wheel/touchmove)统一收敛「是否在底部」,
-      // 这样拖滚动条、键盘 PageUp/Home、触屏惯性滑等都会被纳入判断。
-      // 程序触发的 scrollBottom 总是精确落底,isNearBottom() 恒为 true,不会误标记。
-      userPaused = !isNearBottom();
+      if (userPinned) {
+        // 钉住了：只认「真的到底」，否则保持暂停，不再被 80px 容差覆盖
+        if (box.scrollHeight - box.scrollTop - box.clientHeight <= 2) { userPinned = false; userPaused = false; }
+        else userPaused = true;
+      } else {
+        // 没钉：用 scroll 事件（而非 wheel/touchmove）统一收敛「是否在底部」，
+        // 这样拖滚动条、键盘 PageUp/Home、触屏惯性滑等都会被纳入判断。
+        // 程序触发的 scrollBottom 总是精确落底,isNearBottom() 恒为 true,不会误标记。
+        userPaused = !isNearBottom();
+      }
       updateScrollBottomBtn();
       if (box.scrollTop <= CHAT_TOP_TRIGGER) loadOlderMessages(); // 上滑接近顶部 → 懒加载更早历史
     }, { passive: true });
