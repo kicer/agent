@@ -2,7 +2,14 @@
 'use strict';
   // ---------- 输入区 ----------
   const ta = $('msg-input');
-  function autosize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }
+  // 输入框高度一变，#chat-view（flex:1）的 clientHeight 跟着变：贴底时浏览器会把 scrollTop
+  // 自动 clamp，下一帧流式 delta 又 scrollBottom 拉回去，两边打架就是「打字时消息狂跳」。
+  // 同一个 JS 任务里补一次贴底，浏览器合并成一次布局，中间态不会渲染出来。
+  function autosize() {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+    if (typeof maybeAutoScroll === 'function') maybeAutoScroll();
+  }
   // 输入内容变化直接影响发送键两态：运行中一旦有字就恢复「发送」（可插话），清空后又变回「停止」
   ta.addEventListener('input', () => { autosize(); updateSendBtn(); });
   // 触屏设备(手机/平板)上:Enter 走默认行为(插入 \n),发消息靠发送按钮,
