@@ -368,13 +368,14 @@
   function appendMessagesDom(messages, target) {
     // 只有真正渲染进主消息流时才记增量跟踪（离屏分页容器不参与，避免切会话时污染新会话的跟踪状态）
     const track = target === $('chat-view');
-    // 存档段（type='archived'，「仅摘要」时摘要之前的旧历史）：连成一截淡色容器，
-    // 段尾插一条「已存档、不再发给 AI」说明，紧接摘要卡片，一眼能看出上下文从哪里算起。
+    // 存档段（type='archived'）：连成一截淡色容器，段尾插一条说明，一眼能看出上下文从哪里算起。
+    // 压缩过的会话后面跟着摘要卡片；纯存档（本次新增的「存档」动作）后面什么都没有，文案要分开。
+    const hasSummary = (messages || []).some(m => m.type === 'summary');
     let arcWrap = null;
     const closeArc = () => {
       if (!arcWrap) return;
       arcWrap.insertAdjacentHTML('beforeend',
-        '<div class="archived-note">以上消息已存档，不再发送给 AI；后续对话从摘要开始</div>');
+        '<div class="archived-note">以上消息已存档，不再发送给 AI；后续对话从' + (hasSummary ? '摘要' : '空') + '开始</div>');
       arcWrap = null;
     };
     for (const m of messages || []) {

@@ -831,10 +831,10 @@
       if (!state.sessionId) return;
       if (state.pendingSummary) return; // 已在请求中，防重入
       if (state.status === 'active') { toast('AI 还在输出，请稍候再压缩'); return; }
-      // 弹窗两个动作：摘要（generate_only）/ 清空（clear → clearChat）；右上 X / 点遮罩 / Esc 关闭。
+      // 弹窗两个动作：摘要（generate_only）/ 存档（archive → archiveChat）；右上 X / 点遮罩 / Esc 关闭。
       const choice = await compressModeModal();
       if (!choice) return;
-      if (choice === 'clear') { await clearChat(); return; }
+      if (choice === 'archive') { await archiveChat(); return; }
       await startSummary();
     }
 
@@ -900,10 +900,10 @@
               '<div class="modal-body" style="font-size:14px;line-height:1.55;color:#555;padding:4px 0 12px;">' +
                 'AI 将基于当前上下文生成结构化总结；完成后摘要之前的旧消息都会<b>存档</b>，不再发送给 AI，后续对话从摘要开始。' +
                 '<br>· 「摘要」= 聊天里<b>保留全部历史展示</b>（旧消息变淡标注已存档），并多一张摘要卡片。' +
-                '<br>· 「清空」= 直接<b>删除本会话全部聊天记录</b>，从零开始（不可恢复，任务文件保留，临时文件 /tmp 一并清空）。' +
+                '<br>· 「存档」= 把当前全部聊天记录标成<b>存档</b>：AI 后续对话不再携带这段历史（效果等同清空），但历史消息<b>仍可在界面查看</b>，任务文件全部保留。' +
               '</div>' +
               '<div class="btn-row">' +
-                '<button class="ghost-btn danger" data-act="clear">清空</button>' +
+                '<button class="ghost-btn" data-act="archive">存档</button>' +
                 '<button class="primary-btn" data-act="generate_only">摘要</button>' +
               '</div>' +
             '</div>';
@@ -940,23 +940,23 @@
         box.insertBefore(arc, card);
       }
 
-    // 「清空」：删除本会话全部聊天记录（AI 后续对话不再携带这段历史），任务文件不受影响。
-      // 入口：压缩动作弹窗的「清空」按钮。
-      async function clearChat() {
+    // 「存档」：把本会话全部聊天记录标成 archived（作废，不再发给 AI），但一行不删。
+      // 效果等同清空，区别只在历史仍可在界面查看；任务文件、标题、记忆碎片都不动。
+      async function archiveChat() {
         if (!state.sessionId) return;
         const id = state.sessionId;
-        const ok = await confirmModal('清空会话内容',
-          '将删除本会话的全部聊天记录，AI 后续对话不再携带这段历史（从零开始，更省 token）。任务文件全部保留，不受影响。此操作不可恢复。',
-          '清空', true);
+        const ok = await confirmModal('存档会话内容',
+          '将把本会话全部聊天记录标记为存档：AI 后续对话不再携带这段历史（效果等同清空），但历史消息仍可在界面查看。任务文件全部保留。',
+          '存档', true);
         if (!ok) return;
         try {
-          await req('DELETE', '/api/sessions/' + id + '/messages');
-          toast('会话内容已清空，文件已保留');
-          // 服务端已将会话收尾为 completed 并清空消息：重新拉取详情即为干净起点
+          await req('POST', '/api/sessions/' + id + '/messages/archive');
+          toast('已存档，历史仍可查看');
+          // 重新拉详情：archived 行会被渲染成淡色存档段
           const detail = await req('GET', '/api/sessions/' + id);
-          if (state.sessionId === id) { renderDetail(detail); connectStream(); }
+          if (state.sessionId === id) renderDetail(detail);
           loadSessionList();
-        } catch (e) { toast('清空失败：' + e.message); }
+        } catch (e) { toast('存档失败：' + e.message); }
         updateHeaderActions();
       }
 

@@ -1893,6 +1893,26 @@ function wipeSessionTmp(sessionId) {
 // 会话级 /tmp（宿主机即 <任务目录>/.tmp，执行容器 bind 成容器内 /tmp）一并清空：清空的语义是“从零开始”，
 // 上一轮留下的临时产物不该带进新一轮；执行容器遇到不存在的 .tmp 会懒重建，无副作用。
 // 状态收尾为 completed；此后再次发言从零开始，不再携带旧历史。执行中的会话不允许清空，需先「终止」。
+// 存档：把全部历史标成 archived（作废，不再发给模型），但一行不删。
+// 与清空（clearSessionMessages）的区别：不删行、不清 /tmp、不清待投递队列、
+// 不动标题和记忆碎片、不改会话状态——存档只是「上下文归零但留档」。
+// archived_cnt 变了 → 增量上下文 id 自变，再显式作废一次指针，下一轮全量重建。
+function archiveSessionMessages(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const run = runs.get(sessionId);
+  if (run && run.looping) {
+    throw Object.assign(new Error('任务正在执行，请先「终止」再存档'), { status_code: 409 });
+  }
+  const cid = contextIdOf(session);
+  const r = db.prepare(
+    "UPDATE messages SET type = 'archived' WHERE session_id = ? AND (type IS NULL OR type != 'archived')"
+  ).run(sessionId);
+  invalidateContext(cid);
+  log.info('task', sessionId + ' 存档全部历史（' + r.changes + ' 行，不删档）');
+  return { ok: true, archived: r.changes };
+}
+
 function clearSessionMessages(sessionId) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -2035,6 +2055,7 @@ module.exports = {
   renameSession,
   setWorkDir,
   deleteSession,
+  archiveSessionMessages,
   clearSessionMessages,
   summarizeContext,
   deleteMessage,

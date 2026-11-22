@@ -87,6 +87,14 @@ router.delete('/:id/messages', wrap((req, res) => {
   res.json(r);
 }));
 
+// 存档会话内容：把全部消息标成 archived（不再发给模型），但一行不删，界面仍可查看。
+// 效果等同清空，区别只在留档；任务文件、标题、记忆碎片都不动，会话状态也不变。
+router.post('/:id/messages/archive', wrap((req, res) => {
+  const r = engine.archiveSessionMessages(req.params.id);
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 存档会话内容（留档，不重跑）');
+  res.json(r);
+}));
+
 // 上下文压缩：phase-bar「压缩」按钮弹窗里点「摘要」触发。
 // AI 总结；摘要之前的历史存档（type='archived'，UI 保留展示、不再发给模型）。
 // 摘要行本身标成 type='summary'（见 engine.runLoopInner），作为后续轮次的上下文起点。
