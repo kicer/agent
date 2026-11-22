@@ -290,6 +290,8 @@
   // chip 隐藏，服务器形态完全看不见这个入口。选择只暂存在前端，真正建档时随
   // POST /api/sessions 提交一次；不选 = work_dir 空串 = 老行为（workspace_root/<会话id>）。
   let pendingWorkDir = '';
+  // 本地启动器才有系统目录框（服务器形态 /api/local/info 404，整个入口不出现）
+  let localPick = false;
 
   function renderWelcomeDir() {
     const pathEl = $('welcome-dir-path');
@@ -321,11 +323,40 @@
     if (!chip) return;
     req('GET', '/api/local/info').then(info => {
       if (!info || !info.enabled) return;
+      localPick = true;
       chip.classList.remove('hidden');
       renderWelcomeDir();
+      updateHeaderActions();
     }).catch(() => { /* 服务器形态：接口 404，整条隐藏 */ });
     $('welcome-dir-pick').addEventListener('click', pickWelcomeDir);
     $('welcome-dir-clear').addEventListener('click', () => { pendingWorkDir = ''; renderWelcomeDir(); });
+  })();
+
+  // 会话头部/移动菜单：切当前会话的工作目录。只改 work_dir，不搬目录（用户自己整理文件夹），
+  // 也不重跑；目录必须存在，后端校验。
+  async function pickSessionWorkDir() {
+    const id = state.sessionId;
+    if (!id || !localPick) return;
+    const btn = $('workdir-toggle');
+    if (btn && btn.disabled) return;
+    if (btn) btn.disabled = true;
+    try {
+      const r = await req('POST', '/api/local/pick-dir', {}, false, 130000);
+      if (!r || !r.path) return; // 用户取消
+      await req('PATCH', '/api/sessions/' + id, { work_dir: r.path });
+      state.sessionWorkDir = r.path;
+      updateHeaderActions();
+      if (window.refreshFileTree) window.refreshFileTree();
+      toast('工作目录已切到 ' + r.path);
+    } catch (e) {
+      toast('切换工作目录失败：' + e.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+  (function initWorkDir() {
+    const btn = $('workdir-toggle');
+    if (btn) btn.addEventListener('click', pickSessionWorkDir);
   })();
 
   function newChat() {
@@ -457,6 +488,13 @@
         stext.classList.toggle('hidden', !hasSched);
       }
       schip.dataset.tip = hasSched ? '定时任务 · 点击编辑' : '定时任务 · 点击新建';
+    }
+    // 工作目录：本地启动器才有系统目录框（/api/local/info 探测），服务器形态整块隐藏
+    const wd = $('workdir-toggle');
+    if (wd) {
+      wd.classList.toggle('hidden', !(inChat && localPick));
+      wd.disabled = running;
+      wd.dataset.tip = '工作目录：' + (state.sessionWorkDir || '默认（工作区内）');
     }
     // 压缩图标仅会话内有意义
     const cchip = $('hdr-compact');

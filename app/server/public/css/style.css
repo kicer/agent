@@ -2179,6 +2179,14 @@ body.pv-max .pv-code { max-width: none; padding-left: 16px; padding-right: 16px;
   .ha-icons .ha-btn:last-child::after { left: auto; right: 0; transform: translateY(-2px); }
   .ha-icons .ha-btn:last-child:hover::after,
   .ha-icons .ha-btn:last-child:focus-visible::after { transform: translateY(0); }
+  /* 工作目录提示带完整路径，比另外几个长：右对齐 + 允许换行，别被 240px 截成省略号 */
+  #workdir-toggle::after {
+    left: auto; right: 0; transform: translateY(-2px);
+    width: max-content; /* 不写会按包含块（图标按钮 ~30px）收缩，路径被挤成每两个字符一行 */
+    max-width: min(320px, 70vw);
+    white-space: normal; word-break: break-all;
+  }
+  #workdir-toggle:hover::after, #workdir-toggle:focus-visible::after { transform: translateY(0); }
   /* 属性文字位的悬停反馈：模型位已有状态底色，只降透明度不改色 */
   .hdr-model:hover { opacity: .82; }
   .hdr-sched:hover { background: var(--surface); }

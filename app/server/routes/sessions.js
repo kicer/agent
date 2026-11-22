@@ -232,7 +232,10 @@ router.post('/:id/bind', wrap((req, res) => {
 }));
 
 router.patch('/:id', wrap((req, res) => {
-  res.json(engine.renameSession(req.params.id, req.body && req.body.title));
+  const b = req.body || {};
+  // work_dir 只改指向，不搬目录、不重跑；改名照旧走 title
+  if (Object.prototype.hasOwnProperty.call(b, 'work_dir')) return res.json(engine.setWorkDir(req.params.id, b.work_dir));
+  res.json(engine.renameSession(req.params.id, b.title));
 }));
 
 router.delete('/:id', wrap((req, res) => {

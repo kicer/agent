@@ -1591,6 +1591,23 @@ function renameSession(sessionId, title) {
   return { ok: true, title: t };
 }
 
+// 只改 sessions.work_dir，不搬目录：文件夹名用户自己整理，平台只负责让会话指过去。
+// 目录必须存在——它就是文件工具的根，指向不存在的路径会让后续读写全报错。
+// 运行中拒绝：当前回合的路径已按旧根解析过了。
+function setWorkDir(sessionId, dir) {
+  const s = getSession(sessionId);
+  if (!s) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const run = runs.get(sessionId);
+  if (run && run.looping) throw Object.assign(new Error('任务正在执行，请先终止再改'), { status_code: 409 });
+  const abs = path.resolve(String(dir || '').trim());
+  let st;
+  try { st = fs.statSync(abs); } catch (_) { throw Object.assign(new Error('目录不存在：' + abs), { status_code: 400 }); }
+  if (!st.isDirectory()) throw Object.assign(new Error('不是目录：' + abs), { status_code: 400 });
+  touch(sessionId, { work_dir: abs });
+  log.info('task', sessionId + ' 工作目录 → ' + abs);
+  return { ok: true, work_dir: abs };
+}
+
 function deleteSession(sessionId, deleteDir) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
@@ -2016,6 +2033,7 @@ module.exports = {
   stop,
   releaseHold,
   renameSession,
+  setWorkDir,
   deleteSession,
   clearSessionMessages,
   summarizeContext,

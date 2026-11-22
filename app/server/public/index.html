@@ -196,6 +196,9 @@
            桌面属性区与菜单项共用 data-act，事件统一在 sessions.js 分发。 -->
       <div class="header-actions" id="header-actions">
         <div class="ha-icons">
+          <button class="icon-btn ha-btn hidden" id="workdir-toggle" data-tip="工作目录" aria-label="切换工作目录">
+            <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-folder"/></svg>
+          </button>
           <button class="icon-btn ha-btn" data-act="theme" id="theme-toggle" data-tip="主题：浅色" aria-label="切换主题">
             <svg class="ic sm" viewBox="0 0 24 24"><use href="#i-theme-light"/></svg>
             <svg class="ic sm hidden" viewBox="0 0 24 24"><use href="#i-theme-dark"/></svg>
