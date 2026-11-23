@@ -43,9 +43,16 @@ function loadConfig() {
 }
 const CFG = loadConfig();
 
-// 日志时间固定东八区：本机时区可能变，跨时区看日志不该换算
+// 日志时间固定东八区：本机时区可能变，跨时区看日志不该换算。
+// 带上日期：只留时分秒的话，跨天排查分不清早上和晚上的那两条（这次就吃了这个亏）。
 const CST_MS = 8 * 3600 * 1000;
-function log(...a) { console.log(new Date(Date.now() + CST_MS).toISOString().slice(11, 19), '[client]', ...a); }
+function log(...a) {
+  const d = new Date(Date.now() + CST_MS);
+  const p = (n) => String(n).padStart(2, '0');
+  console.log(p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' '
+    + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds()),
+    '[client]', ...a);
+}
 
 // ---------- 服务路由：Host → 本地端口 ----------
 // 精确匹配优先；再退到「忽略端口」；最后允许 *.xxx 通配一项
@@ -76,6 +83,14 @@ let ws = null;
 let backoff = 1000;
 let stopping = false;
 let lastSeen = 0;          // 最近一次收到服务端任何帧的时刻
+let retryTimer = null;     // 已排队但还没执行的重连（单飞：同时只允许一个，防两条 ws 互顶）
+let reconnects = 0;        // 连续重连次数，连上即清零
+let lastBeatLog = 0;       // 上次打「在线」心跳账的时刻
+
+// 单次握手的硬超时。handshakeTimeout 只在 socket 分配后才生效，DNS 卡住时形同虚设：
+// 那种情况 ws 会永远停在 CONNECTING，close 永不到来，重连就此停摆——只能重启进程。
+const CONN_TIMEOUT_MS = 30000;
+const ONLINE_LOG_MS = 30 * 60 * 1000;
 
 function send(obj) {
   if (ws && ws.readyState === 1) {
@@ -183,49 +198,98 @@ async function handleRequest(id, st) {
 let linked = false;      // 当前是否连着
 let everLinked = false;  // 是否连上过（区分首连和重连）
 
+// 重连排队（单飞）：以前这里是裸的 setTimeout(connect)，一旦有两条路径同时触发
+// 就会出现两条 ws 并存、互相顶（日志里连刷的 "replaced by new connection" 即此）。
+// 连续失败才吭声：正常抖动 1s 就连上，不该刷屏；真出问题第 3 次起就有记录。
+function scheduleReconnect() {
+  if (stopping || retryTimer) return;
+  const wait = backoff;
+  backoff = Math.min(backoff * 2, 30000);     // 指数退避，封顶 30s
+  reconnects++;
+  if (reconnects === 3 || reconnects % 5 === 0) {
+    log('第 ' + reconnects + ' 次重连排队（' + Math.round(wait / 1000) + 's 后）');
+  }
+  retryTimer = setTimeout(() => { retryTimer = null; connect(); }, wait);
+}
+
 function connect() {
   if (stopping) return;
+  // 起新连接前先收掉旧的：旧 socket 的 close 会因为 ws 已换人而被忽略（见下面守卫），
+  // 不会反过来再排一次重连。
+  if (ws) { const old = ws; ws = null; try { old.terminate(); } catch (_) {} }
   const sep = CFG.server.includes('?') ? '&' : '?';
   const url = CFG.server + sep + 'token=' + encodeURIComponent(CFG.token);
-  ws = new WebSocket(url, {
+  const sock = new WebSocket(url, {
     headers: { 'User-Agent': CFG.userAgent },
     handshakeTimeout: 20000,
     perMessageDeflate: false,      // 关压缩：SSE 小帧多，压缩反而添乱且增加特征
   });
+  ws = sock;
+  let opened = false;              // 本次握手是否成功（守卫只在没成功时才动手）
 
-  ws.on('open', () => {
+  // 握手全程硬超时，兜住 handshakeTimeout 管不到的那一段（DNS 解析）。
+  // terminate 未必带来 close，所以这里自己补一次重连，靠单飞守卫去重。
+  const guard = setTimeout(() => {
+    if (opened) return;
+    log('连接 ' + Math.round(CONN_TIMEOUT_MS / 1000) + 's 未建立，重新来过');
+    try { sock.terminate(); } catch (_) {}
+    scheduleReconnect();
+  }, CONN_TIMEOUT_MS);
+
+  sock.on('open', () => {
+    opened = true;
+    clearTimeout(guard);
     backoff = 1000;
+    reconnects = 0;
     linked = true;
     lastSeen = Date.now();
+    lastBeatLog = lastSeen;
     log(everLinked ? '已重新连接' : '已连接 ' + CFG.server);
     everLinked = true;
   });
-  ws.on('message', (data) => { lastSeen = Date.now(); onMessage(data); });
-  ws.on('ping', () => { lastSeen = Date.now(); });
-  ws.on('close', (code, reason) => {
-    if (stopping) return;
+  sock.on('message', (data) => { lastSeen = Date.now(); onMessage(data); });
+  sock.on('ping', () => { lastSeen = Date.now(); });
+  sock.on('close', (code, reason) => {
+    clearTimeout(guard);
+    if (stopping || ws !== sock) return;   // 已被新连接取代，这条 close 不算数
+    // 断线时把在途请求全部作废：对端已 502，不会再有 end/abort 过来，留着就是
+    // chunks 的内存 + 一个永不结束的本地 fetch（长 SSE 会话频繁掉线会一直涨）。
+    for (const [, st] of inflight) { try { st.ac.abort(); } catch (_) {} }
+    inflight.clear();
     if (linked) {                 // 只在「连着 → 断开」这个跳变上说一次
       linked = false;
       log('断开' + (reason ? '：' + reason : '') + '，重连中');
     }
-    setTimeout(connect, backoff);
-    backoff = Math.min(backoff * 2, 30000);   // 指数退避，封顶 30s
+    scheduleReconnect();
   });
-  ws.on('error', () => {});       // close 紧接着会来，不重复报
+  sock.on('error', () => {});     // close 紧接着会来，不重复报
 }
 
 // 看门狗：服务端每 25s ping 一次，超过 75s（连丢 3 次）一个帧都没收到就认定链路半死。
 // 这种连接 close 事件永远不来，只能本端主动 terminate，由 close 走既有重连。
 setInterval(() => {
-  if (stopping || !ws || ws.readyState !== 1) return;
+  if (stopping || !ws || ws.readyState !== 1) return;   // CONNECTING 交给 connect 里的 guard
   if (Date.now() - lastSeen > 75000) {
     log('链路 ' + Math.round((Date.now() - lastSeen) / 1000) + 's 无响应，主动断开重连');
     try { ws.terminate(); } catch (_) {}
+    return;
+  }
+  // 每 30 分钟留一条心跳账：事后能分清「当时活着」还是「静默挂了」。
+  // 以前只有状态跳变才打日志，出问题的那个时间点根本无从回溯。
+  if (Date.now() - lastBeatLog > ONLINE_LOG_MS) {
+    lastBeatLog = Date.now();
+    log('在线（' + Math.round((Date.now() - lastSeen) / 1000) + 's 前收到服务端心跳）');
   }
 }, 20000).unref();
 
-process.on('SIGINT', () => { stopping = true; log('退出'); try { ws && ws.close(1000, 'client shutdown'); } catch (_) {} process.exit(0); });
-process.on('SIGTERM', () => { stopping = true; process.exit(0); });
+process.on('SIGINT', () => {
+  stopping = true;
+  if (retryTimer) clearTimeout(retryTimer);
+  log('退出');
+  try { ws && ws.close(1000, 'client shutdown'); } catch (_) {}
+  process.exit(0);
+});
+process.on('SIGTERM', () => { stopping = true; if (retryTimer) clearTimeout(retryTimer); process.exit(0); });
 
 // 启动：一条说清楚往哪连、暴露了什么（之后只在状态变化时再说）
 log('隧道 → ' + CFG.server + '（' + CFG.services.map(s => s.host + '→127.0.0.1:' + s.port).join(', ') + '）');
