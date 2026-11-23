@@ -664,15 +664,18 @@
   // 启动自愈:外部工具改前端文件是非原子写入,极端时机下浏览器可能拿到半截或重复拼接的 HTML
   // (脚本缺半 → 白屏裸首页;重复注入 → 每个文件报 duplicate variable 后 JS 全挂)。
   // 这里检测关键脚本数量与入口全局,不对就自动整页重载一次(sessionStorage 防循环)。
-  // 注意:js/ 脚本增减时需同步改这里的期望数 10。
+  // 基线 10 只是下界：脚本只增不减，少于基线说明 HTML 被写坏(半截/漏标签)；
+  // 正常加功能会变多，不需要改这里。白屏由下面三个入口全局兜住。
   (function () {
     var ok = false;
     try {
       var n = document.querySelectorAll('script[src^="/js/"]').length;
-      ok = n === 10 && typeof state !== 'undefined' &&
+      ok = n >= 10 && typeof state !== 'undefined' &&
            typeof openFilePreview === 'function' && typeof restartNow === 'function';
     } catch (_) {}
     if (ok) { try { sessionStorage.removeItem('boot-heal'); } catch (_) {} return; }
+    // 失败必留痕：以前静默 reload，把「正常加脚本」和「真白屏」混成同一个不可见动作。
+    try { console.error('[boot] 自检未通过：脚本 ' + n + ' 个(基线 10)；state=' + typeof state + ' openFilePreview=' + typeof openFilePreview + ' restartNow=' + typeof restartNow); } catch (_) {}
     try {
       if (sessionStorage.getItem('boot-heal')) { sessionStorage.removeItem('boot-heal'); return; }
       sessionStorage.setItem('boot-heal', '1');
