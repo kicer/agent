@@ -27,7 +27,7 @@
       (u.cached == null ? '未上报' : u.cached + ' tok') + '，输出 ' + (u.ct || 0) + ' tok';
   }
 
-  function actionsHtml(ts, content, msgId, usage, canEdit) {
+  function actionsHtml(ts, content, msgId, usage, canEdit, aiEdit) {
     const b64 = btoa(unescape(encodeURIComponent(content)));
     // 删除本条:仅已落库消息可删(传 m.id);流式未落库时无 id,不渲染
     const del = msgId
@@ -36,8 +36,13 @@
         '</button>'
       : '';
     // 编辑并重发:只给未压缩的用户消息(调用方传 canEdit);带 b64 回填输入框,避免从 DOM 反推
+    // aiEdit 是另一条路:只改字面、直接入库不重跑(调试上下文用),按钮和标题都区分开
     const edit = canEdit && msgId
       ? '<button class="act act-edit" title="编辑并重发" data-msg-id="' + msgId + '" data-b64="' + b64 + '">' +
+        '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-pencil"/></svg>' +
+        '</button>'
+      : aiEdit && msgId
+      ? '<button class="act act-edit-ai" title="修改这条回复（直接入库，不重跑）" data-msg-id="' + msgId + '" data-b64="' + b64 + '">' +
         '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-pencil"/></svg>' +
         '</button>'
       : '';
@@ -88,13 +93,14 @@
     const text = (m.content || '').trim();
     const reason = (m.reasoning || '').trim();
     const errAck = m.type === 'errAck';
-    // 纯工具调用的应答不渲染气泡（工具卡由 appendToolCardsFromAssistant 铺），但 errAck 要留个标记
+    // 纯工具调用的应答不渲染气泡（工具卡由 appendToolCardsFromAssistant 铺，同轮多调用会包成一组），
+    // 但 errAck 要留个标记
     if (!text && !reason && !errAck) return null;
     const note = errAck
       ? '<div class="msg-note">工具调用参数无效，本轮已从上下文移除，模型会重新发起</div>' : '';
     const think = reason ? thinkPanelHtml(m.reasoning) : '';
     const bubble = text ? (() => { const r = mdHtml(m.content); return '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>'; })() : '';
-    return '<div class="msg other">' + note + think + bubble + actionsHtml(m.created_at, m.content || '', m.id, m.usage) + '</div>';
+    return '<div class="msg other">' + note + think + bubble + actionsHtml(m.created_at, m.content || '', m.id, m.usage, false, !!text) + '</div>';
   }
   // 思考过程折叠面板:summary 固定名「思考过程」+ 右侧复制按钮,body 展示推理全文。
   // 历史重渲染默认收起(与原设计一致),流式阶段的展开行为由 ensureStreamThinkPanel 显式控制。
@@ -173,6 +179,12 @@
     const b64 = btoa(unescape(encodeURIComponent(text)));
     return '<button class="act act-copy" title="复制参数与结果" data-b64="' + b64 + '">' +
       '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button>';
+  }
+  // 工具卡「修改输出」：改的是 tool 消息行的 content，直接入库不重跑（调试上下文用）
+  function toolEditBtnHtml(msgId) {
+    if (!msgId) return '';
+    return '<button class="act act-edit-tool" title="修改工具输出（直接入库，不重跑）" data-msg-id="' + msgId + '">' +
+      '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-pencil"/></svg></button>';
   }
   // 工具卡「删除本条」：删的是 tool 消息行；后端会把它在父 assistant 里的调用同步摘除。
   // msgId = tool 消息的库行 id（历史渲染传 m.id；实时由 tool_result 事件的 msg_id 携带）
@@ -264,6 +276,9 @@
       if (!timeRow.querySelector('.act-copy')) {
         timeRow.insertAdjacentHTML('beforeend', toolCopyBtnHtml(parsed.text || ''));
       }
+      if (!timeRow.querySelector('.act-edit-tool')) {
+        timeRow.insertAdjacentHTML('beforeend', toolEditBtnHtml(card.dataset.msgId));
+      }
       if (!timeRow.querySelector('.act-del')) {
         timeRow.insertAdjacentHTML('beforeend', toolDelBtnHtml(card.dataset.msgId));
       }
@@ -296,16 +311,26 @@
     if (!m.tool_calls) return;
     let calls;
     try { calls = typeof m.tool_calls === 'string' ? JSON.parse(m.tool_calls) : m.tool_calls; } catch (_) { return; }
+    // 同一轮的多个工具调用包进一个组，左侧竖线把它们连成一体；单调用不建壳，保持原样。
+    // 早卡（流式时按 tool_call 事件先建的）收尾时再移进来，顺序按 calls 遍历重建。
+    let group = null;
+    if (Array.isArray(calls) && calls.length > 1) {
+      group = document.createElement('div');
+      group.className = 'tool-group';
+      container.appendChild(group);
+    }
     for (const c of calls) {
       const id = c.id || ('c' + Math.random().toString(36).slice(2, 10));
       if (state.toolCards[id]) { // 早卡(流式生成中)：回填完整参数收尾；否则跳过不重复建卡
         finalizeToolCardArgs(id, c.function && c.function.name, c.function && c.function.arguments);
         applyToolCardUsage(state.toolCards[id], m.usage); // 回合 usage 落点：assistant_message 才带 usage，早卡建卡时还没有，此时补钉
+        const card0 = state.toolCards[id];
+        if (group && card0) group.appendChild(card0);
         continue;
       }
       const card = renderToolCard(id, c.function && c.function.name || '工具', c.function && c.function.arguments, m.created_at);
       applyToolCardUsage(card, m.usage);
-      container.appendChild(card);
+      (group || container).appendChild(card);
       state.toolCards[id] = card;
     }
   }

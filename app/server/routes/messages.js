@@ -68,6 +68,17 @@ router.post('/:id/messages/:mid/edit', wrap((req, res) => {
   res.json(r);
 }));
 
+// 原地改写一条消息的正文（调试上下文用）：只覆盖 content，不删后续历史、不重跑。
+// 与上面的 /edit 区别：那个是「覆盖式重发」（用户消息专用），这个只改字面。
+router.patch('/:id/messages/:mid', wrap((req, res) => {
+  const content = String((req.body && req.body.content) || '').trim();
+  if (!content) return res.status(400).json({ error: 'content 不能为空' });
+  const r = engine.patchMessageContent(req.params.id, Number(req.params.mid), content);
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 修改消息正文 ' + req.params.mid +
+      '（直接入库，不重跑）');
+  res.json(r);
+}));
+
 router.post('/:id/stop', wrap((req, res) => {
   const r = engine.stop(req.params.id);
   log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户终止');

@@ -2004,6 +2004,22 @@ function editUserMessage(sessionId, messageId, content, opts) {
   return Object.assign({ removed: removed }, r);
 }
 
+// 原地改写某条消息的正文（调试上下文用）：不删后续历史、不重跑，只覆盖 content。
+// 运行中拒绝——runLoop 每轮重载历史，中途改会和当前回合拼出来的请求对不上。
+// 改的是历史里的一行：末尾行 id 没变，锚点查不出差异，主动作废增量指针，
+// 下一轮改发 X-Context-Reset 全量重建，否则 relay 缓存里还是改之前的文本。
+function patchMessageContent(sessionId, messageId, content) {
+  const session = getSession(sessionId);
+  if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const row = db.prepare('SELECT id FROM messages WHERE id = ? AND session_id = ?').get(messageId, sessionId);
+  if (!row) throw Object.assign(new Error('消息不存在'), { status_code: 404 });
+  const run = runs.get(sessionId);
+  if (run && run.looping) throw Object.assign(new Error('任务正在执行，请先终止再修改'), { status_code: 409 });
+  db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, messageId);
+  invalidateContext(contextIdOf(session));
+  return { ok: true, id: messageId };
+}
+
 // 删工具回执（任务执行卡片）：同步把对应 tool_call 从父 assistant 的 tool_calls 里摘掉，
 // 避免留下「有调用无结果」被严格上游拒收。父回合若是纯工具调用轮（无文本）且已无
 // 其余调用，则整行一起删（空气泡没有意义）；有文本则保留为普通文本回复。
@@ -2060,6 +2076,7 @@ module.exports = {
   summarizeContext,
   deleteMessage,
   editUserMessage,
+  patchMessageContent,
   getSession,
   getRun,
   taskDirOf,

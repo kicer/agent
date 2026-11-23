@@ -178,6 +178,7 @@
     attachments: [],            // 待发送附件 {file, name, size}
     pending: [],                // 待投递消息队列（服务端内存态的回显）：{id, content, mode, created_at}
     editingMsgId: 0,            // 正在编辑的历史消息 id（0=普通发送，覆盖式重发）
+    editingRole: '',            // 'user'=覆盖式重发；'assistant'=只改字面、直接入库（不重跑）
     lastImgBlobUrl: null,       // 任务文件图片预览的 blob URL，下次预览或开新图时回收
     lastPdfBlobUrl: null,       // 同上:PDF 页内预览的 blob URL(浏览器内建查看器用)
     es: null,                   // EventSource

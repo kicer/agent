@@ -48,6 +48,24 @@
       // 不用 state.status 判断——SSE 状态可能过期，误判成 live 会把 user 行插进工具批次中间。
       const body = { content: text, deepThink: !!state.deepThink, delivery: 'queue' };
       let sent;
+      if (editingId && state.editingRole === 'tool') {
+        // 原地改工具输出：不删后续历史、不重跑
+        await req('PATCH', '/api/sessions/' + id + '/messages/' + editingId, { content });
+        updateToolCard(editingId, content);
+        clearEditState();
+        updateSendBtn();
+        toast('已修改');
+        return;
+      }
+      if (editingId && state.editingRole === 'assistant') {
+        // 原地改 AI 正文：不删后续历史、不重跑，改完只重绘那一个气泡
+        await req('PATCH', '/api/sessions/' + id + '/messages/' + editingId, { content });
+        updateAiBubble(editingId, content);
+        clearEditState();
+        updateSendBtn();
+        toast('已修改');
+        return;
+      }
       if (editingId) {
         // 覆盖式编辑：先撤掉本地该条及其后的渲染，再让服务端删除同范围历史并以新内容重开一轮
         dropDomFromMessage(editingId);
@@ -362,7 +380,10 @@
           // 补上尾部操作行(时间戳+复制/删除),与历史重渲染(aiMsgHtml)同款;
           // created_at 由后端落库时间随事件回传,重进会话后时刻不变
           if (state.streamWrap) {
-            state.streamWrap.insertAdjacentHTML('beforeend', actionsHtml(d.created_at, d.content || '', d.id, d.usage));
+            // 最后一个参数 aiEdit：有正文才给「修改这条回复」的铅笔（与 aiMsgHtml 同口径），
+            // 漏传时流式收尾那条永远没有编辑按钮——历史重渲染里有、刚答完那条没有。
+            state.streamWrap.insertAdjacentHTML('beforeend',
+              actionsHtml(d.created_at, d.content || '', d.id, d.usage, false, !!(d.content || '').trim()));
           }
           if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
           state.streaming = false;
@@ -597,13 +618,23 @@
   // 已压缩存档的消息(type='archived')不给编辑入口：删掉摘要后它前面的行仍不发模型,上下文会断。
   function clearEditState() {
     state.editingMsgId = 0;
+    state.editingRole = '';
     const bar = $('edit-bar');
     if (bar) bar.classList.add('hidden');
   }
-  function setEditState(msgId) {
+  // role：'user' 走覆盖式重发（删后续历史），'assistant' 只改字面、直接入库
+  function setEditState(msgId, role) {
     state.editingMsgId = msgId;
+    state.editingRole = role || 'user';
     const bar = $('edit-bar');
-    if (bar) bar.classList.remove('hidden');
+    if (!bar) return;
+    bar.classList.remove('hidden');
+    const tip = bar.querySelector('span');
+    if (tip) tip.textContent = role === 'assistant'
+      ? '修改 AI 回复：保存后直接入库，不重跑'
+      : role === 'tool'
+      ? '修改工具输出：保存后直接入库，不重跑'
+      : '编辑已发送消息：发送后将丢弃原历史信息';
   }
   // 乐观撤场：删掉该条及之后的所有节点(旧工具卡/打字点/流式气泡都在后面),
   // 并把增量渲染游标回退到编辑点之前，免得后续软补拉把已丢的行当成还在。
@@ -630,7 +661,63 @@
       if (state.view === 'chat') renderDetail(detail);
     } catch (_) { /* 恢复失败不阻断主流程 */ }
   }
+  // 原地改完 AI 正文后只重绘那一个气泡（不重拉整个会话）
+  function updateAiBubble(msgId, content) {
+    const box = $('chat-view');
+    const btn = box && box.querySelector('[data-msg-id="' + msgId + '"]');
+    const node = btn && btn.closest('.msg');
+    if (!node) return;
+    const bubble = node.querySelector('.bubble-ai');
+    if (!bubble) return;
+    const r = mdHtml(content);
+    bubble.className = 'bubble-ai' + (r.fmt ? ' md' : '');
+    bubble.innerHTML = r.html;
+    const b64 = btoa(unescape(encodeURIComponent(content)));
+    node.querySelectorAll('.act-copy, .act-edit-ai').forEach(n => { n.dataset.b64 = b64; });
+  }
+  // 改完工具输出只更新那一张卡的正文
+  function updateToolCard(msgId, content) {
+    const card = document.querySelector('.tool-card[data-msg-id="' + msgId + '"]');
+    if (!card) return;
+    const pre = card.querySelector('.tool-result');
+    if (pre) pre.textContent = content;
+  }
   $('chat-view').addEventListener('click', e => {
+    // 工具卡：改的是 tool 消息行的 content（调试上下文用）
+    const toolBtn = e.target.closest('.act-edit-tool');
+    if (toolBtn) {
+      const msgId = Number(toolBtn.dataset.msgId);
+      if (!msgId || !state.sessionId) return;
+      if (state.status === 'active') { toast('任务执行中，暂不支持修改'); return; }
+      const card = toolBtn.closest('.tool-card');
+      const pre = card && card.querySelector('.tool-result');
+      const text = pre ? pre.textContent : '';
+      if (!text || text === '执行中…') { toast('先展开卡片加载完整输出再改'); return; }
+      const ta = $('msg-input');
+      ta.value = text;
+      autosize();
+      updateSendBtn();
+      setEditState(msgId, 'tool');
+      ta.focus();
+      return;
+    }
+    // AI 回复：只改字面、直接入库，不走覆盖式重发
+    const aiBtn = e.target.closest('.act-edit-ai');
+    if (aiBtn) {
+      const msgId = Number(aiBtn.dataset.msgId);
+      if (!msgId || !state.sessionId) return;
+      if (state.status === 'active') { toast('任务执行中，暂不支持修改'); return; }
+      let text = '';
+      try { text = decodeURIComponent(escape(atob(aiBtn.dataset.b64 || ''))); } catch (_) { return; }
+      const ta = $('msg-input');
+      ta.value = text;
+      autosize();
+      updateSendBtn();
+      setEditState(msgId, 'assistant');
+      ta.focus();
+      try { ta.setSelectionRange(text.length, text.length); } catch (_) {}
+      return;
+    }
     const btn = e.target.closest('.act-edit');
     if (!btn) return;
     const msgId = Number(btn.dataset.msgId);
