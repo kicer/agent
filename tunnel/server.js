@@ -81,7 +81,16 @@ const nextId = () => 'r' + (++seq).toString(36) + Math.random().toString(36).sli
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
   'te', 'trailer', 'transfer-encoding', 'upgrade']);
 
-function log(...a) { console.log(new Date().toISOString().slice(11, 19), '[server]', ...a); }
+// 日志时间固定东八区并带日期：容器里的 TZ 对 toISOString 无效（恒 UTC），
+// 跟 client 日志对照时会差 8 小时、跨天还分不清是哪一条。
+const CST_MS = 8 * 3600 * 1000;
+function log(...a) {
+  const d = new Date(Date.now() + CST_MS);
+  const p = (n) => String(n).padStart(2, '0');
+  console.log(p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' '
+    + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds()),
+    '[server]', ...a);
+}
 
 // ---------- HTTP：把请求搬给 client ----------
 // fixedService：由「固定端口路由」传进来（无域名时一个端口对一个服务）；null = 按 Host 头路由
@@ -104,10 +113,13 @@ function handleRequest(req, res, fixedService) {
   const headers = {};
   for (const [k, v] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(k)) headers[k] = v;
 
-  pending.set(id, { res, timer: null });
+  pending.set(id, { res, timer: null, ws: client });   // 记下归属：断开收尾时只清自己那条连接的
   const frame = { id, op: 'req', method: req.method, path: req.url, headers };
   if (fixedService) frame.service = fixedService;      // 端口绑定的服务名，client 优先按它找
-  client.send(JSON.stringify(frame));
+  if (!sendToClient(frame)) {                        // 刚断线的瞬间：快失败，别挂到 120s 兜底
+    pending.delete(id);
+    return json(res, 503, { error: 'tunnel client offline', hint: '连接刚断，重试即可' });
+  }
 
   let size = 0;
   let overflow = false;
@@ -116,20 +128,20 @@ function handleRequest(req, res, fixedService) {
     size += chunk.length;
     if (size > CFG.maxBodyMb * 1048576) {          // 超限直接掐，别把内存吃穿
       overflow = true;
-      client.send(JSON.stringify({ id, op: 'abort' }));
+      sendToClient({ id, op: 'abort' });
       pending.delete(id);
       return json(res, 413, { error: 'body too large', limit_mb: CFG.maxBodyMb });
     }
-    client.send(JSON.stringify({ id, op: 'body', b64: chunk.toString('base64') }));
+    sendToClient({ id, op: 'body', b64: chunk.toString('base64') });
   });
-  req.on('end', () => { if (!overflow) client.send(JSON.stringify({ id, op: 'end' })); });
+  req.on('end', () => { if (!overflow) sendToClient({ id, op: 'end' }); });
   // 客户端提前断开：让家里把上游请求也停掉，别白跑。
   // 必须挂在 res 上：SSE 是 GET 无 body，req 的 'aborted' 只在传 body 时触发（且已废弃）。
   // 漏掉这条时，前端关掉 SSE 后 client 会继续读流、继续往 WS 灌数据，切会话时
   // 新旧两条流同时推，把单条 WS 占满，后发的 detail 请求只能排队。
   res.on('close', () => {
     if (!pending.has(id)) return; // 正常结束时 pending 已删
-    client.send(JSON.stringify({ id, op: 'abort' }));
+    sendToClient({ id, op: 'abort' });
     pending.delete(id);
   });
 }
@@ -205,13 +217,18 @@ server.on('upgrade', (req, socket, head) => {
     ws.on('pong', () => { ws.isAlive = true; });
     ws.on('message', onClientMessage);
     ws.on('close', () => {
-      if (client === ws) client = null;
-      log('client 断开，未完成请求 ' + pending.size + ' 个一并收尾');
-      // 连接没了，等在途的请求不可能再有响应，直接 502，别让浏览器干等
+      const current = client === ws;   // 先存下来：下面可能把 client 置空
+      if (current) client = null;
+      // 只收尾「属于这条连接」的请求。client 重连时旧连接先 close、新连接已经接手，
+      // 无差别清空会把新连接刚发出去的请求一起 502（表现就是重连瞬间页面白屏）。
+      let n = 0;
       for (const [id, e] of pending) {
+        if (e.ws !== ws) continue;
+        n++;
         try { if (!e.res.headersSent) e.res.writeHead(502); e.res.end('tunnel client disconnected'); } catch (_) {}
         pending.delete(id);
       }
+      log('client ' + (current ? '断开' : '旧连接关闭（已被新连接取代）') + '，收尾 ' + n + ' 个在途请求');
     });
     ws.on('error', (e) => log('client 错误', e.message));
   });
@@ -235,10 +252,18 @@ setInterval(() => {
       log('请求 120s 无响应，放弃', id);
       try { e.res.writeHead(504); e.res.end('tunnel upstream timeout'); } catch (_) {}
       pending.delete(id);
-      if (client && client.readyState === 1) client.send(JSON.stringify({ id, op: 'abort' }));
+      sendToClient({ id, op: 'abort' });
     }
   }
 }, 10000).unref();
+
+// 统一的「发给家里」出口：client 可能在任意时刻变成 null（socket 已经换人），
+// 直接调 client.send 会抛 TypeError——抛在事件回调里就是 uncaught，整个服务端进程退出，
+// 表现为所有隧道访问一起断，且从外面看和「client 卡住」完全一样。
+function sendToClient(obj) {
+  if (!client || client.readyState !== 1) return false;
+  try { client.send(JSON.stringify(obj)); return true; } catch (_) { return false; }
+}
 
 function json(res, code, obj) {
   const body = JSON.stringify(obj);
