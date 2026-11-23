@@ -1372,12 +1372,21 @@ function forkSession(sessionId, messageId, user) {
     null, src.assistant_type || 'secretary', src.user || user || '', src.work_dir || '', ts, ts,
     src.deep_think ? 1 : 0); // 思考开关随会话走：分叉后新会话保持源会话的思考状态
   profile.freezeSnapshot(db, id); // 画像快照随会话冻结：分叉也要一份，否则新会话首轮没有画像
+  // 只搬「有效上下文」：archived 行不复制（新会话不会再压缩它们，搬过去只白占地方、
+  // UI 还多一截淡色存档段）；summary 只留最后一个（压缩后的上下文起点，更早的已被它概括）。
+  const lastSum = db.prepare(
+    "SELECT MAX(id) AS id FROM messages WHERE session_id = ? AND id < ? AND type = 'summary'"
+  ).get(sessionId, point.id);
+  const lastSumId = (lastSum && lastSum.id) || 0;
   // tool_calls / tool_call_id 原样复制，配对关系不变；tool_call_msg_ids 由 GET /sessions/:id 现算
   const r = db.prepare(
     'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, usage, created_at) ' +
     'SELECT ?, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, usage, created_at ' +
-    'FROM messages WHERE session_id = ? AND id < ? ORDER BY id'
-  ).run(id, sessionId, point.id);
+    'FROM messages WHERE session_id = ? AND id < ? ' +
+    "  AND COALESCE(type, '') != 'archived' " +
+    "  AND (COALESCE(type, '') != 'summary' OR id = ?) " +
+    'ORDER BY id'
+  ).run(id, sessionId, point.id, lastSumId);
   log.info('task', sessionId + ' 分叉 → ' + id + '（复制 ' + r.changes + ' 条，分叉点 #' + point.id + '）');
   return { id, copied: r.changes, prefill: point.content || '' };
 }
