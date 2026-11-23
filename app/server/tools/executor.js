@@ -5,6 +5,7 @@ const path = require('path');
 const net = require('net'); // fetch SSRF 防护：IP 字面量/解析结果判私网
 const dns = require('dns').promises; // 同上：主机名 → IP 后统一判定
 const fsp = require('fs').promises;
+const crypto = require('crypto'); // writeAtomic：临时文件随机名
 const { spawn } = require('child_process');
 const mcp = require('../mcp');
 const skills = require('./skills');
@@ -18,6 +19,27 @@ const scheduler = require('../scheduler'); // 只依赖 log/cron-parser/time.js�
 const memory = require('../memory'); // recall 工具的数据面（日记翻阅；仅依赖 time.js，无环）
 // lab 的 help 伪工具要读全量定义：与 engine 同路径 require → node 缓存同一对象，单一事实源。
 const BUILTIN_TOOL_DEFS = require('./definitions.json');
+
+// ---------- 原子落盘 ----------
+// 先写同目录随机临时名再 rename：外部读者(浏览器/另一个进程)只会看到旧整份或新整份，永不见半截。
+// 覆盖已有文件时沿用其权限——rename 换的是 inode，不保住可执行位就会被 umask 悄悄削掉。
+async function writeAtomic(abs, data, enc) {
+  let target = abs;
+  try { target = await fsp.realpath(abs); } catch (_) {} // 符号链接写目标，否则 rename 会把链接本身换成普通文件
+  let mode = null;
+  try { mode = (await fsp.stat(target)).mode & 0o777; } catch (_) {}
+  const tmp = target + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
+  const opts = { mode: mode == null ? 0o666 : mode };
+  if (enc) opts.encoding = enc;
+  try {
+    await fsp.writeFile(tmp, data, opts);
+    if (mode != null) { try { await fsp.chmod(tmp, mode); } catch (_) {} } // writeFile 的 mode 受 umask 削弱，chmod 兜底
+    await fsp.rename(tmp, target);
+  } catch (err) {
+    try { await fsp.unlink(tmp); } catch (_) {}
+    throw err;
+  }
+}
 
 // ---------- 路径沙箱 ----------
 // 文件工具的可见范围（AGENT_FILE_SCOPE，默认 session）：
@@ -492,7 +514,7 @@ async function toolWriteFile(ctx, args) {
   try { st = await fsp.stat(abs); } catch (_) {}
   if (st && st.isDirectory()) throw new Error('无法写入：路径是目录 ' + args.path);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
-  await fsp.writeFile(abs, String(args.content), 'utf8');
+  await writeAtomic(abs, String(args.content), 'utf8');
   recordFile(ctx, abs);
   const nbytes = Buffer.byteLength(String(args.content), 'utf8');
   const rel = dispPath(ctx, abs);
@@ -742,7 +764,7 @@ async function toolEditFile(ctx, args) {
     catch (err) { failure = err; break; }
   }
   if (text !== original) {
-    await fsp.writeFile(abs, text, 'utf8');
+    await writeAtomic(abs, text, 'utf8');
     recordFile(ctx, abs);
   }
   if (failure) {
