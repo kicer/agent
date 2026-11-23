@@ -1348,6 +1348,40 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ---------- 对外 API ----------
 // 新建即绑模（无排队）：指定了优先模型（welcome 预选）就取其平台「最不 active」的 key；
 // 模型无效或平台无槽位退回全局优先级选。池完全为空直接报错（配置问题），不建吊儿郎当的会话。
+// 从某条用户消息分叉：新建会话，把该消息之前的历史原样复制过去，正文回填给前端。
+// 只复制不重跑——新会话拿到的是分叉点之前的上下文，分叉点及之后的东西模型一点看不到。
+// 标题保持源会话不变（用户要求）；work_dir/模型/assistant_type 一并继承。
+// 新会话 status='completed' 不占模型槽，用户发第一条消息时再走正常的激活/分配流程。
+function forkSession(sessionId, messageId, user) {
+  const src = getSession(sessionId);
+  if (!src) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  const point = db.prepare('SELECT id, role, content, type FROM messages WHERE id = ? AND session_id = ?')
+    .get(messageId, sessionId);
+  if (!point) throw Object.assign(new Error('消息不存在'), { status_code: 404 });
+  if (point.role !== 'user') throw Object.assign(new Error('只能从用户消息分叉'), { status_code: 400 });
+  if (point.type === 'archived') {
+    throw Object.assign(new Error('这条消息在存档段里，分叉过去模型也看不到'), { status_code: 400 });
+  }
+  const id = genTaskId();
+  const ts = now();
+  // 标题带「（分叉）」后缀：列表里两个同名会话分不清；源标题还没生成（空）时保持空，后续照常自动生成
+  const title = src.title ? src.title + '（分叉）' : '';
+  db.prepare(
+    "INSERT INTO sessions (id, title, status, model_id, model_slot, last_model_id, held_at, assistant_type, user, work_dir, created_at, updated_at, deep_think) VALUES (?,?,'completed',?,?,?,?,?,?,?,?,?,?)"
+  ).run(id, title, src.model_id || '', null, src.last_model_id || src.model_id || '',
+    null, src.assistant_type || 'secretary', src.user || user || '', src.work_dir || '', ts, ts,
+    src.deep_think ? 1 : 0); // 思考开关随会话走：分叉后新会话保持源会话的思考状态
+  profile.freezeSnapshot(db, id); // 画像快照随会话冻结：分叉也要一份，否则新会话首轮没有画像
+  // tool_calls / tool_call_id 原样复制，配对关系不变；tool_call_msg_ids 由 GET /sessions/:id 现算
+  const r = db.prepare(
+    'INSERT INTO messages (session_id, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, usage, created_at) ' +
+    'SELECT ?, role, content, reasoning, tool_calls, tool_call_id, name, type, is_error, usage, created_at ' +
+    'FROM messages WHERE session_id = ? AND id < ? ORDER BY id'
+  ).run(id, sessionId, point.id);
+  log.info('task', sessionId + ' 分叉 → ' + id + '（复制 ' + r.changes + ' 条，分叉点 #' + point.id + '）');
+  return { id, copied: r.changes, prefill: point.content || '' };
+}
+
 function createSession(title, preferModelId, assistantType, user, workDir) {
   // 用户锁定模型（auth.users[].model）优先于前端预选；锁定值无效/被禁用时退回原逻辑（用前端预选或全局自动选择）。
   const lock = lockedModelOf(user);
@@ -2061,6 +2095,7 @@ module.exports = {
   getConfig: () => cfg,
   activeRuns,
   createSession,
+  forkSession,
   postUserMessage,
   enqueueMessage,
   promotePending,

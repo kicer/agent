@@ -682,7 +682,33 @@
     const pre = card.querySelector('.tool-result');
     if (pre) pre.textContent = content;
   }
-  $('chat-view').addEventListener('click', e => {
+  $('chat-view').addEventListener('click', async e => {
+    // 分叉：从这条用户消息新建会话，复制该点之前的历史，正文回填输入框
+    const forkBtn = e.target.closest('.act-fork');
+    if (forkBtn) {
+      const msgId = Number(forkBtn.dataset.msgId);
+      if (!msgId || !state.sessionId || forkBtn.disabled) return;
+      forkBtn.disabled = true;
+      try {
+        const r = await req('POST', '/api/sessions/' + state.sessionId + '/fork', { message_id: msgId });
+        if (!r || !r.id) return;
+        toast('已分叉到新会话（复制 ' + r.copied + ' 条）');
+        await openSession(r.id);
+        const ta = $('msg-input');
+        if (ta && r.prefill) {
+          ta.value = r.prefill;
+          autosize();
+          updateSendBtn();
+          ta.focus();
+        }
+        loadSessionList();
+      } catch (err) {
+        toast('分叉失败：' + err.message);
+      } finally {
+        forkBtn.disabled = false;
+      }
+      return;
+    }
     // 工具卡：改的是 tool 消息行的 content（调试上下文用）
     const toolBtn = e.target.closest('.act-edit-tool');
     if (toolBtn) {

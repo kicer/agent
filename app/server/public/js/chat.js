@@ -50,6 +50,12 @@
     const usageHtml = u
       ? '<span class="act-usage" title="' + usageTip(u) + '">' + usageBrief(u) + '</span>'
       : '';
+    // 分叉：只给用户消息（它才是分支点），复制该点之前的历史到新会话，正文回填输入框
+    const fork = canEdit && msgId
+      ? '<button class="act act-fork" title="从这里分叉：复制该点之前的历史到新会话" data-msg-id="' + msgId + '">' +
+        '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-fork"/></svg>' +
+        '</button>'
+      : '';
     return '<div class="msg-actions">' +
       '<span>' + fmtTime(ts) + '</span>' +
       usageHtml +
@@ -57,6 +63,7 @@
         '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-copy"/></svg>' +
       '</button>' +
       edit +
+      fork +
       del +
     '</div>';
   }

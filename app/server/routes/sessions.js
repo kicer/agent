@@ -231,6 +231,12 @@ router.post('/:id/bind', wrap((req, res) => {
   res.json(engine.bindToSession(req.params.id, mid));
 }));
 
+router.post('/:id/fork', wrap((req, res) => {
+  const r = engine.forkSession(req.params.id, Number(req.body && req.body.message_id), req.user);
+  log.info('task', (req.user || '-') + ' ' + req.params.id + ' 分叉 → ' + r.id + '（复制 ' + r.copied + ' 条）');
+  res.json(r);
+}));
+
 router.patch('/:id', wrap((req, res) => {
   const b = req.body || {};
   // work_dir 只改指向，不搬目录、不重跑；改名照旧走 title
