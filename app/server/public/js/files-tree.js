@@ -15,6 +15,8 @@
   const SVG_REFRESH = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-reload"/></svg>';
   const SVG_TERM = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-terminal"/></svg>';
   const SVG_VCS = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-git"/></svg>';
+  // 行内按钮版：不带 ic/sm（17px），否则会盖掉 .tree-act svg 的 13px，与其它行内动作大小不一
+  const SVG_GIT_SM = '<svg viewBox="0 0 24 24"><use href="#i-git"/></svg>';
   const SVG_EYE = '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-eye-sm"/></svg>';
   const SVG_DL = '<svg viewBox="0 0 24 24"><use href="#i-download"/></svg>';
   const SVG_DEL = '<svg viewBox="0 0 24 24"><use href="#i-trash"/></svg>';
@@ -128,6 +130,8 @@
     // 「下载」到本地是多余的（用 Finder 直接看原文件更顺），所以换成「在 Finder 中显示」。
     // @ 引用排最前：它是「往输入框送东西」的动作，和后面的下载 / Finder / 删除（对文件本身动手）分开
     row.appendChild(actBtn('at', ent.type === 'dir' ? '引用此目录' : '引用到输入框', SVG_AT, false));
+    // 目录才给：会话根常常只是外壳，仓库在子目录里，从树里直接定位过去（头部按钮只能看会话根）
+    if (ent.type === 'dir') row.appendChild(actBtn('vcs', '在 Git 中打开', SVG_GIT_SM, false));
     if (ent.type === 'file' && !localCapable) row.appendChild(actBtn('download', '下载', SVG_DL, false));
     if (localCapable) row.appendChild(actBtn('reveal', '在 Finder 中显示', SVG_REVEAL_SM, false));
     row.appendChild(actBtn('delete', '删除', SVG_DEL, true));
@@ -379,6 +383,7 @@
       else if (a === 'delete') deleteNode(rel, isDir);
       else if (a === 'reveal') localAction('reveal', rel);
       else if (a === 'at') insertPathRef(rel, isDir);
+      else if (a === 'vcs') { if (typeof window.openVcsPane === 'function') window.openVcsPane(rel); }
       return;
     }
     if (row.dataset.type === 'link') return;

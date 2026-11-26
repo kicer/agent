@@ -144,19 +144,47 @@ router.get('/:id/tree', function (req, res) {
 // ---------- Git 面板（只读）：提交列表 / 提交详情 ----------
 // rev=worktree 是「未提交的改动」，与提交详情返回同一副骨架（commit=null），前端共用一个渲染器。
 // 不是仓库 / 没装 git 不算错误：HTTP 200 + { ok:false, reason }，由界面显示空状态。
-function gitDir(req) { return engine.taskDirOf(req.params.id); }
+// ?dir=<子目录>：会话根常常只是项目外壳，真正的仓库在它下面（会话根不是仓库时，git 只向上找
+// 永远找不到）。相对路径以会话根为基准，绝对路径只要落在会话根内同样放行——校验复用
+// resolveTreeAbs（含 realpath 复核），面板仍然只读、且看不到会话目录以外的东西。
+function gitDir(req) {
+  // 统一走 realpath：git 的 --show-toplevel 返回的就是 realpath（macOS 上 /tmp 是 /private/tmp 的软链），
+  // 不先对齐基准，地址条回填的路径回来一比就会误判越界。
+  let root = path.resolve(engine.taskDirOf(req.params.id));
+  try { root = fs.realpathSync(root); } catch (_) { /* 目录还不存在：保持原样，后面 statSync 会挡 */ }
+  let rel = String(req.query.dir || '');
+  if (!rel) return root;
+  // 地址条回填的是绝对路径，而 resolveTreeAbs 只认相对路径（它会把前导 / 吃掉），
+  // 先归一到会话根内再交过去；前缀判断只是省一次 realpath，真正的越界复核仍在 resolveTreeAbs 里。
+  if (path.isAbsolute(rel)) {
+    let norm = path.normalize(rel);
+    try { norm = fs.realpathSync(norm); } catch (_) { /* 不存在：保持原样，下面报目录不存在 */ }
+    if (norm === root) return root;
+    if (!norm.startsWith(root + path.sep)) throw Object.assign(new Error('路径越界'), { status_code: 400 });
+    rel = norm.slice(root.length + 1);
+  }
+  let abs;
+  try { abs = resolveTreeAbs(root, rel); } catch (err) { throw Object.assign(new Error(err.message), { status_code: 400 }); }
+  let st;
+  try { st = fs.statSync(abs); } catch (_) { throw Object.assign(new Error('目录不存在：' + rel), { status_code: 400 }); }
+  if (!st.isDirectory()) throw Object.assign(new Error('不是目录：' + rel), { status_code: 400 });
+  return abs;
+}
 
 router.get('/:id/git/commits', async function (req, res) {
   const session = engine.getSession(req.params.id);
   if (!session) return res.status(404).json({ error: '会话不存在' });
+  let dir;
+  try { dir = gitDir(req); } catch (err) { return res.status(400).json({ error: err.message }); }
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
   const before = String(req.query.before || '');
   // before 只接受完整/短 hash：它会拼进 git 参数，绝不能是任意表达式
-  const out = await git.query(gitDir(req), 'commits', {
+  const out = await git.query(dir, 'commits', {
     before: /^[0-9a-f]{7,40}$/i.test(before) ? before : '',
     limit,
   });
-  res.json(out);
+  // dir 回传：不是仓库时前端要靠它把地址条填成「当前在哪」，用户才好改成子目录
+  res.json(Object.assign({ dir: dir }, out));
 });
 
 router.get('/:id/git/commit/:rev', async function (req, res) {
@@ -164,7 +192,9 @@ router.get('/:id/git/commit/:rev', async function (req, res) {
   if (!session) return res.status(404).json({ error: '会话不存在' });
   const rev = String(req.params.rev || '');
   if (rev !== 'worktree' && !/^[0-9a-f]{4,40}$/i.test(rev)) return res.status(400).json({ error: '非法的提交编号' });
-  res.json(await git.query(gitDir(req), 'commit', { rev }));
+  let dir;
+  try { dir = gitDir(req); } catch (err) { return res.status(400).json({ error: err.message }); }
+  res.json(Object.assign({ dir: dir }, await git.query(dir, 'commit', { rev })));
 });
 
 router.get('/:id/files', function (req, res) {

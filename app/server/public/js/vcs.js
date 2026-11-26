@@ -7,21 +7,31 @@
 (function () {
   const PAGE = 30;
   // view: list | detail | worktree；cur: 当前详情响应；lastPreview: 进 Git 前预览的文件（切回用）
-  const st = { view: 'list', sid: '', repo: null, commits: [], next: null, cur: null, lastPreview: null, seq: 0 };
+  // dir: 面板当前定位的目录（相对会话根，'' = 会话根）。会话根常常只是项目外壳，
+  // 真正的仓库在它的子目录里，所以面板必须能下钻——不能只认 taskDirOf。
+  const st = { view: 'list', sid: '', dir: '', repo: null, commits: [], next: null, cur: null, lastPreview: null, seq: 0 };
 
   function bodyEl() { return document.getElementById('pv-body'); }
   function sid() { return (state && state.sessionId) || ''; }
 
-  function api(p) {
-    return req('GET', '/api/sessions/' + encodeURIComponent(sid()) + p);
+  // 只去首尾空白与包裹引号、去尾部斜杠；前导 / 必须留着——绝对路径也是合法输入（后端校验它在会话根内）
+  function cleanDir(d) {
+    return String(d || '').trim().replace(/^["']+|["']+$/g, '').replace(/\/+$/, '');
   }
 
-  // 仓库路径显示在地址条上（地址条是现成的路径位，不另开头部）
-  function setAddr(repo) {
+  function api(p) {
+    const q = st.dir ? (p.indexOf('?') >= 0 ? '&' : '?') + 'dir=' + encodeURIComponent(st.dir) : '';
+    return req('GET', '/api/sessions/' + encodeURIComponent(sid()) + p + q);
+  }
+
+  // 仓库路径显示在地址条上（地址条是现成的路径位，不另开头部）。
+  // 不是仓库时也要填：填当前所在目录，用户才能就地改成子目录再回车。
+  function setAddr(repo, dirAbs) {
     const t = document.getElementById('pv-title');
-    if (!t || !repo) return;
-    t.value = repo.root || '';
-    t.title = (repo.root || '') + (repo.branch ? ' · ' + repo.branch : '');
+    if (!t) return;
+    const shown = (repo && repo.root) || dirAbs || '';
+    t.value = shown;
+    t.title = (repo && repo.branch ? shown + ' · ' + repo.branch : shown) + '（回车切到子目录）';
   }
 
   function fmtTime(iso) {
@@ -45,7 +55,7 @@
     if (reason === 'no_git') return '这个环境没有 git 命令。';
     if (reason === 'bad_rev') return '提交不存在，可能已被改写或清理。';
     if (reason === 'timeout') return 'git 执行超时，仓库可能过大。';
-    if (reason === 'not_repo') return '未找到 git 仓库：当前会话目录及其上级都不是仓库。';
+    if (reason === 'not_repo') return '这里不是 git 仓库：当前目录及其上级都没有 .git。若仓库在子目录里，把上方地址栏改成那个子目录（如 abc）再回车。';
     return '读取失败：' + (reason || '未知错误');
   }
 
@@ -182,19 +192,20 @@
     const seq = ++st.seq;
     const keepTop = more ? bodyEl().scrollTop : 0; // 加载更多是整体重绘，得自己把滚动位置补回去
     st.view = 'list';
-    st.sid = sid();
+    // 换会话就回根：否则会把上个会话的子目录带过去，直接 400
+    if (st.sid !== sid()) { st.sid = sid(); st.dir = ''; }
     if (!more) { st.commits = []; st.next = null; bodyEl().innerHTML = '<div class="pv-loading"></div>'; }
     const q = '?limit=' + PAGE + (more && st.next ? '&before=' + encodeURIComponent(st.next) : '');
     let d;
     try { d = await api('/git/commits' + q); }
     catch (e) { if (seq === st.seq) errBox('请求失败：' + (e.message || e), function () { loadList(false); }); return; }
     if (seq !== st.seq) return;
-    if (!d || !d.ok) { errBox(reasonText(d && d.reason), function () { loadList(false); }); return; }
+    if (!d || !d.ok) { setAddr(null, d && d.dir); errBox(reasonText(d && d.reason), function () { loadList(false); }); return; }
     st.repo = d.repo;
     st.worktree = d.worktree;
     st.commits = more ? st.commits.concat(d.commits) : d.commits;
     st.next = d.next;
-    setAddr(d.repo);
+    setAddr(d.repo, d.dir);
     renderList();
     if (more) bodyEl().scrollTop = keepTop;
   }
@@ -211,7 +222,8 @@
       return;
     }
     if (seq !== st.seq) return;
-    if (!d || !d.ok) { errBox(reasonText(d && d.reason), function () { loadDetail(rev); }); return; }
+    if (!d || !d.ok) { setAddr(null, d && d.dir); errBox(reasonText(d && d.reason), function () { loadDetail(rev); }); return; }
+    if (d.repo) setAddr(d.repo, d.dir);
     renderDetail(d);
   }
 
@@ -233,24 +245,43 @@
     syncBtn();
   }
 
-  function openPane() {
+  function openPane(dir) {
     if (!sid()) { toast('请先打开一个会话'); return; }
     if (typeof pvDesktop === 'function' && !pvDesktop()) { toast('Git 面板仅在桌面端可用'); return; }
+    const named = typeof dir === 'string'; // 从文件树点名进来 = 定位到该目录，不当作开关
     const on = document.body.classList.contains('pv-mode-vcs');
-    if (on && st.sid === sid()) { // 再点一次：有上次预览就切回预览，否则关面板
+    if (!named && on && st.sid === sid()) { // 再点一次：有上次预览就切回预览，否则关面板
       setMode(false);
       if (st.lastPreview) { openFilePreview(st.lastPreview); return; }
       document.getElementById('pv-close').click();
       return;
     }
+    const same = st.sid === sid();
     if (!on) st.lastPreview = (typeof pvState === 'object' && pvState && pvState.name) || null;
     if (typeof pvOpenPane === 'function') pvOpenPane();
     setMode(true);
     pvClearBody();
     pvHeader(null); // 清掉预览的文件名与下载钮；地址条下面再写仓库路径
     pvToolbar({ refresh: true, popup: false, reload: refresh });
+    st.sid = sid();
+    st.dir = named ? cleanDir(dir) : (same ? st.dir : '');
     loadList(false);
   }
+
+  // 地址条：Git 模式下回车 = 切到该目录。绝对路径必须在会话根内（后端 resolveTreeAbs 挡），
+  // 相对路径以会话根为基准。preview.js 的地址条逻辑在 Git 模式下让位（那边有守卫）。
+  document.getElementById('pv-title').addEventListener('keydown', function (e) {
+    if (!document.body.classList.contains('pv-mode-vcs')) return;
+    if (e.key === 'Escape') { e.target.blur(); return; }
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    const v = cleanDir(e.target.value);
+    e.target.blur();
+    if (v === st.dir) { loadList(false); return; } // 原样回车 = 刷新
+    st.view = 'list';
+    st.dir = v;
+    loadList(false);
+  });
 
   // 事件委托：pv-body 的内容每次整体重建，逐元素绑定没必要
   document.getElementById('pv-body').addEventListener('click', function (e) {

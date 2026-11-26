@@ -746,9 +746,12 @@ function pvSugUpdate(t) {
   pvSugBox.classList.remove('hidden');
 }
 // 地址条按键：↑↓选、Tab 补全、Enter 打开(高亮文件直接开，目录仅补全)、Esc 先收下拉；组字回车不触发
-document.getElementById('pv-title').addEventListener('input', (e) => pvSugUpdate(e.target));
+// Git 面板开着时地址条归 vcs.js（那里填的是目录，回车 = 定位仓库），不补全也不跳预览
+function pvAddrIsVcs() { return document.body.classList.contains('pv-mode-vcs'); }
+document.getElementById('pv-title').addEventListener('input', (e) => { if (!pvAddrIsVcs()) pvSugUpdate(e.target); });
 document.getElementById('pv-title').addEventListener('blur', pvSugHide);
 document.getElementById('pv-title').addEventListener('keydown', (e) => {
+  if (pvAddrIsVcs()) return;
   if (e.isComposing) return;
   if (e.key === 'Escape' && !pvSugBox.classList.contains('hidden')) { pvSugHide(); e.stopPropagation(); return; }
   if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && pvSug.items.length) {
