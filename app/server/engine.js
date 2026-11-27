@@ -641,8 +641,9 @@ async function runLoop(sessionId) {
   } finally {
     run.looping = false;
     finalize(sessionId, run);
-    // 自动压缩只在回合完全结束（循环已退、finalize 已收尾）后检查：AI↔tools 交互途中绝不触发
-    maybeAutoCompress(sessionId, run, wasCompressTurn);
+    // 自动压缩只在回合完全结束（循环已退、finalize 已收尾）后检查：AI↔tools 交互途中绝不触发。
+    // 临时提问回合跳过：它的 turnMaxPt 是旁路请求的用量，拿它判压缩会把主会话压掉。
+    if (!run.side) maybeAutoCompress(sessionId, run, wasCompressTurn);
   }
 }
 
@@ -675,6 +676,9 @@ function markInterruptedBatch(sessionId) {
 }
 
 function finalize(sessionId, run) {
+  // 临时提问回合走独立收尾：必须排在状态守卫之前——中途被「终止」时 status 已被改成 cancelled，
+  // 但归档照样要做，否则半截问答会留在上下文里。
+  if (run.side) return finalizeSide(sessionId, run);
   const s = getSession(sessionId);
   if (!s || s.status !== 'active') { runs.delete(sessionId); return; }
   const cancelled = run.cancelled;
@@ -706,6 +710,35 @@ function finalize(sessionId, run) {
       catch (e) { log.warn('msg', sessionId + ' 待投递消息发送失败：' + (e && e.message || e)); }
     });
   }
+}
+
+// 临时提问回合收尾：闭合工具批次（配对硬约束）→ 本轮的行整块存档 → 还原会话状态。
+// 常规收尾那几件事一件都不做：不立题、不切 held/cancelled、不投递待投递队列、不触发自动压缩。
+function finalizeSide(sessionId, run) {
+  try { closeToolBatch(sessionId, '临时提问已结束：'); }
+  catch (e) { log.warn('tool', sessionId + ' 关闭工具批次失败：' + (e && e.message || e)); }
+  // 存档 = 与「存档会话」同一条 UPDATE，只多一个 id 下界：问答 + 其间所有工具调用与回执整块出上下文。
+  // 已归档的行不再重复处理（手动存档叠在上面时不白改一遍）；buildMessages 对 archived 一律跳过，
+  // archivedCount 也随之增加，contextId 换代、relay 增量指针自然失效（下一发全量重建）。
+  let n = 0;
+  try {
+    n = db.prepare("UPDATE messages SET type = 'archived' WHERE session_id = ? AND id >= ? AND (type IS NULL OR type != 'archived')")
+      .run(sessionId, run.sideFrom || 0).changes;
+  } catch (e) { log.warn('msg', sessionId + ' 临时提问存档失败：' + (e && e.message || e)); }
+  const back = run.sideRestore || { status: 'held', held_at: null, completed_at: null, cancelled_at: null };
+  touch(sessionId, {
+    status: back.status, held_at: back.held_at,
+    completed_at: back.completed_at, cancelled_at: back.cancelled_at,
+  });
+  runs.delete(sessionId);
+  // 常规收尾信号照发：前端靠 done 复位打字点、streaming 标记、右下角转圈、以及被中断工具卡的占位文案。
+  // 旁路回合被「终止」时如果只发 side_done，这些状态会永远停在「干活中」，转圈不会停。
+  // status 传 cancelled 而不是还原后的 held：前端据此把没跑完的工具卡标成「已取消」。
+  bus.emit(sessionId, 'done', { status: run.cancelled ? 'cancelled' : back.status });
+  // 再补一条 side_done：前端据此把本轮产生的节点就地变淡（带上起点 id，免得重拉整段会话）。
+  bus.emit(sessionId, 'side_done', { archived: n, from_id: run.sideFrom });
+  emitStatus(sessionId);
+  log.info('msg', sessionId + ' 临时提问已存档 ' + n + ' 行');
 }
 
 // 自动生成标题：每回合结束（finalize 成功分支）过门槛才触发，fire-and-forget 不阻塞收尾。
@@ -1571,10 +1604,36 @@ function deliverPendingHead(sessionId) {
 function postUserMessage(sessionId, content, opts) {
   const session = getSession(sessionId);
   if (!session) throw Object.assign(new Error('会话不存在'), { status_code: 404 });
+  // 临时提问（旁路回合）：沿用当前上下文问一句，答完把整轮存档，前后历史不受影响。
+  // 必须等手上这一轮跑完再问——插进正在跑的循环会落在工具批次中间，破坏调用↔回执配对。
+  const side = !!(opts && opts.side);
+  const cur = runs.get(sessionId);
+  if (side) {
+    if ((cur && cur.looping) || session.status === 'active') {
+      throw Object.assign(new Error('会话正在执行，等这一轮跑完再临时提问'), { status_code: 409 });
+    }
+  } else if (cur && cur.side && cur.looping) {
+    // 旁路回合进行中：外来消息不能直接入库，否则 id 落在归档区间里会被一起吃掉。
+    // 排队链路走 enqueueMessage 的进队列，碰不到这里；能撞上的是直接调 postUserMessage 的调用方。
+    throw Object.assign(new Error('会话正在临时提问，稍后再发'), { status_code: 409 });
+  }
   const messageId = saveMessage(sessionId, { role: 'user', content });
   // 预建/更新 run 记录，记下本轮的 deepThink（被 runLoop / callModel 读取）
   const run = getRun(sessionId, true);
   run.deepThink = !!(opts && opts.deepThink);
+  // 显式赋值（不写成 if(side) run.side = true）：run 对象按会话复用，残留标记会让下一轮被白归档
+  run.side = side;
+  if (side) {
+    run.sideFrom = messageId; // 存档边界：从这条提问行（含）到最后一条
+    // 旁路回合得借 active 才进得去 runLoopInner 的状态判断，收尾要原样还回去
+    run.sideRestore = {
+      status: session.status, held_at: session.held_at,
+      completed_at: session.completed_at, cancelled_at: session.cancelled_at,
+    };
+  } else {
+    run.sideFrom = 0;
+    run.sideRestore = null;
+  }
   // 随消息落库：重进会话按它回填按钮，压缩回合也读它
   db.prepare('UPDATE sessions SET deep_think = ? WHERE id = ?').run(run.deepThink ? 1 : 0, sessionId);
   // 真实用户消息到达：若还有个「尚未开跑」的压缩回合（见 summarizeContext），

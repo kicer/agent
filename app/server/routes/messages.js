@@ -19,23 +19,27 @@ function wrap(fn) {
 // delivery：
 //   live（默认，兼容旧调用方/微信）→ 立即入库；回合在跑时下一轮迭代自动带上
 //   queue → 回合在跑时进待投递队列（不落库），回合收尾后自动发出；不在跑则等价于 live
+// side：临时提问（旁路回合）——沿用当前上下文问一句，答完整轮存档，前后历史不动。
+//   必须走 live：排队要穿过 enqueueMessage → deliverPendingHead，旁路回合的标记无处安放。
 // 「干预 / 立即发送」不走这里，而是对已在队列里的条目做升级（POST /pending/:qid）。
 router.post('/:id/messages', wrap((req, res) => {
   const content = String((req.body && req.body.content) || '').trim();
   if (!content) return res.status(400).json({ error: 'content 不能为空' });
   // deepThink：是否启用模型该「深度思考」参数（thinking_params 合并进上游请求体）
   const deepThink = !!(req.body && req.body.deepThink);
+  const side = !!(req.body && req.body.side);
   const delivery = String((req.body && req.body.delivery) || 'live');
   if (delivery === 'queue') {
+    if (side) return res.status(400).json({ error: '临时提问只能直接发送，不支持排队' });
     const r = engine.enqueueMessage(req.params.id, content, { deepThink });
     log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户消息（' +
       (r.queued ? '排队 ' + r.pending_id : r.delivered || '?') + '）：' +
       content.slice(0, 60).replace(/\s+/g, ' '));
     return res.json(r);
   }
-  const r = engine.postUserMessage(req.params.id, content, { deepThink });
-  log.info('msg', (req.user || '-') + ' ' + req.params.id + ' 用户消息（' + (r && r.delivered || '?') + '）：' +
-      content.slice(0, 60).replace(/\s+/g, ' '));
+  const r = engine.postUserMessage(req.params.id, content, { deepThink, side });
+  log.info('msg', (req.user || '-') + ' ' + req.params.id + (side ? ' 临时提问（' : ' 用户消息（') +
+      (r && r.delivered || '?') + '）：' + content.slice(0, 60).replace(/\s+/g, ' '));
   res.json(r);
 }));
 

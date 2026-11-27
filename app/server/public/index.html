@@ -140,6 +140,7 @@
   <symbol id="i-x-path" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></symbol>
   <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></symbol>
   <symbol id="i-fork" viewBox="0 0 24 24"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></symbol>
+  <symbol id="i-ask" viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-9 8.5 9 9 0 0 1-3.8-.9L3 21l1.9-5.2A8.5 8.5 0 0 1 3 11.5a8.5 8.5 0 0 1 9-8.5 8.5 8.5 0 0 1 9 8.5z"></path><path d="M9.6 9.2a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.4v.4"></path><path d="M12 16.6h.01"></path></symbol>
   <symbol id="i-gem" viewBox="0 0 24 24"><path d="M6 3h12l4 6-10 13L2 9z"></path><polyline points="2 9 22 9"></polyline><polyline points="10 3 8 9 12 22"></polyline><polyline points="14 3 16 9 12 22"></polyline></symbol>
   <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
@@ -275,6 +276,11 @@
         <div class="edit-bar hidden" id="edit-bar">
           <span>编辑已发送消息：发送后将丢弃原历史信息</span>
           <button id="edit-cancel" type="button">取消</button>
+        </div>
+        <!-- 临时提问态：与编辑条同一套外观（上方提示 + 可取消），两种态互斥 -->
+        <div class="edit-bar hidden" id="side-bar">
+          <span>临时提问：基于当前上下文，回答完自动归档</span>
+          <button id="side-cancel" type="button">取消</button>
         </div>
         <div class="up-cards hidden" id="up-cards" aria-label="已上传文件"></div>
         <textarea id="msg-input" placeholder="传送信息" rows="2" enterkeyhint="enter"></textarea>

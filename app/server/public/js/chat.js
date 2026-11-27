@@ -90,7 +90,7 @@
     const r = mdHtml(p.text);
     // 复制内容取纯文本（不含【系统通知】附件行），与气泡里显示一致
     // 编辑按钮只给「用户手打/粘贴」的消息：archived（已压缩存档）与 scheduler_note 等系统行不给
-    return '<div class="msg me">' +
+    return '<div class="msg me" data-mid="' + m.id + '">' +
       '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
       actionsHtml(m.created_at, p.text, m.id, null, !m.type) +
     '</div>';
@@ -107,7 +107,7 @@
       ? '<div class="msg-note">工具调用参数无效，本轮已从上下文移除，模型会重新发起</div>' : '';
     const think = reason ? thinkPanelHtml(m.reasoning) : '';
     const bubble = text ? (() => { const r = mdHtml(m.content); return '<div class="bubble-ai' + (r.fmt ? ' md' : '') + '">' + r.html + '</div>'; })() : '';
-    return '<div class="msg other">' + note + think + bubble + actionsHtml(m.created_at, m.content || '', m.id, m.usage, false, !!text) + '</div>';
+    return '<div class="msg other" data-mid="' + m.id + '">' + note + think + bubble + actionsHtml(m.created_at, m.content || '', m.id, m.usage, false, !!text) + '</div>';
   }
   // 思考过程折叠面板:summary 固定名「思考过程」+ 右侧复制按钮,body 展示推理全文。
   // 历史重渲染默认收起(与原设计一致),流式阶段的展开行为由 ensureStreamThinkPanel 显式控制。
@@ -391,6 +391,64 @@
     if (m.role === 'assistant') return m.type === 'summary' ? summaryMsgHtml(m) : aiMsgHtml(m);
     return null; // tool 结果不单独展示
   }
+
+  // ---------- 临时提问 ----------
+  // 入口固定在消息流末尾，不挂在具体某条消息的操作条里：
+  // 1. 归档块（旁路问答）不进模型上下文，按钮挂上去会让人以为问题基于那段，而模型其实看不到；
+  // 2. 挂在「最后一条正常回复」上也不行：归档块堆在它后面，按钮会被越推越靠上，越问越跑。
+  // 押在最末尾，连续提问时按钮位置始终不动。没有 AI 回复（空会话/首轮未答）时不出现；
+  // 回合进行中也不出现——工具回合里 assistant_message 会提前落库推送，不挡一下就会在中间闪一下再消失。
+  let askRow = null;
+  function syncAskBtn() {
+    const box = $('chat-view');
+    if (!box) return;
+    if (!askRow) {
+      askRow = document.createElement('div');
+      askRow.className = 'ask-row';
+      askRow.innerHTML = '<button type="button" class="ask-entry">'
+        + '<svg class="ic sm" viewBox="0 0 24 24"><use href="#i-ask"/></svg>'
+        + '<span>临时提问</span></button>';
+    }
+    askRow.classList.toggle('hidden', !box.querySelector('.msg.other') || state.streaming || state.status === 'active');
+    // 始终押在末尾（新消息、流式气泡追加后会被顶上去）
+    if (box.lastElementChild !== askRow) box.appendChild(askRow);
+  }
+
+  // 临时提问收尾：把本轮产生的节点就地归档，不动网络、不重建 DOM。
+  // 不逐个按 mid 筛：工具卡没有 mid，纯工具调用的 assistant 也不产生节点，按 id 筛会漏。
+  // 改用「第一条 data-mid >= fromId 的子节点」到 askRow 之间整段摘走——绕在这中间的工具卡自然被包进去。
+  // 返回 false = 对不上（节点不在、被删、已切会话），交给调用方退回全量重拉。
+  function archiveTailInPlace(fromId) {
+    const box = $('chat-view');
+    if (!box || !fromId || !askRow || !box.contains(askRow)) return false;
+    const kids = Array.prototype.slice.call(box.children);
+    let start = -1;
+    for (let i = 0; i < kids.length; i++) {
+      const mid = +(kids[i].dataset && kids[i].dataset.mid || 0);
+      if (mid && mid >= fromId) { start = i; break; }
+    }
+    if (start < 0) return false;
+    const end = kids.indexOf(askRow);
+    if (end <= start) return false;
+    // 连续归档要并进同一个容器（全量重排就是这么合的），否则视觉上会分成两块
+    const prev = kids[start - 1];
+    let arc = (prev && prev.classList.contains('msg-archived')) ? prev : null;
+    if (!arc) {
+      arc = document.createElement('div');
+      arc.className = 'msg-archived';
+      box.insertBefore(arc, kids[start]);
+    }
+    const oldNote = arc.querySelector('.archived-note');
+    if (oldNote) oldNote.remove(); // 说明条永远押在容器末尾，复用旧容器时先摘下重加
+    for (const n of kids.slice(start, end)) arc.appendChild(n);
+    const note = document.createElement('div');
+    note.className = 'archived-note';
+    note.textContent = '以上消息已存档，不再发送给 AI';
+    arc.appendChild(note);
+    box.appendChild(askRow); // 入口始终押在最末尾
+    return true;
+  }
+
   // 已渲染消息的轻量签名：role/type 变化（存档、摘要）意味着 DOM 结构要重排，增量路径必须放弃
   function msgSig(m) { return (m.role || '') + '|' + (m.type || ''); }
 
@@ -400,14 +458,14 @@
   function appendMessagesDom(messages, target) {
     // 只有真正渲染进主消息流时才记增量跟踪（离屏分页容器不参与，避免切会话时污染新会话的跟踪状态）
     const track = target === $('chat-view');
-    // 存档段（type='archived'）：连成一截淡色容器，段尾插一条说明，一眼能看出上下文从哪里算起。
-    // 压缩过的会话后面跟着摘要卡片；纯存档（本次新增的「存档」动作）后面什么都没有，文案要分开。
-    const hasSummary = (messages || []).some(m => m.type === 'summary');
+    // 存档段（type='archived'）：连成一截淡色容器，段尾插一条说明。
+    // 一句文案盖住三种来源（压缩 / 整会话存档 / 临时提问）：临时提问的块后面紧跟着正常历史，
+    // 说「后续对话从空开始」是错的，所以不再描述后续从哪里开始。
     let arcWrap = null;
     const closeArc = () => {
       if (!arcWrap) return;
       arcWrap.insertAdjacentHTML('beforeend',
-        '<div class="archived-note">以上消息已存档，不再发送给 AI；后续对话从' + (hasSummary ? '摘要' : '空') + '开始</div>');
+        '<div class="archived-note">以上消息已存档，不再发送给 AI</div>');
       arcWrap = null;
     };
     for (const m of messages || []) {
@@ -431,6 +489,7 @@
     // 历史渲染收口:给本轮新渲染出的代码块补复制按钮(目标可能是分页离屏容器,装饰后再随节点搬迁)
     decorateCodePre(target);
     pvHighlightMdCode(target); // 对话正文里的围栏代码块也上色（与预览同一套）
+    if (track) syncAskBtn(); // 「临时提问」入口押在消息流末尾（归档后也不动）
     return { closeArc };
   }
 
@@ -594,6 +653,8 @@
     const r = mdHtml(content);
     const wrap = document.createElement('div');
     wrap.className = 'msg me';
+    // 带上库行 id：实时发出的消息也要能按 id 定位（临时提问归档靠它切起点，见 archiveTailInPlace）
+    if (msgId) wrap.dataset.mid = msgId;
     wrap.innerHTML = '<div class="bubble-user' + (r.fmt ? ' md' : '') + '">' + attach + r.html + '</div>' +
       // 刚发送的用户消息同样可编辑（canEdit=true）；actionsHtml 只在有 msgId 时才渲染按钮
       actionsHtml(Date.now(), content, msgId, null, true);

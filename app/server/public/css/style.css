@@ -601,6 +601,15 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 删除本条:悬停变红点明破坏性;禁用态(请求中)半透且不响应 */
 .msg-actions .act-del:hover { color: var(--fg-c0392b); }
 .act-del[disabled] { opacity: .4; pointer-events: none; }
+/* 临时提问入口：押在消息流末尾的胶囊按钮（不挂在某条消息上，归档块不进上下文，挂上去会误导） */
+.ask-row { display: flex; justify-content: center; padding: 10px 0 14px; }
+.ask-entry {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 999px;
+  font-size: 13px; color: var(--gray); background: rgba(0, 0, 0, .04);
+}
+.ask-entry:hover { color: var(--active); background: var(--active-soft); }
+.ask-entry .ic { width: 14px; height: 14px; }
 /* 工具卡时间行的删除按钮:同样红示警 */
 .tool-card .tool-time .act-del:hover { color: var(--fg-c0392b); }
 

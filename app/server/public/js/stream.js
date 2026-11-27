@@ -1,5 +1,24 @@
 // 发送 / SSE 流式渲染 / 复制与全屏查看器(拆自 index.html 内联脚本,纯搬运不改逻辑)
 'use strict';
+  // ---------- 临时提问模式 ----------
+  // 点了「临时提问」：接下来这一条走旁路回合（同一个 POST 里带 side），服务端沿用当前上下文问答，
+  // 回答完整块归档——前后历史不动，也不会被立题/压缩/日记收进去。
+  function enterSideAsk() {
+    if (state.status === 'active') { toast('等这一轮跑完再临时提问'); return; }
+    if (!state.sessionId) { toast('先开一个会话'); return; }
+    if (state.editingMsgId) clearEditState(); // 两种态互斥，不跟「编辑重发」叠在一起
+    state.sideAsk = true;
+    const bar = $('side-bar');
+    if (bar) bar.classList.remove('hidden');
+    const ta = $('msg-input');
+    if (ta) ta.focus();
+  }
+  function exitSideAsk() {
+    state.sideAsk = false;
+    const bar = $('side-bar');
+    if (bar) bar.classList.add('hidden');
+  }
+
   // ---------- 发送 ----------
   async function uploadFiles(sessionId, files) {
     const out = [];
@@ -18,6 +37,8 @@
     const ta = $('msg-input');
     const content = ta.value.trim();
     const editingId = state.editingMsgId || 0;
+    // 临时提问：编辑历史消息时不适用（那两条路走的是覆盖式重发 / 只改字面）
+    const side = !editingId && !!state.sideAsk;
     // 没有文字就不发（避免产生空消息）；但只有附件时允许发送——粘贴长文本转成的 .txt 需要能单独发出。
     // 运行中也是这条规则：有字就发，没字又没附件时按钮本身是「停止」。
     if (!content && !state.attachments.length) return;
@@ -46,7 +67,9 @@
       // 是否排队由**服务端**决定：Web 端一律交 delivery:'queue'，回合在跑就进队列，
       // 没在跑就等价于立即发送（enqueueMessage 直接走 postUserMessage）。
       // 不用 state.status 判断——SSE 状态可能过期，误判成 live 会把 user 行插进工具批次中间。
-      const body = { content: text, deepThink: !!state.deepThink, delivery: 'queue' };
+      // 临时提问是唯一例外：排队链路透传不了 side，必须走 live；服务端会挡住「回合在跑」（409）。
+      const body = { content: text, deepThink: !!state.deepThink, delivery: side ? 'live' : 'queue' };
+      if (side) body.side = true;
       let sent;
       if (editingId && state.editingRole === 'tool') {
         // 原地改工具输出：不删后续历史、不重跑
@@ -76,6 +99,8 @@
         sent = await req('POST', '/api/sessions/' + id + '/messages', body);
       }
       clearUploadCards(); // 消息已发出(告知行已拼入正文),卡片使命完成清掉
+      if (side) exitSideAsk(); // 已发出：退出旁路态；归档要等 side_done 回来后再重拉
+      if (askRow) askRow.classList.add('hidden'); // 回合期间收起入口：流式气泡追加会把按钮顶到中间
 
       // 排队回执：条幅以服务端返回的队列为准（本端不画气泡，等真正落库的 user_message 再画）；
       // 竞态下服务端发现回合已结束会直接送达（没有 queued 字段），那就照常当普通发送处理。
@@ -274,8 +299,28 @@
     // 任何具名事件都算连接存活：静默看门狗与回前台宽限共用（error 不列，原生连接错误也走 error）
     ['ping', 'status', 'assistant_delta', 'reasoning_delta', 'assistant_message', 'tool_call_start',
       'tool_call_args', 'tool_call', 'tool_output', 'tool_result', 'ui_card', 'auto_compress', 'done', 'title', 'think_auto',
-      'pending_added', 'pending_removed', 'user_message']
+      'pending_added', 'pending_removed', 'user_message', 'side_done']
       .forEach(function (n) { es.addEventListener(n, function () { markSseAlive(n); }); });
+    // 临时提问收尾：服务端已把本轮问答整块标成 archived。
+    // 要变灰的东西一定在消息流末尾、且就是刚渲染出来的那几条，所以就地搬 DOM 就行——
+    // 重拉整段会话（长会话几十上百 KB，含工具卡 args/output）再把节点重建一遍是纯浪费。
+    es.addEventListener('side_done', ev => {
+      exitSideAsk();
+      removeTyping();
+      const id = state.sessionId;
+      if (!id || state.view !== 'chat') return;
+      let fromId = 0;
+      try { fromId = +((JSON.parse(ev.data) || {}).from_id || 0); } catch (_) { /* 无 data */ }
+      if (archiveTailInPlace(fromId)) {
+        syncAskBtn();
+        updateScrollBottomBtn();
+        return;
+      }
+      // 兜底：节点对不上（中途切过会话 / 消息被删 / 没带 from_id），退回全量重拉
+      req('GET', '/api/sessions/' + id + '?limit=' + Math.max(CHAT_PAGE_SIZE, state.chatLoadedCount + 20))
+        .then(detail => { if (state.sessionId === id && state.view === 'chat') renderDetail(detail, { soft: true, keepView: true }); })
+        .catch(() => {});
+    });
     es.addEventListener('status', ev => {
       const d = JSON.parse(ev.data);
       state.status = d.status;
@@ -285,6 +330,7 @@
       renderHeader();
       updateHeaderActions();
       updateScrollBottomBtn(); // 状态切换同步右下角转圈(开始/结束干活)
+      syncAskBtn(); // 状态是权威的「在不在干活」：一旦离开 active 且消息已落库，就放出临时提问入口
     });
     es.addEventListener('think_auto', ev => {
       const d = JSON.parse(ev.data);
@@ -328,6 +374,8 @@
               if (d.id) {
                 state.renderedSigs[d.id] = 'assistant|' + (d.is_summary ? 'summary' : '');
                 if (d.id > state.lastRenderedMsgId) state.lastRenderedMsgId = d.id;
+                // 流式气泡也是手拼的 DOM：同样补上行 id，否则按 id 定位不到
+                if (state.streamWrap) state.streamWrap.dataset.mid = d.id;
               }
               removeTyping();
           const hasText = !!(d.content && d.content.trim());
@@ -386,6 +434,9 @@
               actionsHtml(d.created_at, d.content || '', d.id, d.usage, false, !!(d.content || '').trim()));
           }
           if (d.tool_calls) appendToolCardsFromAssistant(d, $('chat-view'));
+          // 刚答完这条也要有「临时提问」：这里是原地给流式气泡补操作条，不走 appendMessagesDom，
+          // 不在这里补一次，只有重进会话（走历史重渲染）才看得到按钮。
+          syncAskBtn();
           state.streaming = false;
           // 思考面板本轮结束兜底折叠(正常已在首个正文 delta 时折过,这里是 no-op);
           // 覆盖无正文的回合(如纯工具调用/纯思考),也顺带清掉 .streaming 高亮。工具卡保持展开,由用户自行收起。
@@ -535,6 +586,7 @@
       state.toolCards = {};
       state.toolCallStreaming = {}; // 流式参数早卡映射随会话/回合重置
       updateScrollBottomBtn();
+      syncAskBtn(); // 回合真正结束才放出「临时提问」（进行中一律收起）
       loadSessionList();
       // 一轮完整跑完（agent 循环退出才发 done）：工具/技能产物可能新增或改名，文件树就地刷新；
       // 不在文件树面板时 reloadFileTree 只标脏，等切回去再重拉
@@ -683,6 +735,8 @@
     if (pre) pre.textContent = content;
   }
   $('chat-view').addEventListener('click', async e => {
+    // 临时提问：进入旁路态（下一条只基于当前上下文问，答完整块归档）
+    if (e.target.closest('.ask-entry')) { enterSideAsk(); return; }
     // 分叉：从这条用户消息新建会话，复制该点之前的历史，正文回填输入框
     const forkBtn = e.target.closest('.act-fork');
     if (forkBtn) {
@@ -766,6 +820,12 @@
     autosize();
     updateSendBtn();
     ta.focus();
+  });
+  // 取消临时提问：退出旁路态，输入框里已敲的字保留（可能想改成普通消息发）
+  $('side-cancel').addEventListener('click', () => {
+    exitSideAsk();
+    const ta = $('msg-input');
+    if (ta) ta.focus();
   });
 
   // ---------- 全屏查看器(双击气泡/工具卡放大;图片单击放大;均同步 index) ----------
